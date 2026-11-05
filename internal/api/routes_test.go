@@ -165,6 +165,29 @@ func TestEveryGuardedOperationRequiresItsOwnService(t *testing.T) {
 	e.get("/api/health").want(200)
 }
 
+// The login page is part of the UI shell, so a stack that admits nobody without
+// credentials must still serve the shell and its assets, while every /api/ call
+// stays guarded.
+func TestUIShellLoadsWhenTheStackDoesNotAdmitTheRequest(t *testing.T) {
+	cfg := lockedConfig()
+	ui := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("ui:" + r.URL.Path))
+	})
+	e := newEnv(t, func(o *envOptions) { o.auth = &cfg; o.ui = ui })
+	for _, p := range []string{"/", "/assets/app.js", "/timeline", "/inbox/01JC7Z3K9Q8V5T2M4N6P8R0S1T"} {
+		if r := e.raw("GET", p).want(200); string(r.Body) != "ui:"+p {
+			t.Errorf("GET %s body = %q", p, r.Body)
+		}
+	}
+	for _, p := range []string{"/api/status", "/api/flows", "/api/stream"} {
+		if r := e.raw("GET", p).want(401); r.problem() != "unauthenticated" {
+			t.Errorf("GET %s: %s", p, r.Body)
+		}
+	}
+	e.get("/api/auth/whoami").want(200)
+}
+
 func TestLocalhostTrustIsPerServiceStack(t *testing.T) {
 	cfg := lockedConfig()
 	cfg.Stacks["local"] = []auth.StackEntry{{Module: "localhost-trust", Control: auth.Sufficient}}

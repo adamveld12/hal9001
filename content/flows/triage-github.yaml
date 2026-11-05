@@ -39,7 +39,7 @@ nodes:
           ev["_port"] = "large"
           ev["_reason"] = "size unknown"
       print(json.dumps(ev))
-    ui: {x: 340, y: 120}
+    ui: {x: 400, y: 120}
 
   - id: review-small
     type: agent
@@ -50,14 +50,14 @@ nodes:
     allow:
       commands: ['^gh (pr|issue) (view|diff|list|checks)\b', '^git (log|diff|show)\b']
     timeout: 20m
-    ui: {x: 600, y: 60}
+    ui: {x: 700, y: 60}
 
   - id: note-large
     type: inbox
     title: "Large PR needs you: {{.input.title}}"
     priority: high
     summary_md: "{{.input.repo}}: {{.input.lines_changed}} lines changed\n\n{{.input.url}}"
-    ui: {x: 600, y: 200}
+    ui: {x: 700, y: 200}
 
 edges:
   - {from: only-review-requests, to: classify}

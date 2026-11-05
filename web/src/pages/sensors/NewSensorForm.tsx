@@ -165,10 +165,12 @@ export function NewSensorForm({
             )}
             <Field
               label="Dedup key"
-              hint="Go template over the item. Empty uses the server default."
+              hint="Go template over the item that gives its dedup key."
+              error={fieldErrors("key")}
             >
               <TextInput
                 value={form.key}
+                invalid={show("key") !== undefined}
                 placeholder="{{.id}}:{{.updated_at}}"
                 onChange={(e) => set("key", e.target.value)}
               />

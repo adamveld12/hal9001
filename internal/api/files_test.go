@@ -220,11 +220,29 @@ func TestSensorFilesAndStatus(t *testing.T) {
 		} `json:"status"`
 	}
 	created.decode(&d)
-	if d.Sensor.Interval != "5m" || d.Sensor.FirstRun != "baseline" || d.Status.State != "idle" || d.Status.NextPollAt == nil || d.Status.LastRun != nil {
+	if d.Sensor.Interval != "5m" || d.Sensor.FirstRun != "baseline" || d.Status.State != "idle" || d.Status.LastRun != nil {
 		t.Errorf("new sensor = %+v", d)
+	}
+	// No enabled flow subscribes to it, so the engine does not schedule it.
+	if d.Status.NextPollAt != nil {
+		t.Errorf("unsubscribed sensor next_poll_at = %v, want null", *d.Status.NextPollAt)
 	}
 	if e.reloads.Load() != 1 {
 		t.Errorf("reloads = %d", e.reloads.Load())
+	}
+
+	body := flowBody("watcher", "a")
+	body["subscribe"] = []string{"probe"}
+	e.do("POST", "/api/flows", map[string]any{"flow": body}).want(201)
+	e.ws.Store(spec.Load(e.home))
+	var sub struct {
+		Status struct {
+			NextPollAt *string `json:"next_poll_at"`
+		} `json:"status"`
+	}
+	e.get("/api/sensors/probe").want(200).decode(&sub)
+	if sub.Status.NextPollAt == nil {
+		t.Error("sensor with an enabled subscribing flow has no next_poll_at")
 	}
 
 	// Status follows what the engine recorded.

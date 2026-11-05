@@ -17,6 +17,7 @@ import {
   Spinner,
   StatusBadge,
 } from "../../components/ui";
+import { useNow } from "../approvals/timeLeft";
 import { durationBetween, formatBytes, shortId } from "../../lib/format";
 import { Meta, Mono, TextLink } from "./Meta";
 import { PermissionRequests } from "./PermissionRequests";
@@ -74,6 +75,7 @@ function Details({
 export function AgentRunPage() {
   const { id = "" } = useParams();
   const q = useAgentRun(id);
+  const now = useNow();
 
   if (q.isPending) return <LoadingState label="Loading agent run" />;
   if (q.isError) {
@@ -186,6 +188,7 @@ export function AgentRunPage() {
                   value: durationBetween(
                     run.started_at ?? run.created_at,
                     run.ended_at,
+                    now,
                   ),
                 },
               ]}

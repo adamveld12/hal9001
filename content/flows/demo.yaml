@@ -16,21 +16,21 @@ nodes:
     lang: jq
     ports: [urgent, normal]
     script: '. + {_port: (if .severity == "urgent" then "urgent" else "normal" end)}'
-    ui: {x: 340, y: 120}
+    ui: {x: 400, y: 120}
 
   - id: note-urgent
     type: inbox
     title: "Urgent: {{.input.title}}"
     priority: urgent
     summary_md: "{{.input.text}}\n\n{{.input.url}}"
-    ui: {x: 600, y: 60}
+    ui: {x: 700, y: 60}
 
   - id: note-normal
     type: inbox
     title: "{{.input.title}}"
     priority: normal
     summary_md: "{{.input.text}}\n\n{{.input.url}}"
-    ui: {x: 600, y: 200}
+    ui: {x: 700, y: 200}
 
 edges:
   - {from: drop-noise, to: route}

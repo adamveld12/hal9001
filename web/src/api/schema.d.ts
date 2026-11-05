@@ -1903,6 +1903,7 @@ export interface components {
       state: "idle" | "running" | "failing" | "paused" | "invalid";
       last_run: components["schemas"]["SensorRun"] | null;
       last_success_at: components["schemas"]["NullableTimestamp"];
+      /** @description When the scheduler polls next. `null` while paused, when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works). */
       next_poll_at: components["schemas"]["NullableTimestamp"];
       new_items_24h: number;
     };

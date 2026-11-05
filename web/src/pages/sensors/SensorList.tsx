@@ -4,7 +4,12 @@ import type { SensorSummary } from "../../api/sensors";
 import { Time } from "../../components/Time";
 import { Badge, Table, Td, Th } from "../../components/ui";
 import { cx } from "../../lib/cx";
-import { sensorRow, sensorStateTone } from "./view";
+import {
+  UNSCHEDULED_TITLE,
+  sensorRow,
+  sensorStateTone,
+  unscheduledLabel,
+} from "./view";
 
 type Guard = (e: MouseEvent) => void;
 
@@ -65,7 +70,13 @@ export function SensorTable({
               </Td>
               <Td className="tabular-nums">{r.newItems24h}</Td>
               <Td>
-                <Time ts={r.nextPollAt} />
+                {unscheduledLabel(r.state, r.nextPollAt) ? (
+                  <span className="text-muted" title={UNSCHEDULED_TITLE}>
+                    not scheduled
+                  </span>
+                ) : (
+                  <Time ts={r.nextPollAt} />
+                )}
               </Td>
               <Td>
                 <Problems problems={r.problems} />

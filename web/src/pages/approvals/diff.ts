@@ -6,6 +6,8 @@
  * which the UI then shows as raw JSON.
  */
 
+import type { ToolContent } from "../runs/transcript";
+
 export type DiffKind = "add" | "del" | "ctx" | "hunk" | "skip";
 
 export interface DiffLine {
@@ -208,4 +210,23 @@ export function extractCommand(raw: unknown): string | null {
     return c.join(" ");
   }
   return null;
+}
+
+/**
+ * File changes carried by an ACP tool call's `content` (type `diff`). Codex
+ * sends edit permission requests with no raw input at all, so this is the only
+ * place the change is described.
+ */
+export function diffsFromToolContent(
+  content: readonly ToolContent[],
+): FileDiff[] {
+  const out: FileDiff[] = [];
+  for (const c of content) {
+    if (c.type !== "diff") continue;
+    out.push({
+      path: c.path === "" ? null : c.path,
+      lines: lineDiff(c.oldText ?? "", c.newText),
+    });
+  }
+  return out;
 }

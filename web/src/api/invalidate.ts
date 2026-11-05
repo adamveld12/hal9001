@@ -60,3 +60,23 @@ export function rootsForBatch(types: Iterable<DataStreamType>): Set<QueryRoot> {
   for (const t of types) for (const r of rootsFor(t)) out.add(r);
   return out;
 }
+
+/**
+ * Whether a stream event carries nothing the screen needs: a successful
+ * routine request decision (`request`, `whoami`). The server records one for
+ * every API call, including the refetch an earlier one triggered, so reacting
+ * to them would make the Auth settings refetch itself in a loop. Logins,
+ * logouts, revocations, passkey changes and every failure still refetch.
+ */
+export function isRoutineAuthEvent(event: {
+  type: string;
+  data?: unknown;
+}): boolean {
+  if (event.type !== "auth_event.created") return false;
+  const d = event.data as { action?: unknown; outcome?: unknown } | null;
+  return (
+    d != null &&
+    (d.action === "request" || d.action === "whoami") &&
+    d.outcome === "success"
+  );
+}

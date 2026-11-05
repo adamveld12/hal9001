@@ -137,6 +137,9 @@ export function EnvSection() {
                 type="password"
                 value={value}
                 autoComplete="new-password"
+                // Password managers must not offer to save an env value as a login.
+                data-1p-ignore
+                data-lpignore="true"
                 spellCheck={false}
                 onChange={(e) => setValue(e.target.value)}
               />

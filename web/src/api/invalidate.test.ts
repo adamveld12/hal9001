@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { rootsFor, rootsForBatch, STREAM_TYPES } from "./invalidate";
+import {
+  isRoutineAuthEvent,
+  rootsFor,
+  rootsForBatch,
+  STREAM_TYPES,
+} from "./invalidate";
 import { QUERY_ROOTS } from "./keys";
 
 describe("stream invalidation", () => {
@@ -28,5 +33,27 @@ describe("stream invalidation", () => {
     expect([...roots].sort()).toEqual(
       ["event", "flow-run", "flow-runs", "flows", "inbox", "inbox-item"].sort(),
     );
+  });
+});
+
+describe("isRoutineAuthEvent", () => {
+  const ev = (action: string, outcome: string) => ({
+    type: "auth_event.created",
+    data: { action, outcome },
+  });
+
+  it("ignores successful per-request decisions, which would refetch themselves forever", () => {
+    expect(isRoutineAuthEvent(ev("request", "success"))).toBe(true);
+    expect(isRoutineAuthEvent(ev("whoami", "success"))).toBe(true);
+  });
+
+  it("keeps refreshing for logins, revocations and any failure", () => {
+    expect(isRoutineAuthEvent(ev("login_continue", "success"))).toBe(false);
+    expect(isRoutineAuthEvent(ev("session_revoke", "success"))).toBe(false);
+    expect(isRoutineAuthEvent(ev("request", "fail"))).toBe(false);
+  });
+
+  it("is false for other stream events", () => {
+    expect(isRoutineAuthEvent({ type: "inbox.created", data: {} })).toBe(false);
   });
 });

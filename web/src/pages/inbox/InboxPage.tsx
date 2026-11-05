@@ -77,9 +77,13 @@ export function InboxPage() {
   // Updated during render, which React allows for a component's own state.
   const [openPos, setOpenPos] = useState<Position | null>(null);
   const openAt = openId ? loaded.findIndex((i) => i.id === openId) : -1;
+  // While a changed filter is still loading, `loaded` is the previous filter's
+  // list (placeholder data); recording a position from it would pin an item the
+  // new filter excludes.
   if (
     openId &&
     openAt >= 0 &&
+    !list.isPlaceholderData &&
     (openPos?.id !== openId ||
       openPos.index !== openAt ||
       openPos.search !== search)

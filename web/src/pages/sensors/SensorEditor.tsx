@@ -31,7 +31,13 @@ import {
 import { DiagnosticsList } from "../files/DiagnosticsList";
 import { useEditState } from "../files/useEditState";
 import { SensorRuns } from "./SensorRuns";
-import { pollErrorMessage, scheduleLabel, sensorStateTone } from "./view";
+import {
+  UNSCHEDULED_TITLE,
+  pollErrorMessage,
+  scheduleLabel,
+  sensorStateTone,
+  unscheduledLabel,
+} from "./view";
 
 function Editor({
   detail,
@@ -156,7 +162,18 @@ function Editor({
           label="Last success"
           value={<Time ts={status.last_success_at} />}
         />
-        <Meta label="Next poll" value={<Time ts={status.next_poll_at} />} />
+        <Meta
+          label="Next poll"
+          value={
+            unscheduledLabel(status.state, status.next_poll_at) ? (
+              <span className="text-muted" title={UNSCHEDULED_TITLE}>
+                not scheduled
+              </span>
+            ) : (
+              <Time ts={status.next_poll_at} />
+            )
+          }
+        />
         <Meta label="New items (24h)" value={status.new_items_24h} />
       </dl>
 

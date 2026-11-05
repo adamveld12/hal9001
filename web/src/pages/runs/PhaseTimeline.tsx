@@ -3,6 +3,7 @@ import { usePhaseRuns } from "../../api/runs";
 import { Time } from "../../components/Time";
 import { Badge, Spinner, StatusBadge } from "../../components/ui";
 import { cx } from "../../lib/cx";
+import { useNow } from "../approvals/timeLeft";
 import { durationBetween, shortId } from "../../lib/format";
 import { Mono, TextLink } from "./Meta";
 import { buildPhaseTimeline } from "./timeline";
@@ -16,6 +17,7 @@ export function PhaseTimeline({
   currentRunId: string;
 }) {
   const phases = usePhaseRuns(phaseRunIds);
+  const now = useNow();
   if (phases.pending) return <Spinner label="Loading phases" />;
   if (phases.error) {
     return (
@@ -47,7 +49,7 @@ export function PhaseTimeline({
               </Badge>
             )}
             <span className="ml-auto text-muted">
-              {durationBetween(s.startedAt, s.endedAt)}
+              {durationBetween(s.startedAt, s.endedAt, now)}
             </span>
             {s.resumeFallback && (
               <div className="w-full text-muted">

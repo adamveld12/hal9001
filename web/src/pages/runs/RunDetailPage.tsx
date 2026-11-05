@@ -27,6 +27,7 @@ import {
   groupByNode,
   overlayForRuns,
 } from "../../flow/runOverlay";
+import { useNow } from "../approvals/timeLeft";
 import { durationBetween, shortId } from "../../lib/format";
 import { Mono, TextLink } from "./Meta";
 import { NodeRunPanel } from "./NodeRunPanel";
@@ -90,6 +91,7 @@ export function RunDetailPage() {
   const [params, setParams] = useSearchParams();
   const selectedNode = params.get("node");
   const selectedRun = params.get("run");
+  const now = useNow();
 
   const runQ = useFlowRun(id);
   const flowRun = runQ.data?.flow_run;
@@ -209,6 +211,7 @@ export function RunDetailPage() {
           {durationBetween(
             flowRun.started_at ?? flowRun.created_at,
             flowRun.ended_at,
+            now,
           )}
         </span>
         {sensorQ.data && <span>sensor {sensorQ.data}</span>}

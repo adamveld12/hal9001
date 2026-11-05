@@ -40,6 +40,23 @@ export function scheduleLabel(sensor: SensorSummary["sensor"]): string {
   return "–";
 }
 
+/**
+ * Why a sensor has no next poll ("not scheduled": no enabled flow subscribes
+ * to it, so only "Poll now" runs it). Text for a sensor with no next poll that is not paused or invalid: the engine
+ * only schedules sensors an enabled flow subscribes to. Null when a time (or
+ * the state itself) already explains the empty cell.
+ */
+export function unscheduledLabel(
+  state: SensorState,
+  nextPollAt: string | null,
+): string | null {
+  if (nextPollAt !== null) return null;
+  return state === "paused" || state === "invalid" ? null : "not scheduled";
+}
+
+export const UNSCHEDULED_TITLE =
+  "No enabled flow subscribes to this sensor, so it is not polled on a schedule. Poll now still works.";
+
 export interface SensorRow {
   id: string;
   state: SensorState;
