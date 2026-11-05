@@ -36,7 +36,7 @@ The `config.yaml` stack for the service decides who gets in (REQUIREMENTS §10.4
 3. Success is `200 {"status": "success", "services": [...], "session": {...}}` and sets the `hal9001_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS). Send it back on later requests (`curl -c jar -b jar`). One session covers every service its stack evaluation granted; there is no step-up.
 4. A failed login is `401 authentication-failed`. A session that does not grant the service gets `403 forbidden`.
 
-`GET /api/auth/whoami` always answers 200; `authenticated: false` means show a login. Passkey registration (`/api/auth/webauthn/register/*`) needs a real session cookie that covers `admin`, because it creates a standing credential.
+`GET /api/auth/whoami` always answers 200; `authenticated: false` means show a login. Passkey registration (`/api/auth/webauthn/register/*`) is allowed for any caller the `admin` service admits (a session, or the stack itself such as `localhost-trust`); begin and finish must come from the same caller.
 
 ## Pagination
 

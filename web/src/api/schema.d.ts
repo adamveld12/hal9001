@@ -1314,8 +1314,8 @@ export interface paths {
     put?: never;
     /**
      * Start passkey registration
-     * @description Requires a real session cookie that covers `admin` (a per-request stack decision is not enough, because the
-     *     result is a standing credential). The relying-party ID is the request's Host name without port, which must be
+     * @description Allowed for any caller the `admin` service admits, through a session or the stack itself (e.g. `localhost-trust`).
+     *     Begin and finish must come from the same caller. The relying-party ID is the request's Host name without port, which must be
      *     `localhost` or an entry of `allowed_hosts`. Pass `options` to `navigator.credentials.create`.
      */
     post: operations["beginPasskeyRegistration"];

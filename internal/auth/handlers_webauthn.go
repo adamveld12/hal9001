@@ -9,24 +9,33 @@ import (
 	"hal9001/internal/httpsec"
 )
 
-// requireSession admits only a real session cookie that covers admin:
-// registering a passkey creates a standing credential, so it must come from a
-// logged-in browser rather than a per-request stack decision.
-func (m *Manager) requireSession(w http.ResponseWriter, r *http.Request) (Session, bool) {
-	s, _, ok := m.activeSession(r)
-	switch {
-	case !ok:
-		m.deny(w, ServiceAdmin, http.StatusUnauthorized)
-	case !s.Covers(ServiceAdmin):
-		m.deny(w, ServiceAdmin, http.StatusForbidden)
-	default:
-		return s, true
+// registrant is who may register a passkey: any caller the admin service
+// admits, through a session or through the stack itself (e.g. localhost-trust,
+// which is a first-class module). binding ties begin and finish together so a
+// registration can only be finished by the caller that started it.
+type registrant struct {
+	principal string
+	sessionID string
+	binding   string
+}
+
+func (m *Manager) requireRegistrant(w http.ResponseWriter, r *http.Request) (registrant, bool) {
+	id, status := m.authorize(w, r, ServiceAdmin)
+	if status != 0 {
+		m.deny(w, ServiceAdmin, status)
+		return registrant{}, false
 	}
-	return Session{}, false
+	reg := registrant{principal: id.Principal.Name, sessionID: id.SessionID}
+	if id.Source == "session" {
+		reg.binding = "session:" + id.SessionID
+	} else {
+		reg.binding = "stack:" + id.Principal.Name
+	}
+	return reg, true
 }
 
 func (m *Manager) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
-	s, ok := m.requireSession(w, r)
+	s, ok := m.requireRegistrant(w, r)
 	if !ok {
 		return
 	}
@@ -40,7 +49,7 @@ func (m *Manager) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	peer, _ := netip.ParseAddrPort(r.RemoteAddr)
-	id, creation, err := m.wa.BeginRegistration(r.Context(), s.ID, r.Host, isSecure(r, peer.Addr()), label)
+	id, creation, err := m.wa.BeginRegistration(r.Context(), s.binding, r.Host, isSecure(r, peer.Addr()), label)
 	if err != nil {
 		badRequest(w, err.Error())
 		return
@@ -49,7 +58,7 @@ func (m *Manager) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
-	s, ok := m.requireSession(w, r)
+	s, ok := m.requireRegistrant(w, r)
 	if !ok {
 		return
 	}
@@ -67,10 +76,10 @@ func (m *Manager) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	peer, _ := netip.ParseAddrPort(r.RemoteAddr)
-	cred, err := m.wa.FinishRegistration(r.Context(), s.ID, r.Host, isSecure(r, peer.Addr()), regID, obj["credential"])
+	cred, err := m.wa.FinishRegistration(r.Context(), s.binding, r.Host, isSecure(r, peer.Addr()), regID, obj["credential"])
 	e := AuthEvent{
 		Action: "webauthn_register", Service: ServiceAdmin, Endpoint: r.Method + " " + r.URL.Path,
-		Principal: s.Principal, RemoteAddr: r.RemoteAddr, Host: r.Host, SessionID: s.ID,
+		Principal: s.principal, RemoteAddr: r.RemoteAddr, Host: r.Host, SessionID: s.sessionID,
 	}
 	if err != nil {
 		e.Outcome, e.Reason = OutcomeFail, err.Error()

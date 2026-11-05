@@ -42,11 +42,11 @@ type WebAuthn struct {
 }
 
 type registration struct {
-	sessionID string
-	host      string
-	label     string
-	data      webauthn.SessionData
-	expires   time.Time
+	binding string // "session:<id>" or "stack:<principal>"
+	host    string
+	label   string
+	data    webauthn.SessionData
+	expires time.Time
 }
 
 // NewWebAuthn builds the module over store. now may be nil.
@@ -166,9 +166,9 @@ func (m *WebAuthn) finishLogin(ctx context.Context, wa *webauthn.WebAuthn, rpID 
 }
 
 // BeginRegistration starts a passkey registration for host, bound to the
-// authenticated session. It returns the registration id and the options for
-// navigator.credentials.create().
-func (m *WebAuthn) BeginRegistration(ctx context.Context, sessionID, host string, secure bool, label string) (string, *protocol.CredentialCreation, error) {
+// caller (binding: a session or stack principal). It returns the registration
+// id and the options for navigator.credentials.create().
+func (m *WebAuthn) BeginRegistration(ctx context.Context, binding, host string, secure bool, label string) (string, *protocol.CredentialCreation, error) {
 	wa, rpID, err := relyingParty(host, secure)
 	if err != nil {
 		return "", nil, err
@@ -206,22 +206,22 @@ func (m *WebAuthn) BeginRegistration(ctx context.Context, sessionID, host string
 	if len(m.regs) >= maxPendingLogins {
 		return "", nil, errors.New("too many pending registrations")
 	}
-	m.regs[id] = &registration{sessionID: sessionID, host: host, label: label, data: *data, expires: now.Add(registrationTTL)}
+	m.regs[id] = &registration{binding: binding, host: host, label: label, data: *data, expires: now.Add(registrationTTL)}
 	return id, creation, nil
 }
 
 // errRegistrationUnknown means the registration id is unknown, expired,
-// already used, or belongs to another session or host.
+// already used, or belongs to another caller or host.
 var errRegistrationUnknown = errors.New("registration expired or unknown")
 
 // FinishRegistration verifies the authenticator's attestation and stores the
 // new passkey.
-func (m *WebAuthn) FinishRegistration(ctx context.Context, sessionID, host string, secure bool, regID string, credential []byte) (WebAuthnCredential, error) {
+func (m *WebAuthn) FinishRegistration(ctx context.Context, binding, host string, secure bool, regID string, credential []byte) (WebAuthnCredential, error) {
 	m.mu.Lock()
 	reg, ok := m.regs[regID]
 	delete(m.regs, regID)
 	m.mu.Unlock()
-	if !ok || !m.now().Before(reg.expires) || reg.sessionID != sessionID || reg.host != host {
+	if !ok || !m.now().Before(reg.expires) || reg.binding != binding || reg.host != host {
 		return WebAuthnCredential{}, errRegistrationUnknown
 	}
 	wa, rpID, err := relyingParty(host, secure)

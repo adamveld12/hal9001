@@ -188,11 +188,26 @@ func TestPasskeyLoginRejectsUnknownKeyAndUnverifiedUser(t *testing.T) {
 	}
 }
 
-func TestPasskeyRegistrationNeedsAuthenticatedSessionAndValidAttestation(t *testing.T) {
-	// localhost-trust admits per-request calls, but registration needs a real session.
+func TestPasskeyRegistrationNeedsAdminAndValidAttestation(t *testing.T) {
+	// localhost-trust is a first-class module: a caller it admits to admin can
+	// register a passkey without a session cookie, end to end.
 	e := newEnv(t)
-	wantStatus(t, e.do(post("/api/auth/webauthn/register/begin", map[string]string{})), 401)
-	wantStatus(t, e.do(post("/api/auth/webauthn/register/finish", map[string]any{"registration_id": "x", "credential": map[string]string{}})), 401)
+	rec := e.do(post("/api/auth/webauthn/register/begin", map[string]string{"label": "mac"}))
+	wantStatus(t, rec, 200)
+	b := decode[struct {
+		RegistrationID string          `json:"registration_id"`
+		Options        json.RawMessage `json:"options"`
+	}](t, rec)
+	opts, err := vwa.ParseAttestationOptions(string(b.Options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	att := vwa.CreateAttestationResponse(rpFor(localHost), vwa.NewAuthenticator(), vwa.NewCredential(vwa.KeyTypeEC2), *opts)
+	wantStatus(t, e.do(post("/api/auth/webauthn/register/finish", map[string]any{"registration_id": b.RegistrationID, "credential": json.RawMessage(att)})), 201)
+
+	// A caller the admin stack does not admit (not local, no session) may not register.
+	wantStatus(t, e.do(post("/api/auth/webauthn/register/begin", map[string]string{}).from("192.0.2.7:4000")), 401)
+	wantStatus(t, e.do(post("/api/auth/webauthn/register/finish", map[string]any{"registration_id": "x", "credential": map[string]string{}}).from("192.0.2.7:4000")), 401)
 
 	// A session that does not cover admin may not register either.
 	cfg := auth.DefaultConfig()
@@ -202,7 +217,7 @@ func TestPasskeyRegistrationNeedsAuthenticatedSessionAndValidAttestation(t *test
 	}
 	cfg.Services = map[auth.Service]string{auth.ServiceUI: "basic", auth.ServiceAPI: "basic", auth.ServiceApprove: "basic", auth.ServiceAdmin: "strict"}
 	split := newEnv(t, withConfig(cfg), withModules(otpModule()))
-	rec := split.do(post("/api/auth/ui/begin", map[string]string{"password": testPW}))
+	rec = split.do(post("/api/auth/ui/begin", map[string]string{"password": testPW}))
 	wantStatus(t, rec, 200)
 	wantStatus(t, split.do(post("/api/auth/webauthn/register/begin", map[string]string{}).cookie(sessionCookie(t, rec))), 403)
 

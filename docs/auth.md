@@ -107,7 +107,7 @@ Changes to `config.yaml` are picked up without a restart.
 |---|---|
 | `localhost-trust` | Success when the request is provably local: the TCP peer is loopback, `Host` is `localhost` or `127.0.0.1`, and no proxy header is present (`Forwarded`, `X-Forwarded-*`, `Tailscale-*`). Otherwise `ignore`. Principal `localhost`. |
 | `tailscale-identity` | Applies only to requests that came through `tailscale serve`; see [Tailscale](#tailscale). Principal is the Tailscale login. |
-| `webauthn` | Passkeys (Touch ID through the browser). Interactive logins only. Registered from an already-authenticated session. Principal `owner`. |
+| `webauthn` | Passkeys (Touch ID through the browser). Interactive logins only. Registered by any caller the `admin` stack admits. Principal `owner`. |
 | `password` | One argon2id hash in `config.yaml`. Interactive logins only. Principal `owner`. |
 
 `webauthn` and `password` never authenticate a plain API request: they take part in a login
@@ -136,9 +136,9 @@ Treat `config.yaml` as sensitive after this; `GET /api/settings` and `hal9001 se
 
 - The relying-party ID is the request hostname, so `localhost` and each Tailscale hostname hold **separate**
   credentials: register a passkey once per hostname you use. IP addresses (`127.0.0.1`) cannot be used.
-- Registration is under `/api/auth/webauthn/register/{begin,finish}` (and in the UI under Settings). It needs a real
-  session cookie that covers `admin`, because it creates a standing credential; `localhost-trust` alone is not enough,
-  so log in once (for example with the password) first.
+- Registration is under `/api/auth/webauthn/register/{begin,finish}` (and in the UI under Settings). Any caller the
+  `admin` service admits can register, including a browser admitted by `localhost-trust`; begin and finish must come from
+  the same caller (session, or stack principal).
 - User verification is required. Credentials can be listed and removed with `/api/auth/webauthn/credentials`.
 - Passkeys on `localhost` only matter when `localhost-trust` is not in the stack.
 
