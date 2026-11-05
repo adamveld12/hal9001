@@ -143,21 +143,3 @@ export function useFlowRuns(flowId: string, enabled: boolean) {
       ).items,
   });
 }
-
-/** A node run that is still queued/running while a test is in flight. */
-export function useNodeRun(id: string | undefined) {
-  return useQuery({
-    queryKey: qk("node-run", id ?? ""),
-    enabled: id !== undefined,
-    queryFn: () =>
-      unwrap(
-        api.GET("/api/node-runs/{id}", {
-          params: { path: { id: id as string } },
-        }),
-      ),
-    refetchInterval: (q) => {
-      const s = q.state.data?.status;
-      return s === "queued" || s === "running" ? 1000 : false;
-    },
-  });
-}

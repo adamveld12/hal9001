@@ -151,9 +151,6 @@ function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
       if (node.runtime.trim() === "") at("runtime", "an agent needs a runtime");
       if (node.prompt.trim() === "")
         at("prompt", "choose a prompt from the library");
-      if (node.mode === "approve" && !node.approve) {
-        at("approve", "approve mode defaults to proposal", "warning");
-      }
       if (
         node.cwd?.mode === "worktree" &&
         (!node.cwd.repo || node.cwd.repo.trim() === "")

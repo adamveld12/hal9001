@@ -31,19 +31,6 @@ export function usePromptNames() {
   });
 }
 
-const runtimesQuery = {
-  queryKey: qk("runtimes"),
-  queryFn: () => unwrap(api.GET("/api/runtimes")),
-};
-
-/** Configured ACP runtime names for the agent node's runtime dropdown. */
-export function useRuntimeNames() {
-  return useQuery({
-    ...runtimesQuery,
-    select: (list) => list.items.map((r) => r.name),
-  });
-}
-
 export function usePrompt(name: string) {
   return useQuery({
     queryKey: qk("prompt", name),

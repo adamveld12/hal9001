@@ -4,10 +4,10 @@ import { ApiError, errorMessage } from "../../api/client";
 import {
   useFlowRunDetail,
   useFlowRuns,
-  useNodeRun,
   useRecentEvents,
   useTestNode,
 } from "../../api/flows";
+import { useNodeRun } from "../../api/runs";
 import { BlobView } from "../../components/BlobView";
 import {
   Button,

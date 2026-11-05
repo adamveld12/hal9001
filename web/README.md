@@ -1,32 +1,20 @@
-# React + TypeScript + Vite
+# hal9001 web UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 + TypeScript + Vite + Tailwind v4. A pure client of the daemon's REST API (`../api/openapi.yaml`); the built assets in `dist/` are embedded into the Go binary.
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+mise exec -- pnpm install       # once (or: mise run setup at the repo root)
+mise exec -- pnpm dev           # http://localhost:5173, proxies /api to 127.0.0.1:9001
+mise exec -- pnpm check         # prettier, oxlint, tsc, vitest
+mise exec -- pnpm build         # type-check and emit dist/
+mise exec -- pnpm gen:api       # regenerate src/api/schema.d.ts from ../api/openapi.yaml
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Layout
+
+- `src/api/`: `schema.d.ts` (generated, committed), `client.ts` (openapi-fetch + `unwrap`/`ApiError`), per-area react-query hooks, `stream.tsx` (SSE provider). Every query key starts with a root from `keys.ts`; `invalidate.ts` maps stream events to the roots they refetch.
+- `src/flow/`: the flow editor. `model.ts` is the JSON form of the flow YAML; `graph.ts` converts it to and from the React Flow graph; `validate.ts` does instant client-side checks (cycles, ports); `editorState.ts` is the undoable reducer; `FlowCanvas.tsx` is shared by the editor and the read-only run overlay (`overlay.ts`, `runOverlay.ts`).
+- `src/pages/`: one directory per area of REQUIREMENTS §11. `src/layout/`: shell, header, kill switch. `src/components/`: shared UI kit.
+- `tools/gen-api/`: a separate workspace package that carries TypeScript 5 for `openapi-typescript`, which needs the compiler JS API that TypeScript 7 does not ship.
+
+Keyboard: `g` then `t i a f s p ,` jumps to a page; inbox and approvals have `j`/`k` and action keys; `⌘S` saves in the flow editor, `⌘Z` / `⇧⌘Z` undo and redo.

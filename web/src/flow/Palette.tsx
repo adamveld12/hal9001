@@ -48,10 +48,11 @@ export function Palette({
   const center = (): UIPos => {
     const [w, h] = size.split("x").map(Number);
     const { x, y, zoom } = rf.getViewport();
-    const step = (added.current++ % 6) * 24;
+    // Fan successive adds out over a 3x2 grid so they do not stack.
+    const k = added.current++ % 6;
     return {
-      x: (w / 2 - x) / zoom - 120 + step,
-      y: (h / 2 - y) / zoom - 40 + step,
+      x: (w / 2 - x) / zoom - 120 + ((k % 3) - 1) * 280,
+      y: (h / 2 - y) / zoom - 120 + Math.floor(k / 3) * 180,
     };
   };
 

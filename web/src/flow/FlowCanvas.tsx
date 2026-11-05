@@ -130,7 +130,16 @@ function Inner(props: FlowCanvasProps) {
         edgesReconnectable={false}
         deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
         fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+        fitViewOptions={{
+          // leave room for the palette panel on the left while editing
+          padding: {
+            top: "48px",
+            right: "48px",
+            bottom: "48px",
+            left: readOnly ? "48px" : "216px",
+          },
+          maxZoom: 1,
+        }}
         minZoom={0.2}
         proOptions={{ hideAttribution: true }}
       >
