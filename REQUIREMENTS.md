@@ -388,7 +388,7 @@ Services (what is being accessed):
 
 | Service | Covers |
 |---|---|
-| `ui` | Loading the web UI and establishing a browser session |
+| `ui` | Establishing and ending a browser session (login, logout, whoami). The UI shell and static assets are public (they carry no data) so the login page is reachable; all data comes from guarded `/api/*` routes. |
 | `api` | Read endpoints and SSE |
 | `approve` | Approve / deny proposals and tool calls |
 | `admin` | Writing flows, sensors, prompts, env, settings; kill switch; replay; test-node. Equivalent to running code on this Mac. |
