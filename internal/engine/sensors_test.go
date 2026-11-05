@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"hal9001/internal/core"
 	"hal9001/internal/store"
 )
 
@@ -299,5 +301,47 @@ edges:
 	}
 	if !found {
 		t.Errorf("env keys %v lack API_TOKEN", show.EnvKeys)
+	}
+}
+
+// Only one poll of a sensor runs at a time: a manual poll during a running poll
+// is rejected with ErrInvalidState.
+func TestPollWhileRunningIsRejected(t *testing.T) {
+	h := newHarness(t)
+	gate := filepath.Join(t.TempDir(), "gate")
+	started := filepath.Join(t.TempDir(), "started")
+	h.sensor("slow", "id: slow\ninterval: 1h\nlang: bash\nscript: |\n  touch "+started+"\n  while [ ! -f "+gate+" ]; do sleep 0.02; done\nkey: \"{{.id}}\"\ntimeout: 20s\n")
+	h.start()
+	var wg sync.WaitGroup
+	var first *store.SensorRun
+	wg.Go(func() { first, _ = h.eng.PollSensor(context.Background(), "slow") })
+	h.eventually("the poll to start", func() bool { _, err := os.Stat(started); return err == nil })
+	if _, err := h.eng.PollSensor(t.Context(), "slow"); !errors.Is(err, core.ErrInvalidState) {
+		t.Errorf("second poll: %v, want ErrInvalidState", err)
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	if first == nil || first.Status != store.SensorSucceeded {
+		t.Fatalf("first poll: %+v", first)
+	}
+}
+
+// A poll whose output is not JSON fails, creates nothing, and is shown on the sensor.
+func TestPollWithInvalidOutputFails(t *testing.T) {
+	h := newHarness(t)
+	h.sensor("bad", "id: bad\ninterval: 1h\nlang: bash\nscript: echo 'this is not json'\nkey: \"{{.id}}\"\ntimeout: 10s\n")
+	h.start()
+	run, err := h.eng.PollSensor(t.Context(), "bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != store.SensorFailed || !strings.Contains(run.Error, "JSON") || !strings.Contains(h.text(run.Stdout), "not json") {
+		t.Fatalf("run: %+v", run)
+	}
+	st, _ := h.st.GetSensorState(t.Context(), "bad")
+	if st.LastSuccessAt != nil || st.ConsecutiveFailures < 1 {
+		t.Errorf("state: %+v", st)
 	}
 }

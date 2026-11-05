@@ -575,6 +575,33 @@ nodes:
 	}
 }
 
+// cwd: a plain string is a directory the agent runs in (templated); the default
+// is the node's state dir.
+func TestAgentRunsInConfiguredDirectory(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness(t)
+	h.idleSensor()
+	h.prompt("go")
+	h.runtime("fake", script{Turns: []turn{{Steps: []step{{Op: fakeagent.OpWriteFile, Path: "here.txt", Data: "x"}, say("ok")}}}})
+	h.flow("f", "id: f\nenabled: true\nsubscribe: [src]\nnodes:\n  - {id: work, type: agent, runtime: fake, mode: auto, prompt: p, cwd: \"{{.input.dir}}\"}\n")
+	h.start()
+	runID := h.injectRun(`{"id":"1","dir":"` + dir + `"}`)
+	h.waitRun(runID, store.FlowRunSucceeded)
+	run := h.agentRuns(h.node(runID, "work").ID)[0]
+	if run.Cwd != dir || run.WorktreePath != "" {
+		t.Errorf("agent run cwd %q worktree %q, want %q", run.Cwd, run.WorktreePath, dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "here.txt")); err != nil {
+		t.Errorf("agent did not run in the configured directory: %v", err)
+	}
+
+	bad := h.injectRun(`{"id":"2","dir":"/nonexistent/dir"}`)
+	h.waitRun(bad, store.FlowRunFailed)
+	if n := h.node(bad, "work"); n.Status != store.NodeFailed || !strings.Contains(n.Reason, "not an existing directory") {
+		t.Errorf("missing directory: %+v", n)
+	}
+}
+
 // Scenario 12: with max_agent_runs 2, five agent-bound events leave two agent
 // nodes running and three queued (visible), then all complete.
 func TestScenario12AgentConcurrencyCap(t *testing.T) {

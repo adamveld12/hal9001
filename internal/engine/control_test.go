@@ -406,9 +406,19 @@ func TestProbeRuntime(t *testing.T) {
 	}
 }
 
-// The starter config.yaml's runtimes resolve into agent configs without
-// leaving the {{data}} placeholder behind.
-func TestStarterRuntimesResolveDataPlaceholder(t *testing.T) {
+// Runtime config's {{data}} placeholder resolves to <home>/data, and the
+// isolated agent home it names is created with a symlink to the existing login
+// so settings in the real home cannot bypass the approval policy (docs/acp-gate.md).
+func TestRuntimeIsolatedHomeIsCreatedWithCredentialLink(t *testing.T) {
+	realHome := t.TempDir()
+	login := filepath.Join(realHome, ".codex", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(login), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(login, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", realHome)
 	h := newHarness(t)
 	h.write("config.yaml", `runtimes:
   codex:
@@ -422,10 +432,12 @@ func TestStarterRuntimesResolveDataPlaceholder(t *testing.T) {
 		t.Fatalf("config: %q", got)
 	}
 	h.eng.Apply(ws)
-	if _, err := h.eng.ProbeRuntime(t.Context(), "codex"); err != nil {
-		t.Fatal(err) // probing creates the isolated home; the binary itself is not installed in tests
+	// codex-acp is not installed in tests: the probe reports failure, but only after setting the runtime up.
+	if res, err := h.eng.ProbeRuntime(t.Context(), "codex"); err != nil || res.OK {
+		t.Fatalf("probe: %+v %v", res, err)
 	}
-	if st, err := os.Stat(filepath.Join(h.home, "data", "runtimes", "codex-home")); err != nil || !st.IsDir() {
-		t.Errorf("isolated CODEX_HOME was not created under <home>/data/runtimes: %v", err)
+	home := filepath.Join(h.home, "data", "runtimes", "codex-home")
+	if target, err := os.Readlink(filepath.Join(home, "auth.json")); err != nil || target != login {
+		t.Errorf("credential link in %s: %q %v, want -> %s", home, target, err, login)
 	}
 }

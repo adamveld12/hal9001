@@ -229,7 +229,7 @@ shown to be callable. ACP `mcpServers` passed in `session/new` worked (the probe
 ## Recommended `runtimes:` block
 
 `config.yaml` shape follows the Agents slice's `RuntimeConfig` (`command`, `modes`, `env`, `ask`/`full` extras).
-Fields marked **new** are not in REQUIREMENTS §7.3; the gate needs them. The model option is found by `configOptions` category `model` (values: Claude alias or id, Codex model id with a separate `reasoning_effort` option, omp `provider/model`), so no model field is needed. `session/resume` is not used.
+Fields marked **new** are not in REQUIREMENTS §7.3; the gate needs them. They are implemented in `spec.Runtime` (`ask`/`full` as `{args, env}`, `session_meta`, `elicitation`, `env`), and the engine resolves `{{data}}` to `<home>/data` and creates the isolated homes with the credential symlinks (`internal/engine`); `content/config.yaml` ships this block. The model option is found by `configOptions` category `model` (values: Claude alias or id, Codex model id with a separate `reasoning_effort` option, omp `provider/model`), so no model field is needed. `session/resume` is not used.
 
 ```yaml
 runtimes:
@@ -243,7 +243,7 @@ runtimes:
     command: [codex-acp]
     modes: {ask: read-only, full: agent-full-access}
     env:
-      CODEX_HOME: "<data>/runtimes/codex-home"   # new: stable dir; contains symlink auth.json -> ~/.codex/auth.json
+      CODEX_HOME: "{{data}}/runtimes/codex-home"   # new: stable dir; contains symlink auth.json -> ~/.codex/auth.json
     elicitation: false
   omp:
     command: [omp, acp]
@@ -251,7 +251,7 @@ runtimes:
     ask:  {args: [--approval-mode, always-ask]}
     full: {args: [--approval-mode, yolo]}
     env:
-      PI_CODING_AGENT_DIR: "<data>/runtimes/omp-home"  # new: dir containing symlink agent.db -> ~/.omp/agent/agent.db
+      PI_CODING_AGENT_DIR: "{{data}}/runtimes/omp-home"  # new: dir containing symlink agent.db -> ~/.omp/agent/agent.db
     elicitation: true                   # new: needed so edit/MCP approvals reach the harness
 ```
 
