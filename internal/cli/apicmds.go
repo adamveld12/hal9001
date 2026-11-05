@@ -118,6 +118,7 @@ func (a *app) tree() *command {
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
 		group("env", "list, set and unset env variables", envCmds(false)...),
+		group("assist", "AI-assisted sensor authoring: sessions, draft, test runs", assistCmds()...),
 	}}
 	return root
 }
@@ -150,6 +151,7 @@ func sensorCmds() []*command {
 		cmd("poll", "poll a sensor now", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/poll", nil, nil)
 		}}),
+		cmd("validate", "validate sensor YAML from a file or stdin without saving", sensorValidateLeaf()),
 	}
 }
 

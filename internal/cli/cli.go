@@ -35,6 +35,8 @@ const (
 	EnvSessionCookie = "HAL9001_SESSION_COOKIE"
 	EnvHome          = "HAL9001_HOME"
 	EnvWebDir        = "HAL9001_WEB_DIR"
+	// EnvAssistSession is the id of the assist session the CLI runs inside; `assist test|draft|cancel` default to it.
+	EnvAssistSession = "HAL9001_ASSIST_SESSION"
 )
 
 // Env is everything the CLI touches outside its own process memory, so tests
