@@ -25,6 +25,7 @@ type InterruptResult struct {
 	AgentRuns          int `json:"agent_runs"`
 	ExpiredApprovals   int `json:"expired_approvals"`
 	ExpiredPermissions int `json:"expired_permissions"`
+	AssistSessions     int `json:"assist_sessions"`
 }
 
 // MarkInterrupted reconciles persisted state after a daemon restart, in one
@@ -125,6 +126,19 @@ func (s *Store) MarkInterrupted(ctx context.Context) (InterruptResult, error) {
 			t.note(ResSensorRun, id, OpUpdate)
 		}
 		res.SensorRuns = len(polls)
+
+		// 7. Assist sessions whose turn was running: the agent process is gone. The conversation
+		// stays usable, the next message resumes it.
+		assists, err := t.updateReturning(ctx, `UPDATE assist_sessions SET status='failed', updated_at=?,
+			error = CASE WHEN error = '' THEN ? ELSE error END
+			WHERE status IN ('running','awaiting_approval') RETURNING id`, now, "the daemon restarted during the turn")
+		if err != nil {
+			return fmt.Errorf("store: interrupt assist sessions: %w", err)
+		}
+		for _, id := range assists {
+			t.note(ResAssistSession, id, OpUpdate)
+		}
+		res.AssistSessions = len(assists)
 		return nil
 	})
 	return res, err
@@ -258,19 +272,22 @@ func (s *Store) GCBlobs(ctx context.Context, minAge time.Duration) ([]string, er
 
 // PruneResult reports what Prune deleted and what the caller must now clean up.
 type PruneResult struct {
-	FlowRuns     int `json:"flow_runs"` // node runs, agent runs, events, permission requests and approvals go with them
-	Events       int `json:"events"`
-	SensorRuns   int `json:"sensor_runs"`
-	InboxItems   int `json:"inbox_items"`
-	AuthEvents   int `json:"auth_events"`
-	Sessions     int `json:"sessions"`
-	SeenKeys     int `json:"seen_keys"`
-	FlowVersions int `json:"flow_versions"`
+	FlowRuns       int `json:"flow_runs"` // node runs, agent runs, events, permission requests and approvals go with them
+	Events         int `json:"events"`
+	SensorRuns     int `json:"sensor_runs"`
+	InboxItems     int `json:"inbox_items"`
+	AuthEvents     int `json:"auth_events"`
+	Sessions       int `json:"sessions"`
+	SeenKeys       int `json:"seen_keys"`
+	FlowVersions   int `json:"flow_versions"`
+	AssistSessions int `json:"assist_sessions"` // agent runs, transcripts and approvals of their turns go with them
 	// OrphanBlobs are refs that were referenced only by deleted rows. Pass them
 	// to RemoveOrphanBlobs.
 	OrphanBlobs []string `json:"orphan_blobs"`
 	// Worktrees are worktree paths of deleted agent runs; remove them from disk.
 	Worktrees []string `json:"worktrees"`
+	// AssistSessionIDs are the deleted assist sessions; remove their draft directories.
+	AssistSessionIDs []string `json:"assist_session_ids"`
 }
 
 // Prune applies retention (REQUIREMENTS §9). now is the reference time.
@@ -309,6 +326,9 @@ func (s *Store) Prune(ctx context.Context, now time.Time, retentionDays, dedupRe
 			return err
 		}
 		res.Worktrees = worktrees
+		if res.AssistSessionIDs, err = queryAll(ctx, t, scanString, `SELECT id FROM prune_assist ORDER BY id`); err != nil {
+			return fmt.Errorf("store: prune assist sessions: %w", err)
+		}
 
 		del := func(dst *int, resource, query string, args ...any) error {
 			r, err := t.ExecContext(ctx, query, args...)
@@ -335,6 +355,7 @@ func (s *Store) Prune(ctx context.Context, now time.Time, retentionDays, dedupRe
 			{&res.AuthEvents, ResAuthEvent, `DELETE FROM auth_events WHERE ts < ?`, []any{cutoff}},
 			{&res.Sessions, ResSession, `DELETE FROM sessions WHERE expires_at < ? OR revoked_at < ?`, []any{cutoff, cutoff}},
 			{&res.SeenKeys, "seen_key", `DELETE FROM seen_keys WHERE first_seen < ?`, []any{dedupCutoff}},
+			{&res.AssistSessions, ResAssistSession, `DELETE FROM assist_sessions WHERE id IN (SELECT id FROM prune_assist)`, nil},
 			{&res.FlowVersions, ResFlowVersion, `DELETE FROM flow_versions WHERE first_seen < ?
 				AND NOT EXISTS (SELECT 1 FROM flow_runs fr WHERE fr.flow_id = flow_versions.flow_id AND fr.flow_hash = flow_versions.hash)
 				AND hash <> (SELECT v.hash FROM flow_versions v WHERE v.flow_id = flow_versions.flow_id ORDER BY v.first_seen DESC, v.hash DESC LIMIT 1)`, []any{cutoff}},
@@ -347,7 +368,7 @@ func (s *Store) Prune(ctx context.Context, now time.Time, retentionDays, dedupRe
 		if res.OrphanBlobs, err = t.unreferenced(ctx, refs); err != nil {
 			return err
 		}
-		for _, tbl := range []string{"prune_runs", "prune_events", "prune_sensor_runs"} {
+		for _, tbl := range []string{"prune_runs", "prune_events", "prune_sensor_runs", "prune_assist"} {
 			if _, err := t.ExecContext(ctx, "DROP TABLE "+tbl); err != nil {
 				return fmt.Errorf("store: drop %s: %w", tbl, err)
 			}
@@ -369,9 +390,11 @@ func (t *txn) stagePrune(ctx context.Context, cutoff string) error {
 		{`DROP TABLE IF EXISTS prune_runs`, nil},
 		{`DROP TABLE IF EXISTS prune_events`, nil},
 		{`DROP TABLE IF EXISTS prune_sensor_runs`, nil},
+		{`DROP TABLE IF EXISTS prune_assist`, nil},
 		{`CREATE TEMP TABLE prune_runs (id TEXT PRIMARY KEY) WITHOUT ROWID`, nil},
 		{`CREATE TEMP TABLE prune_events (id TEXT PRIMARY KEY) WITHOUT ROWID`, nil},
 		{`CREATE TEMP TABLE prune_sensor_runs (id TEXT PRIMARY KEY) WITHOUT ROWID`, nil},
+		{`CREATE TEMP TABLE prune_assist (id TEXT PRIMARY KEY) WITHOUT ROWID`, nil},
 		{`INSERT INTO prune_runs SELECT fr.id FROM flow_runs fr
 			WHERE fr.created_at < ? AND fr.status IN ('succeeded','failed','killed','interrupted')
 			  AND NOT EXISTS (SELECT 1 FROM inbox_items i WHERE i.starred = 1 AND i.flow_run_id = fr.id)
@@ -385,6 +408,10 @@ func (t *txn) stagePrune(ctx context.Context, cutoff string) error {
 		{`INSERT INTO prune_sensor_runs SELECT sr.id FROM sensor_runs sr
 			WHERE sr.started_at < ? AND sr.status <> 'running'
 			  AND NOT EXISTS (SELECT 1 FROM events e WHERE e.sensor_run_id = sr.id AND e.id NOT IN (SELECT id FROM prune_events))`, []any{cutoff}},
+		{`INSERT INTO prune_assist SELECT s.id FROM assist_sessions s
+			WHERE s.updated_at < ? AND s.status IN ('idle','failed','closed')
+			  AND NOT EXISTS (SELECT 1 FROM approvals a JOIN agent_runs ar ON ar.id = a.agent_run_id
+			        WHERE ar.assist_session_id = s.id AND a.status = 'pending')`, []any{cutoff}},
 	}
 	for _, s := range stmts {
 		if _, err := t.ExecContext(ctx, s.q, s.args...); err != nil {
@@ -398,6 +425,10 @@ const (
 	scopeNodes = `flow_run_id IN (SELECT id FROM prune_runs)`
 	scopeRuns  = `node_run_id IN (SELECT id FROM node_runs WHERE ` + scopeNodes + `)`
 	scopeAgent = `agent_run_id IN (SELECT id FROM agent_runs WHERE ` + scopeRuns + `)`
+
+	// Assist turns are agent runs of a session being pruned.
+	scopeAssistRuns  = `assist_session_id IN (SELECT id FROM prune_assist)`
+	scopeAssistAgent = `agent_run_id IN (SELECT id FROM agent_runs WHERE ` + scopeAssistRuns + `)`
 )
 
 // pruneCandidates gathers blob refs and worktree paths held by the rows staged
@@ -405,10 +436,10 @@ const (
 func (t *txn) pruneCandidates(ctx context.Context) (refs, worktrees []string, err error) {
 	scopes := map[string]string{
 		"node_runs":           scopeNodes,
-		"agent_runs":          scopeRuns,
-		"agent_events":        scopeAgent,
-		"permission_requests": scopeAgent,
-		"approvals":           scopeAgent,
+		"agent_runs":          `(` + scopeRuns + ` OR ` + scopeAssistRuns + `)`,
+		"agent_events":        `(` + scopeAgent + ` OR ` + scopeAssistAgent + `)`,
+		"permission_requests": `(` + scopeAgent + ` OR ` + scopeAssistAgent + `)`,
+		"approvals":           `(` + scopeAgent + ` OR ` + scopeAssistAgent + `)`,
 		"events":              `id IN (SELECT id FROM prune_events)`,
 		"sensor_runs":         `id IN (SELECT id FROM prune_sensor_runs)`,
 	}

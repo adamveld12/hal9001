@@ -97,7 +97,10 @@ export function AgentRunPage() {
     run.status === "running" ||
     run.status === "awaiting_approval";
   const info = run.agent_info;
-  const flowRunPath = `/runs/${run.flow_run_id}?node=${encodeURIComponent(run.node_id)}&run=${run.node_run_id}`;
+  const flowRunPath =
+    run.flow_run_id && run.node_id
+      ? `/runs/${run.flow_run_id}?node=${encodeURIComponent(run.node_id)}&run=${run.node_run_id}`
+      : null;
 
   return (
     <div>
@@ -110,14 +113,20 @@ export function AgentRunPage() {
         }
         subtitle={
           <>
-            {run.runtime} · {run.flow_id} / {run.node_id}
+            {run.runtime}
+            {run.flow_id ? ` · ${run.flow_id} / ${run.node_id}` : ""}
+            {run.assist_session_id
+              ? ` · assist session ${shortId(run.assist_session_id)}`
+              : ""}
           </>
         }
         actions={
           <>
-            <TextLink to={flowRunPath}>
-              Flow run <Mono>{shortId(run.flow_run_id)}</Mono>
-            </TextLink>
+            {flowRunPath && run.flow_run_id && (
+              <TextLink to={flowRunPath}>
+                Flow run <Mono>{shortId(run.flow_run_id)}</Mono>
+              </TextLink>
+            )}
             {run.raw_size > 0 ? (
               <a
                 href={`/api/agent-runs/${run.id}/raw`}

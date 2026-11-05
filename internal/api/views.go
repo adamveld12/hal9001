@@ -231,6 +231,9 @@ func (rv *resolver) lineageOfAgentRun(agentRunID string) (lineage, *store.AgentR
 	if err != nil || ar == nil {
 		return lineage{FlowID: unknownRef, NodeID: unknownRef}, ar, err
 	}
+	if ar.NodeRunID == "" {
+		return lineage{}, ar, nil // a turn of an assist session has no flow lineage
+	}
 	l, err := rv.lineageOfNodeRun(ar.NodeRunID, "")
 	return l, ar, err
 }
@@ -491,35 +494,36 @@ type linkView struct {
 }
 
 type agentRunView struct {
-	ID            string          `json:"id"`
-	NodeRunID     string          `json:"node_run_id"`
-	FlowRunID     string          `json:"flow_run_id"`
-	FlowID        string          `json:"flow_id"`
-	NodeID        string          `json:"node_id"`
-	Runtime       string          `json:"runtime"`
-	AgentInfo     json.RawMessage `json:"agent_info"`
-	Capabilities  json.RawMessage `json:"capabilities"`
-	Mode          string          `json:"mode"`
-	ApproveStyle  *string         `json:"approve_style"`
-	Policy        string          `json:"policy"`
-	Phase         string          `json:"phase"`
-	SessionID     *string         `json:"session_id"`
-	ResumedVia    *string         `json:"resumed_via"`
-	ResumeFall    *string         `json:"resume_fallback"`
-	Cwd           *string         `json:"cwd"`
-	RenderedPromp string          `json:"rendered_prompt"`
-	Argv          []string        `json:"argv"`
-	Status        string          `json:"status"`
-	StopReason    *string         `json:"stop_reason"`
-	FinalMessage  *string         `json:"final_message"`
-	Result        *noteView       `json:"result"`
-	ParseError    bool            `json:"parse_error"`
-	Error         *string         `json:"error"`
-	RawBlob       *string         `json:"raw_blob"`
-	RawSize       int64           `json:"raw_size"`
-	CreatedAt     time.Time       `json:"created_at"`
-	StartedAt     *time.Time      `json:"started_at"`
-	EndedAt       *time.Time      `json:"ended_at"`
+	ID              string          `json:"id"`
+	NodeRunID       *string         `json:"node_run_id"`
+	FlowRunID       *string         `json:"flow_run_id"`
+	FlowID          *string         `json:"flow_id"`
+	NodeID          *string         `json:"node_id"`
+	AssistSessionID *string         `json:"assist_session_id"`
+	Runtime         string          `json:"runtime"`
+	AgentInfo       json.RawMessage `json:"agent_info"`
+	Capabilities    json.RawMessage `json:"capabilities"`
+	Mode            string          `json:"mode"`
+	ApproveStyle    *string         `json:"approve_style"`
+	Policy          string          `json:"policy"`
+	Phase           string          `json:"phase"`
+	SessionID       *string         `json:"session_id"`
+	ResumedVia      *string         `json:"resumed_via"`
+	ResumeFall      *string         `json:"resume_fallback"`
+	Cwd             *string         `json:"cwd"`
+	RenderedPromp   string          `json:"rendered_prompt"`
+	Argv            []string        `json:"argv"`
+	Status          string          `json:"status"`
+	StopReason      *string         `json:"stop_reason"`
+	FinalMessage    *string         `json:"final_message"`
+	Result          *noteView       `json:"result"`
+	ParseError      bool            `json:"parse_error"`
+	Error           *string         `json:"error"`
+	RawBlob         *string         `json:"raw_blob"`
+	RawSize         int64           `json:"raw_size"`
+	CreatedAt       time.Time       `json:"created_at"`
+	StartedAt       *time.Time      `json:"started_at"`
+	EndedAt         *time.Time      `json:"ended_at"`
 }
 
 // rawOrNull returns raw as a JSON value, or null when it is empty.
@@ -586,7 +590,8 @@ func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView,
 		argv = []string{}
 	}
 	v := agentRunView{
-		ID: ar.ID, NodeRunID: ar.NodeRunID, FlowRunID: l.FlowRunID, FlowID: l.FlowID, NodeID: l.NodeID, Runtime: ar.Runtime,
+		ID: ar.ID, NodeRunID: nonEmpty(ar.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
+		AssistSessionID: nonEmpty(ar.AssistSessionID), Runtime: ar.Runtime,
 		AgentInfo: rawOrNull(ar.AgentInfo), Capabilities: rawOrNull(ar.Capabilities), Mode: string(ar.Mode),
 		Policy: string(ar.Policy), Phase: string(ar.Phase), SessionID: nonEmpty(ar.SessionID), Cwd: nonEmpty(ar.Cwd),
 		RenderedPromp: prompt, Argv: argv, Status: string(ar.Status), StopReason: nonEmpty(ar.StopReason),
@@ -699,10 +704,11 @@ func (rv *resolver) permissionRequestView(p store.PermissionRequest) (permission
 type approvalView struct {
 	ID                  string                 `json:"id"`
 	AgentRunID          string                 `json:"agent_run_id"`
-	NodeRunID           string                 `json:"node_run_id"`
-	FlowRunID           string                 `json:"flow_run_id"`
-	FlowID              string                 `json:"flow_id"`
-	NodeID              string                 `json:"node_id"`
+	NodeRunID           *string                `json:"node_run_id"`
+	FlowRunID           *string                `json:"flow_run_id"`
+	FlowID              *string                `json:"flow_id"`
+	NodeID              *string                `json:"node_id"`
+	AssistSessionID     *string                `json:"assist_session_id"`
 	EventID             *string                `json:"event_id"`
 	Runtime             string                 `json:"runtime"`
 	Type                string                 `json:"type"`
@@ -724,13 +730,14 @@ func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
 		return approvalView{}, err
 	}
 	v := approvalView{
-		ID: a.ID, AgentRunID: a.AgentRunID, NodeRunID: l.NodeRunID, FlowRunID: l.FlowRunID, FlowID: l.FlowID, NodeID: l.NodeID,
+		ID: a.ID, AgentRunID: a.AgentRunID, NodeRunID: nonEmpty(l.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
 		EventID: nonEmpty(l.EventID), Type: string(a.Type), PermissionRequestID: nonEmpty(a.PermissionRequestID),
 		Status: string(a.Status), Comment: nonEmpty(a.Comment), DecidedBy: nonEmpty(a.DecidedBy),
 		DecidedAt: utcPtr(a.DecidedAt), CreatedAt: utc(a.CreatedAt), ExpiresAt: utcPtr(a.ExpiresAt), Runtime: unknownRef,
 	}
 	if ar != nil {
 		v.Runtime = ar.Runtime
+		v.AssistSessionID = nonEmpty(ar.AssistSessionID)
 	}
 	if a.Type == store.ApprovalProposal {
 		text := rv.s.contentString(a.Proposal)

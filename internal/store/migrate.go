@@ -74,9 +74,22 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 func (s *Store) migrateOnce(ctx context.Context, migs []migration) error {
+	// Rebuilding a table (SQLite cannot relax a column constraint in place) needs foreign keys off, and
+	// that pragma is a no-op inside a transaction, so the run is pinned to one connection with them off
+	// and the result is verified with foreign_key_check before it commits.
+	conn, err := s.wdb.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("store: migration connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("store: disable foreign keys for migrations: %w", err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys = ON`) }()
+
 	// One immediate transaction covers the whole run, so concurrent openers
 	// queue on the write lock (busy_timeout) and then find nothing to do.
-	tx, err := s.wdb.BeginTx(ctx, nil)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin migrations: %w", err)
 	}
@@ -84,10 +97,33 @@ func (s *Store) migrateOnce(ctx context.Context, migs []migration) error {
 		_ = tx.Rollback()
 		return err
 	}
+	violations, err := foreignKeyViolations(ctx, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("store: foreign key check after migrations: %w", err)
+	}
+	if violations > 0 {
+		_ = tx.Rollback()
+		return fmt.Errorf("store: migrations leave %d foreign key violations", violations)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit migrations: %w", err)
 	}
 	return nil
+}
+
+// foreignKeyViolations counts the rows PRAGMA foreign_key_check reports.
+func foreignKeyViolations(ctx context.Context, tx *sql.Tx) (int, error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	n := 0
+	for rows.Next() {
+		n++
+	}
+	return n, rows.Err()
 }
 
 func applyMigrations(ctx context.Context, tx *sql.Tx, migs []migration, now string) error {

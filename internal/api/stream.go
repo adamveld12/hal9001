@@ -396,7 +396,9 @@ func (h *hub) handle(c store.Change) bool {
 			h.logRead(c.Resource, c.ID, err)
 			return false
 		}
-		h.publish("agent_run."+kind, v, map[string]string{"agent_run_id": ar.ID, "flow_run_id": v.FlowRunID, "flow_id": v.FlowID}, false)
+		h.publish("agent_run."+kind, v, optionalMeta(map[string]string{
+			"agent_run_id": ar.ID, "flow_run_id": deref(v.FlowRunID), "flow_id": deref(v.FlowID), "assist_session_id": ar.AssistSessionID,
+		}), false)
 		return true
 	case store.ResAgentEvent:
 		if c.Op != store.OpCreate {
@@ -436,7 +438,9 @@ func (h *hub) handle(c store.Change) bool {
 			h.logRead(c.Resource, c.ID, err)
 			return false
 		}
-		h.publish("approval."+kind, v, map[string]string{"agent_run_id": a.AgentRunID, "flow_run_id": v.FlowRunID, "flow_id": v.FlowID}, false)
+		h.publish("approval."+kind, v, optionalMeta(map[string]string{
+			"agent_run_id": a.AgentRunID, "flow_run_id": deref(v.FlowRunID), "flow_id": deref(v.FlowID), "assist_session_id": deref(v.AssistSessionID),
+		}), false)
 		return true
 	case store.ResInboxItem:
 		it, err := st.GetInboxItem(ctx, c.ID)
@@ -451,6 +455,20 @@ func (h *hub) handle(c store.Change) bool {
 		}
 		h.publish("inbox."+kind, v, map[string]string{"flow_run_id": v.FlowRunID, "flow_id": v.FlowID}, false)
 		return true
+	case store.ResAssistSession:
+		a, err := st.GetAssistSession(ctx, c.ID)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		h.publish("assist.updated", assistSession(*a), map[string]string{"assist_session_id": a.ID}, false)
+	case store.ResAssistMessage:
+		m, err := st.GetAssistMessage(ctx, c.ID)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		h.publish("assist.message", assistStreamMessageView{assistMessageView: assistMessage(*m), SessionID: m.SessionID}, map[string]string{"assist_session_id": m.SessionID}, false)
 	case store.ResAuthEvent:
 		if c.Op != store.OpCreate {
 			return false
@@ -563,6 +581,9 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	if v := q.ulid("agent_run_id"); v != "" {
 		filters["agent_run_id"] = v
 	}
+	if v := q.ulid("assist_session_id"); v != "" {
+		filters["assist_session_id"] = v
+	}
 	if !q.ok(w) {
 		return
 	}
@@ -636,6 +657,25 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// deref returns *s, or "" for nil.
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// optionalMeta drops the empty entries of an SSE filter map: a record without
+// that resource (for example an assist turn has no flow) is not tagged with it.
+func optionalMeta(m map[string]string) map[string]string {
+	for k, v := range m {
+		if v == "" {
+			delete(m, k)
+		}
+	}
+	return m
 }
 
 func orZero(s string) string {

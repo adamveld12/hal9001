@@ -125,8 +125,9 @@ type env struct {
 }
 
 type envOptions struct {
-	auth *auth.Config
-	ui   http.Handler
+	auth   *auth.Config
+	ui     http.Handler
+	assist core.Assist
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -161,7 +162,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.reloads.Add(1)
 			e.ws.Store(spec.Load(e.home))
 		},
-		Version: "test", UI: eo.ui,
+		Version: "test", UI: eo.ui, Assist: eo.assist,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

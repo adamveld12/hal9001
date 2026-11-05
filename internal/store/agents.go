@@ -10,7 +10,7 @@ import (
 // ---- agent runs ----
 
 func agentRunCols(slim bool) string {
-	return "id, node_run_id, COALESCE(prev_agent_run_id, ''), runtime, agent_info, capabilities, mode, COALESCE(approve_style, ''), policy, phase, model, session_id, " +
+	return "id, COALESCE(node_run_id, ''), COALESCE(assist_session_id, ''), COALESCE(prev_agent_run_id, ''), runtime, agent_info, capabilities, mode, COALESCE(approve_style, ''), policy, phase, model, session_id, " +
 		"COALESCE(resumed_via, ''), cwd, worktree_path, " + contentCols("prompt", slim) + ", argv, status, stop_reason, error, " +
 		contentCols("result", slim) + ", " + contentCols("raw_jsonrpc", slim) + ", created_at, started_at, ended_at"
 }
@@ -23,7 +23,7 @@ func scanAgentRun(r rowScanner) (AgentRun, error) {
 		created                                     string
 		started, ended                              sql.NullString
 	)
-	dests := []any{&a.ID, &a.NodeRunID, &a.PrevAgentRunID, &a.Runtime, &info, &caps, &mode, &style, &policy, &phase, &a.Model, &a.SessionID,
+	dests := []any{&a.ID, &a.NodeRunID, &a.AssistSessionID, &a.PrevAgentRunID, &a.Runtime, &info, &caps, &mode, &style, &policy, &phase, &a.Model, &a.SessionID,
 		&resumed, &a.Cwd, &a.WorktreePath}
 	dests = append(dests, scanDests(&a.Prompt)...)
 	dests = append(dests, &argv, &status, &a.StopReason, &a.Error)
@@ -54,8 +54,10 @@ func scanAgentRun(r rowScanner) (AgentRun, error) {
 
 func (a *AgentRun) validate() error {
 	switch {
-	case a.NodeRunID == "" || a.Runtime == "":
-		return fmt.Errorf("%w: node_run_id and runtime required", ErrInvalid)
+	case (a.NodeRunID == "") == (a.AssistSessionID == ""):
+		return fmt.Errorf("%w: an agent run belongs to exactly one of node_run_id and assist_session_id", ErrInvalid)
+	case a.Runtime == "":
+		return fmt.Errorf("%w: runtime required", ErrInvalid)
 	case a.Mode != ModeAuto && a.Mode != ModeApprove && a.Mode != ModeReadonly:
 		return fmt.Errorf("%w: agent mode %q", ErrInvalid, a.Mode)
 	case a.ApproveStyle != "" && a.ApproveStyle != StyleProposal && a.ApproveStyle != StylePerTool:
@@ -99,11 +101,11 @@ func (s *Store) CreateAgentRun(ctx context.Context, a *AgentRun) error {
 		if err := t.prep(ctx, "agent_runs", "", contentField{"prompt", &a.Prompt}, contentField{"result", &a.Result}, contentField{"raw_jsonrpc", &a.RawJSONRPC}); err != nil {
 			return err
 		}
-		_, err := t.ExecContext(ctx, `INSERT INTO agent_runs (id, node_run_id, prev_agent_run_id, runtime, agent_info, capabilities, mode, approve_style, policy, phase, model,
+		_, err := t.ExecContext(ctx, `INSERT INTO agent_runs (id, node_run_id, assist_session_id, prev_agent_run_id, runtime, agent_info, capabilities, mode, approve_style, policy, phase, model,
 			session_id, resumed_via, cwd, worktree_path, prompt_text, prompt_ref, prompt_size, argv, status, stop_reason, error,
 			result_text, result_ref, result_size, raw_jsonrpc_text, raw_jsonrpc_ref, raw_jsonrpc_size, created_at, started_at, ended_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			a.ID, a.NodeRunID, nullStr(a.PrevAgentRunID), a.Runtime, info, caps, a.Mode, nullStr(string(a.ApproveStyle)), a.Policy, a.Phase, a.Model,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			a.ID, nullStr(a.NodeRunID), nullStr(a.AssistSessionID), nullStr(a.PrevAgentRunID), a.Runtime, info, caps, a.Mode, nullStr(string(a.ApproveStyle)), a.Policy, a.Phase, a.Model,
 			a.SessionID, nullStr(string(a.ResumedVia)), a.Cwd, a.WorktreePath, a.Prompt.Text, a.Prompt.Ref, a.Prompt.Size, stringsText(a.Argv), a.Status, a.StopReason, a.Error,
 			a.Result.Text, a.Result.Ref, a.Result.Size, a.RawJSONRPC.Text, a.RawJSONRPC.Ref, a.RawJSONRPC.Size,
 			ts(a.CreatedAt), tsOrNil(a.StartedAt), tsOrNil(a.EndedAt))
@@ -163,12 +165,14 @@ func (s *Store) GetAgentRun(ctx context.Context, id string) (*AgentRun, error) {
 // AgentRunFilter selects agent runs for ListAgentRuns.
 type AgentRunFilter struct {
 	NodeRunID string
-	FlowRunID string
-	Runtime   string
-	Mode      AgentMode
-	Statuses  []AgentStatus
-	Time      TimeRange // on created_at
-	Slim      bool      // omit inline prompt/result/raw text
+	// AssistSessionID selects the turns of one assist session.
+	AssistSessionID string
+	FlowRunID       string
+	Runtime         string
+	Mode            AgentMode
+	Statuses        []AgentStatus
+	Time            TimeRange // on created_at
+	Slim            bool      // omit inline prompt/result/raw text
 	ListOpts
 }
 
@@ -176,6 +180,7 @@ type AgentRunFilter struct {
 func (s *Store) ListAgentRuns(ctx context.Context, f AgentRunFilter) (Page[AgentRun], error) {
 	var w where
 	w.eq("node_run_id", f.NodeRunID)
+	w.eq("assist_session_id", f.AssistSessionID)
 	w.eq("runtime", f.Runtime)
 	w.eq("mode", string(f.Mode))
 	w.in("status", strs(f.Statuses))

@@ -236,6 +236,8 @@ const (
 	ResApproval          = "approval"
 	ResInboxItem         = "inbox_item"
 	ResAuthEvent         = "auth_event"
+	ResAssistSession     = "assist_session"
+	ResAssistMessage     = "assist_message"
 	ResSession           = "session"
 	ResWebAuthn          = "webauthn_credential"
 	ResSetting           = "setting"
@@ -373,31 +375,33 @@ type NodeRun struct {
 
 // AgentRun is one agent session phase behind an agent node run.
 type AgentRun struct {
-	ID             string          `json:"id"`
-	NodeRunID      string          `json:"node_run_id"`
-	PrevAgentRunID string          `json:"prev_agent_run_id,omitempty"`
-	Runtime        string          `json:"runtime"`
-	AgentInfo      json.RawMessage `json:"agent_info,omitempty"`
-	Capabilities   json.RawMessage `json:"capabilities,omitempty"`
-	Mode           AgentMode       `json:"mode"`
-	ApproveStyle   ApproveStyle    `json:"approve_style,omitempty"`
-	Policy         Policy          `json:"policy"`
-	Phase          AgentPhase      `json:"phase"`
-	Model          string          `json:"model,omitempty"`
-	SessionID      string          `json:"session_id,omitempty"`
-	ResumedVia     ResumedVia      `json:"resumed_via,omitempty"`
-	Cwd            string          `json:"cwd,omitempty"`
-	WorktreePath   string          `json:"worktree_path,omitempty"`
-	Prompt         Content         `json:"prompt"`
-	Argv           []string        `json:"argv"`
-	Status         AgentStatus     `json:"status"`
-	StopReason     string          `json:"stop_reason,omitempty"`
-	Error          string          `json:"error,omitempty"`
-	Result         Content         `json:"result"`
-	RawJSONRPC     Content         `json:"raw_jsonrpc"`
-	CreatedAt      time.Time       `json:"created_at"`
-	StartedAt      *time.Time      `json:"started_at,omitempty"`
-	EndedAt        *time.Time      `json:"ended_at,omitempty"`
+	ID        string `json:"id"`
+	NodeRunID string `json:"node_run_id,omitempty"`
+	// AssistSessionID is set instead of NodeRunID when the run is one turn of an assist session.
+	AssistSessionID string          `json:"assist_session_id,omitempty"`
+	PrevAgentRunID  string          `json:"prev_agent_run_id,omitempty"`
+	Runtime         string          `json:"runtime"`
+	AgentInfo       json.RawMessage `json:"agent_info,omitempty"`
+	Capabilities    json.RawMessage `json:"capabilities,omitempty"`
+	Mode            AgentMode       `json:"mode"`
+	ApproveStyle    ApproveStyle    `json:"approve_style,omitempty"`
+	Policy          Policy          `json:"policy"`
+	Phase           AgentPhase      `json:"phase"`
+	Model           string          `json:"model,omitempty"`
+	SessionID       string          `json:"session_id,omitempty"`
+	ResumedVia      ResumedVia      `json:"resumed_via,omitempty"`
+	Cwd             string          `json:"cwd,omitempty"`
+	WorktreePath    string          `json:"worktree_path,omitempty"`
+	Prompt          Content         `json:"prompt"`
+	Argv            []string        `json:"argv"`
+	Status          AgentStatus     `json:"status"`
+	StopReason      string          `json:"stop_reason,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	Result          Content         `json:"result"`
+	RawJSONRPC      Content         `json:"raw_jsonrpc"`
+	CreatedAt       time.Time       `json:"created_at"`
+	StartedAt       *time.Time      `json:"started_at,omitempty"`
+	EndedAt         *time.Time      `json:"ended_at,omitempty"`
 }
 
 // AgentEvent is one session/update (or other transcript entry), ordered by Seq within a run.

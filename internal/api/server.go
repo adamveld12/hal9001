@@ -38,6 +38,9 @@ type Options struct {
 	// Home is the hal9001 home directory the daemon serves.
 	Home   string
 	Engine core.Engine
+	// Assist serves the AI-assisted authoring endpoints that start agent turns or
+	// run drafts. Optional: without it those endpoints answer 503 unavailable.
+	Assist core.Assist
 	Auth   *auth.Manager
 	// Workspace returns the currently loaded configuration.
 	Workspace func() *spec.Workspace
@@ -258,6 +261,15 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"getPrompt":    s.getPrompt,
 		"updatePrompt": s.updatePrompt,
 		"deletePrompt": s.deletePrompt,
+
+		"listAssistSessions":  s.listAssistSessions,
+		"createAssistSession": s.createAssistSession,
+		"getAssistSession":    s.getAssistSession,
+		"deleteAssistSession": s.deleteAssistSession,
+		"sendAssistMessage":   s.sendAssistMessage,
+		"updateAssistDraft":   s.updateAssistDraft,
+		"testAssistDraft":     s.testAssistDraft,
+		"cancelAssistSession": s.cancelAssistSession,
 
 		"listRuntimes": s.listRuntimes,
 		"probeRuntime": s.probeRuntime,

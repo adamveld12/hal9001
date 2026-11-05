@@ -17,6 +17,7 @@ function approval(over: Partial<Approval> & { id: string }): Approval {
     flow_run_id: "fr",
     flow_id: "flow",
     node_id: "node",
+    assist_session_id: null,
     event_id: null,
     runtime: "claude",
     type: "proposal",

@@ -29,14 +29,21 @@ function Context({ a }: { a: Approval }) {
   const cls = "text-accent underline";
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-      <Link to={`/flows/${a.flow_id}`} className={cls}>
-        flow {a.flow_id}
-      </Link>
-      <span>node {a.node_id}</span>
+      {a.flow_id && (
+        <Link to={`/flows/${a.flow_id}`} className={cls}>
+          flow {a.flow_id}
+        </Link>
+      )}
+      {a.node_id && <span>node {a.node_id}</span>}
+      {a.assist_session_id && (
+        <span>assist session {shortId(a.assist_session_id)}</span>
+      )}
       <span>runtime {a.runtime}</span>
-      <Link to={`/runs/${a.flow_run_id}`} className={cls}>
-        run {shortId(a.flow_run_id)}
-      </Link>
+      {a.flow_run_id && (
+        <Link to={`/runs/${a.flow_run_id}`} className={cls}>
+          run {shortId(a.flow_run_id)}
+        </Link>
+      )}
       <Link to={`/agent-runs/${a.agent_run_id}`} className={cls}>
         agent run {shortId(a.agent_run_id)}
       </Link>
