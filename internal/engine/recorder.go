@@ -19,10 +19,15 @@ const maxRawBytes = 64 << 20
 // the agent_runs row, the transcript, permission requests and the raw
 // JSON-RPC traffic, with env-file secrets redacted.
 type runRecorder struct {
-	e        *Engine
-	red      *runner.Redactor
+	e   *Engine
+	red *runner.Redactor
+	// redFn, when set, supplies the redactor of the moment instead of red: an assist session outlives
+	// many env changes, a node run does not.
+	redFn    func() *runner.Redactor
 	model    string
 	worktree string
+	// assist, when set, is the assist session the run is a turn of (the run has no node run).
+	assist string
 
 	mu    sync.Mutex
 	perms map[string]bool // permission request ids already created
@@ -30,6 +35,13 @@ type runRecorder struct {
 }
 
 var _ agent.Recorder = (*runRecorder)(nil)
+
+func (r *runRecorder) redactor() *runner.Redactor {
+	if r.redFn != nil {
+		return r.redFn()
+	}
+	return r.red
+}
 
 // RunUpdated upserts the agent_runs row. Fields the record does not carry
 // (the stored result, raw traffic) are kept from the existing row.
@@ -39,7 +51,7 @@ func (r *runRecorder) RunUpdated(rec agent.RunRecord) {
 	create := errors.Is(err, store.ErrNotFound)
 	switch {
 	case create:
-		a = &store.AgentRun{ID: rec.ID, NodeRunID: rec.NodeRunID, PrevAgentRunID: rec.ParentRunID, Runtime: rec.Runtime, Model: r.model}
+		a = &store.AgentRun{ID: rec.ID, NodeRunID: rec.NodeRunID, AssistSessionID: r.assist, PrevAgentRunID: rec.ParentRunID, Runtime: rec.Runtime, Model: r.model}
 	case err != nil:
 		r.e.log.Error("engine: load agent run", "agent_run", rec.ID, "err", err)
 		return
@@ -54,10 +66,10 @@ func (r *runRecorder) RunUpdated(rec agent.RunRecord) {
 		a.ResumedVia = store.ResumedVia(rec.ResumedVia)
 	}
 	if rec.Prompt != "" {
-		a.Prompt = store.Inline(r.red.String(rec.Prompt))
+		a.Prompt = store.Inline(r.redactor().String(rec.Prompt))
 	}
 	if len(rec.Argv) > 0 {
-		a.Argv = r.red.Argv(rec.Argv)
+		a.Argv = r.redactor().Argv(rec.Argv)
 	}
 	if rec.AgentInfo != nil {
 		a.AgentInfo, _ = json.Marshal(rec.AgentInfo)
@@ -66,7 +78,7 @@ func (r *runRecorder) RunUpdated(rec agent.RunRecord) {
 		a.Capabilities = rec.Capabilities
 	}
 	a.Status, a.StopReason = store.AgentStatus(rec.Status), rec.StopReason
-	a.Error = r.red.String(failureText(rec))
+	a.Error = r.redactor().String(failureText(rec))
 	if create {
 		started := rec.StartedAt
 		a.StartedAt = &started
@@ -125,13 +137,13 @@ func (r *runRecorder) resultJSON(rec agent.RunRecord) []byte {
 	if err != nil {
 		return []byte(`{"final_message":null,"note":null,"parse_error":false,"resume_fallback":null}`)
 	}
-	return r.red.Bytes(b)
+	return r.redactor().Bytes(b)
 }
 
 func (r *runRecorder) Event(ev agent.Event) {
 	err := r.e.st.AppendAgentEvent(r.e.dbCtx, &store.AgentEvent{
 		AgentRunID: ev.RunID, Seq: int64(ev.Seq), TS: ev.TS, Kind: ev.Kind, ToolCallID: ev.ToolCallID,
-		Payload: store.Inline(string(r.red.Bytes(ev.Payload))),
+		Payload: store.Inline(string(r.redactor().Bytes(ev.Payload))),
 	})
 	if err != nil {
 		r.e.log.Error("engine: record agent event", "agent_run", ev.RunID, "seq", ev.Seq, "err", err)
@@ -144,15 +156,15 @@ func (r *runRecorder) Event(ev agent.Event) {
 func (r *runRecorder) Permission(p agent.PermissionRecord) {
 	pr := &store.PermissionRequest{
 		ID: p.ID, AgentRunID: p.RunID, ToolCallID: p.ToolCallID, ToolKind: p.ToolKind,
-		Title: r.red.String(p.Title), Options: optionsJSON(p.Options),
+		Title: r.redactor().String(p.Title), Options: optionsJSON(p.Options),
 		Decision: store.PermDecision(p.Decision), DecidedBy: store.PermDecidedBy(p.DecidedBy),
-		MatchedRule: p.MatchedRule, Reason: r.red.String(p.Reason), RequestedAt: p.RequestedAt, DecidedAt: p.DecidedAt,
+		MatchedRule: p.MatchedRule, Reason: r.redactor().String(p.Reason), RequestedAt: p.RequestedAt, DecidedAt: p.DecidedAt,
 	}
 	input := p.RawInput
 	if len(input) == 0 {
 		input = p.Content // e.g. codex edits carry only a diff
 	}
-	pr.RawInput = store.Inline(string(r.red.Bytes(input)))
+	pr.RawInput = store.Inline(string(r.redactor().Bytes(input)))
 
 	r.mu.Lock()
 	if r.perms == nil {
@@ -222,6 +234,6 @@ func (r *runRecorder) Raw(f agent.RawFrame) {
 	if r.raw.Len()+len(entry) > maxRawBytes {
 		return
 	}
-	r.raw.Write(r.red.Bytes(entry))
+	r.raw.Write(r.redactor().Bytes(entry))
 	r.raw.WriteByte('\n')
 }

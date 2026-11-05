@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"hal9001/content"
+	"hal9001/internal/assist"
 	"hal9001/internal/auth"
 	"hal9001/internal/authstore"
 	"hal9001/internal/httpsec"
@@ -50,6 +51,10 @@ type Options struct {
 	BasePATH string
 	// Log receives operational logs; default slog.Default().
 	Log *slog.Logger
+
+	// AssistIdleTimeout suspends the agent process of an assist session after this long without a turn
+	// (default 15m). Tests shorten it.
+	AssistIdleTimeout time.Duration
 
 	// ListenAddr overrides ListenAddr. Tests only (e.g. 127.0.0.1:0).
 	ListenAddr string
@@ -146,6 +151,21 @@ func Run(ctx context.Context, opts Options) error {
 		log.Warn("web UI not built; only the API is served (run `mise run build`)")
 	}
 
+	// Assist manager: it runs agent turns on the engine's lifetime, so it is shut down after the engine
+	// (defers run last in, first out).
+	assistMgr, err := assist.New(assist.Options{
+		Store: st, Home: home, Host: eng.AssistHost(), Log: log,
+		URL: "http://127.0.0.1:" + strconv.Itoa(port), IdleTimeout: opts.AssistIdleTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("daemon: assist: %w", err)
+	}
+	defer assistMgr.Shutdown()
+	eng.SetToolApprovalObserver(assistMgr)
+	if err := assistMgr.Start(); err != nil {
+		return fmt.Errorf("daemon: start assist: %w", err)
+	}
+
 	// Engine: Apply before Start so schedulers know the sensors.
 	eng.Apply(d.effective(ws))
 	runCtx, cancel := context.WithCancel(ctx)
@@ -165,7 +185,7 @@ func Run(ctx context.Context, opts Options) error {
 	}()
 
 	apiHandler := newAPI(apiParams{
-		Store: st, Home: home, Engine: eng, Auth: mgr,
+		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr,
 		Workspace: d.workspace, Reload: d.reload,
 		Version: opts.Version, UI: ui, Log: log,
 	})

@@ -37,6 +37,7 @@ type apiParams struct {
 	Store     *store.Store
 	Home      string
 	Engine    core.Engine
+	Assist    core.Assist
 	Auth      *auth.Manager
 	Workspace func() *spec.Workspace
 	Reload    func()

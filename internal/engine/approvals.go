@@ -61,6 +61,8 @@ func (b *storeBroker) AwaitToolApproval(ctx context.Context, t agent.ToolApprova
 	}()
 
 	e.markToolWait(t.RunID, t.NodeRunID, true)
+	e.toolApprovalPending(t.RunID, t.ToolCallID, a.ID)
+	defer e.toolApprovalResolved(t.RunID, a.ID)
 	e.notify(core.Notification{
 		Kind:  "approval",
 		Title: "Approve tool call: " + e.nodeLabel(t.NodeRunID),
@@ -93,6 +95,9 @@ func cancelText(ctx context.Context) string {
 
 // nodeLabel is "<flow>/<node>" for notification titles.
 func (e *Engine) nodeLabel(nodeRunID string) string {
+	if nodeRunID == "" {
+		return "sensor assistant" // a turn of an assist session has no node run
+	}
 	nr, err := e.st.GetNodeRun(e.dbCtx, nodeRunID)
 	if err != nil {
 		return "agent"
@@ -120,6 +125,9 @@ func (e *Engine) markToolWait(runID, nodeRunID string, waiting bool) {
 		if err := e.st.UpdateAgentRun(e.dbCtx, a); err != nil {
 			e.log.Warn("engine: mark agent run", "agent_run", runID, "err", err)
 		}
+	}
+	if nodeRunID == "" {
+		return // an assist turn: the assist manager tracks its session
 	}
 	nr, err := e.st.GetNodeRun(e.dbCtx, nodeRunID)
 	if err != nil {

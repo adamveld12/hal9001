@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,6 +32,8 @@ import (
 var (
 	fakeAgentBin string
 	fakeAgentDir string
+	// hal9001Bin is the real CLI binary, built once; assist tests put it on the agents' PATH.
+	hal9001Bin string
 )
 
 // TestMain builds the fake ACP agent once for the whole suite. Under -short
@@ -47,6 +50,11 @@ func TestMain(m *testing.M) {
 		fakeAgentDir = dir
 		fakeAgentBin, err = agenttest.BuildFakeAgent(dir)
 		if err != nil {
+			fmt.Fprintln(os.Stderr, "e2e:", err)
+			_ = os.RemoveAll(dir)
+			os.Exit(1)
+		}
+		if hal9001Bin, err = buildHal9001(dir); err != nil {
 			fmt.Fprintln(os.Stderr, "e2e:", err)
 			_ = os.RemoveAll(dir)
 			os.Exit(1)
@@ -81,6 +89,9 @@ type Daemon struct {
 
 	// Cookie, when set, is sent with every request.
 	Cookie string
+
+	// AssistIdle is the assist idle timeout (the daemon default when zero).
+	AssistIdle time.Duration
 }
 
 // Option configures newDaemon.
@@ -312,7 +323,7 @@ func (d *Daemon) Start() {
 	d.logOK.Store(true)
 	go func() {
 		done <- daemon.Run(ctx, daemon.Options{
-			Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0",
+			Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0", AssistIdleTimeout: d.AssistIdle,
 			Log:   slog.New(slog.NewTextHandler(logWriter{d}, &slog.HandlerOptions{Level: slog.LevelWarn})),
 			Ready: func(a net.Addr) { ready <- a },
 		})
@@ -550,5 +561,23 @@ func (d *Daemon) EventuallyWithin(limit time.Duration, what string, cond func() 
 			d.t.Fatalf("timed out after %s waiting for %s", limit, what)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// buildHal9001 compiles cmd/hal9001 into dir and returns the path. Assist agents run it as `hal9001 assist test`.
+func buildHal9001(dir string) (string, error) {
+	bin := filepath.Join(dir, "hal9001")
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-buildvcs=false", "-o", bin, "hal9001/cmd/hal9001") //nolint:gosec // fixed arguments
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build hal9001: %w\n%s", err, out)
+	}
+	return bin, nil
+}
+
+// InstallCLI puts the real hal9001 binary on the PATH of the daemon and everything it spawns (the agents).
+func (d *Daemon) InstallCLI() {
+	d.t.Helper()
+	if err := os.Symlink(hal9001Bin, filepath.Join(d.Bin, "hal9001")); err != nil {
+		d.t.Fatal(err)
 	}
 }

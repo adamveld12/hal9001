@@ -78,7 +78,8 @@ type Engine struct {
 	waitMu  sync.Mutex
 	waiters map[string]chan agent.ToolDecision // tool_call approval id -> decision
 
-	broker *storeBroker
+	broker   *storeBroker
+	observer observerSlot
 }
 
 // New returns an engine over opt.Store. Call Apply with the loaded workspace,

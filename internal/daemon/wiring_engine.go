@@ -7,7 +7,7 @@ import (
 	"hal9001/internal/engine"
 )
 
-func newEngine(p engineParams) (runtimeEngine, error) {
+func newEngine(p engineParams) (*engine.Engine, error) {
 	return engine.New(engine.Options{
 		Store:     p.Store,
 		Home:      p.Home,
@@ -23,6 +23,7 @@ func newAPI(p apiParams) http.Handler {
 		Store:     p.Store,
 		Home:      p.Home,
 		Engine:    p.Engine,
+		Assist:    p.Assist,
 		Auth:      p.Auth,
 		Workspace: p.Workspace,
 		Reload:    p.Reload,
