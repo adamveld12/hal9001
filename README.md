@@ -74,7 +74,8 @@ mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --
 | `slack-mentions-dms` | `SLACK_USER_TOKEN` | User token (`xoxp-...`) from a Slack app installed to your workspace. Scopes: `search:read`, `im:history`, `im:read`, `users:read`. |
 | `github-notifications`, `triage-github` | `gh auth login` | The token must read notifications (classic scope `notifications`, or `repo`) and pull requests. |
 | `linear-assigned` | `LINEAR_API_KEY` | Linear Settings > Account > Security & access. Read-only is enough. |
-| `gmail-unread` | [`gog`](https://github.com/steipete/gogcli) | Install it, then `gog auth add you@example.com`. Set `GOG_ACCOUNT` in `env` when `gog` has several accounts. |
+| `imap-mail` | `python3`, `IMAP_USER`, `IMAP_PASSWORD` | The default email sensor. Set the values in the sensor's Environment section. For Gmail: enable IMAP in Gmail settings and create an app password (Google account > Security > 2-Step Verification > App passwords). A Workspace admin can disable IMAP or app passwords; the poll then fails with `AUTHENTICATIONFAILED`. Other IMAP servers: also set `IMAP_HOST` (see [docs/flows.md](docs/flows.md#sensors)). Read-only: nothing is marked read. |
+| `gmail-unread` | [`gog`](https://github.com/steipete/gogcli) | Alternative to `imap-mail`; needs Google OAuth, which a Workspace admin can block. Install it, then `gog auth add you@example.com`. Set `GOG_ACCOUNT` in `env` when `gog` has several accounts. |
 | Claude agents | Claude Code login | Runtime `claude`, adapter `claude-agent-acp` (mise-pinned). |
 | Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`, adapter `codex-acp` (mise-pinned). |
 | omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs `omp acp`. Not in `mise.toml` (a Homebrew install). |

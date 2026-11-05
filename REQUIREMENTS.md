@@ -130,13 +130,14 @@ timeout: 60s
 | slack-mentions-dms | curl `search.messages` (mentions) + `conversations.list/history` (IMs) | `SLACK_USER_TOKEN` (xoxp; `search:read`, `im:history`, `im:read`, `users:read`) | `{{.channel}}:{{.ts}}` |
 | github-notifications | `gh api notifications` (incl. review requests) | existing `gh` auth | `{{.id}}:{{.updated_at}}` |
 | linear-assigned | curl GraphQL: assigned issues + comments updated since `HAL_LAST_SUCCESS_AT` | `LINEAR_API_KEY` | `{{.id}}:{{.updatedAt}}` |
-| gmail-unread | Gmail CLI query `is:unread in:inbox` | CLI's own OAuth | `{{.id}}` |
+| imap-mail | python3 `imaplib`: `EXAMINE` + `UID SEARCH` + `BODY.PEEK[]` (read-only; Gmail extensions when advertised) | per-sensor env `IMAP_USER`, `IMAP_PASSWORD` (Gmail app password); optional `IMAP_HOST`, `IMAP_PORT`, `IMAP_TLS`, `IMAP_MAILBOX`, `IMAP_SEARCH`, `IMAP_MAX` | `{{.id}}` (`X-GM-MSGID`, else `UIDVALIDITY:UID`) |
+| gmail-unread | Gmail CLI query `is:unread in:inbox` (alternative; needs Google OAuth) | CLI's own OAuth | `{{.id}}` |
 
 Pause: a sensor can be paused on its own (`POST /api/sensors/{id}/pause`, `hal9001 sensors pause`). The state is stored in the database (not the YAML), survives restarts and records who and when. The scheduler skips a paused sensor and `next_poll_at` is null; "Poll now" and event injection still work, since they are explicit user actions.
 
 Per-sensor env: a sensor's own secrets live in `env.d/sensors/<id>.env`, never in its YAML. A poll gets `env` overlaid with the sensor's values (the sensor wins). Values are write-only (API and UI list names only).
 
-Gmail CLI: neither `gog` nor `gws` is installed yet. Default choice `gog`; the template is verified once installed (see §13).
+Email: the default is `imap-mail` because Google OAuth can be blocked by Workspace admins. Gmail CLI: neither `gog` nor `gws` is installed yet. The alternative `gmail-unread` uses `gog`; its template is verified once installed (see §13). The `email-secretary` flow subscribes to `imap-mail`.
 
 ## 6. Flows
 

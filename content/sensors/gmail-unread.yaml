@@ -1,5 +1,8 @@
+# Alternative email sensor; the default is imap-mail (Gmail over IMAP with an app password).
+# Use this one only if you can authorise Google OAuth: a Workspace admin can block that, and then this sensor cannot work.
 # Unread inbox mail via the gog CLI (github.com/steipete/gogcli), read-only.
 # Auth is gog's own OAuth: `gog auth add you@example.com`. Set GOG_ACCOUNT to pick an account.
+# To use it, set the email-secretary flow to subscribe to gmail-unread and change the prompt's snippet to text.
 id: gmail-unread
 interval: 5m
 lang: bash
