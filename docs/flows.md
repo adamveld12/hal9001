@@ -190,6 +190,32 @@ override a global one). Values are write-only: the API and UI list key names onl
 output like the global values. A change applies on the next poll without a restart, and deleting the sensor deletes its
 env file.
 
+**Email: the `imap-mail` sensor.** The default email sensor reads any IMAP mailbox with the Python 3 standard library
+(no packages, no OAuth). It is meant for Gmail with an app password and is configured entirely in its own Environment
+section (`IMAP_USER`, `IMAP_PASSWORD`; optional `IMAP_HOST`, `IMAP_PORT`, `IMAP_TLS`, `IMAP_MAILBOX`, `IMAP_SEARCH`,
+`IMAP_MAX`; defaults and meaning are in the comment at the top of `sensors/imap-mail.yaml` and in `env.example`).
+
+- Read-only: it opens the mailbox with `EXAMINE` and fetches with `BODY.PEEK`, so nothing is marked read, moved or
+  deleted. The default search is `UNSEEN`; after the first successful poll it adds `SINCE` the day before
+  `HAL_LAST_SUCCESS_AT`, and dedup drops the overlap. Each poll takes the newest `IMAP_MAX` (default 50) matches.
+- Gmail: when the server advertises `X-GM-EXT-1`, `id` is the `X-GM-MSGID` (the dedup key), `thread_id` is the
+  `X-GM-THRID`, `labels` are the Gmail labels and `url` opens the message in Gmail. Other servers get `id` =
+  `<UIDVALIDITY>:<UID>`, empty `labels` and a null `url`.
+- Items: `source`, `id`, `thread_id`, `uid`, `mailbox`, `from` (display string), `from_address`, `to`, `cc`, `subject`,
+  `date` (RFC 3339 UTC), `message_id`, `in_reply_to`, `labels`, `flags`, `snippet` (the first 2000 characters of the
+  plain-text part, or the HTML part stripped to text), `has_attachments`, `url`, `updated_at` (= `date`). Headers and
+  bodies are decoded with their declared charsets; undecodable bytes become U+FFFD.
+- Gmail setup: turn on IMAP (Gmail Settings > Forwarding and POP/IMAP), then create an app password (Google account >
+  Security > 2-Step Verification > App passwords) and set it as `IMAP_PASSWORD`. A Workspace admin can disable IMAP or
+  app passwords; the poll then fails with `AUTHENTICATIONFAILED` in its stderr and only the admin can fix that.
+- `IMAP_TLS=none` sends the password in clear and exists for tests and local bridges only. Failures (login, TLS,
+  connection, unknown mailbox) exit non-zero with a message that never contains the password.
+- Stored output is redacted like any env value, so your own address (the `IMAP_USER` value) shows as `«IMAP_USER»`
+  in `to`/`cc`/`from` fields of stored events.
+- `gmail-unread` (the `gog` CLI) remains as an alternative, but it needs Google OAuth, which a Workspace admin can
+  block. To use it, change the `email-secretary` flow to subscribe to `gmail-unread` and the prompt's
+  `{{.input.snippet}}` to `{{.input.text}}`.
+
 ## Flows
 
 ```yaml

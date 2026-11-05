@@ -10,9 +10,9 @@ Subject: {{.input.subject}}
 Date: {{.input.date}}
 Link: {{.input.url}}
 
-Body:
+Body (the first 2000 characters, as plain text):
 
-{{.input.text}}
+{{.input.snippet}}
 
 What to do:
 1. Classify it: needs reply, needs action, FYI, or noise. Put the class in the first line of the summary.

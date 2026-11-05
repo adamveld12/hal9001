@@ -95,7 +95,7 @@ func TestEmbeddedLayout(t *testing.T) {
 		}
 	}
 	for dir, want := range map[string][]string{
-		"sensors": {"slack-mentions-dms", "github-notifications", "linear-assigned", "gmail-unread", "demo-ticker"},
+		"sensors": {"slack-mentions-dms", "github-notifications", "linear-assigned", "gmail-unread", "imap-mail", "demo-ticker"},
 		"flows":   {"triage-github", "triage-slack", "linear-triage", "email-secretary", "demo"},
 		"prompts": {"triage-slack", "pr-review", "linear-triage", "email-secretary"},
 	} {
@@ -121,11 +121,16 @@ func TestSensorsDeclareKeysAndBaseline(t *testing.T) {
 		"github-notifications": "{{.id}}:{{.updated_at}}",
 		"linear-assigned":      "{{.id}}:{{.updatedAt}}",
 		"gmail-unread":         "{{.id}}",
+		"imap-mail":            "{{.id}}",
 		"demo-ticker":          "{{.id}}:{{.updated_at}}",
 	}
 	for id, key := range wantKey {
 		def := loadSensor(t, id)
-		if def.ID != id || def.Key != key || def.Lang != "bash" || def.Script == "" || def.Timeout == "" || def.Interval == "" {
+		wantLang := "bash"
+		if id == "imap-mail" {
+			wantLang = "python"
+		}
+		if def.ID != id || def.Key != key || def.Lang != wantLang || def.Script == "" || def.Timeout == "" || def.Interval == "" {
 			t.Errorf("%s: unexpected definition %+v", id, def)
 		}
 		wantFirst := "baseline"
@@ -144,7 +149,7 @@ func TestEnvExampleListsEveryCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, want := range []string{"SLACK_USER_TOKEN=", "LINEAR_API_KEY=", "search:read", "im:history", "im:read", "users:read", "GOG_ACCOUNT"} {
+	for _, want := range []string{"SLACK_USER_TOKEN=", "LINEAR_API_KEY=", "search:read", "im:history", "im:read", "users:read", "GOG_ACCOUNT", "IMAP_USER", "IMAP_PASSWORD", "IMAP_HOST", "IMAP_PORT", "IMAP_TLS", "IMAP_MAILBOX", "IMAP_SEARCH", "IMAP_MAX"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("env.example lacks %q", want)
 		}
