@@ -394,9 +394,54 @@ func (r *run) applyModel() bool {
 	return true
 }
 
-// prompt sends session/prompt and waits for its response. On cancellation of
-// the run it sends session/cancel and gives the agent CancelGrace to answer.
+// maxRecoveryPrompts bounds how often a turn that a policy rejection ended is
+// continued with a follow-up prompt.
+const maxRecoveryPrompts = 2
+
+// prompt sends the run's prompt and waits for the agent to finish. Agents
+// whose only reject option cancels the turn (codex) would otherwise end every
+// readonly or proposal run the moment they try to change something, so a turn
+// ended by a policy rejection is continued in the same session with a
+// follow-up prompt that says what happened.
 func (r *run) prompt() {
+	text := r.rec.Prompt
+	for round := 0; ; round++ {
+		r.promptOnce(text)
+		rej, ok := r.policyEndedTurn()
+		if !ok || round == maxRecoveryPrompts || r.ctx.Err() != nil {
+			return
+		}
+		text = recoveryPrompt(rej.title)
+		r.mu.Lock()
+		r.lastReject, r.prompted, r.stop = nil, false, ""
+		r.cur.Reset() // the final message is the answer to the follow-up
+		r.mu.Unlock()
+		r.harness(map[string]any{"action": "recovery_prompt", "rejected": rej.title, "round": round + 1, "prompt": text})
+	}
+}
+
+// recoveryPrompt tells the agent its call was rejected by policy and asks it to finish read-only.
+func recoveryPrompt(title string) string {
+	return fmt.Sprintf("The tool call %q was rejected: the policy of this run does not allow it, and your turn was ended. "+
+		"Do not retry it or look for another way to make that change. Continue with what you can do read-only and give your final answer now: "+
+		"if you were asked to propose a plan, write the plan and include the rejected change as a step; otherwise answer the original request from what you can read.", title)
+}
+
+// policyEndedTurn reports the rejection when the agent's last turn ended with
+// stopReason cancelled right after the policy (not a user) rejected a call.
+func (r *run) policyEndedTurn() (rejection, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.prompted || r.stop != acp.StopReasonCancelled || r.lastReject == nil || r.lastReject.by != DecidedByPolicy || r.rec.FailureReason != "" {
+		return rejection{}, false
+	}
+	return *r.lastReject, true
+}
+
+// promptOnce sends one session/prompt and waits for its response. On
+// cancellation of the run it sends session/cancel and gives the agent
+// CancelGrace to answer.
+func (r *run) promptOnce(text string) {
 	sid := acp.SessionId(r.rec.SessionID)
 	type result struct {
 		resp acp.PromptResponse
@@ -406,7 +451,7 @@ func (r *run) prompt() {
 	go func() {
 		// Not bound to r.ctx: cancellation is orchestrated below so the
 		// agent can still answer session/cancel with stopReason cancelled.
-		resp, err := r.conn.Prompt(context.Background(), acp.PromptRequest{SessionId: sid, Prompt: []acp.ContentBlock{acp.TextBlock(r.rec.Prompt)}})
+		resp, err := r.conn.Prompt(context.Background(), acp.PromptRequest{SessionId: sid, Prompt: []acp.ContentBlock{acp.TextBlock(text)}})
 		done <- result{resp, err}
 	}()
 
@@ -505,9 +550,23 @@ func (r *run) end(st Status, reason, msg string) {
 	if r.rec.Error == "" {
 		r.rec.Error = msg
 	}
+	// A process that died on its own usually says why on stderr (a broken
+	// shim, a missing login); keep that with the error.
+	if tail := stderrTail(r.rec.Stderr, 10); tail != "" && (r.rec.FailureReason == ReasonAgentExit || r.rec.FailureReason == ReasonAgentError) {
+		r.rec.Error += "\nstderr: " + tail
+	}
 	rec := r.rec
 	r.e.Recorder.RunUpdated(rec)
 	r.mu.Unlock()
+}
+
+// stderrTail returns the last n non-empty lines of s.
+func stderrTail(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func (r *run) finishCompleted() {
