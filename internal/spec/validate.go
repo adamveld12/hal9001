@@ -1,6 +1,7 @@
 package spec
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -194,9 +195,36 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 		case rt.Command[0] == "":
 			c.errorf(CodeInvalidValue, p+".command[0]", "runtime %q: command[0] (the program) must not be empty", name)
 		}
+		validateEnvNames(c, p+".env", rt.Env)
+		validateEnvNames(c, p+".ask.env", rt.Ask.Env)
+		validateEnvNames(c, p+".full.env", rt.Full.Env)
+		for _, side := range []struct {
+			path  string
+			spawn RuntimeSpawn
+		}{{p + ".ask.args", rt.Ask}, {p + ".full.args", rt.Full}} {
+			for i, a := range side.spawn.Args {
+				if a == "" {
+					c.errorf(CodeInvalidValue, fmt.Sprintf("%s[%d]", side.path, i), "runtime %q: argument must not be empty", name)
+				}
+			}
+		}
+		if len(rt.SessionMeta) > 0 {
+			if _, err := json.Marshal(rt.SessionMeta); err != nil {
+				c.errorf(CodeInvalidValue, p+".session_meta", "runtime %q: session_meta must be JSON-compatible: %v", name, err)
+			}
+		}
 	}
 	validateAuth(c, &g.Auth)
 	return c.ds
+}
+
+// validateEnvNames checks that every key of env is a legal variable name.
+func validateEnvNames(c *collector, path string, env map[string]string) {
+	for _, k := range sortedKeys(env) {
+		if !envKeyRE.MatchString(k) {
+			c.errorf(CodeInvalidValue, path+"."+k, "invalid environment variable name %q (letters, digits and _, not starting with a digit)", k)
+		}
+	}
 }
 
 func validateAuth(c *collector, a *Auth) {

@@ -106,15 +106,40 @@ type Config struct {
 	Auth            Auth               `yaml:"auth,omitempty" json:"auth"`
 }
 
-// Runtime is one configured ACP agent command (REQUIREMENTS §7.3).
+// DataPlaceholder in a runtime's command, env values and spawn args/env is
+// replaced by the engine with <home>/data (the directory for runtime state such
+// as the isolated agent homes). Write it quoted in YAML: "{{data}}/runtimes/x".
+const DataPlaceholder = "{{data}}"
+
+// Runtime is one configured ACP agent command (REQUIREMENTS §7.3). The fields
+// beyond Command and Modes are what the ACP gate (docs/acp-gate.md) found
+// necessary to run a runtime restrictively.
 type Runtime struct {
 	Command []string          `yaml:"command" json:"command"`
 	Modes   RuntimeModes      `yaml:"modes,omitempty" json:"modes"`
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	// Ask applies to readonly and approve nodes, Full to auto nodes (and to the
+	// approved phase of a proposal): extra argv and env for the agent process,
+	// for runtimes that pick their approval behaviour with a flag.
+	Ask  RuntimeSpawn `yaml:"ask,omitempty" json:"ask"`
+	Full RuntimeSpawn `yaml:"full,omitempty" json:"full"`
+	// SessionMeta is sent as _meta on session/new and session/load, for
+	// runtime-specific session options such as claude's settingSources.
+	SessionMeta map[string]any `yaml:"session_meta,omitempty" json:"session_meta,omitempty"`
+	// Elicitation advertises form elicitation to the agent, which runtimes
+	// like omp need to route edit and MCP approvals to the harness.
+	Elicitation bool `yaml:"elicitation,omitempty" json:"elicitation,omitempty"`
+}
+
+// RuntimeSpawn is extra argv and environment for one policy of a runtime.
+type RuntimeSpawn struct {
+	Args []string          `yaml:"args,omitempty" json:"args,omitempty"`
+	Env  map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 }
 
 // RuntimeModes names the agent's ACP session modes for the restrictive
-// ("ask") and permissive ("full") policies.
+// ("ask") and permissive ("full") policies. An empty name means the runtime is
+// restricted some other way (see Runtime.Ask and Runtime.Full).
 type RuntimeModes struct {
 	Ask  string `yaml:"ask,omitempty" json:"ask"`
 	Full string `yaml:"full,omitempty" json:"full"`

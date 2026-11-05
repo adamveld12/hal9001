@@ -2401,6 +2401,28 @@ components:
           type: object
           description: Extra environment for the process. Values are returned as `«redacted»`.
           additionalProperties: {type: string}
+        ask:
+          $ref: '#/components/schemas/RuntimeSpawn'
+          description: Extra argv/env for restrictive (readonly, approve) runs, for runtimes that pick approval behaviour with a process flag.
+        full:
+          $ref: '#/components/schemas/RuntimeSpawn'
+          description: Extra argv/env for permissive (auto, approved proposal) runs.
+        session_meta:
+          type: object
+          description: Sent as `_meta` on session/new and session/load (e.g. claude settingSources isolation).
+          additionalProperties: true
+        elicitation:
+          type: boolean
+          description: Advertise form elicitation so the runtime routes edit/MCP approvals to the harness (omp).
+    RuntimeSpawn:
+      type: object
+      additionalProperties: false
+      properties:
+        args: {type: array, items: {type: string}}
+        env:
+          type: object
+          description: Values are returned as `«redacted»`.
+          additionalProperties: {type: string}
     AuthModuleEntry:
       type: object
       additionalProperties: false

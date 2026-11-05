@@ -46,18 +46,19 @@ func redactAny(v any) any {
 
 // redactConfig returns a copy of c that is safe to return from the API:
 // values of sensitive keys in auth module options and every runtime
-// environment value are replaced by «redacted».
+// environment value (including the ask/full spawn env) are replaced by «redacted».
 func redactConfig(c spec.Config) spec.Config {
 	c = c.Clone()
 	runtimes := make(map[string]spec.Runtime, len(c.Runtimes))
 	for name, rt := range c.Runtimes {
 		rt.Command = slices.Clone(rt.Command)
-		if rt.Env != nil {
-			env := make(map[string]string, len(rt.Env))
-			for k := range rt.Env {
-				env[k] = redacted
-			}
-			rt.Env = env
+		rt.Env = redactEnv(rt.Env)
+		rt.Ask.Args = slices.Clone(rt.Ask.Args)
+		rt.Ask.Env = redactEnv(rt.Ask.Env)
+		rt.Full.Args = slices.Clone(rt.Full.Args)
+		rt.Full.Env = redactEnv(rt.Full.Env)
+		if rt.SessionMeta != nil {
+			rt.SessionMeta = redactAny(rt.SessionMeta).(map[string]any)
 		}
 		runtimes[name] = rt
 	}
@@ -82,6 +83,17 @@ func redactConfig(c spec.Config) spec.Config {
 		c.Runtimes = map[string]spec.Runtime{}
 	}
 	return c
+}
+
+func redactEnv(env map[string]string) map[string]string {
+	if env == nil {
+		return nil
+	}
+	out := make(map[string]string, len(env))
+	for k := range env {
+		out[k] = redacted
+	}
+	return out
 }
 
 type settingsView struct {
