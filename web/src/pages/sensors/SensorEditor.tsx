@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ApiError, errorMessage } from "../../api/client";
 import {
   useDeleteSensor,
@@ -69,14 +69,7 @@ function Editor({
   const [checked, setChecked] = useState<Checked | null>(null);
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const runsPanel = useRef<HTMLDivElement>(null);
-  // After Poll now, bring the new poll's result (opened in Recent polls) into view once it is on screen.
-  const showPollResult = useRef(false);
-  useEffect(() => {
-    if (!showPollResult.current || expandedRun === null) return;
-    showPollResult.current = false;
-    runsPanel.current?.scrollIntoView({ block: "start" });
-  }, [expandedRun]);
+  const [revealRun, setRevealRun] = useState<string | null>(null);
 
   // AI assistant: while a session for this sensor is open the editor shows and feeds its draft.
   const assist = useAssistPage();
@@ -182,7 +175,7 @@ function Editor({
               poll.mutate(id, {
                 onSuccess: (run) => {
                   setExpandedRun(run.id);
-                  showPollResult.current = true;
+                  setRevealRun(run.id);
                 },
               })
             }
@@ -363,17 +356,16 @@ function Editor({
 
       <SensorEnvSection sensorId={id} />
 
-      <div ref={runsPanel}>
-        <Panel title="Recent polls" className="overflow-hidden">
-          <div className="-m-3">
-            <SensorRuns
-              sensorId={id}
-              expandedId={expandedRun}
-              onToggle={(r) => setExpandedRun((cur) => (cur === r ? null : r))}
-            />
-          </div>
-        </Panel>
-      </div>
+      <Panel title="Recent polls" className="overflow-hidden">
+        <div className="-m-3">
+          <SensorRuns
+            sensorId={id}
+            expandedId={expandedRun}
+            revealId={revealRun}
+            onToggle={(r) => setExpandedRun((cur) => (cur === r ? null : r))}
+          />
+        </div>
+      </Panel>
     </div>
   );
 }

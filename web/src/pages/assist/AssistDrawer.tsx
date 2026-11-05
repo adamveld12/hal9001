@@ -126,10 +126,12 @@ function Resizer({
 
 function Header({
   title,
+  badge,
   children,
   actions,
 }: {
   title: ReactNode;
+  badge?: ReactNode;
   children?: ReactNode;
   actions?: ReactNode;
 }) {
@@ -141,7 +143,7 @@ function Header({
         <h2 className="m-0 min-w-0 flex-1 truncate text-[13px] font-semibold">
           {title}
         </h2>
-        {actions}
+        {badge}
         <button
           type="button"
           aria-label="Close assistant"
@@ -153,6 +155,9 @@ function Header({
         </button>
       </div>
       {children}
+      {actions && (
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+      )}
     </header>
   );
 }
@@ -280,7 +285,7 @@ function StartView() {
           onModel={setModel}
         />
       </Header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-3">
         <p className="m-0 text-xs text-muted">
           The agent edits a draft of the sensor, which appears in the editor.
           Nothing is saved until you press Save. It never sees your secrets; it
@@ -395,6 +400,7 @@ function TestPanel({ sessionId }: { sessionId: string }) {
       <div className="flex items-center gap-2">
         <Button
           icon="play"
+          className="shrink-0 whitespace-nowrap"
           disabled={test.isPending}
           onClick={() => void test.run()}
         >
@@ -466,10 +472,14 @@ function SessionView({ id }: { id: string }) {
   return (
     <>
       <Header
-        title={s.target.id === null ? "New sensor" : `Sensor ${s.target.id}`}
+        title={
+          (s.target.id ?? page.sensorId)
+            ? `Sensor ${s.target.id ?? page.sensorId}`
+            : "New sensor"
+        }
+        badge={<StatusPill status={s.status} />}
         actions={
           <>
-            <StatusPill status={s.status} />
             {busy && (
               <Button
                 variant="danger"
