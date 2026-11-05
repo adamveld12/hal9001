@@ -177,6 +177,12 @@ func TestClassifyPath(t *testing.T) {
 		"flows/sub/a.yaml":  {"", "", false},
 		"data/hal.db":       {"", "", false},
 		"prompts/p.yaml":    {"", "", false},
+
+		"env.d/sensors/linear.env":      {KindSensorEnv, "linear", true},
+		"env.d/sensors/.linear.env.tmp": {"", "", false},
+		"env.d/sensors/linear.txt":      {"", "", false},
+		"env.d/sensors/sub/x.env":       {"", "", false},
+		"env.d/other/x.env":             {"", "", false},
 	} {
 		k, id, ok := ClassifyPath(rel)
 		if k != want.k || id != want.id || ok != want.ok {

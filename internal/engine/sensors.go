@@ -80,7 +80,7 @@ func (e *Engine) sensorLoop(ctx context.Context, id string, sched spec.Schedule)
 			return
 		case <-t.C:
 		}
-		if !e.isPaused() {
+		if !e.isPaused() && !e.sensorPaused(ctx, id) {
 			_, done, err := e.startPoll(id, store.OriginSchedule)
 			switch {
 			case err == nil:
@@ -97,6 +97,43 @@ func (e *Engine) sensorLoop(ctx context.Context, id string, sched spec.Schedule)
 			return
 		}
 	}
+}
+
+// sensorPaused reports whether the sensor is paused individually. A state that
+// cannot be read counts as not paused: a poll is cheaper than a silent outage.
+func (e *Engine) sensorPaused(ctx context.Context, id string) bool {
+	st, err := e.st.GetSensorState(ctx, id)
+	return err == nil && st.PausedAt != nil
+}
+
+// PauseSensor stops the scheduler polling the sensor until ResumeSensor. The
+// state is persisted. "Poll now" and event injection keep working: they are
+// explicit user actions. Pausing a paused sensor changes nothing.
+func (e *Engine) PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error) {
+	if e.snapshot().sensors[sensorID] == nil {
+		return store.SensorState{}, fmt.Errorf("%w: sensor %q", store.ErrNotFound, sensorID)
+	}
+	return e.st.SetSensorPaused(ctx, sensorID, true, principal)
+}
+
+// ResumeSensor lets the scheduler poll the sensor again. Its scheduler starts
+// over, so an overdue interval sensor polls at once, as after a restart.
+func (e *Engine) ResumeSensor(ctx context.Context, sensorID string) (store.SensorState, error) {
+	if e.snapshot().sensors[sensorID] == nil {
+		return store.SensorState{}, fmt.Errorf("%w: sensor %q", store.ErrNotFound, sensorID)
+	}
+	st, err := e.st.SetSensorPaused(ctx, sensorID, false, "")
+	if err != nil {
+		return store.SensorState{}, err
+	}
+	e.loopMu.Lock()
+	if l := e.loops[sensorID]; l != nil {
+		l.cancel()
+		delete(e.loops, sensorID)
+	}
+	e.loopMu.Unlock()
+	e.syncSensors()
+	return st, nil
 }
 
 // firstDue is when a (re)started scheduler first polls: an interval sensor
@@ -204,7 +241,7 @@ func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.
 	}
 	env, cleanup, err := runner.BuildEnv(runner.EnvOptions{
 		Path:          e.opt.BasePATH,
-		EnvFile:       snap.env,
+		EnvFile:       snap.pollEnv(sensor.ID),
 		RunID:         run.ID,
 		Node:          sensor.ID,
 		StateDir:      filepath.Join(e.data, "state", "_sensors", sensor.ID),

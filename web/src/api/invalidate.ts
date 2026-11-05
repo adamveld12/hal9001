@@ -13,9 +13,11 @@ export type DataStreamType = Exclude<StreamType, ControlType>;
 const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "status.changed": [],
   "killswitch.changed": ["killswitch", "status", "sensors"],
+  "sensor.changed": ["sensors", "sensor"],
   "config.changed": [
     "sensors",
     "sensor",
+    "sensor-env",
     "flows",
     "flow",
     "prompts",

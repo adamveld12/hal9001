@@ -58,6 +58,7 @@ Home dir defaults to `~/.hal9001` (override `--home`). Config files are meant to
 ~/.hal9001/
   config.yaml          # port, concurrency, retention, defaults
   env                  # KEY=VALUE, injected into every node (SLACK_USER_TOKEN, LINEAR_API_KEY, ...)
+  env.d/sensors/<id>.env  # per-sensor KEY=VALUE secrets (0600, git-ignored); overlay `env` for that sensor only
   sensors/*.yaml
   flows/*.yaml
   prompts/*.md
@@ -130,6 +131,10 @@ timeout: 60s
 | github-notifications | `gh api notifications` (incl. review requests) | existing `gh` auth | `{{.id}}:{{.updated_at}}` |
 | linear-assigned | curl GraphQL: assigned issues + comments updated since `HAL_LAST_SUCCESS_AT` | `LINEAR_API_KEY` | `{{.id}}:{{.updatedAt}}` |
 | gmail-unread | Gmail CLI query `is:unread in:inbox` | CLI's own OAuth | `{{.id}}` |
+
+Pause: a sensor can be paused on its own (`POST /api/sensors/{id}/pause`, `hal9001 sensors pause`). The state is stored in the database (not the YAML), survives restarts and records who and when. The scheduler skips a paused sensor and `next_poll_at` is null; "Poll now" and event injection still work, since they are explicit user actions.
+
+Per-sensor env: a sensor's own secrets live in `env.d/sensors/<id>.env`, never in its YAML. A poll gets `env` overlaid with the sensor's values (the sensor wins). Values are write-only (API and UI list names only).
 
 Gmail CLI: neither `gog` nor `gws` is installed yet. Default choice `gog`; the template is verified once installed (see §13).
 
@@ -339,7 +344,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 | webauthn_credentials | id, rp_id, public key, sign count, label, created, last used |
 
 - Payloads > 64 KiB are stored as blobs (content-addressed, zstd).
-- Secret redaction: values from the `env` file are replaced with `«KEY»` in stored stdout/stderr/argv.
+- Secret redaction: values from the `env` file and the per-sensor env files are replaced with `«KEY»` in stored stdout/stderr/argv.
 - Retention: `retention_days` (default 30). Nightly prune of runs, events, blobs, and worktrees older than that, except anything linked to a starred inbox item or a pending approval. Dedup keys are retained longer (`dedup_retention_days`, default 180) so old items don't re-fire.
 
 ## 10. Daemon, API, network, and auth

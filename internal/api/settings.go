@@ -304,9 +304,11 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 const maxEnvValue = 64 << 10
 
-// envFile reads the env file. A missing file is empty with an empty hash.
-func (s *Server) envFile() (raw []byte, hash string, err error) {
-	raw, hash, err = spec.ReadFile(s.opts.Home, spec.KindEnv, "")
+// envFile reads an env file: the global one (spec.KindEnv) or a sensor's
+// (spec.KindSensorEnv with the sensor id). A missing file is empty with an
+// empty hash.
+func (s *Server) envFile(k spec.Kind, id string) (raw []byte, hash string, err error) {
+	raw, hash, err = spec.ReadFile(s.opts.Home, k, id)
 	if errors.Is(err, spec.ErrNotFound) {
 		return nil, "", nil
 	}
@@ -315,7 +317,7 @@ func (s *Server) envFile() (raw []byte, hash string, err error) {
 
 // listEnvKeys returns variable names only. Values are never returned by any endpoint.
 func (s *Server) listEnvKeys(w http.ResponseWriter, r *http.Request) {
-	raw, _, err := s.envFile()
+	raw, _, err := s.envFile(spec.KindEnv, "")
 	if err != nil {
 		s.writeError(w, r, err)
 		return
@@ -401,11 +403,12 @@ func withEnvKey(raw []byte, key, value string, set bool) (out []byte, found bool
 	return []byte(strings.Join(lines, "\n") + "\n"), found
 }
 
-// writeEnv applies change to the env file, retrying when another writer got in between.
-func (s *Server) writeEnv(change func(raw []byte) ([]byte, error)) error {
+// writeEnv applies change to an env file (see envFile), retrying when another
+// writer got in between.
+func (s *Server) writeEnv(k spec.Kind, id string, change func(raw []byte) ([]byte, error)) error {
 	var err error
 	for range 3 {
-		raw, hash, rerr := s.envFile()
+		raw, hash, rerr := s.envFile(k, id)
 		if rerr != nil {
 			return rerr
 		}
@@ -413,7 +416,7 @@ func (s *Server) writeEnv(change func(raw []byte) ([]byte, error)) error {
 		if cerr != nil {
 			return cerr
 		}
-		_, err = spec.WriteFile(s.opts.Home, spec.KindEnv, "", updated, hash)
+		_, err = spec.WriteFile(s.opts.Home, k, id, updated, hash)
 		if !errors.Is(err, spec.ErrConflict) {
 			return err
 		}
@@ -422,6 +425,12 @@ func (s *Server) writeEnv(change func(raw []byte) ([]byte, error)) error {
 }
 
 func (s *Server) setEnvValue(w http.ResponseWriter, r *http.Request) {
+	s.setEnv(w, r, spec.KindEnv, "")
+}
+
+// setEnv is PUT of one key into the env file of kind k (id is the sensor id
+// for spec.KindSensorEnv).
+func (s *Server) setEnv(w http.ResponseWriter, r *http.Request, k spec.Kind, id string) {
 	key := r.PathValue("key")
 	var req struct {
 		Value *string `json:"value"`
@@ -440,7 +449,7 @@ func (s *Server) setEnvValue(w http.ResponseWriter, r *http.Request) {
 		fieldProblem(w, "value", "value must be text of at most 64 KiB without NUL bytes")
 		return
 	}
-	err := s.writeEnv(func(raw []byte) ([]byte, error) {
+	err := s.writeEnv(k, id, func(raw []byte) ([]byte, error) {
 		out, _ := withEnvKey(raw, key, *req.Value, true)
 		env, ds := spec.ParseEnv(out)
 		if spec.HasErrors(ds) || env.Vars[key] != *req.Value {
@@ -453,15 +462,20 @@ func (s *Server) setEnvValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reload()
-	s.publishFileChange(spec.KindEnv, "")
+	s.publishFileChange(k, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 var errEnvKeyMissing = errors.New("no such environment key")
 
 func (s *Server) deleteEnvValue(w http.ResponseWriter, r *http.Request) {
+	s.deleteEnv(w, r, spec.KindEnv, "")
+}
+
+// deleteEnv is DELETE of one key from the env file of kind k.
+func (s *Server) deleteEnv(w http.ResponseWriter, r *http.Request, k spec.Kind, id string) {
 	key := r.PathValue("key")
-	err := s.writeEnv(func(raw []byte) ([]byte, error) {
+	err := s.writeEnv(k, id, func(raw []byte) ([]byte, error) {
 		out, found := withEnvKey(raw, key, "", false)
 		if !found {
 			return nil, errEnvKeyMissing
@@ -477,6 +491,59 @@ func (s *Server) deleteEnvValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reload()
-	s.publishFileChange(spec.KindEnv, "")
+	s.publishFileChange(k, id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- per-sensor env ----
+
+// listSensorEnv returns the key names of the sensor's own env file and whether
+// each one overrides a key of the global env file. Values are never returned.
+func (s *Server) listSensorEnv(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.sensorExists(w, id) {
+		return
+	}
+	raw, _, err := s.envFile(spec.KindSensorEnv, id)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	own, _ := spec.ParseEnv(raw)
+	graw, _, err := s.envFile(spec.KindEnv, "")
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	global, _ := spec.ParseEnv(graw)
+	keys := slices.Clone(own.Keys)
+	sort.Strings(keys)
+	type item struct {
+		Key             string `json:"key"`
+		OverridesGlobal bool   `json:"overrides_global"`
+	}
+	out := struct {
+		Items []item `json:"items"`
+	}{Items: []item{}}
+	for _, k := range keys {
+		_, ok := global.Vars[k]
+		out.Items = append(out.Items, item{Key: k, OverridesGlobal: ok})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) setSensorEnvValue(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.sensorExists(w, id) {
+		return
+	}
+	s.setEnv(w, r, spec.KindSensorEnv, id)
+}
+
+func (s *Server) deleteSensorEnvValue(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.sensorExists(w, id) {
+		return
+	}
+	s.deleteEnv(w, r, spec.KindSensorEnv, id)
 }

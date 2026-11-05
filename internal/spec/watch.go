@@ -45,6 +45,12 @@ func ClassifyPath(rel string) (k Kind, id string, ok bool) {
 	case FileEnv:
 		return KindEnv, "", true
 	}
+	if name, ok := strings.CutPrefix(rel, DirSensorEnv+"/"); ok {
+		if !strings.Contains(name, "/") && !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".env") {
+			return KindSensorEnv, strings.TrimSuffix(name, ".env"), true
+		}
+		return "", "", false
+	}
 	dir, name, found := strings.Cut(rel, "/")
 	if !found || strings.Contains(name, "/") {
 		return "", "", false
@@ -71,7 +77,7 @@ func ClassifyPath(rel string) (k Kind, id string, ok bool) {
 	return "", "", false
 }
 
-var watchedDirs = []string{DirSensors, DirFlows, DirPrompts}
+var watchedDirs = []string{DirSensors, DirFlows, DirPrompts, DirSensorEnv}
 
 // Watch watches config.yaml, env, sensors/, flows/ and prompts/ under home and
 // delivers debounced Reload notifications until ctx is done, when the

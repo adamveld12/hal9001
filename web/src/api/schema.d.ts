@@ -303,10 +303,114 @@ export interface paths {
      * Poll now
      * @description Starts a poll outside the schedule and returns the new SensorRun immediately. Follow it with
      *     `GET /api/sensor-runs/{id}?wait=30s`. 409 `invalid-state` when a poll of this sensor is already running;
-     *     423 `paused` while the kill switch is engaged.
+     *     423 `paused` while the kill switch is engaged. A sensor that was paused individually
+     *     (`POST /api/sensors/{id}/pause`) can still be polled this way: only the scheduler honours that pause.
      */
     post: operations["pollSensor"];
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sensors/{id}/pause": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Pause a sensor
+     * @description Stops the scheduler polling this sensor until `POST /api/sensors/{id}/resume`. The state is operational, not
+     *     part of the sensor YAML: it is stored in the database, survives daemon restarts, and records who paused the
+     *     sensor and when (`status.paused_at`, `status.paused_by`). While paused, `status.state` is `paused` and
+     *     `status.next_poll_at` is `null`. A poll that is already running finishes.
+     *
+     *     Explicit actions are not affected: `POST /api/sensors/{id}/poll` ("Poll now") and `POST /api/events`
+     *     (injection) work while a sensor is paused. Idempotent: pausing a paused sensor changes nothing and keeps the
+     *     original `paused_at` and `paused_by`. Independent of the kill switch, which pauses every sensor.
+     */
+    post: operations["pauseSensor"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sensors/{id}/resume": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resume a sensor
+     * @description Lets the scheduler poll the sensor again. Its schedule starts over, as after a daemon restart: an interval
+     *     sensor that is overdue polls at once, a cron sensor waits for its next match. Idempotent: resuming a sensor
+     *     that is not paused changes nothing.
+     */
+    post: operations["resumeSensor"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sensors/{id}/env": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Environment key names of a sensor
+     * @description Names from the sensor's own env file (`env.d/sensors/<id>.env`) only. Values are write-only and never returned
+     *     by any endpoint. `overrides_global` tells whether the key also exists in the global `env` file, whose value
+     *     the sensor's own value then replaces for this sensor's polls.
+     */
+    get: operations["listSensorEnv"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sensors/{id}/env/{key}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+        key: components["parameters"]["EnvKey"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Set an environment value on a sensor
+     * @description Creates or replaces the key in the sensor's own env file. The file is not part of the sensor YAML and is
+     *     git-ignored. The value is injected into this sensor's poll process on top of the global env (the sensor's value
+     *     wins) and redacted, like every global env value, from stored output. Takes effect on the next poll.
+     */
+    put: operations["setSensorEnv"];
+    post?: never;
+    /** Remove an environment key from a sensor */
+    delete: operations["deleteSensorEnv"];
     options?: never;
     head?: never;
     patch?: never;
@@ -372,7 +476,8 @@ export interface paths {
      * Inject an event for a sensor without polling
      * @description The body is the item JSON, any JSON value. The item goes through the sensor's `key` template, dedup, and flow
      *     fan-out exactly like a polled item. 201 with the new event; 200 with `deduplicated: true` when the key was seen
-     *     before (nothing is created). Injection is accepted while paused and the resulting runs stay `queued`.
+     *     before (nothing is created). Injection is accepted while paused and the resulting runs stay `queued`. It is also accepted for a sensor that was
+     *     paused individually (`POST /api/sensors/{id}/pause`); only the scheduler honours that pause.
      */
     post: operations["injectEvent"];
     delete?: never;
@@ -1903,14 +2008,19 @@ export interface components {
       unread_inbox: number;
     };
     SensorStatus: {
+      /** @description This sensor was paused with `POST /api/sensors/{id}/pause`. Independent of the kill switch: `state` is `paused` for either, `paused` is true only for this one. */
+      paused: boolean;
+      paused_at: components["schemas"]["NullableTimestamp"];
+      /** @description Principal that paused the sensor; null when it is not paused. */
+      paused_by: string | null;
       /**
-       * @description `failing` when the last poll failed; `paused` while the kill switch is engaged; `invalid` when the file has errors.
+       * @description `failing` when the last poll failed; `paused` while the kill switch is engaged or this sensor is paused (`paused`); `invalid` when the file has errors.
        * @enum {string}
        */
       state: "idle" | "running" | "failing" | "paused" | "invalid";
       last_run: components["schemas"]["SensorRun"] | null;
       last_success_at: components["schemas"]["NullableTimestamp"];
-      /** @description When the scheduler polls next. `null` while paused, when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works). */
+      /** @description When the scheduler polls next. `null` while paused (kill switch or this sensor), when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works). */
       next_poll_at: components["schemas"]["NullableTimestamp"];
       new_items_24h: number;
     };
@@ -2125,6 +2235,13 @@ export interface components {
     EnvKeyList: {
       items: {
         key: components["schemas"]["EnvKeyName"];
+      }[];
+    };
+    SensorEnvKeyList: {
+      items: {
+        key: components["schemas"]["EnvKeyName"];
+        /** @description The global `env` file has the same key; this sensor sees its own value. */
+        overrides_global: boolean;
       }[];
     };
     EnvSetRequest: {
@@ -2669,7 +2786,8 @@ export interface components {
     /**
      * @description Value of the SSE `event:` field and of `StreamEvent.type`.
      *     `stream.ready` and `stream.resync` are control messages and always delivered.
-     *     `status.changed`, `killswitch.changed`, and `config.changed` carry daemon-wide state.
+     *     `status.changed`, `killswitch.changed`, and `config.changed` carry daemon-wide state; `sensor.changed` carries one
+     *     sensor's status.
      *     The rest announce that a record was created (`.created`, `.appended`) or changed (`.updated`).
      * @enum {string}
      */
@@ -2678,6 +2796,7 @@ export interface components {
       | "stream.resync"
       | "status.changed"
       | "killswitch.changed"
+      | "sensor.changed"
       | "config.changed"
       | "sensor_run.created"
       | "sensor_run.updated"
@@ -2712,6 +2831,7 @@ export interface components {
       | components["schemas"]["StreamResyncEvent"]
       | components["schemas"]["StatusChangedEvent"]
       | components["schemas"]["KillSwitchChangedEvent"]
+      | components["schemas"]["SensorChangedEvent"]
       | components["schemas"]["ConfigChangedEvent"]
       | components["schemas"]["SensorRunCreatedEvent"]
       | components["schemas"]["SensorRunUpdatedEvent"]
@@ -2743,11 +2863,15 @@ export interface components {
     /** @description A file under the home dir changed on disk or through the API (hot reload). */
     ConfigChange: {
       /** @enum {string} */
-      kind: "sensor" | "flow" | "prompt" | "settings" | "env";
-      /** @description Sensor id, flow id, or prompt name; null for settings and env. */
+      kind: "sensor" | "flow" | "prompt" | "settings" | "env" | "sensor_env";
+      /** @description Sensor id, flow id, or prompt name; for `sensor_env` the sensor id; null for settings and env. */
       id: string | null;
       hash: components["schemas"]["NullableHash"];
       deleted: boolean;
+    };
+    SensorChange: {
+      id: components["schemas"]["Slug"];
+      status: components["schemas"]["SensorStatus"];
     };
     /** @description First message on every connection. `data` is `StreamReady`. */
     StreamReadyEvent: components["schemas"]["StreamEnvelope"] & {
@@ -2797,7 +2921,22 @@ export interface components {
        */
       type: "killswitch.changed";
     };
-    /** @description A sensor, flow, prompt, settings, or env file changed. `data` is `ConfigChange`. */
+    /**
+     * @description A sensor's status changed: it was paused or resumed, or a poll recorded its outcome. `data` is
+     *     `SensorChange`. Filterable with `sensor_id`.
+     */
+    SensorChangedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "sensor.changed";
+      data?: components["schemas"]["SensorChange"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "sensor.changed";
+    };
+    /** @description A sensor, flow, prompt, settings, env, or sensor env file changed. `data` is `ConfigChange`. */
     ConfigChangedEvent: components["schemas"]["StreamEnvelope"] & {
       /** @enum {unknown} */
       type?: "config.changed";
@@ -3624,6 +3763,144 @@ export interface operations {
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  pauseSensor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The sensor, now paused. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SensorSummary"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  resumeSensor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The sensor, no longer paused. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SensorSummary"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listSensorEnv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Key names, sorted. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SensorEnvKeyList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  setSensorEnv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+        key: components["parameters"]["EnvKey"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EnvSetRequest"];
+      };
+    };
+    responses: {
+      /** @description Stored. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  deleteSensorEnv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+        key: components["parameters"]["EnvKey"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Removed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
       default: components["responses"]["Error"];
     };
   };

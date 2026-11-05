@@ -299,7 +299,11 @@ type SensorState struct {
 	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
 	LastError           string     `json:"last_error,omitempty"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	// PausedAt is set while the sensor is paused (never polled by the
+	// scheduler); PausedBy is the principal that paused it.
+	PausedAt  *time.Time `json:"paused_at,omitempty"`
+	PausedBy  string     `json:"paused_by,omitempty"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // Event is one deduplicated sensor item. Immutable once created.

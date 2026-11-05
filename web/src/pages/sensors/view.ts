@@ -57,9 +57,25 @@ export function unscheduledLabel(
 export const UNSCHEDULED_TITLE =
   "No enabled flow subscribes to this sensor, so it is not polled on a schedule. Poll now still works.";
 
+/**
+ * Who paused the sensor and when, for a tooltip. Null when the sensor is not
+ * paused individually (a sensor held by the kill switch is not "paused" here).
+ */
+export function pausedTitle(status: SensorSummary["status"]): string | null {
+  if (!status.paused) return null;
+  const by = status.paused_by ? ` by ${status.paused_by}` : "";
+  const at = status.paused_at
+    ? ` on ${new Date(status.paused_at).toLocaleString()}`
+    : "";
+  return `Paused${by}${at}. Scheduled polls are off; Poll now still works.`;
+}
+
 export interface SensorRow {
   id: string;
   state: SensorState;
+  /** This sensor is paused on its own (not only by the kill switch). */
+  paused: boolean;
+  pausedTitle: string | null;
   schedule: string;
   lastPollAt: string | null;
   newItems24h: number;
@@ -79,12 +95,19 @@ export function sensorRow(s: SensorSummary): SensorRow {
   return {
     id: s.id,
     state: s.status.state,
+    paused: s.status.paused,
+    pausedTitle: pausedTitle(s.status),
     schedule: scheduleLabel(s.sensor),
     lastPollAt: last?.started_at ?? null,
     newItems24h: s.status.new_items_24h,
     nextPollAt: s.status.next_poll_at,
     problems,
   };
+}
+
+/** Message for a failed pause or resume request. */
+export function pauseErrorMessage(e: unknown, resuming: boolean): string {
+  return `Could not ${resuming ? "resume" : "pause"} the sensor: ${errorMessage(e)}`;
 }
 
 /** Message for a failed "Poll now" request. */

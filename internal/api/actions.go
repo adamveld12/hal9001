@@ -136,6 +136,60 @@ func (s *Server) pollSensor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, s.sensorRunView(*run, false))
 }
 
+// pauseSensor and resumeSensor are idempotent and answer with the updated
+// SensorSummary. A paused sensor is not polled on schedule; Poll now and event
+// injection still work.
+func (s *Server) pauseSensor(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.sensorExists(w, id) {
+		return
+	}
+	if _, err := s.opts.Engine.PauseSensor(r.Context(), id, principal(r)); err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.writeSensorSummary(w, r, id)
+}
+
+func (s *Server) resumeSensor(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.sensorExists(w, id) {
+		return
+	}
+	if _, err := s.opts.Engine.ResumeSensor(r.Context(), id); err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.writeSensorSummary(w, r, id)
+}
+
+func (s *Server) sensorExists(w http.ResponseWriter, id string) bool {
+	if s.opts.Workspace().Sensor(id) == nil {
+		notFound(w, "no sensor %q", id)
+		return false
+	}
+	return true
+}
+
+func (s *Server) writeSensorSummary(w http.ResponseWriter, r *http.Request, id string) {
+	ks, err := s.opts.Store.GetKillSwitch(r.Context())
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	f := s.opts.Workspace().Sensor(id)
+	if f == nil {
+		notFound(w, "no sensor %q", id)
+		return
+	}
+	v, err := s.sensorSummary(r.Context(), f, ks.Paused)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
 // ---- test node ----
 
 const defaultTestWait = 30 * time.Second

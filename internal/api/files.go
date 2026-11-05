@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
+	"os"
 	"slices"
 	"sort"
 	"time"
@@ -65,7 +68,10 @@ func (s *Server) saveFile(w http.ResponseWriter, r *http.Request, k spec.Kind, i
 }
 
 // removeFile deletes a file if it still has the expected hash.
-func (s *Server) removeFile(w http.ResponseWriter, r *http.Request, k spec.Kind, id, expected string) {
+//
+// cleanup, when non-nil, runs after the file is gone and before the reload, so
+// state that belongs to the file goes away with it.
+func (s *Server) removeFile(w http.ResponseWriter, r *http.Request, k spec.Kind, id, expected string, cleanup func() error) {
 	if !expectedHashOK(w, expected) {
 		return
 	}
@@ -81,6 +87,11 @@ func (s *Server) removeFile(w http.ResponseWriter, r *http.Request, k spec.Kind,
 		}
 		s.writeError(w, r, err)
 		return
+	}
+	if cleanup != nil {
+		if err := cleanup(); err != nil {
+			s.log().Error("api: clean up after delete", "kind", k, "id", id, "err", err)
+		}
 	}
 	s.reload()
 	s.publishFileChange(k, id)
@@ -111,7 +122,12 @@ func oneOf(w http.ResponseWriter, a, b bool, an, bn string) bool {
 // ---- sensors ----
 
 type sensorStatusView struct {
-	State         string         `json:"state"`
+	State string `json:"state"`
+	// Paused is true when this sensor is paused individually (not by the kill
+	// switch); PausedAt and PausedBy then say when and by whom.
+	Paused        bool           `json:"paused"`
+	PausedAt      *time.Time     `json:"paused_at"`
+	PausedBy      *string        `json:"paused_by"`
 	LastRun       *sensorRunView `json:"last_run"`
 	LastSuccessAt *time.Time     `json:"last_success_at"`
 	NextPollAt    *time.Time     `json:"next_poll_at"`
@@ -132,8 +148,8 @@ type sensorDetailView struct {
 	YAML string `json:"yaml"`
 }
 
-func (s *Server) sensorStatus(r *http.Request, id string, sensor *spec.Sensor, valid, paused bool) (sensorStatusView, error) {
-	ctx, st := r.Context(), s.opts.Store
+func (s *Server) sensorStatus(ctx context.Context, id string, sensor *spec.Sensor, valid, killSwitch bool) (sensorStatusView, error) {
+	st := s.opts.Store
 	v := sensorStatusView{State: "idle"}
 	runs, err := st.ListSensorRuns(ctx, store.SensorRunFilter{SensorID: id, ListOpts: store.ListOpts{Limit: 1}})
 	if err != nil {
@@ -149,6 +165,11 @@ func (s *Server) sensorStatus(r *http.Request, id string, sensor *spec.Sensor, v
 	}
 	v.NewItems24h = n
 	v.LastSuccessAt = utcPtr(state.LastSuccessAt)
+	if state.PausedAt != nil {
+		by := state.PausedBy
+		v.Paused, v.PausedAt, v.PausedBy = true, utcPtr(state.PausedAt), &by
+	}
+	paused := killSwitch || v.Paused
 	var last *store.SensorRun
 	if len(runs.Items) > 0 {
 		last = &runs.Items[0]
@@ -194,8 +215,8 @@ func (s *Server) sensorSubscribed(id string) bool {
 	return false
 }
 
-func (s *Server) sensorSummary(r *http.Request, f *spec.File[spec.Sensor], paused bool) (sensorSummaryView, error) {
-	status, err := s.sensorStatus(r, f.Name, f.Value, f.Valid(), paused)
+func (s *Server) sensorSummary(ctx context.Context, f *spec.File[spec.Sensor], killSwitch bool) (sensorSummaryView, error) {
+	status, err := s.sensorStatus(ctx, f.Name, f.Value, f.Valid(), killSwitch)
 	if err != nil {
 		return sensorSummaryView{}, err
 	}
@@ -216,7 +237,7 @@ func (s *Server) listSensors(w http.ResponseWriter, r *http.Request) {
 		Items []sensorSummaryView `json:"items"`
 	}{Items: []sensorSummaryView{}}
 	for _, f := range files {
-		v, err := s.sensorSummary(r, f, ks.Paused)
+		v, err := s.sensorSummary(r.Context(), f, ks.Paused)
 		if err != nil {
 			s.writeError(w, r, err)
 			return
@@ -238,7 +259,7 @@ func (s *Server) sensorDetail(r *http.Request, id string) (sensorDetailView, err
 		return sensorDetailView{}, err
 	}
 	f := &spec.File[spec.Sensor]{Name: id, Path: spec.KindSensor.Rel(id), Hash: hash, Value: sensor, Diagnostics: ds}
-	sum, err := s.sensorSummary(r, f, ks.Paused)
+	sum, err := s.sensorSummary(r.Context(), f, ks.Paused)
 	return sensorDetailView{sensorSummaryView: sum, YAML: string(raw)}, err
 }
 
@@ -332,7 +353,17 @@ func (s *Server) updateSensor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSensor(w http.ResponseWriter, r *http.Request) {
-	s.removeFile(w, r, spec.KindSensor, r.PathValue("id"), r.URL.Query().Get("expected_hash"))
+	id := r.PathValue("id")
+	s.removeFile(w, r, spec.KindSensor, id, r.URL.Query().Get("expected_hash"), func() error {
+		// The sensor's secrets go with it; a sensor created later under the
+		// same id must not inherit them.
+		err := os.Remove(spec.KindSensorEnv.Path(s.opts.Home, id)) //nolint:gosec // id names an existing sensor file under home
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		s.publishFileChange(spec.KindSensorEnv, id)
+		return err
+	})
 }
 
 func (s *Server) validateSensor(w http.ResponseWriter, r *http.Request) {
@@ -560,7 +591,7 @@ func (s *Server) updateFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
-	s.removeFile(w, r, spec.KindFlow, r.PathValue("id"), r.URL.Query().Get("expected_hash"))
+	s.removeFile(w, r, spec.KindFlow, r.PathValue("id"), r.URL.Query().Get("expected_hash"), nil)
 }
 
 func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
@@ -723,7 +754,7 @@ func (s *Server) updatePrompt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deletePrompt(w http.ResponseWriter, r *http.Request) {
-	s.removeFile(w, r, spec.KindPrompt, r.PathValue("name"), r.URL.Query().Get("expected_hash"))
+	s.removeFile(w, r, spec.KindPrompt, r.PathValue("name"), r.URL.Query().Get("expected_hash"), nil)
 }
 
 func (s *Server) renderPrompt(w http.ResponseWriter, r *http.Request) {

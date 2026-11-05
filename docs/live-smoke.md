@@ -95,8 +95,8 @@ codex 38 s, omp 30 s. Token cost was not measured.
    notification from here); the same dedup path is covered by the engine tests.
 
 `TestLiveCredentialSensorsFailVisibly`: with no credentials, `slack-mentions-dms`, `linear-assigned` and `gmail-unread` each
-poll to `status: failed`, `exit_code: 1`, stderr naming the cause (`SLACK_USER_TOKEN is not set (see env.example)`,
-`LINEAR_API_KEY is not set (see env.example)`, `gog: command not found ... is gog installed and authorised?`), 0 events,
+poll to `status: failed`, `exit_code: 1`, stderr naming the cause (`SLACK_USER_TOKEN is not set - set it in the sensor Environment section of the UI or in the global env file, see env.example`,
+`LINEAR_API_KEY is not set - set it in the sensor Environment section of the UI or in the global env file, see env.example`, `gog: command not found ... is gog installed and authorised?`), 0 events,
 sensor `state: failing`, `last_success_at: null`. Real polls with credentials (scenario 19) were not run: no Slack, Linear
 or Gmail credentials exist here (`gog` is not installed).
 

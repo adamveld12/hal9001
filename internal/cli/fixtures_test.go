@@ -72,7 +72,7 @@ func sensorSummary() map[string]any {
 		"sensor":      map[string]any{"id": "github-notifications", "lang": "bash", "interval": "2m", "script": "gh api notifications"},
 		"diagnostics": []any{},
 		"status": map[string]any{
-			"state": "idle", "last_run": nil, "last_success_at": ts, "next_poll_at": nil, "new_items_24h": 7,
+			"state": "idle", "paused": false, "paused_at": nil, "paused_by": nil, "last_run": nil, "last_success_at": ts, "next_poll_at": nil, "new_items_24h": 7,
 		},
 	}
 }

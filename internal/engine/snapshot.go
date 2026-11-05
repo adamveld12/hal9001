@@ -21,10 +21,13 @@ type snapshot struct {
 	cfg     spec.Config
 	env     map[string]string
 	envKeys []string
-	red     *runner.Redactor
-	sensors map[string]*spec.Sensor
-	flows   map[string]*flowDef
-	prompts map[string]*spec.Prompt
+	// sensorEnv maps a sensor id to its own env values (env.d/sensors); they
+	// overlay env for that sensor's polls only.
+	sensorEnv map[string]map[string]string
+	red       *runner.Redactor
+	sensors   map[string]*spec.Sensor
+	flows     map[string]*flowDef
+	prompts   map[string]*spec.Prompt
 	// subs maps a sensor id to the enabled flows subscribed to it, sorted.
 	subs map[string][]string
 }
@@ -39,12 +42,13 @@ type flowDef struct {
 
 func newSnapshot(ws *spec.Workspace) *snapshot {
 	s := &snapshot{
-		ws:      ws,
-		env:     map[string]string{},
-		sensors: map[string]*spec.Sensor{},
-		flows:   map[string]*flowDef{},
-		prompts: map[string]*spec.Prompt{},
-		subs:    map[string][]string{},
+		ws:        ws,
+		env:       map[string]string{},
+		sensorEnv: map[string]map[string]string{},
+		sensors:   map[string]*spec.Sensor{},
+		flows:     map[string]*flowDef{},
+		prompts:   map[string]*spec.Prompt{},
+		subs:      map[string][]string{},
 	}
 	if ws.Config.Value != nil {
 		s.cfg = ws.Config.Value.Clone()
@@ -54,7 +58,16 @@ func newSnapshot(ws *spec.Workspace) *snapshot {
 		s.env = maps.Clone(ws.Env.Value.Vars)
 		s.envKeys = slices.Clone(ws.Env.Value.Keys)
 	}
-	s.red = runner.NewRedactor(s.env)
+	secrets := []map[string]string{s.env}
+	for _, f := range ws.SensorEnv {
+		if f.Value == nil {
+			continue
+		}
+		s.sensorEnv[f.Name] = maps.Clone(f.Value.Vars)
+		// A per-sensor value is a secret everywhere the global env is.
+		secrets = append(secrets, f.Value.Vars)
+	}
+	s.red = runner.NewRedactor(secrets...)
 	for _, f := range ws.Sensors {
 		if f.Valid() {
 			s.sensors[f.Name] = f.Value
@@ -205,4 +218,16 @@ func (e *Engine) ensureAgentHomes(cfg agent.RuntimeConfig) {
 func sensorSig(s *spec.Sensor) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// pollEnv is the env-file layer of a sensor's process: the global values with
+// the sensor's own values on top.
+func (s *snapshot) pollEnv(sensorID string) map[string]string {
+	own := s.sensorEnv[sensorID]
+	if len(own) == 0 {
+		return s.env
+	}
+	out := maps.Clone(s.env)
+	maps.Copy(out, own)
+	return out
 }

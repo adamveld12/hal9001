@@ -165,6 +165,7 @@ paths:
         stream.resync: '#/components/schemas/StreamResyncEvent'
         status.changed: '#/components/schemas/StatusChangedEvent'
         killswitch.changed: '#/components/schemas/KillSwitchChangedEvent'
+        sensor.changed: '#/components/schemas/SensorChangedEvent'
         config.changed: '#/components/schemas/ConfigChangedEvent'
         sensor_run.created: '#/components/schemas/SensorRunCreatedEvent'
         sensor_run.updated: '#/components/schemas/SensorRunUpdatedEvent'
@@ -432,7 +433,8 @@ paths:
       description: |
         Starts a poll outside the schedule and returns the new SensorRun immediately. Follow it with
         `GET /api/sensor-runs/{id}?wait=30s`. 409 `invalid-state` when a poll of this sensor is already running;
-        423 `paused` while the kill switch is engaged.
+        423 `paused` while the kill switch is engaged. A sensor that was paused individually
+        (`POST /api/sensors/{id}/pause`) can still be polled this way: only the scheduler honours that pause.
       x-hal-service: admin
       x-hal-paused: reject
       responses:
@@ -449,6 +451,118 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/pause:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    post:
+      operationId: pauseSensor
+      tags: [sensors]
+      summary: Pause a sensor
+      description: |
+        Stops the scheduler polling this sensor until `POST /api/sensors/{id}/resume`. The state is operational, not
+        part of the sensor YAML: it is stored in the database, survives daemon restarts, and records who paused the
+        sensor and when (`status.paused_at`, `status.paused_by`). While paused, `status.state` is `paused` and
+        `status.next_poll_at` is `null`. A poll that is already running finishes.
+
+        Explicit actions are not affected: `POST /api/sensors/{id}/poll` ("Poll now") and `POST /api/events`
+        (injection) work while a sensor is paused. Idempotent: pausing a paused sensor changes nothing and keeps the
+        original `paused_at` and `paused_by`. Independent of the kill switch, which pauses every sensor.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: The sensor, now paused.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/resume:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    post:
+      operationId: resumeSensor
+      tags: [sensors]
+      summary: Resume a sensor
+      description: |
+        Lets the scheduler poll the sensor again. Its schedule starts over, as after a daemon restart: an interval
+        sensor that is overdue polls at once, a cron sensor waits for its next match. Idempotent: resuming a sensor
+        that is not paused changes nothing.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: The sensor, no longer paused.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorSummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/env:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    get:
+      operationId: listSensorEnv
+      tags: [sensors]
+      summary: Environment key names of a sensor
+      description: |
+        Names from the sensor's own env file (`env.d/sensors/<id>.env`) only. Values are write-only and never returned
+        by any endpoint. `overrides_global` tells whether the key also exists in the global `env` file, whose value
+        the sensor's own value then replaces for this sensor's polls.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Key names, sorted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorEnvKeyList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/env/{key}:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+      - {$ref: '#/components/parameters/EnvKey'}
+    put:
+      operationId: setSensorEnv
+      tags: [sensors]
+      summary: Set an environment value on a sensor
+      description: |
+        Creates or replaces the key in the sensor's own env file. The file is not part of the sensor YAML and is
+        git-ignored. The value is injected into this sensor's poll process on top of the global env (the sensor's value
+        wins) and redacted, like every global env value, from stored output. Takes effect on the next poll.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnvSetRequest'}
+      responses:
+        '204': {description: Stored.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteSensorEnv
+      tags: [sensors]
+      summary: Remove an environment key from a sensor
+      x-hal-service: admin
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
   /api/sensors/{id}/runs:
     parameters:
@@ -535,7 +649,8 @@ paths:
       description: |
         The body is the item JSON, any JSON value. The item goes through the sensor's `key` template, dedup, and flow
         fan-out exactly like a polled item. 201 with the new event; 200 with `deduplicated: true` when the key was seen
-        before (nothing is created). Injection is accepted while paused and the resulting runs stay `queued`.
+        before (nothing is created). Injection is accepted while paused and the resulting runs stay `queued`. It is also accepted for a sensor that was
+        paused individually (`POST /api/sensors/{id}/pause`); only the scheduler honours that pause.
       x-hal-service: admin
       x-hal-paused: queue
       parameters:
@@ -2535,17 +2650,22 @@ components:
     # ---------------------------------------------------------------- file resources (sensors, flows, prompts)
     SensorStatus:
       type: object
-      required: [state, last_run, last_success_at, next_poll_at, new_items_24h]
+      required: [state, paused, paused_at, paused_by, last_run, last_success_at, next_poll_at, new_items_24h]
       properties:
+        paused:
+          type: boolean
+          description: 'This sensor was paused with `POST /api/sensors/{id}/pause`. Independent of the kill switch: `state` is `paused` for either, `paused` is true only for this one.'
+        paused_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        paused_by: {type: [string, 'null'], description: 'Principal that paused the sensor; null when it is not paused.'}
         state:
           type: string
           enum: [idle, running, failing, paused, invalid]
-          description: '`failing` when the last poll failed; `paused` while the kill switch is engaged; `invalid` when the file has errors.'
+          description: '`failing` when the last poll failed; `paused` while the kill switch is engaged or this sensor is paused (`paused`); `invalid` when the file has errors.'
         last_run: {oneOf: [{$ref: '#/components/schemas/SensorRun'}, {type: 'null'}]}
         last_success_at: {$ref: '#/components/schemas/NullableTimestamp'}
         next_poll_at:
           $ref: '#/components/schemas/NullableTimestamp'
-          description: 'When the scheduler polls next. `null` while paused, when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works).'
+          description: 'When the scheduler polls next. `null` while paused (kill switch or this sensor), when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works).'
         new_items_24h: {type: integer, minimum: 0}
     SensorSummary:
       type: object
@@ -2851,6 +2971,18 @@ components:
             required: [key]
             properties:
               key: {$ref: '#/components/schemas/EnvKeyName'}
+    SensorEnvKeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [key, overrides_global]
+            properties:
+              key: {$ref: '#/components/schemas/EnvKeyName'}
+              overrides_global: {type: boolean, description: 'The global `env` file has the same key; this sensor sees its own value.'}
     EnvSetRequest:
       type: object
       additionalProperties: false
@@ -3447,13 +3579,15 @@ components:
       description: |
         Value of the SSE `event:` field and of `StreamEvent.type`.
         `stream.ready` and `stream.resync` are control messages and always delivered.
-        `status.changed`, `killswitch.changed`, and `config.changed` carry daemon-wide state.
+        `status.changed`, `killswitch.changed`, and `config.changed` carry daemon-wide state; `sensor.changed` carries one
+        sensor's status.
         The rest announce that a record was created (`.created`, `.appended`) or changed (`.updated`).
       enum:
         - stream.ready
         - stream.resync
         - status.changed
         - killswitch.changed
+        - sensor.changed
         - config.changed
         - sensor_run.created
         - sensor_run.updated
@@ -3490,6 +3624,7 @@ components:
         - {$ref: '#/components/schemas/StreamResyncEvent'}
         - {$ref: '#/components/schemas/StatusChangedEvent'}
         - {$ref: '#/components/schemas/KillSwitchChangedEvent'}
+        - {$ref: '#/components/schemas/SensorChangedEvent'}
         - {$ref: '#/components/schemas/ConfigChangedEvent'}
         - {$ref: '#/components/schemas/SensorRunCreatedEvent'}
         - {$ref: '#/components/schemas/SensorRunUpdatedEvent'}
@@ -3515,6 +3650,7 @@ components:
           stream.resync: '#/components/schemas/StreamResyncEvent'
           status.changed: '#/components/schemas/StatusChangedEvent'
           killswitch.changed: '#/components/schemas/KillSwitchChangedEvent'
+          sensor.changed: '#/components/schemas/SensorChangedEvent'
           config.changed: '#/components/schemas/ConfigChangedEvent'
           sensor_run.created: '#/components/schemas/SensorRunCreatedEvent'
           sensor_run.updated: '#/components/schemas/SensorRunUpdatedEvent'
@@ -3550,10 +3686,16 @@ components:
       description: A file under the home dir changed on disk or through the API (hot reload).
       required: [kind, id, hash, deleted]
       properties:
-        kind: {type: string, enum: [sensor, flow, prompt, settings, env]}
-        id: {type: [string, 'null'], description: 'Sensor id, flow id, or prompt name; null for settings and env.'}
+        kind: {type: string, enum: [sensor, flow, prompt, settings, env, sensor_env]}
+        id: {type: [string, 'null'], description: 'Sensor id, flow id, or prompt name; for `sensor_env` the sensor id; null for settings and env.'}
         hash: {$ref: '#/components/schemas/NullableHash'}
         deleted: {type: boolean}
+    SensorChange:
+      type: object
+      required: [id, status]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        status: {$ref: '#/components/schemas/SensorStatus'}
     StreamReadyEvent:
       description: First message on every connection. `data` is `StreamReady`.
       allOf:
@@ -3586,8 +3728,18 @@ components:
           properties:
             type: {enum: [killswitch.changed]}
             data: {$ref: '#/components/schemas/KillSwitch'}
+    SensorChangedEvent:
+      description: |
+        A sensor's status changed: it was paused or resumed, or a poll recorded its outcome. `data` is
+        `SensorChange`. Filterable with `sensor_id`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [sensor.changed]}
+            data: {$ref: '#/components/schemas/SensorChange'}
     ConfigChangedEvent:
-      description: A sensor, flow, prompt, settings, or env file changed. `data` is `ConfigChange`.
+      description: A sensor, flow, prompt, settings, env, or sensor env file changed. `data` is `ConfigChange`.
       allOf:
         - {$ref: '#/components/schemas/StreamEnvelope'}
         - type: object

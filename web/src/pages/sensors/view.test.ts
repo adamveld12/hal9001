@@ -3,6 +3,7 @@ import { ApiError, type Problem } from "../../api/client";
 import type { SensorRun, SensorSummary } from "../../api/sensors";
 import {
   isFailedRun,
+  pauseErrorMessage,
   pollErrorMessage,
   scheduleLabel,
   sensorRow,
@@ -41,6 +42,9 @@ function summary(over: Partial<SensorSummary>): SensorSummary {
     diagnostics: [],
     status: {
       state: "idle",
+      paused: false,
+      paused_at: null,
+      paused_by: null,
       last_run: run({}),
       last_success_at: "2026-11-05T10:00:02Z",
       next_poll_at: "2026-11-05T10:02:00Z",
@@ -83,6 +87,9 @@ describe("sensorRow", () => {
         ],
         status: {
           state: "failing",
+          paused: false,
+          paused_at: null,
+          paused_by: null,
           last_run: run({ status: "failed", error: "exit_nonzero" }),
           last_success_at: null,
           next_poll_at: null,
@@ -99,6 +106,9 @@ describe("sensorRow", () => {
         sensor: null,
         status: {
           state: "invalid",
+          paused: false,
+          paused_at: null,
+          paused_by: null,
           last_run: null,
           last_success_at: null,
           next_poll_at: null,
@@ -109,6 +119,54 @@ describe("sensorRow", () => {
     expect(row.lastPollAt).toBeNull();
     expect(row.schedule).toBe("–");
     expect(sensorStateTone(row.state)).toBe("bad");
+  });
+});
+
+describe("paused sensors", () => {
+  const paused = summary({
+    status: {
+      state: "paused",
+      paused: true,
+      paused_at: "2026-11-05T10:00:00Z",
+      paused_by: "adam",
+      last_run: run({}),
+      last_success_at: "2026-11-05T10:00:02Z",
+      next_poll_at: null,
+      new_items_24h: 0,
+    },
+  });
+
+  it("marks a sensor paused on its own and says who paused it and that Poll now still works", () => {
+    const row = sensorRow(paused);
+    expect(row.paused).toBe(true);
+    expect(row.pausedTitle).toMatch(/Paused by adam on /);
+    expect(row.pausedTitle).toMatch(/Poll now still works/);
+  });
+
+  it("does not call a sensor held by the kill switch paused (resume would do nothing)", () => {
+    const held = summary({
+      status: {
+        ...paused.status,
+        paused: false,
+        paused_at: null,
+        paused_by: null,
+      },
+    });
+    const row = sensorRow(held);
+    expect(row.state).toBe("paused");
+    expect(row.paused).toBe(false);
+    expect(row.pausedTitle).toBeNull();
+  });
+});
+
+describe("pauseErrorMessage", () => {
+  it("names the action that failed", () => {
+    expect(pauseErrorMessage(new Error("boom"), false)).toMatch(
+      /pause the sensor/,
+    );
+    expect(pauseErrorMessage(new Error("boom"), true)).toMatch(
+      /resume the sensor/,
+    );
   });
 });
 

@@ -32,6 +32,7 @@ const PATHS = {
   archive: "M4 5h16v4H4zM6 9v10h12V9M10 13h4",
   external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
   stop: "M6 6h12v12H6z",
+  pause: "M8 5v14M16 5v14",
   refresh: "M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 005.6 8M5.5 15a7 7 0 0012.9 1",
   save: "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6",
 } as const;

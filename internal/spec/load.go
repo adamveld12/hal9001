@@ -35,11 +35,14 @@ type Workspace struct {
 	Home string `json:"home"`
 	// Config.Value is never nil; a missing or unparsable config.yaml yields the
 	// defaults plus diagnostics.
-	Config  File[Config]    `json:"config"`
-	Env     File[Env]       `json:"env"`
-	Sensors []*File[Sensor] `json:"sensors"`
-	Flows   []*File[Flow]   `json:"flows"`
-	Prompts []*File[Prompt] `json:"prompts"`
+	Config File[Config] `json:"config"`
+	Env    File[Env]    `json:"env"`
+	// SensorEnv are the per-sensor env files (env.d/sensors/<id>.env); Name is
+	// the sensor id. A file does not need a matching sensor to be loaded.
+	SensorEnv []*File[Env]    `json:"sensor_env"`
+	Sensors   []*File[Sensor] `json:"sensors"`
+	Flows     []*File[Flow]   `json:"flows"`
+	Prompts   []*File[Prompt] `json:"prompts"`
 	// Diagnostics are findings not tied to one file, such as an unreadable
 	// directory.
 	Diagnostics []Diagnostic `json:"diagnostics"`
@@ -97,6 +100,9 @@ func (w *Workspace) AllDiagnostics() []Diagnostic {
 	out := append([]Diagnostic(nil), w.Diagnostics...)
 	out = append(out, w.Config.Diagnostics...)
 	out = append(out, w.Env.Diagnostics...)
+	for _, f := range w.SensorEnv {
+		out = append(out, f.Diagnostics...)
+	}
 	for _, f := range w.Sensors {
 		out = append(out, f.Diagnostics...)
 	}
@@ -115,6 +121,7 @@ func Load(home string) *Workspace {
 	w := &Workspace{Home: home}
 	w.loadConfig()
 	w.loadEnv()
+	w.loadSensorEnv()
 
 	sensorNames := w.listDir(DirSensors, ".yaml")
 	flowNames := w.listDir(DirFlows, ".yaml")
@@ -200,6 +207,27 @@ func (w *Workspace) loadEnv() {
 	}
 	w.Env = f
 }
+
+// loadSensorEnv reads every env.d/sensors/<id>.env.
+func (w *Workspace) loadSensorEnv() {
+	for _, n := range w.listDir(DirSensorEnv, ".env") {
+		rel := KindSensorEnv.Rel(n)
+		f := &File[Env]{Name: n, Path: rel}
+		b, err := os.ReadFile(KindSensorEnv.Path(w.Home, n)) //nolint:gosec // name comes from a directory listing under home
+		if err != nil {
+			f.Value = &Env{Vars: map[string]string{}}
+			f.Diagnostics = []Diagnostic{{File: rel, Severity: SeverityError, Code: CodeReadError, Message: err.Error()}}
+		} else {
+			f.Raw, f.Hash = b, Hash(b)
+			f.Value, f.Diagnostics = ParseEnv(b)
+			f.Diagnostics = withFile(rel, f.Diagnostics)
+		}
+		w.SensorEnv = append(w.SensorEnv, f)
+	}
+}
+
+// SensorEnvFor returns the per-sensor env file of a sensor, or nil.
+func (w *Workspace) SensorEnvFor(id string) *File[Env] { return find(w.SensorEnv, id) }
 
 // listDir returns the stems of the regular files in dir with extension ext,
 // sorted. Hidden files, editor backups and directories are skipped silently;

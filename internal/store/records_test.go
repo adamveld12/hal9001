@@ -383,6 +383,53 @@ func TestInboxFlagsFilterAndLinks(t *testing.T) {
 	}
 }
 
+func TestSensorPauseIsIdempotentAndKeptAcrossPolls(t *testing.T) {
+	s, clk := newTestStore(t)
+
+	st, err := s.SetSensorPaused(ctx(), "gh", true, "adam")
+	must(t, err)
+	at := st.PausedAt
+	if at == nil || st.PausedBy != "adam" {
+		t.Fatalf("paused state = %+v", st)
+	}
+	clk.Advance(time.Minute)
+	st, err = s.SetSensorPaused(ctx(), "gh", true, "someone-else")
+	must(t, err)
+	if st.PausedAt == nil || !st.PausedAt.Equal(*at) || st.PausedBy != "adam" {
+		t.Errorf("pausing twice changed who or when: %+v", st)
+	}
+
+	// A poll outcome (manual polls work while paused) does not resume the sensor.
+	must(t, s.RecordSensorOutcome(ctx(), "gh", "r1", clk.Now(), true, ""))
+	st, err = s.GetSensorState(ctx(), "gh")
+	must(t, err)
+	if st.PausedAt == nil || st.LastSuccessAt == nil {
+		t.Errorf("outcome lost the pause or was not recorded: %+v", st)
+	}
+
+	path := s.Path()
+	must(t, s.Close())
+	s2, err := Open(path, WithClock(clk.Now))
+	must(t, err)
+	defer func() { _ = s2.Close() }()
+	st, err = s2.GetSensorState(ctx(), "gh")
+	must(t, err)
+	if st.PausedAt == nil || st.PausedBy != "adam" {
+		t.Errorf("pause did not survive a reopen: %+v", st)
+	}
+
+	st, err = s2.SetSensorPaused(ctx(), "gh", false, "")
+	must(t, err)
+	if st.PausedAt != nil || st.PausedBy != "" || st.LastSuccessAt == nil {
+		t.Errorf("resume: %+v", st)
+	}
+	st, err = s2.SetSensorPaused(ctx(), "never-polled", false, "")
+	must(t, err)
+	if st.PausedAt != nil {
+		t.Errorf("resuming an unknown sensor paused it: %+v", st)
+	}
+}
+
 func TestSensorRunsStateAndKillSwitch(t *testing.T) {
 	s, clk := newTestStore(t)
 
