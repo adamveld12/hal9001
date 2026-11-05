@@ -490,8 +490,8 @@ export interface paths {
     /**
      * Replace a flow
      * @description Send `expected_hash` and either `yaml` or `flow`. 409 `conflict` when the file changed since that hash, 422
-     *     when validation reports errors. Saving a changed flow creates a new version snapshot; runs already in progress
-     *     keep the version they started with.
+     *     when validation reports errors. A version snapshot is recorded the first time a run uses the new content; runs
+     *     already in progress keep the version they started with.
      */
     put: operations["updateFlow"];
     post?: never;
@@ -543,7 +543,7 @@ export interface paths {
     };
     /**
      * Snapshots of a flow
-     * @description Every distinct version that was saved or loaded, newest first. Works for deleted flows while their runs exist.
+     * @description Every distinct version that a run has used (snapshotted when the run starts), newest first. Works for deleted flows while their runs exist.
      */
     get: operations["listFlowVersions"];
     put?: never;

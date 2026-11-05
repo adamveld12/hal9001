@@ -29,3 +29,7 @@ run = [
   "pnpm --dir web build",
   "go build -tags embedui -ldflags \"-X main.version=$(git describe --always --dirty)\" -o bin/hal9001 ./cmd/hal9001",
 ]
+
+[tasks.e2e]
+description = "API-driven end-to-end suite (real daemon, fake ACP agent), with -race"
+run = "go test -race -count=1 ./e2e/..."
