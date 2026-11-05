@@ -32,8 +32,11 @@ func (e *ValidationError) Error() string { return "validation failed" }
 
 // InjectResult is the outcome of POST /api/events.
 type InjectResult struct {
-	Event      *store.Event // nil when Duplicate
+	// Event is the created event, or when Duplicate the event that already
+	// holds the key. It is nil only when that event was pruned.
+	Event      *store.Event
 	Duplicate  bool
+	DedupKey   string   // the key the item rendered to
 	FlowRunIDs []string // flow runs created by fan-out (queued)
 }
 

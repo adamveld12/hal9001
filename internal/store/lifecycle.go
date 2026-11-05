@@ -143,7 +143,8 @@ type Counts struct {
 	UnreadInbox      int `json:"unread_inbox"`
 }
 
-// Counts returns the header counters. Test runs are excluded from flow run counts.
+// Counts returns the header counters. Test runs are excluded from flow run counts;
+// UnreadInbox excludes archived and dry-run items.
 func (s *Store) Counts(ctx context.Context) (Counts, error) {
 	var c Counts
 	err := s.rdb.QueryRowContext(ctx, `SELECT
@@ -155,7 +156,7 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		(SELECT COUNT(*) FROM agent_runs WHERE status='queued'),
 		(SELECT COUNT(*) FROM agent_runs WHERE status='running'),
 		(SELECT COUNT(*) FROM approvals WHERE status='pending'),
-		(SELECT COUNT(*) FROM inbox_items WHERE is_read=0 AND archived=0)`).
+		(SELECT COUNT(*) FROM inbox_items WHERE is_read=0 AND archived=0 AND dry_run=0)`).
 		Scan(&c.FlowRunsQueued, &c.FlowRunsRunning, &c.FlowRunsAwaiting, &c.NodeRunsQueued, &c.NodeRunsRunning,
 			&c.AgentRunsQueued, &c.AgentRunsRunning, &c.PendingApprovals, &c.UnreadInbox)
 	if err != nil {
