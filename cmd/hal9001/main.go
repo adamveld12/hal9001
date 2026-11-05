@@ -1,18 +1,16 @@
-// Command hal9001 is the hal9001 daemon and CLI.
+// Command hal9001 is the hal9001 daemon and its command line.
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+
+	"hal9001/internal/cli"
 )
 
+// version is set at build time: -ldflags "-X main.version=1.2.3".
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println(version)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "usage: hal9001 version")
-	os.Exit(2)
+	os.Exit(cli.Run(context.Background(), os.Args[1:], cli.Env{Version: version}))
 }
