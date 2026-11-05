@@ -224,6 +224,7 @@ func (m *Manager) deny(w http.ResponseWriter, svc Service, status int) {
 		p.Detail = fmt.Sprintf("your session does not grant service %q", svc)
 	} else {
 		w.Header().Set("WWW-Authenticate", `Cookie realm="hal9001"`)
+		p.Extensions["next_step"] = map[string]string{"method": "POST", "href": "/api/auth/" + string(svc) + "/begin"}
 	}
 	httpsec.WriteProblem(w, p)
 }

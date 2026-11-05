@@ -40,6 +40,9 @@ func TestWithoutLocalhostTrustCurlGets401AndPasswordLoginYieldsWorkingSession(t 
 	if p["type"] != "urn:hal9001:problem:unauthenticated" || p["service"] != "api" {
 		t.Errorf("problem = %v", p)
 	}
+	if ns, _ := p["next_step"].(map[string]any); ns["method"] != "POST" || ns["href"] != "/api/auth/api/begin" {
+		t.Errorf("next_step = %v", p["next_step"])
+	}
 	if m, _ := p["methods"].([]any); len(m) != 2 || m[0] != "webauthn" || m[1] != "password" {
 		t.Errorf("methods = %v, want [webauthn password]", p["methods"])
 	}
