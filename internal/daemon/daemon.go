@@ -169,6 +169,15 @@ func Run(ctx context.Context, opts Options) error {
 		Workspace: d.workspace, Reload: d.reload,
 		Version: opts.Version, UI: ui, Log: log,
 	})
+	// The API server announces on-disk edits to SSE clients and owns the
+	// stream hub, which must be closed on shutdown.
+	apiServer, _ := apiHandler.(interface {
+		PublishConfigChange(paths []string)
+		Close()
+	})
+	if apiServer != nil {
+		defer apiServer.Close()
+	}
 	handler := httpsec.Middleware(httpsec.Options{
 		Port:         port,
 		AllowedHosts: func() []string { return d.workspace().Config.Value.AllowedHosts },
@@ -197,6 +206,9 @@ func Run(ctx context.Context, opts Options) error {
 		for rl := range changes {
 			log.Info("config changed; reloading", "paths", rl.Paths)
 			d.reload()
+			if apiServer != nil {
+				apiServer.PublishConfigChange(rl.Paths)
+			}
 		}
 	}()
 

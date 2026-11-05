@@ -1,5 +1,3 @@
-//go:build integrated
-
 package daemon_test
 
 import (

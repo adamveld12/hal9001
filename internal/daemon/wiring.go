@@ -22,7 +22,7 @@ type runtimeEngine interface {
 	Stop(ctx context.Context) error
 }
 
-// engineParams are the inputs of engine.New (see wiring_integrated.go).
+// engineParams are the inputs of engine.New (see wiring_engine.go).
 type engineParams struct {
 	Store     *store.Store
 	Home      string
@@ -32,7 +32,7 @@ type engineParams struct {
 	UIBaseURL string
 }
 
-// apiParams are the inputs of api.New (see wiring_integrated.go).
+// apiParams are the inputs of api.New (see wiring_engine.go).
 type apiParams struct {
 	Store     *store.Store
 	Home      string
