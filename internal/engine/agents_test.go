@@ -257,8 +257,8 @@ func TestScenario7aPerToolAllow(t *testing.T) {
 	if ap.ExpiresAt == nil {
 		t.Error("tool approval has no expiry")
 	}
-	notes := h.notes.kind("approval")
-	if len(notes) != 1 || notes[0].URL != uiBase+"/approvals/"+ap.ID {
+	h.eventually("the approval notification", func() bool { return len(h.notes.kind("approval")) == 1 })
+	if notes := h.notes.kind("approval"); notes[0].URL != uiBase+"/approvals/"+ap.ID {
 		t.Errorf("notifications: %+v", notes)
 	}
 	if _, err := os.Stat(h.stateFile("work", "note.txt")); err == nil {

@@ -35,7 +35,10 @@ func TestScenario2PollDedupAndRetrigger(t *testing.T) {
 	h.start()
 
 	// The scheduler polls an overdue interval sensor at start; wait for it.
-	h.eventually("scheduled first poll", func() bool { return len(h.events("src")) == 3 })
+	h.eventually("scheduled first poll", func() bool {
+		st, _ := h.st.GetSensorState(t.Context(), "src")
+		return len(h.events("src")) == 3 && st.LastSuccessAt != nil
+	})
 
 	run, err := h.eng.PollSensor(t.Context(), "src")
 	if err != nil {
