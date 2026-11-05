@@ -257,13 +257,24 @@ One Go ACP client (`github.com/coder/acp-go-sdk`) over stdio. A runtime is just 
 
 ```yaml
 # config.yaml
-runtimes:
-  claude: {command: [claude-agent-acp], modes: {ask: default, full: bypassPermissions}}
-  codex:  {command: [codex-acp],        modes: {ask: read-only, full: full-access}}
-  omp:    {command: [omp, acp],         modes: {ask: TBD, full: TBD}}
+runtimes:   # results of the ACP gate (docs/acp-gate.md); full block in content/config.yaml
+  claude:
+    command: [claude-agent-acp]
+    modes: {ask: default, full: bypassPermissions}
+    session_meta: {claudeCode: {options: {settingSources: [project]}}}   # user allow rules must not bypass the harness
+  codex:
+    command: [codex-acp]
+    modes: {ask: read-only, full: agent-full-access}
+    env: {CODEX_HOME: "{{data}}/runtimes/codex-home"}                     # isolated home, auth.json symlinked
+  omp:
+    command: [omp, acp]
+    ask:  {args: [--approval-mode, always-ask]}                           # approval is a process flag, not a session mode
+    full: {args: [--approval-mode, yolo]}
+    env: {PI_CODING_AGENT_DIR: "{{data}}/runtimes/omp-home"}
+    elicitation: true                                                     # edit/MCP approvals arrive as elicitation/create
 ```
 
-Adapters are installed globally at pinned versions (not run through `npx`) so startup is fast and versions don't drift. The mode names above are placeholders until the gate in §13 confirms the real ones.
+Adapters are pinned in `mise.toml` (`npm:@agentclientprotocol/claude-agent-acp` 0.100.0, `npm:@agentclientprotocol/codex-acp` 2.5.0) so startup is fast and versions don't drift; omp is the Homebrew install. Gate findings that shape behavior: all three support `session/load`; model is set via `session/set_config_option` (`model`); Codex's only reject option cancels the turn, so per-tool "deny and continue" works on Claude and omp only; the client only ever picks one-shot allow options (never `allow_always` / exec-policy amendments).
 
 Session lifecycle per agent NodeRun:
 1. Spawn the runtime command in the run cwd; `initialize`. Record agent info and capabilities. The client advertises **no** `fs` or `terminal` capabilities in v1, so agents use their own tools.
