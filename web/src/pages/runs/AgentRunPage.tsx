@@ -115,9 +115,6 @@ export function AgentRunPage() {
           <>
             {run.runtime}
             {run.flow_id ? ` · ${run.flow_id} / ${run.node_id}` : ""}
-            {run.assist_session_id
-              ? ` · assist session ${shortId(run.assist_session_id)}`
-              : ""}
           </>
         }
         actions={
@@ -125,6 +122,11 @@ export function AgentRunPage() {
             {flowRunPath && run.flow_run_id && (
               <TextLink to={flowRunPath}>
                 Flow run <Mono>{shortId(run.flow_run_id)}</Mono>
+              </TextLink>
+            )}
+            {run.assist_session_id && (
+              <TextLink to={`/sensors?assist=${run.assist_session_id}`}>
+                Assist session <Mono>{shortId(run.assist_session_id)}</Mono>
               </TextLink>
             )}
             {run.raw_size > 0 ? (

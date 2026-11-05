@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, errorMessage } from "../../api/client";
 import {
   useDeleteSensor,
@@ -18,6 +18,11 @@ import {
   LoadingState,
   Panel,
 } from "../../components/ui";
+import { useAssistPage } from "../assist/context";
+import { DraftBanners } from "../assist/DraftBanners";
+import { pickChecked } from "../assist/draftSync";
+import { useBoundSession, useDraftSync } from "../assist/useDraftSync";
+import { useTestDraft } from "../assist/useTestDraft";
 import { ConfirmButton } from "../files/ConfirmButton";
 import { ConflictBanner } from "../files/ConflictBanner";
 import {
@@ -64,6 +69,28 @@ function Editor({
   const [checked, setChecked] = useState<Checked | null>(null);
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const runsPanel = useRef<HTMLDivElement>(null);
+  // After Poll now, bring the new poll's result (opened in Recent polls) into view once it is on screen.
+  const showPollResult = useRef(false);
+  useEffect(() => {
+    if (!showPollResult.current || expandedRun === null) return;
+    showPollResult.current = false;
+    runsPanel.current?.scrollIntoView({ block: "start" });
+  }, [expandedRun]);
+
+  // AI assistant: while a session for this sensor is open the editor shows and feeds its draft.
+  const assist = useAssistPage();
+  const bound = useBoundSession(id);
+  const sync = useDraftSync({
+    sessionId: bound.sessionId,
+    text: state.draft,
+    setText: (v) => dispatch({ type: "edit", draft: v }),
+    dirty,
+  });
+  const test = useTestDraft(bound.sessionId);
+  const assistChecked: Checked | null = sync.draft
+    ? { text: sync.draft.yaml, diagnostics: sync.draft.diagnostics }
+    : null;
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
@@ -71,7 +98,7 @@ function Editor({
   const shown = visibleDiagnostics(
     state.draft,
     { text: detail.yaml, diagnostics: detail.diagnostics },
-    checked,
+    pickChecked(state.draft, checked, assistChecked),
   );
   const busy = update.isPending || del.isPending;
 
@@ -152,7 +179,12 @@ function Editor({
             icon="play"
             disabled={poll.isPending || status.state === "invalid"}
             onClick={() =>
-              poll.mutate(id, { onSuccess: (run) => setExpandedRun(run.id) })
+              poll.mutate(id, {
+                onSuccess: (run) => {
+                  setExpandedRun(run.id);
+                  showPollResult.current = true;
+                },
+              })
             }
           >
             {poll.isPending ? "Starting…" : "Poll now"}
@@ -238,6 +270,23 @@ function Editor({
           <>
             {notice && !dirty && <span className="text-ok">{notice}</span>}
             {dirty && <Badge tone="warn">unsaved</Badge>}
+            {bound.sessionId !== null && (
+              <Button
+                icon="play"
+                disabled={test.isPending}
+                onClick={() => void test.run()}
+              >
+                {test.isPending ? "Testing…" : "Test draft"}
+              </Button>
+            )}
+            <Button
+              icon="agent"
+              disabled={assist.param !== null}
+              title="Chat with an AI agent that edits this sensor's draft"
+              onClick={assist.open}
+            >
+              Ask AI
+            </Button>
             <Button
               disabled={validate.isPending}
               onClick={() => {
@@ -262,12 +311,20 @@ function Editor({
         }
       >
         <div className="space-y-3">
+          <DraftBanners
+            pending={sync.pending}
+            markedLines={sync.marks}
+            onTakeAi={sync.takeAi}
+            onKeepMine={sync.keepMine}
+            onClearMarks={sync.clearMarks}
+          />
           <CodeEditor
             lang="yaml"
             label={`Sensor ${id} YAML`}
             value={state.draft}
             onChange={(v) => dispatch({ type: "edit", draft: v })}
             invalid={!shown.stale && hasErrors(shown.diagnostics)}
+            markedLines={sync.marks}
             minHeight="12rem"
             maxHeight="32rem"
           />
@@ -279,6 +336,11 @@ function Editor({
           {deleteError && (
             <div role="alert" className="text-xs text-bad">
               {deleteError}
+            </div>
+          )}
+          {test.error && (
+            <div role="alert" className="text-xs text-bad">
+              {test.error.message}
             </div>
           )}
           {validate.isError && (
@@ -301,15 +363,17 @@ function Editor({
 
       <SensorEnvSection sensorId={id} />
 
-      <Panel title="Recent polls" className="overflow-hidden">
-        <div className="-m-3">
-          <SensorRuns
-            sensorId={id}
-            expandedId={expandedRun}
-            onToggle={(r) => setExpandedRun((cur) => (cur === r ? null : r))}
-          />
-        </div>
-      </Panel>
+      <div ref={runsPanel}>
+        <Panel title="Recent polls" className="overflow-hidden">
+          <div className="-m-3">
+            <SensorRuns
+              sensorId={id}
+              expandedId={expandedRun}
+              onToggle={(r) => setExpandedRun((cur) => (cur === r ? null : r))}
+            />
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }

@@ -43,7 +43,8 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "inbox.created": ["inbox", "inbox-item"],
   "inbox.updated": ["inbox", "inbox-item"],
   "auth_event.created": ["auth-events", "auth-sessions"],
-  "assist.updated": [],
+  // The open session is updated in place from the event (pages/assist/useAssistLive.ts); only the lists refetch.
+  "assist.updated": ["assist-sessions"],
   "assist.message": [],
 };
 

@@ -2,6 +2,7 @@ import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  Ref,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
@@ -250,7 +251,10 @@ export function TextArea({
   invalid,
   className,
   ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  invalid?: boolean;
+  ref?: Ref<HTMLTextAreaElement>;
+}) {
   return (
     <textarea
       className={cx(

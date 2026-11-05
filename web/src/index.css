@@ -136,3 +136,23 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
+
+/* Assist drawer slides in from the right. */
+@keyframes assist-slide-in {
+  from {
+    transform: translateX(1.5rem);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.assist-drawer {
+  animation: assist-slide-in 160ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .assist-drawer {
+    animation: none;
+  }
+}

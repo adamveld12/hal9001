@@ -50,7 +50,7 @@ function Row({
           <span>{a.permission_request.tool_kind}</span>
         )}
         <span className="truncate">
-          {a.flow_id} / {a.node_id}
+          {a.flow_id !== null ? `${a.flow_id} / ${a.node_id}` : "sensor assist"}
         </span>
         {pending && !a.expires_at && <Time ts={a.created_at} />}
       </div>
