@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+
+	"hal9001/internal/transform"
 )
 
 type flowDef struct {
@@ -23,21 +25,22 @@ type flowDef struct {
 }
 
 type nodeDef struct {
-	ID       string         `yaml:"id"`
-	Type     string         `yaml:"type"`
-	Lang     string         `yaml:"lang"`
-	Script   string         `yaml:"script"`
-	Ports    []string       `yaml:"ports"`
-	Runtime  string         `yaml:"runtime"`
-	Mode     string         `yaml:"mode"`
-	Prompt   string         `yaml:"prompt"`
-	Timeout  string         `yaml:"timeout"`
-	Title    string         `yaml:"title"`
-	Priority string         `yaml:"priority"`
-	Summary  string         `yaml:"summary_md"`
-	Cwd      map[string]any `yaml:"cwd"`
-	Allow    map[string]any `yaml:"allow"`
-	UI       map[string]any `yaml:"ui"`
+	ID       string           `yaml:"id"`
+	Type     string           `yaml:"type"`
+	Lang     string           `yaml:"lang"`
+	Script   string           `yaml:"script"`
+	Steps    []transform.Step `yaml:"steps"`
+	Ports    []string         `yaml:"ports"`
+	Runtime  string           `yaml:"runtime"`
+	Mode     string           `yaml:"mode"`
+	Prompt   string           `yaml:"prompt"`
+	Timeout  string           `yaml:"timeout"`
+	Title    string           `yaml:"title"`
+	Priority string           `yaml:"priority"`
+	Summary  string           `yaml:"summary_md"`
+	Cwd      map[string]any   `yaml:"cwd"`
+	Allow    map[string]any   `yaml:"allow"`
+	UI       map[string]any   `yaml:"ui"`
 }
 
 type edgeDef struct {
@@ -216,14 +219,18 @@ func TestFlowsAreConsistent(t *testing.T) {
 				continue
 			}
 			incoming[e.To] = true
+			declared := from.Ports
+			if from.Type == "transform" {
+				declared = transform.Ports(from.Steps)
+			}
 			switch {
 			case e.Port == "":
-				if len(from.Ports) > 0 {
+				if from.Type != "transform" && len(from.Ports) > 0 {
 					t.Errorf("%s: node %s declares ports, edge %+v must name one", id, from.ID, e)
 				}
 			case e.Port != "error" && e.Port != "denied":
 				found := false
-				for _, p := range from.Ports {
+				for _, p := range declared {
 					found = found || p == e.Port
 				}
 				if !found {
@@ -300,15 +307,28 @@ func node(t *testing.T, flow, id string) nodeDef {
 	return nodeDef{}
 }
 
+// compiled returns the jq a transform node's steps compile to.
+func compiled(t *testing.T, flow, id string) string {
+	t.Helper()
+	n := node(t, flow, id)
+	if n.Type != "transform" {
+		t.Fatalf("%s/%s is a %s node, want transform", flow, id, n.Type)
+	}
+	jq, err := transform.Compile(n.Steps)
+	if err != nil {
+		t.Fatalf("%s/%s: %v", flow, id, err)
+	}
+	return jq
+}
+
 func TestDemoFlowFiltersAndRoutes(t *testing.T) {
-	drop := node(t, "demo", "drop-noise").Script
-	route := node(t, "demo", "route").Script
+	drop := compiled(t, "demo", "drop-noise")
+	route := compiled(t, "demo", "route")
 	if out := jqNode(t, drop, `{"id":"3","severity":"noise"}`); out != "" {
 		t.Errorf("noise must be dropped, got %s", out)
 	}
-	kept := jqNode(t, drop, `{"id":"1","severity":"urgent"}`)
-	if !strings.Contains(kept, `"_reason"`) {
-		t.Errorf("kept item should carry a decision reason: %s", kept)
+	if out := jqNode(t, drop, `{"id":"1","severity":"urgent"}`); out != `{"id":"1","severity":"urgent"}` {
+		t.Errorf("a kept item must pass through unchanged: %s", out)
 	}
 	if out := jqNode(t, route, `{"severity":"urgent"}`); !strings.Contains(out, `"_port":"urgent"`) {
 		t.Errorf("urgent routed wrongly: %s", out)

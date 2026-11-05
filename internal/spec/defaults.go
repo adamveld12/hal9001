@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"slices"
 	"time"
+
+	"hal9001/internal/transform"
 )
 
 // DefaultAuth returns the default auth configuration (REQUIREMENTS §10.4):
@@ -192,6 +194,10 @@ func (f *Flow) ApplyDefaults() {
 			if n.Priority == "" {
 				n.Priority = PriorityNormal
 			}
+		case NodeTransform:
+			if n.Timeout == 0 {
+				n.Timeout = DefaultCommandTimeout
+			}
 		}
 	}
 	for i := range f.Edges {
@@ -202,7 +208,7 @@ func (f *Flow) ApplyDefaults() {
 }
 
 func (n Node) clone() Node {
-	n.Ports = slices.Clone(n.Ports)
+	n.Steps = transform.Clone(n.Steps)
 	n.Command = slices.Clone(n.Command)
 	n.Links = slices.Clone(n.Links)
 	n.MCPServers = slices.Clone(n.MCPServers)
@@ -261,6 +267,10 @@ func (f Flow) Minimal() Flow {
 			if n.Priority == PriorityNormal {
 				n.Priority = ""
 			}
+		case NodeTransform:
+			if n.Timeout == DefaultCommandTimeout {
+				n.Timeout = 0
+			}
 		}
 	}
 	for i := range f.Edges {
@@ -305,6 +315,8 @@ func (n *Node) OutPorts() []string {
 	switch n.Type {
 	case NodeCommand:
 		ports = slices.Clone(n.Ports)
+	case NodeTransform:
+		ports = transform.Ports(n.Steps)
 	default:
 		ports = []string{PortOut}
 	}

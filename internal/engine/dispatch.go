@@ -116,7 +116,7 @@ func (e *Engine) beginFlowRun(fr *store.FlowRun) {
 	}
 	for _, id := range entries {
 		n := flow.NodeByID(id)
-		nr := &store.NodeRun{FlowRunID: fr.ID, NodeID: id, NodeType: store.NodeType(n.Type), Stdin: store.Inline(payload)}
+		nr := &store.NodeRun{FlowRunID: fr.ID, NodeID: id, NodeType: nodeRunType(n), Stdin: store.Inline(payload)}
 		if err := e.st.CreateNodeRun(e.dbCtx, nr); err != nil {
 			e.endFlowRun(fr, store.FlowRunFailed, fmt.Sprintf("queue node %s: %v", id, err))
 			return
@@ -266,7 +266,7 @@ func (e *Engine) route(nr *store.NodeRun, flow *spec.Flow, outs []runner.Output)
 				return fmt.Errorf("edge to unknown node %q", edge.To)
 			}
 			child := &store.NodeRun{
-				FlowRunID: nr.FlowRunID, NodeID: target.ID, NodeType: store.NodeType(target.Type),
+				FlowRunID: nr.FlowRunID, NodeID: target.ID, NodeType: nodeRunType(target),
 				ParentNodeRunID: nr.ID, Stdin: store.Inline(string(out.Payload)),
 			}
 			if err := e.st.CreateNodeRun(e.dbCtx, child); err != nil {

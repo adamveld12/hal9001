@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"hal9001/internal/transform"
 )
 
 // Refs is what a file may refer to elsewhere in the home dir. A nil map means
@@ -300,9 +302,10 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 }
 
 var nodeFieldsAllowed = map[string][]string{
-	NodeCommand: {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:   {"runtime", "mode", "approve", "prompt", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers"},
-	NodeInbox:   {"title", "priority", "summary_md", "suggested_reply", "links"},
+	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers"},
+	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
+	NodeTransform: {"steps", "timeout"},
 }
 
 // setFields lists the optional node fields that are set, in struct order.
@@ -313,6 +316,7 @@ func (n *Node) setFields() []string {
 		set  bool
 	}{
 		{"lang", n.Lang != ""}, {"ports", len(n.Ports) > 0}, {"script", n.Script != ""}, {"command", len(n.Command) > 0},
+		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
 		{"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
 		{"title", n.Title != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
@@ -384,9 +388,9 @@ func validateNode(c *collector, p string, n *Node, refs *Refs) {
 	allowed, known := nodeFieldsAllowed[n.Type]
 	switch {
 	case n.Type == "":
-		c.errorf(CodeRequired, p+".type", "type is required (command | agent | inbox)")
+		c.errorf(CodeRequired, p+".type", "type is required (command | agent | inbox | transform)")
 	case !known:
-		c.errorf(CodeInvalidEnum, p+".type", "type %q is not valid (one of command | agent | inbox)", n.Type)
+		c.errorf(CodeInvalidEnum, p+".type", "type %q is not valid (one of command | agent | inbox | transform)", n.Type)
 	}
 	if !known {
 		return
@@ -406,6 +410,20 @@ func validateNode(c *collector, p string, n *Node, refs *Refs) {
 		validateAgent(c, p, n, refs)
 	case NodeInbox:
 		validateInbox(c, p, n)
+	case NodeTransform:
+		validateTransform(c, p, n)
+	}
+}
+
+// validateTransform reports the transform steps' problems with paths
+// like nodes[2].steps[1].conditions[0].value.
+func validateTransform(c *collector, p string, n *Node) {
+	for _, is := range transform.Validate(n.Steps) {
+		sev := SeverityError
+		if is.Severity == transform.SeverityWarning {
+			sev = SeverityWarning
+		}
+		c.add(sev, is.Code, p+"."+is.Path, "%s", is.Message)
 	}
 }
 

@@ -214,9 +214,10 @@ edges:
   duplicate ids and fields that do not belong to the node's type.
 - **Entry nodes** (no incoming edge) each receive the event. An edge without `port` uses `out`.
 - **Fan-out:** one port can feed several nodes; they run concurrently.
-- **Ports:** a `command` node declares `ports` (default `[out]`). Every node also has an implicit `error` port; agent
-  nodes in `approve` mode also have `denied`. `error` and `denied` cannot be declared. Inbox nodes and agent nodes emit
-  on `out`.
+- **Ports:** a `command` node declares `ports` (default `[out]`). A `transform` node's ports come from its route step
+  (see [Building flows without code](#building-flows-without-code-transform-nodes)). Every node also has an implicit
+  `error` port; agent nodes in `approve` mode also have `denied`. `error` and `denied` cannot be declared. Inbox nodes
+  and agent nodes emit on `out`.
 - **Error port:** if an edge leaves a node's `error` port, a failed node run is routed there instead of failing the
   branch, with the payload `{"input": <node input>, "error": <class>, "reason": ..., "exit_code": ..., "stderr": ...}`
   (stderr cut to 4000 characters). Test runs never route.
@@ -244,6 +245,85 @@ Helpers: `json VALUE` (compact JSON, no HTML escaping), `default DEFAULT VALUE`,
 
 A missing key is an error (`missingkey=error`), which fails the node with class `template`. Because of that, `default`
 only helps for present-but-empty values; for an optional key use `{{default "n/a" (index .input "maybe")}}`.
+
+## Building flows without code (transform nodes)
+
+A `transform` node reshapes, filters and routes items with a list of plain-language steps, so you do not have to write
+jq. In the flow editor you add steps from a menu and fill in dropdowns; a preview on a real sample item shows the result
+after every edit. The steps compile to a jq program (one `# step N: ...` comment and one line per step) that runs
+exactly like a jq `command` node: same timeout, redaction and trace (the trace records the compiled jq as the script).
+
+```yaml
+- id: triage
+  type: transform
+  steps:
+    - type: filter                       # drop anything that is not an open, non-bot item
+      conditions:
+        - {field: state, op: equals, value: open}
+        - {field: author.login, op: not_equals, value: dependabot}
+    - type: set
+      field: summary
+      value: {kind: template, template: "{title} by {author.login} ({labels[].name})"}
+    - type: aggregate                    # count the comments into comment_count
+      field: comments
+      into: comment_count
+      op: count
+    - type: pick
+      fields: [id, summary, comment_count, url]
+    - type: route                        # the last step may route to different outputs
+      default_port: normal
+      rules:
+        - port: urgent
+          match: any
+          conditions:
+            - {field: 'labels[].name', op: in, value: [p0, p1]}
+            - {field: comment_count, op: gte, value: 20}
+```
+
+The input is one JSON value (the event item, or what the upstream node emitted). Steps run in order and each one gets
+what the previous one produced.
+
+| Step | Does |
+|---|---|
+| `filter` `{match: all\|any, conditions, keep}` | Keeps items that meet the conditions (`keep: false` drops them instead). A dropped item is recorded as `dropped` with a reason in plain words, for example `Dropped by step 1: it did not meet the condition: state is "open"`. |
+| `route` `{rules: [{port, match, conditions}], default_port}` | Must be the last step. The first matching rule picks the output port; items no rule matches go to `default_port` (default `out`). |
+| `pick` `{fields, rename, flatten}` | Keeps only these fields. Nested fields stay nested (`author.login` gives `{"author": {"login": ...}}`); with `flatten` the key is `author_login`; `rename: {author.login: who}` makes a top-level `who`. Missing fields are left out. |
+| `set` `{field, value}` | Writes `field` (a dot path; nested objects are created). `value.kind` is `constant` (`value`: text, number, true/false, list), `field` (copy another field), `template` (text with `{field.path}` placeholders; `{{` and `}}` are literal braces) or `function` (`function` of `field`: `lowercase`, `uppercase`, `trim`, `length`, `join` and `split` (separator in `arg`), `first`, `last`, `to_number`, `to_string`, `default` (`arg` is the value to use when the field is missing)). |
+| `remove` `{fields}` | Deletes fields. |
+| `split` `{field, as, keep_parent}` | Turns the list at `field` (`.` means the item itself) into one output item per element. `as` wraps each element as `{as: element}`; `keep_parent` copies the other fields into every item (replacing the list, or adding `as`). An empty or missing list drops the item. |
+| `sort` `{field, by, order}`, `limit` `{field, count}`, `unique` `{field, by}` | Sort the list at `field` (by a sub-path, `asc` or `desc`), keep its first `count` elements, or remove duplicates (first occurrence wins, order kept). |
+| `aggregate` `{field, into, op, of, group_by}` | Writes a summary of the list at `field` into `into`: `count`, `sum`/`avg`/`min`/`max` of the sub-path `of` (numbers; `min`/`max` accept text such as dates), `collect` the `of` values into a list, or `group_count` by `group_by` (a list of `{value, count}`). |
+| `filter_list` `{field, match, conditions, keep}` | Keeps (or with `keep: false` removes) the elements of the list at `field` that meet the conditions, which are written relative to each element (`.` is the element itself). |
+
+A **condition** is `{field, op, value, case_sensitive}`. Operators: `equals`, `not_equals`, `contains`, `not_contains`,
+`starts_with`, `ends_with`, `matches` (a regular expression), `gt`, `gte`, `lt`, `lte` (numbers, or text such as ISO
+dates), `exists`, `not_exists`, `is_empty`, `is_not_empty`, `is_true`, `is_false`, and `in` (a list of values). The
+operators that need a value take one of the matching type; the others take none. Text operators ignore upper/lower case
+unless `case_sensitive: true`; `contains` also finds an element in a list of text. A *missing* field is never an error:
+`exists` is false, `is_empty` is true and the positive comparisons are false (so the `not_*` ones are true).
+
+**Paths** are dot paths: `author.login`. `[]` means "any element": `labels[].name equals bug` is true when some label is
+named bug. `not_*` operators and `is_not_empty` are the exact opposite, so `labels[].name not_equals bug` means *no*
+label is named bug (and is true for an item without labels). `.` is the whole item. In `set`, a path with `[]` yields the
+list of all matches, which a template or `join` turns into text.
+
+**Ports.** A transform node has `out`, every port named by its route step (rules and `default_port`), and the implicit
+`error`. Edges leaving the node use those names; the editor updates the canvas handles as you edit the route. Duplicate
+rule ports are a validation error.
+
+**Limits.** `lowercase` and `uppercase` change ASCII letters only. `matches` accepts the common regular-expression
+syntax; patterns the Go `regexp` package rejects (look-around, back-references) are reported as invalid. Condition
+values are matched as data, never as jq or as patterns (except `matches`).
+
+**In the editor.** The preview takes a sample from recent events (or the upstream node's recent outputs) or pasted JSON,
+and shows the item count after each step, the output per port, or why the item was dropped. "Show jq" displays the
+compiled program read-only; "Convert to code node" turns the node into an editable jq `command` node with that program
+(one-way). Existing jq nodes keep working and can sit in the same flow.
+
+**API.** `POST /api/transform/preview` (`{steps, input}`: the compiled jq, a description per step, the outcome, per-step
+counts and diagnostics; nothing is stored), `POST /api/transform/compile` (`{steps}`: the jq and descriptions) and
+`GET /api/flows/{id}/samples?node_id=` (recent sample inputs for a node, with where each came from). Validation errors in
+a flow carry paths such as `nodes[2].steps[1].conditions[0].value`.
 
 ## Inbox nodes
 
