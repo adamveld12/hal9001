@@ -114,15 +114,15 @@ One real claude turn (model `haiku`) in an assist session ([assist.md](assist.md
 that emits two static items, test it, and say what the test showed. The harness builds `cmd/hal9001` and puts it first on the
 daemon's PATH so the agent's `hal9001 assist test` resolves. Passes only if the turn ends `idle`, the draft validates
 (`diagnostics: []`, `updated_by: agent`), `POST .../test` of the draft returns exit 0 with 2 items and rendered dedup keys,
-the draft edit was allowed by rule `allow.edit_under[0]` and `hal9001 assist test` by `allow.commands[0]`, no tool call needed
-a person, and the turn ended with a summary.
+the draft edit was allowed by rule `allow.edit_under[0]`, the agent's test of its new script was a `tool_call` approval
+(rule `policy:gated`) that the harness allows exactly once, no other tool call needed a person, and the turn ended with a summary.
 
 ```sh
 HAL9001_LIVE=1 HAL9001_LIVE_RUNTIMES=claude mise exec -- go test ./e2e/live -run TestLiveAssistClaudeAuthorsASensor -count=1 -v
 ```
 
-Result (2026-11-05, claude-agent-acp 0.100.0): **pass**, 13 s. The agent read `AGENTS.md` and `sensor.yaml` (read-class, allowed),
-wrote `sensor.yaml` (`Write`, allowed by the draft-directory rule), ran `hal9001 assist test` (allowed by the command rule) and
+Result (2026-11-05, claude-agent-acp 0.100.0): **pass**, 11 s. The agent read `AGENTS.md` and `sensor.yaml` (read-class, allowed),
+wrote `sensor.yaml` (`Write`, allowed by the draft-directory rule), ran `hal9001 assist test` (a new script: approval, allowed by the harness) and
 answered "The test passed: the sensor exited 0 and returned 2 items, with dedup keys "1" and "2" and no key errors."
 
 ## Adapter resolution

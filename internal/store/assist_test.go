@@ -145,11 +145,12 @@ func TestAssistSessionAndMessages(t *testing.T) {
 	}
 
 	a.Status, a.DraftYAML, a.DraftHash, a.DraftUpdatedBy, a.ACPSessionID = AssistRunning, "id: y\n", "h1", DraftByAgent, "acp-1"
+	a.ApprovedScript, a.ApprovedScriptHash = "lang: bash\nscript:\necho hi\n", "sh1"
 	a.DraftDiagnostics = []byte(`[{"severity":"error","code":"required","message":"m"}]`)
 	must(t, s.UpdateAssistSession(ctx(), a))
 	got, err := s.GetAssistSession(ctx(), a.ID)
 	must(t, err)
-	if got.Status != AssistRunning || got.DraftYAML != "id: y\n" || got.DraftUpdatedBy != DraftByAgent || got.ACPSessionID != "acp-1" || string(got.DraftDiagnostics) != string(a.DraftDiagnostics) {
+	if got.Status != AssistRunning || got.DraftYAML != "id: y\n" || got.DraftUpdatedBy != DraftByAgent || got.ACPSessionID != "acp-1" || got.ApprovedScript != a.ApprovedScript || got.ApprovedScriptHash != "sh1" || string(got.DraftDiagnostics) != string(a.DraftDiagnostics) {
 		t.Errorf("session after update = %+v", got)
 	}
 

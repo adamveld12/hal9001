@@ -146,7 +146,14 @@ function ToolRow({
   const needsApproval = message.approval_id !== null;
   return (
     <div className="space-y-1.5">
-      <details className="rounded-md border border-line bg-panel text-xs">
+      {/* A call waiting for a decision opens, so the user reads what they are asked to allow. */}
+      <details
+        open={
+          needsApproval &&
+          (call.status === "pending" || call.status === "in_progress")
+        }
+        className="rounded-md border border-line bg-panel text-xs"
+      >
         <summary className="flex cursor-pointer select-none items-center gap-2 px-2 py-1.5">
           <Icon
             name={KIND_ICON[call.kind] ?? "settings"}

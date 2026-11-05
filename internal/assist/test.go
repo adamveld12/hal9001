@@ -25,7 +25,11 @@ const (
 // TestDraft runs the draft like Poll now and returns the redacted result. It records nothing: no sensor run,
 // no events, no dedup keys. The environment is the global env file overlaid with the values of the TARGET
 // sensor (a new sensor has none), exactly what a poll of that sensor would get.
-func (m *Manager) TestDraft(ctx context.Context, sessionID string) (core.AssistTestResult, error) {
+//
+// The script runs with those credentials, so who asks matters. The user's test always runs and marks the script
+// approved; the agent's runs only while the script is one the user has tested or approved (or the target sensor's
+// saved script), else core.ErrInvalidState: the agent has to ask through its permission request first.
+func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool) (core.AssistTestResult, error) {
 	var zero core.AssistTestResult
 	if m.host.Paused() {
 		return zero, fmt.Errorf("%w: draft tests are rejected while the kill switch is engaged", core.ErrPaused)
@@ -43,16 +47,27 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string) (core.AssistT
 		s.mu.Unlock()
 		return zero, err
 	}
-	yaml, target := s.row.DraftYAML, s.row.TargetID
-	s.mu.Unlock()
-
-	sensor, ds := spec.CheckSensor("", []byte(yaml))
+	target := s.row.TargetID
+	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
 	if sensor == nil || spec.HasErrors(ds) {
+		s.mu.Unlock()
 		for i := range ds {
 			ds[i].File = DraftFile
 		}
 		return zero, &core.ValidationError{Diagnostics: ds}
 	}
+	available := m.availableEnv(target)
+	id := scriptOf(sensor, available)
+	if byAgent {
+		if approved, _ := s.scriptApprovedLocked(id, available); !approved {
+			s.mu.Unlock()
+			return zero, fmt.Errorf("%w: the draft's script changed since the user last tested or approved it; "+
+				"running it needs the user's approval (the permission request for `hal9001 assist test`)", core.ErrInvalidState)
+		}
+	} else {
+		s.markApprovedLocked(id)
+	}
+	s.mu.Unlock()
 
 	global, own, red := m.host.Env(target)
 	stateDir, err := os.MkdirTemp("", "hal-assist-state-")

@@ -225,7 +225,7 @@ func (r *run) decide(pc permissionCtx) verdict {
 	if r.ctx.Err() != nil {
 		return r.finish1(pr, DecisionCancelled, DecidedByPolicy, "run was already cancelled: "+cancelWhy(r.ctx))
 	}
-	d := r.engine.Decide(ToolRequest{Kind: pc.kind, Title: pc.title, Name: pc.name, RawInput: pc.rawIn, Paths: ToolPaths(pc.rawIn, pc.content, pc.locations)})
+	d := r.engine.Decide(ToolRequest{Kind: pc.kind, Title: pc.title, Name: pc.name, RawInput: pc.rawIn, Paths: ToolPaths(pc.rawIn, pc.content, pc.locations), ToolCallID: pc.toolCallID})
 	pr.MatchedRule, pr.Reason = d.Rule, d.Reason
 	switch d.Action {
 	case ActionAllow:

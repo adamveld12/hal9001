@@ -380,7 +380,11 @@ func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
 		t.Fatalf("session for an existing sensor = %+v", s)
 	}
 
-	got := d.assistTurn(s.ID, "test it")
+	// The agent changed the script, so its test asks first; the user allows it.
+	d.assistSend(s.ID, "test it", nil)
+	ap := d.waitPendingApproval()
+	d.Post("/api/approvals/"+ap["id"].(string)+"/approve", map[string]any{}).Want(200)
+	got := d.assistWait(s.ID, "idle", "failed")
 	if got.Status != "idle" {
 		t.Fatalf("status %q error %v", got.Status, got.Error)
 	}
@@ -396,19 +400,17 @@ func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
 		t.Errorf("the sensor file changed before Save: %+v", after)
 	}
 
-	// Both helper commands were allowed by policy, not by a person.
+	// The test of the changed script was decided by the user, the draft print by policy.
 	run := d.assistRuns(s.ID)[0]
-	var rules []string
+	var exec []permJSON
 	for _, p := range d.permissions(run.ID) {
 		if p.ToolKind == "execute" {
-			rules = append(rules, ruleOf(p))
-			if decisionOf(p) != "allow" || p.DecidedBy == nil || *p.DecidedBy != "policy" {
-				t.Errorf("permission %+v", p)
-			}
+			exec = append(exec, p)
 		}
 	}
-	if len(rules) != 2 || !strings.HasPrefix(rules[0], "allow.commands") || !strings.HasPrefix(rules[1], "allow.commands") {
-		t.Errorf("execute rules = %v", rules)
+	if len(exec) != 2 || decisionOf(exec[0]) != "allow" || *exec[0].DecidedBy != "user" || ruleOf(exec[0]) != "policy:gated" ||
+		decisionOf(exec[1]) != "allow" || *exec[1].DecidedBy != "policy" || !strings.HasPrefix(ruleOf(exec[1]), "allow.commands[1]") {
+		t.Errorf("execute permissions = %+v", exec)
 	}
 
 	// What the agent's CLI printed: the real result, redacted.
@@ -979,4 +981,209 @@ func TestAssistSessionSurvivesARestart(t *testing.T) {
 	if !loaded {
 		t.Error("the new daemon did not resume the agent session with session/load")
 	}
+}
+
+// ---- a test runs the script with real credentials: a changed script needs the user ----
+
+// scriptYAML is a sensor whose script prints one item carrying n; interval varies without changing the script.
+func scriptYAML(n int, interval string) string {
+	return fmt.Sprintf("id: probe\ninterval: %s\nlang: bash\nscript: |\n  echo '[{\"id\":%d}]'\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n", interval, n)
+}
+
+// agentTest is the agent running `hal9001 assist test`; the result lands in file (written only when it ran).
+func agentTest(id, file string) step {
+	return execPermission(id, "hal9001 assist test", []step{shellStep("hal9001 assist test > " + file)}, say("the test was refused"))
+}
+
+// toolContents returns the content items of the tool message that carries the approval.
+func (d *Daemon) toolContents(sessionID, approvalID string) []map[string]any {
+	d.t.Helper()
+	var det struct {
+		Messages []struct {
+			ApprovalID *string `json:"approval_id"`
+			ToolCall   *struct {
+				Content []map[string]any `json:"content"`
+			} `json:"tool_call"`
+		} `json:"messages"`
+	}
+	d.Get("/api/assist/sessions/" + sessionID).Want(200).JSON(&det)
+	for _, m := range det.Messages {
+		if m.ApprovalID != nil && *m.ApprovalID == approvalID && m.ToolCall != nil {
+			return m.ToolCall.Content
+		}
+	}
+	d.t.Fatalf("no tool message carries approval %s", approvalID)
+	return nil
+}
+
+// The agent's test of a script the user has not seen is a tool_call approval whose description shows the script (and
+// a diff against the last approved version); allowing it records that script as approved, so the same script runs
+// again without asking, a changed one asks again, and a denial approves nothing.
+func TestAssistTestOfAChangedScriptNeedsApprovalOnce(t *testing.T) {
+	s1, s2 := scriptYAML(1, "5m"), scriptYAML(2, "5m")
+	d := newAssistDaemon(t, func(d *Daemon) {
+		d.assistRuntime(false,
+			turn{When: when("first$"), Steps: []step{assistEdit(s1), agentTest("t1", "r1.json"), say("tested 1")}},
+			turn{When: when("second$"), Steps: []step{agentTest("t2", "r2.json"), say("tested 1 again")}},
+			turn{When: when("third$"), Steps: []step{assistEdit(s2), agentTest("t3", "r3.json"), say("tested 2")}},
+			turn{When: when("fourth$"), Steps: []step{agentTest("t4", "r4.json"), say("tested 2 again")}},
+			turn{When: when("fifth$"), Steps: []step{assistEdit(scriptYAML(2, "9m")), agentTest("t5", "r5.json"), say("only the interval changed")}},
+		)
+	})
+	s := d.assistCreate("")
+	dir := d.assistDir(s.ID)
+
+	// 1. A new script: the test asks, and does not run until allowed.
+	d.assistSend(s.ID, "first", nil)
+	ap := d.waitPendingApproval()
+	pr := ap["permission_request"].(map[string]any)
+	if ap["assist_session_id"] != s.ID || pr["tool_kind"] != "execute" || pr["matched_rule"] != "policy:gated" || !strings.Contains(fmt.Sprint(pr["reason"]), "changed since the user last tested or approved") {
+		t.Fatalf("approval = %v", ap)
+	}
+	d.assistWait(s.ID, "awaiting_approval")
+	if fileExists(filepath.Join(dir, "r1.json")) {
+		t.Fatal("the test ran before it was allowed")
+	}
+	content := d.toolContents(s.ID, ap["id"].(string))
+	var sawText, sawDiff bool
+	for _, c := range content {
+		switch c["type"] {
+		case "content":
+			sawText = strings.Contains(fmt.Sprint(c["content"]), "real credentials")
+		case "diff":
+			sawDiff = c["oldText"] == "" && strings.Contains(fmt.Sprint(c["newText"]), `echo '[{"id":1}]'`) && strings.Contains(fmt.Sprint(c["newText"]), "# lang: bash")
+		}
+	}
+	if !sawText || !sawDiff {
+		t.Errorf("the approval does not show the script: %v", content)
+	}
+	d.Post("/api/approvals/"+ap["id"].(string)+"/approve", map[string]any{}).Want(200)
+	if got := d.assistWait(s.ID, "idle", "failed"); got.Status != "idle" {
+		t.Fatalf("status %q error %v", got.Status, got.Error)
+	}
+	if !fileExists(filepath.Join(dir, "r1.json")) {
+		t.Fatal("the allowed test did not run")
+	}
+
+	// 2. The same script again: no approval.
+	if got := d.assistTurn(s.ID, "second"); got.Status != "idle" {
+		t.Fatalf("status %q error %v (a test of the approved script must not wait for anyone)", got.Status, got.Error)
+	}
+	if !fileExists(filepath.Join(dir, "r2.json")) {
+		t.Error("the test of the approved script did not run")
+	}
+	runs := d.assistRuns(s.ID)
+	if p := d.permissions(runs[1].ID); len(p) != 1 || decisionOf(p[0]) != "allow" || *p[0].DecidedBy != "policy" || !strings.HasPrefix(ruleOf(p[0]), "allow.commands[0]") {
+		t.Errorf("second test permission = %+v", p)
+	}
+
+	// 3. A changed script asks again, with a diff against the approved one; a denial approves nothing.
+	d.assistSend(s.ID, "third", nil)
+	ap = d.waitPendingApproval()
+	var diffOld, diffNew string
+	for _, c := range d.toolContents(s.ID, ap["id"].(string)) {
+		if c["type"] == "diff" {
+			diffOld, diffNew = fmt.Sprint(c["oldText"]), fmt.Sprint(c["newText"])
+		}
+	}
+	if !strings.Contains(diffOld, `"id":1`) || !strings.Contains(diffNew, `"id":2`) {
+		t.Errorf("diff = %q -> %q, want the approved script against the new one", diffOld, diffNew)
+	}
+	d.Post("/api/approvals/"+ap["id"].(string)+"/deny", map[string]any{}).Want(200)
+	d.assistWait(s.ID, "idle", "failed")
+	if fileExists(filepath.Join(dir, "r3.json")) {
+		t.Error("a denied test ran")
+	}
+	// Denied means not approved: the same script asks again, and allowing it makes it run unasked afterwards.
+	d.assistSend(s.ID, "fourth", nil)
+	ap = d.waitPendingApproval()
+	d.Post("/api/approvals/"+ap["id"].(string)+"/approve", map[string]any{}).Want(200)
+	d.assistWait(s.ID, "idle", "failed")
+	if !fileExists(filepath.Join(dir, "r4.json")) {
+		t.Error("the test allowed the second time did not run")
+	}
+
+	// 4. Changing only what a test does not execute (the interval) does not ask.
+	if got := d.assistTurn(s.ID, "fifth"); got.Status != "idle" || !fileExists(filepath.Join(dir, "r5.json")) {
+		t.Errorf("a change of the interval alone asked for approval or failed: status %q", got.Status)
+	}
+}
+
+// The user's own test always runs and approves the script; the daemon refuses the agent's test of any other script
+// even if the agent got past the permission request, and a credential the script mentions that appears later changes
+// what the approval covered.
+func TestAssistUserTestApprovesTheScriptAndTheDaemonEnforcesIt(t *testing.T) {
+	const withKey = "id: probe\ninterval: 5m\nlang: bash\nscript: |\n  echo \"[{\\\"id\\\":1,\\\"k\\\":\\\"$LATER_KEY\\\"}]\"\nkey: \"{{.id}}\"\nfirst_run: fire\n"
+	d := newAssistDaemon(t, func(d *Daemon) {
+		d.Sensor("probe", "id: probe\ninterval: 1h\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\n")
+		d.assistRuntime(false,
+			turn{When: when("write$"), Steps: []step{assistEdit(withKey), say("written")}},
+			turn{When: when("run$"), Steps: []step{agentTest("t1", "r1.json"), say("ran")}},
+		)
+	})
+	agent := withHeader("X-Hal9001-Assist-Agent", "1")
+	s := d.assistCreate("probe")
+	test := "/api/assist/sessions/" + s.ID + "/test"
+
+	// The saved script of the sensor being edited is trusted; the agent's rewrite is not.
+	d.Post(test, nil, agent).Want(200)
+	d.assistTurn(s.ID, "write")
+	r := d.Post(test, nil, agent).Want(409)
+	if r.Problem() != "invalid-state" || !strings.Contains(string(r.Body), "approval") {
+		t.Errorf("agent test of an unapproved script = %s", r.Body)
+	}
+
+	// The user's test runs, approves the script, and from then on the agent's test of it runs.
+	d.Post(test, nil).Want(200)
+	d.Post(test, nil, agent).Want(200)
+	if got := d.assistTurn(s.ID, "run"); got.Status != "idle" || !fileExists(filepath.Join(d.assistDir(s.ID), "r1.json")) {
+		t.Errorf("the agent's test of the user-tested script: status %q", got.Status)
+	}
+	if p := d.permissions(d.assistRuns(s.ID)[1].ID); len(p) != 1 || *p[0].DecidedBy != "policy" {
+		t.Errorf("permissions = %+v, want the test allowed by policy", p)
+	}
+
+	// The script mentions $LATER_KEY. Once that credential exists, a test would use it: what the user approved no
+	// longer covers it, for the policy and for the daemon.
+	d.Put("/api/sensors/probe/env/LATER_KEY", map[string]any{"value": "later-key-value-7777"}).Want(204)
+	d.Post(test, nil, agent).Want(409)
+	d.assistSend(s.ID, "run", nil)
+	ap := d.waitPendingApproval()
+	if !strings.Contains(fmt.Sprint(d.toolContents(s.ID, ap["id"].(string))), "LATER_KEY") {
+		t.Errorf("the approval does not name the credential the script now uses")
+	}
+	d.Post("/api/approvals/"+ap["id"].(string)+"/deny", map[string]any{"cancel_run": true}).Want(200)
+	d.assistWait(s.ID, "idle", "failed")
+	d.assertNoSecret(s.ID, "later-key-value-7777")
+}
+
+// A session on an existing sensor may test the sensor's own saved script without asking; changing it asks, with the
+// saved script as the base of the diff.
+func TestAssistExistingSensorsSavedScriptNeedsNoApproval(t *testing.T) {
+	const saved = "id: gh\ninterval: 1h\nlang: bash\nscript: |\n  echo '[{\"id\":7}]'\nkey: \"{{.id}}\"\nfirst_run: fire\n"
+	changed := strings.Replace(saved, `"id":7`, `"id":8`, 1)
+	d := newAssistDaemon(t, func(d *Daemon) {
+		d.Sensor("gh", saved)
+		d.assistRuntime(false,
+			turn{When: when("same$"), Steps: []step{agentTest("t1", "r1.json"), say("tested the saved script")}},
+			turn{When: when("change$"), Steps: []step{assistEdit(changed), agentTest("t2", "r2.json"), say("tested the change")}},
+		)
+	})
+	s := d.assistCreate("gh")
+	if got := d.assistTurn(s.ID, "same"); got.Status != "idle" || !fileExists(filepath.Join(d.assistDir(s.ID), "r1.json")) {
+		t.Fatalf("the saved script needed approval: status %q", got.Status)
+	}
+	d.assistSend(s.ID, "change", nil)
+	ap := d.waitPendingApproval()
+	var base string
+	for _, c := range d.toolContents(s.ID, ap["id"].(string)) {
+		if c["type"] == "diff" {
+			base = fmt.Sprint(c["oldText"])
+		}
+	}
+	if !strings.Contains(base, `"id":7`) {
+		t.Errorf("the diff is not against the saved script: %q", base)
+	}
+	d.Post("/api/approvals/"+ap["id"].(string)+"/approve", map[string]any{}).Want(200)
+	d.assistWait(s.ID, "idle", "failed")
 }

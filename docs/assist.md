@@ -25,7 +25,9 @@ flowchart LR
   which runs it with the secrets and returns the **redacted** result. See [Secrets](#secrets).
 - **Every turn is an agent run**, linked to the session, visible on the Agent run page with its transcript, permission
   requests and approvals. Nothing the agent does is off the record.
-- **Anything beyond editing the draft and the two helper commands asks you**, inline in the chat.
+- **Anything beyond editing the draft and the helper commands asks you**, inline in the chat. That includes the agent's
+  first test of a script you have not seen: a test runs the script with your real credentials, so a changed script is an
+  approval whose description shows the script ([Secrets](#secrets)).
 
 ## Using it
 
@@ -40,7 +42,7 @@ flowchart LR
 4. A tool call that needs you shows up as a message with `approval_id`. Decide it with the normal
    `POST /api/approvals/{id}/approve|deny` (service `approve`): Allow, Deny, or Deny with `cancel_run` to stop the turn.
 5. `PUT /api/assist/sessions/{id}/draft` hands your editor content to the session (guarded by `expected_hash`, so you do not
-   overwrite an edit the agent made meanwhile). `POST .../test` runs the draft yourself. `POST .../cancel` cancels the
+   overwrite an edit the agent made meanwhile). `POST .../test` runs the draft yourself and approves its script for the agent's later tests. `POST .../cancel` cancels the
    running turn. `DELETE /api/assist/sessions/{id}` ends the session.
 6. Save the sensor with `PUT /api/sensors/{id}` (or create it with `POST /api/sensors`) using the draft's YAML.
 
@@ -74,7 +76,7 @@ hal9001 sensors validate [file.yaml|-]    # the sensor format check, no save
 | File | Purpose |
 |---|---|
 | `sensor.yaml` | The draft. The only file the agent edits. The daemon compares it with its stored copy after every tool call, every 400 ms during a turn, and at the end of the turn; a change is validated and published as `assist.updated` (`updated_by: agent`). |
-| `AGENTS.md`, `CLAUDE.md` | The same instructions under the names the agents read: the sensor format and node contract, the output rules (JSON array or JSONL), the dedup `key` template rules, `first_run`, the env variable **names** available (global env file plus the target sensor's own), how to test, and the rules (edit only `sensor.yaml`, never print or ask for secrets, keep the id stable when editing, end each turn with a short plain-language summary). Rewritten at every turn so the names are current. |
+| `AGENTS.md`, `CLAUDE.md` | The same instructions under the names the agents read: the sensor format and node contract, the output rules (JSON array or JSONL), the dedup `key` template rules, `first_run`, the env variable **names** available (global env file plus the target sensor's own), how to test (including that the first test after a script change asks you), and the rules (edit only `sensor.yaml`, never print or ask for secrets, keep the id stable when editing, end each turn with a short plain-language summary). Rewritten at every turn so the names are current. |
 
 The working directory of the agent is this directory. The directory is removed when the session is deleted, and by retention
 for sessions that were left open.
@@ -88,9 +90,11 @@ Each turn runs under the **gated** policy of [REQUIREMENTS §7.2](../REQUIREMENT
 |---|---|
 | Read, search, fetch, think | Allowed (rule `kind:<kind>`), except on a protected file (below). |
 | Edit, delete or move where every target path lies inside the session's draft directory | Allowed (rule `allow.edit_under[0]`). `..` escapes, sibling directories with the same prefix, symlinks pointing out, and calls that name no path do not match. |
-| Execute: `hal9001 assist test` or `hal9001 assist draft` (optionally followed by the session id), via `PATH` or the absolute path of the running binary | Allowed (rule `allow.commands[n]`). |
-| Execute: `hal9001 sensors validate sensor.yaml` | Allowed. Only that file name: the command would otherwise read any file you name. |
-| Any command with `;`, `&&`, `|`, redirects, `$(...)` or backticks | Not matched by the rules above, so it asks. |
+| Execute: `hal9001 assist draft` (optionally followed by the session id), via `PATH` or the absolute path of the running binary | Allowed (rule `allow.commands[1]`). |
+| Execute: `hal9001 sensors validate sensor.yaml` | Allowed (rule `allow.commands[2]`). Only that file name: the command would otherwise read any file you name. |
+| Execute: `hal9001 assist test` (optionally followed by the session id) **when the draft's script is one you have tested or approved**, or is the saved script of the sensor being edited | Allowed (rule `allow.commands[0]`). |
+| Execute: `hal9001 assist test` when the script **changed** since | An approval of type `tool_call` (rule `policy:gated`, the reason says the script changed). The chat message of the call carries the description: what runs, which credentials it mentions, and a diff against the last approved version. Allow records that script as approved. |
+| Any command with `;`, `&&`, `\|`, redirects, `$(...)` or backticks | Not matched by the rules above, so it asks. |
 | Everything else (other commands, edits elsewhere, MCP tools, `curl`, ...) | An approval of type `tool_call` (rule `policy:gated`), decided inline in the chat or in the Approvals page. Allow runs it once, Deny rejects it and the agent continues, Deny + stop ends the turn. |
 
 Claude and omp continue after a denial. Codex's only reject option cancels the turn, so a denial ends the turn there
@@ -116,22 +120,40 @@ What the agent can and cannot see:
 | Values of another sensor's `env.d` file | No, and names only for the target sensor. |
 | The result of `hal9001 assist test` | Yes, **redacted**: every secret value of the global env file and of every sensor env file (values marked plain are not secret) is replaced by `«KEY»` in stdout, stderr and the rendered dedup keys. |
 
-`POST /api/assist/sessions/{id}/test` (the endpoint behind `hal9001 assist test`) runs the draft **like Poll now**: `lang`,
+`POST /api/assist/sessions/{id}/test` (the endpoint behind `hal9001 assist test`, and the UI's Test button) runs the draft **like Poll now**: `lang`,
 `script`/`command`, `cwd` and `timeout` of the draft, the `HAL_*` variables with `HAL_STATE_DIR` in a temporary directory and
 no `HAL_LAST_SUCCESS_AT`, and the global env overlaid by the values of the **target** sensor (a new sensor has none: the id in
 a draft never selects someone else's secrets). Output is redacted, then bounded: 64 KiB per stream inline (the whole output
 as a blob beyond that), the first 200 items listed with their rendered dedup keys (`key_error` when the key template fails on
 an item), `item_count` the total. The call records nothing: no sensor run, no events, no dedup keys. It answers 200 even when
-the script fails (see `exit_code`, `timed_out`, `parse_error`), 422 when the draft does not parse as a sensor, 423 while
-paused.
+the script fails (see `exit_code`, `timed_out`, `parse_error`), 409 for the agent's test of an unapproved script, 422 when
+the draft does not parse as a sensor, 423 while paused.
 
-Redaction replaces the secret values the daemon knows, as everywhere else in hal9001. Two limits follow from what a sensor is:
+Redaction replaces the secret values the daemon knows, as everywhere else in hal9001. It cannot stop a script that sends
+`$TOKEN` over the network or prints it encoded, and a test **runs the agent's code with your credentials**. So the agent
+cannot run its own code unseen:
 
-- A test **runs the agent's code with your credentials.** A script that sends `$TOKEN` over the network, or prints it
-  encoded, is not caught by value redaction. The draft is code from a model: read it (the editor shows every change) before
-  you trust a credential to it, and keep the credentials of sensitive systems out of the global `env` file.
-- The agent can run a test without asking (that is what makes the loop work). If you do not want an agent to execute drafts
-  with a sensor's credentials, do not give the target sensor those credentials until the draft is reviewed.
+- **The identity of a script** is `lang`, `script`, `command`, `cwd`, and the names from the credentials available to the
+  sensor (global env file plus the target sensor's own) that the code mentions. Changing `interval`, `cron`, `key`,
+  `first_run` or `timeout` does not change it. Adding a credential the script already mentions does.
+- **Approved scripts.** A script is approved when you tested it with the Test button (`POST .../test` without the agent
+  header: the UI, the API, the CLI outside an agent), when you allowed an agent test of it, or when it is the saved script of
+  the sensor being edited (that code already runs with those credentials). The latest approved script is kept per session,
+  with its text, for the diff.
+- **The agent's test of any other script is an approval**, decided in the chat or on the Approvals page. Its description
+  shows what runs, the credentials it mentions and a diff against the last approved version (against nothing, for the first
+  script of a new sensor). Allow records that script as approved: testing the same script again, in this or a later turn,
+  runs without asking. Deny approves nothing, so the same script asks again; with Codex a denial also ends the turn.
+- **The daemon enforces it too.** The CLI marks requests made inside an assist session with the header
+  `X-Hal9001-Assist-Agent`; for those, `POST .../test` answers 409 `invalid-state` unless the script is approved, so a test
+  cannot slip past the permission request (for example by the script changing between the approval and the run).
+  Whoever calls without the header is treated as you. The agent cannot call the endpoint another way without asking: any
+  other command, `curl` included, is an approval of its own.
+
+What this does not cover: the agent can still write a script that leaks a credential once you approve it, so read the
+diff before you allow. Approving a script that dumps the whole environment (`env`, `printenv`) approves it for every
+credential the sensor has, because it mentions none by name. Keep the credentials of sensitive systems out of the global
+`env` file; give a sensor only what it needs in its own `env.d` file.
 
 Secrets never appear in the conversation, the stored transcripts or any assist/agent API response: messages, tool calls,
 agent events, permission requests, raw JSON-RPC and agent-run errors are stored through the same redactor as other runs.
@@ -157,7 +179,7 @@ agent events, permission requests, raw JSON-RPC and agent-run errors are stored 
 
 | Table | Contents |
 |---|---|
-| `assist_sessions` | Target, runtime, model, status, error, the latest validated draft (yaml, hash, parsed id, diagnostics, who wrote it), `last_agent_run_id`, the agent's own session id. |
+| `assist_sessions` | Target, runtime, model, status, error, the latest validated draft (yaml, hash, parsed id, diagnostics, who wrote it), the script you last tested or approved (text and hash), `last_agent_run_id`, the agent's own session id. |
 | `assist_messages` | The conversation: user text as sent, assistant text (consecutive chunks of one turn merged into one message), one message per tool call (updated in place as it progresses: title, kind, status, raw input, content including diffs), system notes (cancelled, failed, ...), and `approval_id` for gated calls. |
 | `agent_runs` | One row per turn: `assist_session_id` set, `node_run_id` null, `mode: approve`, `approve_style: per_tool`, `policy: gated`, `phase: execute`, `rendered_prompt` is what was sent (a short preamble plus your text). `agent_events`, `permission_requests` and `approvals` work as for flow runs. |
 
@@ -178,5 +200,7 @@ Agent run and approval JSON therefore have `node_run_id`, `flow_run_id`, `flow_i
 `e2e/assist_test.go` drives the whole feature with the scripted fake agent and the real `hal9001` binary: draft edits and
 live diagnostics, the secret model (a test result with redacted values, no secret in the agent's environment or any API
 response), approvals and denials, resume with `session/load` and with the recap fallback after the idle timeout, user
-edits reaching the agent, cancel, delete (including the agent's process group), the kill switch, and restart. The live smoke
+edits reaching the agent, cancel, delete (including the agent's process group), the kill switch, restart, and the approval of
+changed scripts (a new script's first test asks and shows the script, an allowed script runs unasked, a changed or denied
+one asks again, your own test approves, the daemon refuses an agent test of an unapproved script). The live smoke
 `TestLiveAssistClaudeAuthorsASensor` ([live-smoke.md](live-smoke.md)) runs one real claude turn.

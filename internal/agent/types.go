@@ -178,6 +178,11 @@ type AllowRules struct {
 	// Protected are files or directories whose reading needs approval: a
 	// read-class call naming a path inside one is not allowed by its kind.
 	Protected []string `json:"protected,omitempty"`
+	// CommandVeto, when set, is asked about a command that matched allow.commands[i] before the rule allows it:
+	// a non-empty answer is the reason the command is not allowed automatically after all, and it is decided like
+	// any other call that no rule allows (approval queue when gated, rejected when read-only). It lets a caller
+	// make a rule depend on state the static patterns cannot see.
+	CommandVeto func(req ToolRequest, rule int) string `json:"-"`
 	// Base resolves relative paths of EditUnder, Protected and tool calls. It
 	// defaults to the run's working directory.
 	Base string `json:"base,omitempty"`

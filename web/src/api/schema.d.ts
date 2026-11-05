@@ -1195,6 +1195,13 @@ export interface paths {
      *     events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
      *     the secret values. 422 `validation-failed` when the draft does not parse as a sensor; 423 `paused` while the
      *     kill switch is engaged.
+     *
+     *     The script runs with real credentials, so the caller matters. A test by the user (no `X-Hal9001-Assist-Agent`
+     *     header: the UI's Test button, the API, the CLI outside an agent) always runs and marks the draft's script as
+     *     approved. A test by the agent (the CLI inside an assist session sends the header) runs only while the script,
+     *     meaning `lang`, `script`, `command`, `cwd` and the names of the env variables it references, equals the one the
+     *     user last tested or approved, or the saved script of the target sensor; otherwise 409 `invalid-state`. The agent
+     *     asks for that approval through its permission request for `hal9001 assist test` (a `tool_call` approval).
      */
     post: operations["testAssistDraft"];
     delete?: never;
@@ -5571,7 +5578,10 @@ export interface operations {
   testAssistDraft: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        /** @description Set by the CLI when it runs inside an assist session. Any non-empty value marks the caller as the agent. */
+        "X-Hal9001-Assist-Agent"?: string;
+      };
       path: {
         id: components["parameters"]["AssistSessionId"];
       };
@@ -5591,6 +5601,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       423: components["responses"]["Paused"];

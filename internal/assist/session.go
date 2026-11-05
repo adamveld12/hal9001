@@ -35,7 +35,10 @@ type session struct {
 	idle      *time.Timer
 	approvals map[string]string   // tool call id -> approval id, for the running turn
 	pending   map[string]struct{} // approvals waiting for a decision
-	closed    bool
+	// Tests of a changed script the agent asked for, by tool call id; and by approval id once the approval exists.
+	pendingTests  map[string]*pendingTest
+	testApprovals map[string]*pendingTest
+	closed        bool
 }
 
 // turn is one agent turn in flight.
@@ -59,6 +62,7 @@ func newSession(m *Manager, row store.AssistSession) *session {
 	return &session{
 		m: m, id: row.ID, dir: filepath.Join(m.dir, row.ID), row: row,
 		approvals: map[string]string{}, pending: map[string]struct{}{},
+		pendingTests: map[string]*pendingTest{}, testApprovals: map[string]*pendingTest{},
 	}
 }
 
@@ -268,6 +272,7 @@ func (s *session) send(text string, yaml *string) (*store.AssistSession, error) 
 	s.turn = t
 	s.stopIdleLocked()
 	s.approvals, s.pending = map[string]string{}, map[string]struct{}{}
+	s.pendingTests, s.testApprovals = map[string]*pendingTest{}, map[string]*pendingTest{}
 	s.m.mu.Lock()
 	s.m.byRun[t.runID] = s
 	s.m.mu.Unlock()
@@ -366,7 +371,7 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 		Prompt: head + text,
 		FallbackPrompt: head + "Your previous agent session could not be restored, so this is a new one. " +
 			"Read the current sensor.yaml first. The conversation so far:\n" + recap(before) + "\nThe user now says:\n\n" + text,
-		Allow: s.m.allowRules(s.id, s.dir),
+		Allow: s.allowRules(),
 	})
 }
 
@@ -380,7 +385,7 @@ func preamble(targetID string, global, sensor []string) string {
 		b.WriteString("You are creating a new sensor.\n")
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), sensor...)) + ".\n")
-	b.WriteString("Run `hal9001 assist test` to test the draft.\n\n")
+	b.WriteString("Run `hal9001 assist test` to test the draft; the first test after you change the script asks the user to approve it.\n\n")
 	return b.String()
 }
 
@@ -495,6 +500,75 @@ func (s *session) onRunUpdated(rec agent.RunRecord) {
 	}
 }
 
+// scriptApprovedLocked reports whether id is a script the user has tested or approved in this session, or the saved
+// script of the sensor being edited (which already runs with these credentials). It also returns the text a changed
+// script is shown against. s.mu must be held.
+func (s *session) scriptApprovedLocked(id scriptID, available []string) (approved bool, base string) {
+	h := id.hash()
+	if s.row.ApprovedScriptHash != "" && s.row.ApprovedScriptHash == h {
+		return true, s.row.ApprovedScript
+	}
+	base = s.row.ApprovedScript
+	if saved, ok := s.m.savedScript(s.row.TargetID, available); ok {
+		if saved.hash() == h {
+			return true, saved.text()
+		}
+		if base == "" {
+			base = saved.text()
+		}
+	}
+	return false, base
+}
+
+// savedScript is the script of the saved sensor file, when the session edits an existing sensor.
+func (m *Manager) savedScript(target string, available []string) (scriptID, bool) {
+	if target == "" {
+		return scriptID{}, false
+	}
+	raw, _, err := spec.ReadFile(m.opt.Home, spec.KindSensor, target)
+	if err != nil {
+		return scriptID{}, false
+	}
+	sensor, ds := spec.ParseSensor(raw)
+	if sensor == nil || spec.HasErrors(ds) {
+		return scriptID{}, false
+	}
+	return scriptOf(sensor, available), true
+}
+
+// markApprovedLocked records id as the script the user last tested or approved. s.mu must be held.
+func (s *session) markApprovedLocked(id scriptID) {
+	s.row.ApprovedScript, s.row.ApprovedScriptHash = id.text(), id.hash()
+	_ = s.saveLocked()
+}
+
+// vetoTest is the CommandVeto of `hal9001 assist test`: the test executes the draft's script with the user's
+// credentials, so it is allowed without asking only while that script is one the user has tested or approved. The
+// draft file is read now, so an edit the agent just made counts. A changed script is asked about: the veto's reason
+// goes to the permission request and the script and its diff to the conversation.
+func (s *session) vetoTest(req agent.ToolRequest, rule int) string {
+	if rule != 0 {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.syncFromDiskLocked(); err != nil {
+		return "the draft could not be read, so its script cannot be compared with the approved one"
+	}
+	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
+	if sensor == nil || spec.HasErrors(ds) {
+		return "" // a draft that does not validate is not run: the test answers 422
+	}
+	available := s.m.availableEnv(s.row.TargetID)
+	id := scriptOf(sensor, available)
+	approved, base := s.scriptApprovedLocked(id, available)
+	if approved {
+		return ""
+	}
+	s.pendingTests[req.ToolCallID] = &pendingTest{id: id, base: base}
+	return "the draft's script changed since the user last tested or approved it, and a test runs it with real credentials"
+}
+
 // approvalPending records a gated tool call: the conversation shows it with its approval, and the session waits.
 func (s *session) approvalPending(runID, toolCallID, approvalID string) {
 	s.mu.Lock()
@@ -502,6 +576,9 @@ func (s *session) approvalPending(runID, toolCallID, approvalID string) {
 	t := s.turn
 	if t == nil || t.runID != runID {
 		return
+	}
+	if pt := s.pendingTests[toolCallID]; pt != nil {
+		s.testApprovals[approvalID] = pt
 	}
 	s.linkApproval(t, toolCallID, approvalID)
 	s.pending[approvalID] = struct{}{}
@@ -512,9 +589,15 @@ func (s *session) approvalPending(runID, toolCallID, approvalID string) {
 }
 
 // approvalResolved returns the session to running once no approval is pending.
-func (s *session) approvalResolved(approvalID string) {
+func (s *session) approvalResolved(approvalID string, allowed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if pt := s.testApprovals[approvalID]; pt != nil {
+		delete(s.testApprovals, approvalID)
+		if allowed {
+			s.markApprovedLocked(pt.id) // before the agent's command runs: the daemon re-checks it
+		}
+	}
 	delete(s.pending, approvalID)
 	if len(s.pending) == 0 && s.turn != nil && s.row.Status == store.AssistAwaitingApproval {
 		s.row.Status = store.AssistRunning

@@ -62,7 +62,8 @@ func (b *storeBroker) AwaitToolApproval(ctx context.Context, t agent.ToolApprova
 
 	e.markToolWait(t.RunID, t.NodeRunID, true)
 	e.toolApprovalPending(t.RunID, t.ToolCallID, a.ID)
-	defer e.toolApprovalResolved(t.RunID, a.ID)
+	allowed := false
+	defer func() { e.toolApprovalResolved(t.RunID, a.ID, allowed) }()
 	e.notify(core.Notification{
 		Kind:  "approval",
 		Title: "Approve tool call: " + e.nodeLabel(t.NodeRunID),
@@ -71,6 +72,7 @@ func (b *storeBroker) AwaitToolApproval(ctx context.Context, t agent.ToolApprova
 	})
 	select {
 	case d := <-ch:
+		allowed = d.Verdict == agent.VerdictAllow
 		e.markToolWait(t.RunID, t.NodeRunID, false)
 		return d, nil
 	case <-ctx.Done():

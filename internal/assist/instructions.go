@@ -55,13 +55,16 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("- Use only the tools you need. Reading, searching and editing `%s` are allowed. Running anything else asks the user for approval each time.\n", DraftFile)
 	w("- Run the two helper commands below exactly as written, one per call: no pipes, redirects, `&&`, `;` or `cd` (you are already in the right directory).\n")
 	w("- Test the draft with `hal9001 assist test` before you say it is done, and fix what it reports.\n")
+	w("- A test runs the script with the user's real credentials, so the first test after you change the script (`lang`, `script`, `command`, `cwd`, or the credentials it mentions) asks the user to approve it: they see the script and a diff against the last approved version. ")
+	w("Before you run it, say in a sentence what the script does and which credentials it uses. Once the user allowed a version, testing the same script again does not ask. ")
+	w("Changing only `interval`, `key`, `first_run` or `timeout` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
 
 	w("## Helper commands\n\n")
 	w("- `hal9001 assist draft` prints the current draft with its validation diagnostics as JSON.\n")
 	w("- `hal9001 assist test` runs the draft the way a poll would (with the real credentials, which you cannot see) and prints JSON: ")
 	w("`exit_code`, `timed_out`, `parse_error`, `item_count`, `items` (each with its rendered `dedup_key` or a `key_error`), and the redacted `stdout` and `stderr`. ")
-	w("Nothing is recorded: no sensor run, no events. Values of the credentials appear as `«NAME»`.\n")
+	w("Nothing is recorded: no sensor run, no events. Values of the credentials appear as `«NAME»`. It refuses (and asks the user first) when the script changed since the user last tested or approved it.\n")
 	w("- `hal9001 sensors validate sensor.yaml` checks the file against the sensor format only.\n\n")
 
 	w("## The sensor file\n\n")

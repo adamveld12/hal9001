@@ -307,10 +307,11 @@ func (m *Manager) ToolApprovalPending(runID, toolCallID, approvalID string) {
 	}
 }
 
-// ToolApprovalResolved marks the session as running again once no approval is pending.
-func (m *Manager) ToolApprovalResolved(runID, approvalID string) {
+// ToolApprovalResolved marks the session as running again once no approval is pending. An allowed test of a changed
+// script records that script as approved.
+func (m *Manager) ToolApprovalResolved(runID, approvalID string, allowed bool) {
 	if s := m.sessionOfRun(runID); s != nil {
-		s.approvalResolved(approvalID)
+		s.approvalResolved(approvalID, allowed)
 	}
 }
 
@@ -338,19 +339,24 @@ func (m *Manager) agentEnv(sessionID string) []string {
 }
 
 // allowRules are the per-turn permissions of the agent (REQUIREMENTS §7.2 gated policy plus these): edits inside
-// the session's draft directory and the helper commands are allowed, files holding secrets are protected, and
-// everything else goes to the approval queue.
-func (m *Manager) allowRules(sessionID, dir string) agent.AllowRules {
+// the session's draft directory and the helper commands are allowed (a test only for a script the user has
+// approved), files holding secrets are protected, and everything else goes to the approval queue.
+func (s *session) allowRules() agent.AllowRules {
+	m, sessionID, dir := s.m, s.id, s.dir
 	bin := `(?:hal9001|` + regexp.QuoteMeta(m.opt.Executable) + `)`
 	home := m.home
 	data := filepath.Join(home, "data")
 	return agent.AllowRules{
+		// Rule 0 runs the draft with the user's credentials: it is vetoed unless the script is one the user has
+		// tested or approved (see vetoTest).
 		Commands: []string{
-			`^` + bin + ` assist (?:test|draft)(?: ` + sessionID + `)?$`,
+			`^` + bin + ` assist test(?: ` + sessionID + `)?$`,
+			`^` + bin + ` assist draft(?: ` + sessionID + `)?$`,
 			`^` + bin + ` sensors validate (?:\./)?` + regexp.QuoteMeta(DraftFile) + `$`,
 		},
-		EditUnder: []string{dir},
-		Base:      dir,
+		CommandVeto: s.vetoTest,
+		EditUnder:   []string{dir},
+		Base:        dir,
 		Protected: []string{
 			filepath.Join(home, "env"), filepath.Join(home, "env.d"), filepath.Join(home, "config.yaml"),
 			filepath.Join(data, "hal.db"), filepath.Join(data, "hal.db-wal"), filepath.Join(data, "hal.db-shm"),
@@ -369,6 +375,14 @@ func invalid(path, message string) error {
 	return &core.ValidationError{Diagnostics: []spec.Diagnostic{{
 		Severity: spec.SeverityError, Code: spec.CodeInvalidValue, Path: path, Message: message,
 	}}}
+}
+
+// availableEnv lists, sorted, every credential name a script of the sensor can read.
+func (m *Manager) availableEnv(targetID string) []string {
+	global, sensor := m.envNames(targetID)
+	all := append(append([]string(nil), global...), sensor...)
+	sort.Strings(all)
+	return all
 }
 
 // envNames lists the variable names a sensor script sees: the global env file and the target sensor's own file.
