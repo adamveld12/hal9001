@@ -1,111 +1,138 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+/* Semantic tokens. Light is the default; the dark palette applies when the
+   user chose it or (with no choice) when the OS prefers it. See lib/theme.ts. */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --raised: #f0f0f2;
+  --line: #e2e2e6;
+  --fg: #1c1c21;
+  --muted: #6b6b76;
+  --accent: #5e6ad2;
+  --accent-fg: #ffffff;
+  --ok: #1a8f4c;
+  --warn: #b7791f;
+  --bad: #d13b3b;
+  --info: #2b7bd6;
+  --run: #7c5cd6;
+  color-scheme: light;
+}
 
-  --sans: system-ui, "Segoe UI", Roboto, sans-serif;
-  --heading: system-ui, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+:root[data-theme="dark"] {
+  --bg: #0f1013;
+  --panel: #16171b;
+  --raised: #1e1f25;
+  --line: #2a2b33;
+  --fg: #e6e6ea;
+  --muted: #8a8b96;
+  --accent: #7b86f0;
+  --accent-fg: #0f1013;
+  --ok: #3fbf74;
+  --warn: #e0a43a;
+  --bad: #f06a6a;
+  --info: #5aa2f0;
+  --run: #a08af0;
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+  :root:not([data-theme="light"]) {
+    --bg: #0f1013;
+    --panel: #16171b;
+    --raised: #1e1f25;
+    --line: #2a2b33;
+    --fg: #e6e6ea;
+    --muted: #8a8b96;
+    --accent: #7b86f0;
+    --accent-fg: #0f1013;
+    --ok: #3fbf74;
+    --warn: #e0a43a;
+    --bad: #f06a6a;
+    --info: #5aa2f0;
+    --run: #a08af0;
+    color-scheme: dark;
   }
 }
 
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+  --color-run: var(--run);
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html,
+body,
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+  height: 100%;
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+/* React Flow follows the app palette. */
+.react-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-dot-color-default: var(--line);
+  --xy-edge-stroke-default: var(--muted);
+  --xy-edge-stroke-selected-default: var(--accent);
+  --xy-connectionline-stroke-default: var(--accent);
+  --xy-minimap-background-color-default: var(--panel);
+  --xy-controls-button-background-color-default: var(--panel);
+  --xy-controls-button-background-color-hover-default: var(--raised);
+  --xy-controls-button-color-default: var(--fg);
+  --xy-controls-button-border-color-default: var(--line);
+  --xy-attribution-background-color-default: transparent;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+.react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--panel);
+  background: var(--muted);
+}
+
+.react-flow__handle.connectingto,
+.react-flow__handle.valid {
+  background: var(--ok);
+}
+
+.cm-editor {
+  font-size: 12px;
+  background: var(--panel);
+}
+.cm-editor.cm-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }
