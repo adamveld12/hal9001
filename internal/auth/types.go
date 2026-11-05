@@ -117,7 +117,7 @@ type Settings struct {
 // AuthRequest is everything a module may look at.
 type AuthRequest struct {
 	Service Service
-	// Method and Path identify the endpoint being accessed.
+	// HTTPMethod and Path identify the endpoint being accessed.
 	HTTPMethod string
 	Path       string
 	// Host is the Host header (with port, if any).
