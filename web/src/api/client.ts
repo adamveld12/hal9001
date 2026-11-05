@@ -33,7 +33,11 @@ const jsonContentType: Middleware = {
   },
 };
 
-export const api = createClient<paths>({ baseUrl: "" });
+// Array query parameters are comma separated (`style: form, explode: false` in the contract).
+export const api = createClient<paths>({
+  baseUrl: "",
+  querySerializer: { array: { style: "form", explode: false } },
+});
 api.use(jsonContentType);
 
 interface Result<D> {

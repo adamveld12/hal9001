@@ -71,7 +71,10 @@ export function replaceApprovalInPages(
     ...page,
     items: page.items.flatMap((a) => {
       if (a.id !== decided.id) return [a];
-      if (query.status !== undefined && query.status !== decided.status) {
+      if (
+        query.status !== undefined &&
+        !query.status.includes(decided.status)
+      ) {
         return [];
       }
       return [decided];

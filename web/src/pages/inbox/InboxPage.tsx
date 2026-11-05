@@ -68,8 +68,8 @@ export function InboxPage() {
   const update = useUpdateInbox();
 
   const loaded = useMemo(
-    () => mergeInboxPages(list.data?.pages ?? [], filters.sort),
-    [list.data, filters.sort],
+    () => mergeInboxPages(list.data?.pages ?? []),
+    [list.data],
   );
 
   // Where the open item and the cursor last were in the list, so the open item

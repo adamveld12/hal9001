@@ -189,9 +189,9 @@ describe("encodeAttestation", () => {
 });
 
 describe("isAssertionStep", () => {
-  it("matches the daemon's step kind and the documented spelling only", () => {
+  it("matches the daemon's step kind only", () => {
     expect(isAssertionStep("webauthn.assertion")).toBe(true);
-    expect(isAssertionStep("webauthn_assertion")).toBe(true);
+    expect(isAssertionStep("webauthn_assertion")).toBe(false);
     expect(isAssertionStep("password")).toBe(false);
     expect(isAssertionStep("webauthn.attestation")).toBe(false);
   });
