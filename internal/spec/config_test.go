@@ -135,3 +135,65 @@ func TestConfigMarshalOmitsDefaults(t *testing.T) {
 		t.Errorf("round trip: %v\n%s", ds, out)
 	}
 }
+
+const gateRuntimes = `
+runtimes:
+  claude:
+    command: [claude-agent-acp]
+    modes: {ask: default, full: bypassPermissions}
+    session_meta:
+      claudeCode: {options: {settingSources: [project]}}
+  omp:
+    command: [omp, acp]
+    modes: {ask: "", full: ""}
+    ask: {args: [--approval-mode, always-ask]}
+    full: {args: [--approval-mode, yolo], env: {EXTRA: "1"}}
+    env:
+      PI_CODING_AGENT_DIR: "{{data}}/runtimes/omp-home"
+    elicitation: true
+`
+
+func TestGateRuntimeBlockParsesCleanAndRoundTrips(t *testing.T) {
+	cfg, ds := CheckConfig([]byte(gateRuntimes))
+	if len(ds) != 0 {
+		t.Fatalf("diagnostics: %v", ds)
+	}
+	omp := cfg.Runtimes["omp"]
+	if strings.Join(omp.Ask.Args, " ") != "--approval-mode always-ask" || omp.Full.Env["EXTRA"] != "1" ||
+		!omp.Elicitation || omp.Env["PI_CODING_AGENT_DIR"] != DataPlaceholder+"/runtimes/omp-home" {
+		t.Errorf("omp = %+v", omp)
+	}
+	meta, _ := cfg.Runtimes["claude"].SessionMeta["claudeCode"].(map[string]any)
+	if meta == nil {
+		t.Fatalf("claude session_meta = %+v", cfg.Runtimes["claude"].SessionMeta)
+	}
+	out, err := MarshalConfig(*cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, ds := CheckConfig(out)
+	if len(ds) != 0 || strings.Join(again.Runtimes["omp"].Full.Args, " ") != "--approval-mode yolo" || !again.Runtimes["omp"].Elicitation {
+		t.Fatalf("round trip lost runtime fields: %v\n%s", ds, out)
+	}
+}
+
+func TestRuntimeSpawnValidation(t *testing.T) {
+	tests := []struct {
+		name, yaml, path, msg string
+	}{
+		{"env name", "runtimes: {x: {command: [a], env: {'BAD-NAME': v}}}\n", "runtimes.x.env.BAD-NAME", "invalid environment variable name"},
+		{"ask env name", "runtimes: {x: {command: [a], ask: {env: {'1X': v}}}}\n", "runtimes.x.ask.env.1X", "invalid environment variable name"},
+		{"full empty arg", "runtimes: {x: {command: [a], full: {args: ['']}}}\n", "runtimes.x.full.args[0]", "must not be empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ds := CheckConfig([]byte(tt.yaml))
+			for _, d := range ds {
+				if d.Code == CodeInvalidValue && d.Path == tt.path && strings.Contains(d.Message, tt.msg) {
+					return
+				}
+			}
+			t.Fatalf("want %s containing %q in %v", tt.path, tt.msg, ds)
+		})
+	}
+}

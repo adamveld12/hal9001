@@ -13,7 +13,7 @@ dedup_retention_days: 180
 
 # Items at or above this priority raise a macOS notification
 # (low | normal | high | urgent).
-notify_min_priority: high
+notify_min_priority: normal
 
 # How long a per-tool approval request waits before it is rejected and the run
 # fails with approval_timeout.
@@ -27,18 +27,40 @@ allowed_hosts: []
 # owns this Mac.
 allowed_logins: []
 
-# ACP agent runtimes. A runtime is a command speaking ACP over stdio; install the
-# adapters globally at pinned versions (not via npx).
+# ACP agent runtimes (verified by the gate in docs/acp-gate.md). A runtime is a
+# command speaking ACP over stdio; install the adapters globally at pinned
+# versions (not via npx).
 #
 # `modes` maps hal9001's two policies onto the agent's own session-mode names:
-#   ask  - most restrictive "ask for permission" mode (used for readonly and approve nodes)
-#   full - most permissive mode (used for auto nodes and approved proposals)
-# The claude and codex names below are the expected ones and the omp names are
-# unknown (TBD). All of them MUST be confirmed by the ACP gate; see docs/acp-gate.md.
+#   ask  - most restrictive "ask for permission" mode (readonly and approve nodes)
+#   full - most permissive mode (auto nodes and approved proposals)
+# An empty mode name means the runtime is restricted another way: `ask` and
+# `full` add spawn args/env per policy (omp picks its approval mode with a flag).
+# `session_meta` is sent as _meta on session/new and session/load. `elicitation`
+# advertises form elicitation, which omp needs to route edit and MCP approvals to
+# hal9001. `env` is added to the agent process; "{{data}}" stands for
+# <home>/data. The engine creates the isolated CODEX_HOME / PI_CODING_AGENT_DIR
+# directories and symlinks the existing login into them so user settings that
+# auto-allow tools cannot bypass the approval policy.
 runtimes:
-  claude: {command: [claude-agent-acp], modes: {ask: default, full: bypassPermissions}}
-  codex: {command: [codex-acp], modes: {ask: read-only, full: full-access}}
-  omp: {command: [omp, acp], modes: {ask: TBD, full: TBD}} # TBD: set after the ACP gate confirms omp's mode names
+  claude:
+    command: [claude-agent-acp]
+    modes: {ask: default, full: bypassPermissions}
+    session_meta:
+      claudeCode: {options: {settingSources: [project]}}
+  codex:
+    command: [codex-acp]
+    modes: {ask: read-only, full: agent-full-access}
+    env:
+      CODEX_HOME: "{{data}}/runtimes/codex-home"
+  omp:
+    command: [omp, acp]
+    modes: {ask: "", full: ""}
+    ask: {args: [--approval-mode, always-ask]}
+    full: {args: [--approval-mode, yolo]}
+    env:
+      PI_CODING_AGENT_DIR: "{{data}}/runtimes/omp-home"
+    elicitation: true
 
 # Auth: PAM-style stacks per service (see REQUIREMENTS section 10.4).
 # localhost-trust lets local requests in; tailscale-identity signs in tailnet
