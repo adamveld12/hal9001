@@ -1,0 +1,55 @@
+# Git hooks for hal9001. Install with `mise run setup`.
+# Tools are pinned in mise.toml; every command runs through `mise exec` so hooks, agents, and manual runs use the same versions.
+
+pre-commit:
+  parallel: true
+  commands:
+    gitleaks:
+      run: mise exec -- gitleaks git --pre-commit --staged --redact --no-banner
+
+    go-fmt:
+      glob: "*.go"
+      run: mise exec -- golangci-lint fmt --diff {staged_files}
+
+    go-mod-tidy:
+      glob: "{go.mod,go.sum,*.go}"
+      run: mise exec -- go mod tidy -diff
+
+    golangci-lint:
+      glob: "*.go"
+      run: mise exec -- golangci-lint run ./...
+
+    go-test:
+      glob: "{*.go,go.mod,go.sum}"
+      run: mise exec -- go test -short ./...
+
+    web-format:
+      root: "web/"
+      glob: "*.{ts,tsx,js,jsx,json,css,html,md}"
+      run: mise exec -- pnpm exec prettier --check {staged_files}
+
+    web-lint:
+      root: "web/"
+      glob: "*.{ts,tsx,js,jsx}"
+      run: mise exec -- pnpm exec oxlint --deny-warnings {staged_files}
+
+    web-typecheck:
+      root: "web/"
+      glob: "*.{ts,tsx}"
+      run: mise exec -- pnpm typecheck
+
+    web-test:
+      root: "web/"
+      glob: "*.{ts,tsx}"
+      run: mise exec -- pnpm test
+
+pre-push:
+  parallel: true
+  commands:
+    go-test-race:
+      run: mise exec -- go test -race ./...
+    golangci-lint-full:
+      run: mise exec -- golangci-lint run ./...
+    web-check:
+      root: "web/"
+      run: mise exec -- pnpm check

@@ -1,0 +1,22 @@
+[tools]
+go = "1.27.3"
+golangci-lint = "2.15.0"
+lefthook = "2.2.2"
+gitleaks = "8.30.1"
+node = "24.22.1"
+pnpm = "11.28.8"
+
+[tasks.setup]
+description = "Install git hooks and web dependencies"
+run = ["lefthook install", "pnpm --dir web install --frozen-lockfile"]
+
+[tasks.check]
+description = "Run every check the hooks run, on the whole tree"
+run = [
+  "gitleaks git --redact --no-banner",
+  "golangci-lint fmt --diff ./...",
+  "go mod tidy -diff",
+  "golangci-lint run ./...",
+  "go test -race ./...",
+  "pnpm --dir web check",
+]
