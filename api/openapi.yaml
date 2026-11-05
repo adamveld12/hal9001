@@ -2015,7 +2015,8 @@ components:
       type: [string, 'null']
       description: Pass as `cursor` to get the next page; null on the last page.
     JsonValue:
-      description: Any JSON value.
+      description: Any JSON value, including null.
+      anyOf: [{}, {type: 'null'}]
     EnvKeyName:
       type: string
       pattern: '^[A-Za-z_][A-Za-z0-9_]*$'

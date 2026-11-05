@@ -144,7 +144,9 @@ type Counts struct {
 }
 
 // Counts returns the header counters. Test runs are excluded from flow run counts;
-// UnreadInbox excludes archived and dry-run items.
+// UnreadInbox excludes archived and dry-run items. AgentRunsQueued counts agent
+// runs waiting for a slot: queued agent_runs rows plus agent node runs still
+// queued behind max_agent_runs (their agent run row is created when they start).
 func (s *Store) Counts(ctx context.Context) (Counts, error) {
 	var c Counts
 	err := s.rdb.QueryRowContext(ctx, `SELECT
@@ -153,7 +155,9 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		(SELECT COUNT(*) FROM flow_runs WHERE status='awaiting_approval' AND kind <> 'test'),
 		(SELECT COUNT(*) FROM node_runs WHERE status='queued'),
 		(SELECT COUNT(*) FROM node_runs WHERE status='running'),
-		(SELECT COUNT(*) FROM agent_runs WHERE status='queued'),
+		(SELECT COUNT(*) FROM agent_runs WHERE status='queued')
+		 + (SELECT COUNT(*) FROM node_runs n WHERE n.status='queued' AND n.node_type='agent'
+		    AND NOT EXISTS (SELECT 1 FROM agent_runs a WHERE a.node_run_id=n.id AND a.status='queued')),
 		(SELECT COUNT(*) FROM agent_runs WHERE status='running'),
 		(SELECT COUNT(*) FROM approvals WHERE status='pending'),
 		(SELECT COUNT(*) FROM inbox_items WHERE is_read=0 AND archived=0 AND dry_run=0)`).

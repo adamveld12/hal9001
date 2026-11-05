@@ -1377,8 +1377,8 @@ export interface components {
     NullableTimestamp: string | null;
     /** @description Pass as `cursor` to get the next page; null on the last page. */
     NextCursor: string | null;
-    /** @description Any JSON value. */
-    JsonValue: unknown;
+    /** @description Any JSON value, including null. */
+    JsonValue: unknown | null;
     EnvKeyName: string;
     /**
      * @description Captured text (stdin, stdout, stderr). `text` holds up to 64 KiB inline in detail responses and up to 4 KiB in
