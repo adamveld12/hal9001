@@ -60,10 +60,10 @@ event: flow_run.updated
 data: {"type":"flow_run.updated","id":"1042","ts":"2026-11-05T10:00:00.123456789Z","data":{...FlowRun...}}
 ```
 
-- `types` is a comma-separated subset of `StreamEventType`; omit it for everything. `sensor_id`, `flow_id`, `flow_run_id`, and `agent_run_id` narrow the types that carry that resource.
+- `types` is a comma-separated subset of `StreamEventType`; omit it for everything. `sensor_id`, `flow_id`, `flow_run_id`, `agent_run_id`, and `assist_session_id` narrow the types that carry that resource.
 - `stream.ready` is the first message. `Last-Event-ID` resumes from the server's buffer; when the gap is too large the server sends `stream.resync` and the client must refetch what it shows.
 - Payloads are the same records the REST endpoints return, with text previews cut to 4 KiB. The envelope schema of every type is listed under `x-hal-sse-events` on the stream operation.
-- Types: `status.changed`, `killswitch.changed`, `config.changed`, `sensor_run.{created,updated}`, `event.created`, `flow_run.{created,updated}`, `node_run.{created,updated}`, `agent_run.{created,updated}`, `agent_event.appended`, `permission_request.{created,updated}`, `approval.{created,updated}`, `inbox.{created,updated}`, `auth_event.created`.
+- Types: `status.changed`, `killswitch.changed`, `config.changed`, `sensor_run.{created,updated}`, `event.created`, `flow_run.{created,updated}`, `node_run.{created,updated}`, `agent_run.{created,updated}`, `agent_event.appended`, `permission_request.{created,updated}`, `approval.{created,updated}`, `inbox.{created,updated}`, `auth_event.created`, `assist.updated`, `assist.message` (see [assist.md](assist.md)).
 
 ## Errors
 

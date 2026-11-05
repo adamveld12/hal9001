@@ -478,12 +478,21 @@ func (s *session) onRunUpdated(rec agent.RunRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.turn
-	if t == nil || t.runID != rec.ID || t.linked {
+	if t == nil || t.runID != rec.ID {
 		return
 	}
-	t.linked = true
-	s.row.LastAgentRunID = rec.ID
-	_ = s.saveLocked()
+	// The agent's own session id survives a daemon restart that interrupts this turn.
+	changed := rec.SessionID != "" && rec.SessionID != s.row.ACPSessionID
+	if changed {
+		s.row.ACPSessionID = rec.SessionID
+	}
+	if !t.linked {
+		t.linked, changed = true, true
+		s.row.LastAgentRunID = rec.ID
+	}
+	if changed {
+		_ = s.saveLocked()
+	}
 }
 
 // approvalPending records a gated tool call: the conversation shows it with its approval, and the session waits.
@@ -538,7 +547,7 @@ func (s *session) cancel(ctx context.Context) (*store.AssistSession, error) {
 // close ends the session: the running turn is cancelled, the agent stopped, the draft directory removed.
 func (s *session) close(ctx context.Context) error {
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.row.Status == store.AssistClosed {
 		s.mu.Unlock()
 		return nil
 	}

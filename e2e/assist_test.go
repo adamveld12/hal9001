@@ -890,6 +890,24 @@ func TestAssistIsRejectedWhilePaused(t *testing.T) {
 	}
 }
 
+// "Pause and kill running" stops a running assist turn like any other running work.
+func TestAssistTurnIsKilledByThePauseAndKillSwitch(t *testing.T) {
+	d := newAssistDaemon(t, func(d *Daemon) {
+		d.assistRuntime(false, turn{Steps: []step{say("working"), {Op: fakeagent.OpHang}}})
+	})
+	s := d.assistCreate("")
+	d.assistSend(s.ID, "go", nil)
+	d.Eventually("the agent to start the turn", func() bool { return countCalls(d, "session/prompt") == 1 })
+	d.Post("/api/killswitch/pause", map[string]any{"kill_running": true}).Want(200)
+	got := d.assistWait(s.ID, "failed")
+	if got.Error == nil || !strings.Contains(*got.Error, "kill switch") {
+		t.Errorf("error = %v", got.Error)
+	}
+	if runs := d.assistRuns(s.ID); len(runs) != 1 || runs[0].Status != "killed" {
+		t.Errorf("runs = %+v", runs)
+	}
+}
+
 // A request for an unknown runtime or sensor is refused up front, and an agent edit that changes the id of an
 // existing sensor is flagged in the draft's diagnostics.
 func TestAssistCreateValidationAndIdMismatch(t *testing.T) {
@@ -934,7 +952,15 @@ func TestAssistSessionSurvivesARestart(t *testing.T) {
 	d.assistSend(s.ID, "hang", nil)
 	d.Eventually("the agent to start the second turn", func() bool { return countCalls(d, "session/prompt") == 2 })
 
+	orphan := "data/assist/01JC7Z3K9Q8V5T2M4N6P8R0S1T" // a draft directory no session owns (left by a crash)
+	d.Write(orphan+"/sensor.yaml", "id: orphan\n")
 	d.Restart()
+	if _, err := os.Stat(d.Path(orphan)); !os.IsNotExist(err) {
+		t.Errorf("the orphan draft directory survives a restart: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(d.assistDir(s.ID), "sensor.yaml")); err != nil {
+		t.Errorf("the session's own draft directory was removed: %v", err)
+	}
 	got := d.assistGet(s.ID)
 	if got.Draft.YAML != emitTwoYAML || len(got.Messages) < 4 {
 		t.Fatalf("after restart: draft %q, %d messages", got.Draft.YAML, len(got.Messages))

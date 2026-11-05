@@ -239,6 +239,12 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `sensors env list <id>` | Key names of the sensor's own env, and whether each overrides a global key. Values are never shown. |
 | `sensors env set <id> <KEY> [value]` | `--stdin` reads the value from stdin. Takes effect on the next poll. |
 | `sensors env unset <id> <KEY>` | |
+| `sensors validate [file.yaml\|-]` | Validate sensor YAML without saving. |
+| `assist create --runtime <name>` | Start an AI-assisted authoring session: `--sensor <id>` (edit an existing sensor), `--model`, `--yaml file\|-`. See [docs/assist.md](docs/assist.md). |
+| `assist list` / `assist get <session>` | `--target-kind`, `--target-id`; `get` includes the conversation. |
+| `assist send <session> <text...>` | `--yaml file\|-` replaces the draft first. Starts one agent turn. |
+| `assist test [<session>]` / `assist draft [<session>]` | Run the draft like Poll now (redacted JSON result) / print the draft with its diagnostics. The session defaults to `HAL9001_ASSIST_SESSION`. |
+| `assist cancel [<session>]` / `assist close <session>` | Cancel the running turn / end the session and delete its draft directory. |
 | `events list` | `--sensor`, `--flow`, `--kind`, `--status`, `--decision`, `--q`, `--since`, `--until` (RFC 3339), `--limit`, `--cursor` |
 | `events get <id>` | The event with its fan-out of flow runs. |
 | `events inject <sensor-id>` | `--file item.json` (default: JSON on stdin). Goes through dedup and fan-out like a polled item. |
@@ -321,6 +327,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/auth.md](docs/auth.md) | Auth stacks, modules, Tailscale setup, threat notes. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
+| [docs/assist.md](docs/assist.md) | AI-assisted sensor authoring: draft, permission policy, secret model, lifecycle. |
 | [docs/api.md](docs/api.md) | REST API guide: auth, pagination, long-polling, SSE, errors, curl walkthrough. |
 | [docs/live-smoke.md](docs/live-smoke.md) | Live smoke tests against real runtimes and services. |
 | [cmd/fake-acp-agent/README.md](cmd/fake-acp-agent/README.md) | The scripted ACP agent used by tests. |

@@ -100,6 +100,12 @@ func (s *session) onEvent(ev agent.Event) {
 		s.flushTextLocked(t) // text after this call starts a new assistant message
 		t.text = nil
 		s.applyToolUpdate(t, u)
+		// A finished tool call may have written the draft: show the change now, not at the next poll.
+		if u.Status != nil && (*u.Status == "completed" || *u.Status == "failed") {
+			if err := s.syncFromDiskLocked(); err != nil {
+				s.m.log.Warn("assist: sync draft", "session", s.id, "err", err)
+			}
+		}
 	}
 }
 

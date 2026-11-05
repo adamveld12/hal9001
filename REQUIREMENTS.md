@@ -66,6 +66,7 @@ Home dir defaults to `~/.hal9001` (override `--home`). Config files are meant to
   data/blobs/          # large stdout/stderr/transcripts, content-addressed
   data/state/<node>/   # persistent per-sensor/per-node scratch dir ($HAL_STATE_DIR)
   data/worktrees/<run>/
+  data/assist/<session>/  # AI-assisted authoring: the draft sensor.yaml and the agent's instructions (§5.1)
 ```
 
 - Config files are hot-reloaded on change (fsnotify). The UI writes YAML; if the file changed on disk since the UI loaded it (hash mismatch), the save is rejected with a conflict.
@@ -137,6 +138,17 @@ Pause: a sensor can be paused on its own (`POST /api/sensors/{id}/pause`, `hal90
 Per-sensor env: a sensor's own secrets live in `env.d/sensors/<id>.env`, never in its YAML. A poll gets `env` overlaid with the sensor's values (the sensor wins). Values are write-only (API and UI list names only).
 
 Gmail CLI: neither `gog` nor `gws` is installed yet. Default choice `gog`; the template is verified once installed (see §13).
+
+### 5.1 AI-assisted sensor authoring
+
+From the Sensors page, "Create with AI" (new sensor) or "Ask AI" (existing sensor) opens a chat drawer. The user talks to an agent running on one of the configured ACP runtimes (`runtimes` in `config.yaml`); the agent edits a **draft** of the sensor, which shows up live in the sensor editor; the user tests it and saves with the normal Save button. Full description: `docs/assist.md`.
+
+- **Draft, not file.** The agent never writes a real sensor file. It edits `data/assist/<session>/sensor.yaml`; only Save (the ordinary sensor create/update endpoints, with `expected_hash`) persists a sensor. The draft is validated like a sensor file after every change (for a new sensor the id need not exist yet; a changed id of an existing sensor is flagged) and the latest copy, with its diagnostics and who wrote it, is part of the session.
+- **No secrets for the agent.** The agent's environment contains no value from `env` or `env.d`; it is told the variable names only (global plus the target sensor's). It tests the draft through the daemon (`POST /api/assist/sessions/{id}/test`, `hal9001 assist test`), which runs it like Poll now with the global env overlaid by the target sensor's values, redacts the output (§9) and records nothing: no sensor run, events or dedup keys.
+- **Permissions per turn** (the gated policy of §7.2): read-class calls are allowed (not on protected files such as `env`, `env.d`, `config.yaml`, the database); edits inside the session's draft directory are allowed; `hal9001 assist test`, `hal9001 assist draft` and `hal9001 sensors validate sensor.yaml` are allowed; everything else is a `tool_call` approval, decided inline in the chat (Allow / Deny / Deny + stop). Codex cannot continue after a denial, so a denial ends its turn.
+- **Traceability.** Every turn is an agent run (mode `approve`, style `per_tool`, policy `gated`, phase `execute`, `assist_session_id` set, no node run) with transcript, permission requests and approvals, visible on the Agent run page.
+- **Lifecycle.** One turn at a time; the agent process is kept alive between turns and suspended after 15 minutes idle; the next message resumes it with `session/load` (fallback: a new session with a recap, recorded on the run). Kill switch: new messages and tests are rejected with 423. Sessions and drafts are pruned by retention; closing a session deletes its draft directory.
+- **API.** `POST/GET /api/assist/sessions`, `GET/DELETE .../{id}`, `POST .../{id}/messages`, `PUT .../{id}/draft`, `POST .../{id}/test`, `POST .../{id}/cancel`; SSE `assist.updated` and `assist.message` (filter `assist_session_id`).
 
 ## 6. Flows
 
@@ -334,9 +346,11 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 | flow_versions | flow_id, hash, yaml |
 | flow_runs | id, flow_id, flow_hash, event_id, kind (live/replay/test), replay_of, dry_run, status, timestamps |
 | node_runs | id, flow_run_id, node_id, parent_node_run_id, status, decision (emitted/dropped/error/skipped), reason, port(s), command/script snapshot, env keys (values redacted), stdin, stdout, stderr, exit, duration |
-| agent_runs | id, node_run_id, runtime, agent info + capabilities from `initialize`, mode, approve style, policy, phase (propose/execute), session_id, resumed_via (load/new_session), cwd, rendered prompt, argv, status, stop_reason, result JSON, raw JSON-RPC blob |
+| agent_runs | id, node_run_id (null for an assist turn), assist_session_id (assist turns only), runtime, agent info + capabilities from `initialize`, mode, approve style, policy, phase (propose/execute), session_id, resumed_via (load/new_session), cwd, rendered prompt, argv, status, stop_reason, result JSON, raw JSON-RPC blob |
 | agent_events | agent_run_id, seq, ts, kind (message/thought/tool_call/tool_call_update/plan/...), tool_call_id, payload (the `session/update` body) |
 | permission_requests | id, agent_run_id, tool_call_id, tool kind, title, raw input, options offered, decision (allow/reject/cancelled/expired), decided_by (policy/user/timeout), matched rule, reason, timestamps |
+| assist_sessions | id, target (sensor id or none), runtime, model, status, error, latest draft (yaml, hash, parsed id, diagnostics, author), last agent run, the agent's session id |
+| assist_messages | id, session_id, role (user/assistant/tool/system), text, agent_run_id, tool call (title, kind, status, raw input, content), approval_id |
 | approvals | id, agent_run_id, type (proposal/tool_call), permission_request_id (tool_call only), proposal_md, status, decided_at, comment |
 | inbox_items | id, source (agent_run/node_run), title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run |
 | auth_events | id, ts, service, endpoint, per-module results, outcome, principal, remote addr, host, session id |
@@ -360,7 +374,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 The backend is a JSON REST API; the web UI and the CLI are both clients of it and have no private endpoints. Everything the tool does can be driven and verified with `curl` or the CLI.
 
 - Contract: `api/openapi.yaml` (OpenAPI 3.1), updated in the same commit as handlers. TS types for the UI are generated from it.
-- Resources: sensors (incl. `POST /api/sensors/{id}/poll`), events, flows (CRUD on YAML + `validate`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, auth.
+- Resources: sensors (incl. `POST /api/sensors/{id}/poll`), events, flows (CRUD on YAML + `validate`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), auth.
 - Test entry points:
   - `POST /api/events` injects an event for a sensor id without polling (body = item JSON); goes through dedup and fan-out exactly like a polled item.
   - `POST /api/flows/{id}/test-node` runs one node on a supplied input (same as "Run node on sample").

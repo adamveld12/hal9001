@@ -274,11 +274,17 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 	msg := &store.AssistMessage{SessionID: mine.ID, Role: "assistant", Text: &text}
 	must(t, e.st.CreateAssistMessage(ctx(), msg))
 
-	up := c.expect("assist.updated").data()
+	// The session's creation may still be in flight when the stream opens: skip to the update.
+	var up map[string]any
+	for range 5 {
+		if up = c.expectUntil("assist.updated").data(); up["status"] == "running" {
+			break
+		}
+	}
 	if up["id"] != mine.ID || up["status"] != "running" || up["draft"].(map[string]any)["updated_by"] != "agent" {
 		t.Errorf("assist.updated = %v", up)
 	}
-	m := c.expect("assist.message").data()
+	m := c.expectUntil("assist.message").data()
 	if m["id"] != msg.ID || m["session_id"] != mine.ID || m["text"] != "hello" {
 		t.Errorf("assist.message = %v", m)
 	}

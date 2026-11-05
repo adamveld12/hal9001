@@ -356,15 +356,3 @@ func (s *Store) ListAssistMessages(ctx context.Context, sessionID string) ([]Ass
 	}
 	return out, rows.Err()
 }
-
-// AssistApprovalFor returns the id of the tool-call approval raised by the
-// permission request of toolCallID in agentRunID, or "" when there is none.
-func (s *Store) AssistApprovalFor(ctx context.Context, agentRunID, toolCallID string) (string, error) {
-	var id string
-	err := s.rdb.QueryRowContext(ctx, `SELECT a.id FROM approvals a JOIN permission_requests p ON p.id = a.permission_request_id
-		WHERE a.agent_run_id = ? AND p.tool_call_id = ? ORDER BY a.id DESC LIMIT 1`, agentRunID, toolCallID).Scan(&id)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return id, err
-}
