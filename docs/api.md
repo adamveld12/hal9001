@@ -25,7 +25,7 @@ Each operation declares its service in `x-hal-service`:
 | Service | Operations |
 |---|---|
 | `ui` | The login, logout, and whoami calls. The UI shell and its assets are public (they hold no data and contain the login page); every `/api/` route is guarded. |
-| `api` | Reads, the event stream, and the compute-only POSTs (`/api/flows/validate`, `/api/sensors/validate`, `/api/prompts/render`). |
+| `api` | Reads, the event stream, and the compute-only POSTs (`/api/flows/validate`, `/api/sensors/validate`, `/api/prompts/render`, `/api/transform/preview`, `/api/transform/compile`). |
 | `approve` | `POST /api/approvals/{id}/approve` and `/deny`. |
 | `admin` | Everything that writes files, runs code, or changes state: flows, sensors, prompts, env, settings, kill switch, event injection, replay, test-node, runtime probes, inbox flags, session and passkey management. Auth reads that expose security data (sessions, auth events, passkeys, Tailscale status) are also `admin`. |
 

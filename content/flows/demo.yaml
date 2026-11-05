@@ -1,4 +1,5 @@
 # Credential-free demo: demo-ticker -> drop noise -> route by severity -> inbox.
+# The first two nodes are transform nodes: plain-language steps instead of jq.
 id: demo
 enabled: true
 dry_run: false
@@ -6,16 +7,22 @@ subscribe: [demo-ticker]
 max_concurrent: 2
 nodes:
   - id: drop-noise
-    type: command
-    lang: jq
-    script: 'select(.severity != "noise") | . + {_reason: "not noise"}'
+    type: transform
+    steps:
+      - type: filter
+        conditions:
+          - {field: severity, op: not_equals, value: noise}
     ui: {x: 100, y: 120}
 
   - id: route
-    type: command
-    lang: jq
-    ports: [urgent, normal]
-    script: '. + {_port: (if .severity == "urgent" then "urgent" else "normal" end)}'
+    type: transform
+    steps:
+      - type: route
+        default_port: normal
+        rules:
+          - port: urgent
+            conditions:
+              - {field: severity, op: equals, value: urgent}
     ui: {x: 400, y: 120}
 
   - id: note-urgent

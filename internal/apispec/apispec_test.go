@@ -145,9 +145,11 @@ func usesExpectedHash(op *openapi3.Operation) bool {
 }
 
 // Reads are guarded by api, decisions by approve, everything that changes state or runs code by admin
-// (REQUIREMENTS §10.4). The POST operations below only compute and persist nothing, so they are reads.
+// (REQUIREMENTS §10.4). The POST operations below only compute and persist nothing, so they are reads. The
+// transform ones run jq, but only the program internal/transform generates (user text is JSON-encoded into it,
+// never spliced into jq syntax) on the posted sample, with a timeout.
 func TestServiceMapping(t *testing.T) {
-	computeOnly := []string{"validateSensor", "validateFlow", "renderPrompt"}
+	computeOnly := []string{"validateSensor", "validateFlow", "renderPrompt", "previewTransform", "compileTransform"}
 	operations(t, func(method, path string, op *openapi3.Operation) {
 		svc, _ := op.Extensions[ExtService].(string)
 		public, _ := op.Extensions[ExtPublic].(bool)
