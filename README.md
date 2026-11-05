@@ -1,0 +1,316 @@
+# hal9001
+
+A local macOS daemon that watches Slack, GitHub, Linear and Gmail, runs each new item through flows you write
+(shell-command nodes in any language), and hands the ones that matter to a coding agent (Claude Code, Codex, omp)
+under one of three autonomy modes. A web UI on `localhost:9001` shows every event, decision, agent transcript and
+approval.
+
+- **Plain code decides.** Sensors and command nodes are processes: JSON on stdin, JSON on stdout. Any language.
+- **Agents are constrained.** They run over ACP in `readonly`, `approve` or `auto` mode, and every permission request
+  is decided by policy or by you, and recorded.
+- **Everything is traceable.** For any outcome you can see the source item, each node's input, output, exit code and
+  script, the agent transcript, and what was approved.
+- **API first.** The UI and the `hal9001` CLI are clients of one JSON REST API ([`api/openapi.yaml`](api/openapi.yaml)).
+
+The full specification is [REQUIREMENTS.md](REQUIREMENTS.md). Working rules for contributors are in
+[AGENTS.md](AGENTS.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Sources
+    S1["Sensor: slack-mentions-dms"]
+    S2["Sensor: github-notifications"]
+    S3["Sensor: linear-assigned / gmail-unread / ..."]
+  end
+  S1 & S2 & S3 -->|"items (JSON / JSONL)"| DD["Dedup by key template"]
+  DD -->|"new key"| EV[("Event")]
+  EV -->|"one FlowRun per subscribed flow"| FL
+  subgraph FL ["Flow (DAG, flows/*.yaml)"]
+    N1["command node"] -->|"_port"| N2["command node"]
+    N2 --> AG["agent node"]
+    N2 --> IN["inbox node"]
+  end
+  AG -->|"proposal / tool call"| AP[("Approvals")]
+  AG -->|"structured note"| IB[("Inbox")]
+  IN --> IB
+  AP -. "approve / deny" .-> AG
+  IB --> NT["macOS notification"]
+  subgraph Clients
+    UI["Web UI"]
+    CLI["hal9001 CLI"]
+  end
+  API{{"REST API + SSE (127.0.0.1:9001)"}}
+  UI & CLI --> API
+  API --- EV & FL & AP & IB
+```
+
+| Term | Meaning |
+|---|---|
+| Sensor | Scheduled command that prints items. Defined once in `sensors/`, subscribed to by many flows. |
+| Event | One item that passed dedup. Immutable. |
+| Flow | DAG of nodes subscribed to sensors (`flows/*.yaml`). One FlowRun per event per flow. |
+| Node | `command` (process), `agent` (ACP session) or `inbox` (note for you). Nodes have named output ports. |
+| Prompt | Reusable prompt template for agent nodes (`prompts/*.md`). |
+| Inbox item / Approval | A note for you; a pending decision from an `approve`-mode agent. |
+
+Authoring details: [docs/flows.md](docs/flows.md).
+
+## Prerequisites
+
+macOS, [mise](https://mise.jdx.dev/), and the tools below. Everything pinned in [`mise.toml`](mise.toml) (Go, Node,
+pnpm, golangci-lint, lefthook, gitleaks, and the `claude-agent-acp` and `codex-acp` adapters) is installed by
+`mise install`.
+
+```sh
+mise install        # pinned toolchain and ACP adapters
+mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --frozen-lockfile)
+```
+
+| Needed for | What | Notes |
+|---|---|---|
+| Nodes | `bash`, `jq`, `python3`, `node` | Only the interpreters your sensors and nodes use. `jq` is used by the starter sensors. |
+| `slack-mentions-dms` | `SLACK_USER_TOKEN` | User token (`xoxp-...`) from a Slack app installed to your workspace. Scopes: `search:read`, `im:history`, `im:read`, `users:read`. |
+| `github-notifications`, `triage-github` | `gh auth login` | The token must read notifications (classic scope `notifications`, or `repo`) and pull requests. |
+| `linear-assigned` | `LINEAR_API_KEY` | Linear Settings > Account > Security & access. Read-only is enough. |
+| `gmail-unread` | [`gog`](https://github.com/steipete/gogcli) | Install it, then `gog auth add you@example.com`. Set `GOG_ACCOUNT` in `env` when `gog` has several accounts. |
+| Claude agents | Claude Code login | Runtime `claude`, adapter `claude-agent-acp` (mise-pinned). |
+| Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`, adapter `codex-acp` (mise-pinned). |
+| omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs `omp acp`. Not in `mise.toml` (a Homebrew install). |
+| Notifications | `terminal-notifier` (optional) | Falls back to `osascript` when missing. |
+| Remote access | Tailscale (optional) | See [docs/auth.md](docs/auth.md#tailscale). |
+
+Credentials go in `~/.hal9001/env` (`KEY=VALUE` per line, injected into every sensor and command node, never shown by
+the UI or API, and redacted from stored output). The first run seeds `env.example` next to it:
+
+```sh
+cp ~/.hal9001/env.example ~/.hal9001/env && chmod 600 ~/.hal9001/env
+$EDITOR ~/.hal9001/env
+# or, without exposing the value in the process list or shell history:
+printf %s "$LINEAR_API_KEY" | bin/hal9001 env set LINEAR_API_KEY --stdin
+```
+
+The ACP runtimes need extra care (isolated agent homes, adapter paths): see [docs/runtimes.md](docs/runtimes.md).
+
+## Quick start
+
+```sh
+mise run build          # builds the web UI, then bin/hal9001 with the UI embedded
+bin/hal9001 serve       # run in the foreground; Ctrl-C stops it
+```
+
+`serve` listens on `127.0.0.1:9001` (fixed; not configurable) and on first run seeds `~/.hal9001` from the starter
+content (use `--home <dir>` or `HAL9001_HOME` for another directory). Open the UI with `bin/hal9001 open`, or go to
+<http://localhost:9001>.
+
+To run it permanently as a launchd LaunchAgent (starts at login, restarts on exit):
+
+```sh
+bin/hal9001 install     # writes ~/Library/LaunchAgents/com.hal9001.daemon.plist and starts it
+bin/hal9001 uninstall   # stops it and removes the plist; your home directory is left alone
+bin/hal9001 install --dry-run   # print the plist only
+```
+
+`install` records the path of the binary you ran, so copy `bin/hal9001` to its permanent location first. It also
+copies your login-shell `PATH` into the plist so mise shims, `gh` and `jq` resolve inside nodes. Logs go to
+`~/Library/Logs/hal9001/hal9001.log`.
+
+### Demo flow (no credentials)
+
+The seeded `demo` flow is enabled. Its `demo-ticker` sensor emits three sample items per poll (first run fires them);
+the flow drops the `noise` one and routes the rest to the inbox by severity:
+
+```sh
+bin/hal9001 status --table                 # daemon counters and kill switch
+bin/hal9001 inbox list --table             # 2 items: one urgent, one normal
+bin/hal9001 events list --sensor demo-ticker --table
+bin/hal9001 runs list --table
+bin/hal9001 sensors poll demo-ticker       # poll now: same items, deduped, no new events
+```
+
+The other starter flows (`triage-slack`, `triage-github`, `linear-triage`, `email-secretary`) are disabled and
+`dry_run: true` until you have set their credentials; enable them by editing the YAML or in the UI. In dry-run,
+agents are forced read-only and side-effect nodes are skipped.
+
+## Home directory
+
+`~/.hal9001` (override with `--home` / `HAL9001_HOME`). Config files are meant to be versioned in git; the seeded
+`.gitignore` excludes `data/` and `env`.
+
+```
+~/.hal9001/
+  config.yaml          # concurrency, retention, notifications, allowed_hosts/logins, runtimes, auth
+  env                  # KEY=VALUE secrets injected into every node (not in git)
+  env.example          # seeded template for env
+  sensors/*.yaml       # one file per sensor
+  flows/*.yaml         # one file per flow
+  prompts/*.md         # agent prompt templates (YAML frontmatter + body)
+  data/hal.db          # SQLite: events, runs, transcripts, inbox, approvals, flow versions, auth events
+  data/blobs/          # large stdout/stderr/transcripts, content-addressed
+  data/state/<flow>/<node>/   # persistent scratch dir of a node ($HAL_STATE_DIR); sensors use data/state/_sensors/<id>/
+  data/worktrees/<id>/ # git worktrees for agent nodes with cwd mode worktree
+  data/runtimes/       # isolated agent homes (codex-home, omp-home)
+```
+
+Files are hot-reloaded. A save from the UI or API that is based on a stale copy is rejected with a conflict (`409`).
+`config.yaml` keys and defaults:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_agent_runs` | 2 | Global agent concurrency. Excess runs wait as `queued`. |
+| `max_command_runs` | 8 | Command-node pool size. |
+| `retention_days` | 30 | Nightly prune of runs, events, blobs and worktrees (keeps anything tied to a starred inbox item or pending approval). |
+| `dedup_retention_days` | 180 | Dedup keys are kept longer so old items do not re-fire. |
+| `notify_min_priority` | `normal` | Inbox items at or above this raise a macOS notification (`low`, `normal`, `high`, `urgent`). Every new approval notifies. |
+| `approval_timeout` | `1h` | Default wait for a `per_tool` approval before the run fails (`approval_timeout`). Agent nodes can override it. |
+| `session_ttl` | `7d` | Sliding lifetime of a login session. |
+| `allowed_hosts` | `[]` | Extra `Host` values the server accepts (your Tailscale hostname). |
+| `allowed_logins` | `[]` | Logins accepted by `tailscale-identity`; empty means the login that owns this Mac. |
+| `runtimes` | see [docs/runtimes.md](docs/runtimes.md) | ACP agent commands. |
+| `auth` | see [docs/auth.md](docs/auth.md) | PAM-style stacks per service. |
+
+`hal9001 validate` checks sensors, flows, prompts and config offline (exit code non-zero on errors; `--json` for
+machine-readable diagnostics).
+
+## CLI reference
+
+`hal9001 --help`:
+
+```
+usage: hal9001 <command> [flags]
+
+  serve       run the daemon in the foreground
+  install     install and start the launchd LaunchAgent
+  uninstall   stop and remove the launchd LaunchAgent
+  open        open the web UI in the browser
+  validate    check sensors, flows, prompts and config offline
+  version     print the version
+  auth        authentication helpers
+  tailscale   Tailscale exposure
+  status      daemon counters and kill switch state
+  sensors     list, inspect and poll sensors
+  events      list, inject and replay events
+  flows       list, validate and test flows
+  runs        list and inspect flow runs
+  node-runs   inspect node runs
+  agent-runs  list and inspect agent runs and transcripts
+  approvals   list, approve and deny approvals
+  inbox       list items; mark read, starred, archived
+  killswitch  pause and resume the daemon
+  runtimes    list and probe ACP runtimes
+  settings    show settings
+  env         list, set and unset env variables
+
+API commands print JSON; add --table for a human-readable view.
+Global API flags: --url (env HAL9001_URL, default http://127.0.0.1:9001), --session-cookie (env HAL9001_SESSION_COOKIE), --table.
+```
+
+Every command accepts `--help`. Errors from the API are printed as the `application/problem+json` document on stderr
+(a one-line summary with `--table`) and the exit code is 1; usage mistakes exit 2.
+
+**Local commands** (do not talk to the daemon; take `--home`, env `HAL9001_HOME`, default `~/.hal9001`):
+
+| Command | Flags | Purpose |
+|---|---|---|
+| `serve` | `--home`, `--web-dir` (serve the UI from a directory instead of the embedded one; env `HAL9001_WEB_DIR`) | Run the daemon in the foreground. |
+| `install` | `--home`, `--dry-run` | Install and start the LaunchAgent (label `com.hal9001.daemon`). |
+| `uninstall` | `--home` | Stop and remove the LaunchAgent. |
+| `open [path]` | `--home` | Open the UI (or a UI path) in the browser. |
+| `validate` | `--home`, `--json` | Lint sensors, flows, prompts and config. |
+| `version` | `--home` | Print the version. |
+| `auth set-password` | `--home`, `--stdin` | Set the password for the `password` auth module (prompts without echo; `--stdin` reads the first line of stdin). |
+
+**API commands** (flags `--url`, `--session-cookie`, `--table` on all of them):
+
+| Command | Arguments and flags |
+|---|---|
+| `status` | Daemon counters and kill switch state. |
+| `tailscale status` | Tailscale CLI reachability, this Mac's tailnet hostname and owner, whether serve is configured, whether the hostname is in `allowed_hosts`. |
+| `sensors list` / `sensors get <id>` | |
+| `sensors poll <id>` | Poll now (rejected while paused). |
+| `events list` | `--sensor`, `--flow`, `--kind`, `--status`, `--decision`, `--q`, `--since`, `--until` (RFC 3339), `--limit`, `--cursor` |
+| `events get <id>` | The event with its fan-out of flow runs. |
+| `events inject <sensor-id>` | `--file item.json` (default: JSON on stdin). Goes through dedup and fan-out like a polled item. |
+| `events replay <event-id>` | `--flow <flow-id>` (required), `--dry-run=true\|false` (omit to keep the flow's setting). |
+| `flows list` / `flows get <id>` | |
+| `flows validate [file.yaml\|-]` | Validate flow YAML without saving. |
+| `flows test-node <flow-id> <node-id>` | Input from one of `--event <id>`, `--node-run <id>[:<index>]`, `--json <value>`, or stdin. `--dry-run`, `--wait 60s`. |
+| `runs list` | `--flow`, `--event`, `--kind` (`live`, `replay`, `test`), `--status`, `--replay-of`, `--since`, `--until`, `--limit`, `--cursor` |
+| `runs get <id>` | `--wait` (block until finished or awaiting approval), `--timeout 10m` |
+| `node-runs get <id>` | `--wait`, `--timeout 10m` |
+| `agent-runs list` | `--flow-run`, `--node-run`, `--runtime`, `--status`, `--limit`, `--cursor` |
+| `agent-runs get <id>` | |
+| `agent-runs events <id>` | `--after-seq N`, `--limit N`, `--kind K` |
+| `approvals list` | `--status` (`pending`, `approved`, `denied`, `expired`), `--type` (`proposal`, `tool_call`), `--flow-run`, `--agent-run`, `--limit`, `--cursor` |
+| `approvals get <id>` | |
+| `approvals approve <id>` | `--comment text` (passed to the agent) |
+| `approvals deny <id>` | `--comment text`, `--cancel-run` (tool-call approvals: end the run instead of letting the agent continue) |
+| `inbox list` | `--unread`, `--starred`, `--archived`, `--dry-run`, `--flow`, `--priority`, `--q`, `--sort`, `--limit`, `--cursor` |
+| `inbox get <id>` | |
+| `inbox read <id>` / `star <id>` / `archive <id>` | `--unread` / `--off` / `--undo` reverse the action. |
+| `killswitch get` / `resume` | |
+| `killswitch pause` | `--kill` (also terminate running nodes), `--reason text` |
+| `runtimes list` | |
+| `runtimes probe <name>` | Start the runtime and report what it advertises. |
+| `settings get` | `config.yaml` as JSON, secrets redacted. |
+| `env list` | Variable names only. |
+| `env set <KEY> [value]` | Without a value, or with `--stdin`, the value is read from stdin. |
+| `env unset <KEY>` | |
+
+There is no CLI command to create flows or sensors: they are files in the home directory (hot-reloaded), or edited in
+the UI, or written through the API (see [docs/api.md](docs/api.md)). The CLI authenticates like any client: with the
+default auth config local requests need nothing; otherwise pass a session cookie obtained from
+`POST /api/auth/{service}/begin` ([docs/auth.md](docs/auth.md#logging-in-from-scripts)).
+
+## Development
+
+Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
+
+- All tools run through mise: `mise exec -- <tool>` or `mise run <task>`. First time in a clone or worktree:
+  `mise run setup`.
+- Commit early, one logical change per commit. Never bypass hooks. Pre-commit runs gitleaks, gofmt/goimports,
+  `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, tsc, vitest. Pre-push adds
+  `go test -race ./...` and the full web check. When a hook fails, assume your code is wrong first.
+- Parallel work uses one git worktree and branch per agent; the coordinator merges. Do not commit to `main` directly
+  or touch another worktree.
+- API first: `api/openapi.yaml` is the contract and changes in the same commit as the handler. After editing it run
+  `pnpm --dir web gen:api` to regenerate the UI types.
+
+| Task | Command |
+|---|---|
+| Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
+| Everything the hooks run, on the whole tree | `mise run check` (gitleaks, format, `go mod tidy -diff`, golangci-lint, `go test -race ./...`, `pnpm --dir web check`) |
+| UI dev server (proxies `/api` to `127.0.0.1:9001`) | `mise exec -- pnpm --dir web dev` |
+| Web checks only | `mise exec -- pnpm --dir web check` |
+
+## Testing
+
+- **Unit and API tests:** `mise exec -- go test -short ./...` (fast; this is what pre-commit runs) and
+  `mise exec -- go test -race ./...` (pre-push). Tests assert behavior a user or API client would notice, through the
+  real router (`httptest`) or the CLI, not through the UI. Slow suites skip under `-short`.
+- **Agent behavior** is tested against the scripted fake ACP agent ([`cmd/fake-acp-agent`](cmd/fake-acp-agent/README.md)),
+  never a real model, so modes, policy, approvals, resume, timeouts and cancellation are deterministic.
+- **End to end:** the scenarios of [REQUIREMENTS.md §12](REQUIREMENTS.md) are driven through the REST API only, with the
+  fake agent, and can each be reproduced by hand with `curl` or the CLI ([docs/api.md](docs/api.md) has a walkthrough).
+- **Live:** smoke tests against the real ACP runtimes and sensors are explicitly marked and need real credentials; see
+  [docs/live-smoke.md](docs/live-smoke.md).
+- **Real adapters:** `hal9001 runtimes probe <name>` and `cmd/acp-probe` check a runtime by hand
+  ([docs/runtimes.md](docs/runtimes.md)).
+
+Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.1:0`, and use a temporary home, never
+`~/.hal9001`.
+
+## More documentation
+
+| Document | Contents |
+|---|---|
+| [REQUIREMENTS.md](REQUIREMENTS.md) | Full specification and acceptance scenarios. |
+| [docs/flows.md](docs/flows.md) | Writing sensors, flows and prompts: the node contract, routing, templates, agent nodes, dry-run, replay, test-node. |
+| [docs/auth.md](docs/auth.md) | Auth stacks, modules, Tailscale setup, threat notes. |
+| [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
+| [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
+| [docs/api.md](docs/api.md) | REST API guide: auth, pagination, long-polling, SSE, errors, curl walkthrough. |
+| [docs/live-smoke.md](docs/live-smoke.md) | Live smoke tests against real runtimes and services. |
+| [cmd/fake-acp-agent/README.md](cmd/fake-acp-agent/README.md) | The scripted ACP agent used by tests. |
+| [web/README.md](web/README.md) | UI layout and dev commands. |
