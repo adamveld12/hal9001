@@ -167,6 +167,16 @@ func (s *Store) SetNotifier(fn func(Change)) {
 	s.notify.Store(&fn)
 }
 
+// Notifier returns the installed change callback, or nil. A second consumer
+// chains onto it: capture the result, then install a callback that calls the
+// previous one and its own.
+func (s *Store) Notifier() func(Change) {
+	if p := s.notify.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 // NewID returns a new ULID string stamped with the store clock. IDs from one
 // Store are strictly increasing.
 func (s *Store) NewID() string {

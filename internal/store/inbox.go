@@ -186,13 +186,19 @@ type InboxFilter struct {
 	DryRun     *bool
 	Priorities []Priority
 	FlowRunID  string
+	FlowID     string // items whose flow run belongs to this flow
 	Search     string // case-insensitive substring of title or summary
 	Time       TimeRange
+	// ByPriority orders by priority (urgent first) and then newest first,
+	// instead of newest first. Cursors stay item ids.
+	ByPriority bool
 	ListOpts
 }
 
-// ListInbox lists items, newest first. Ordering by priority is left to the
-// client so cursors stay stable ULIDs.
+const inboxRank = `(CASE priority WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 ELSE 0 END)`
+
+// ListInbox lists items, newest first, or by priority then newest first with
+// ByPriority (Oldest is ignored in that mode).
 func (s *Store) ListInbox(ctx context.Context, f InboxFilter) (Page[InboxItem], error) {
 	var w where
 	w.boolPtr("is_read", f.Read)
@@ -201,10 +207,43 @@ func (s *Store) ListInbox(ctx context.Context, f InboxFilter) (Page[InboxItem], 
 	w.boolPtr("dry_run", f.DryRun)
 	w.in("priority", strs(f.Priorities))
 	w.eq("flow_run_id", f.FlowRunID)
+	if f.FlowID != "" {
+		w.add("flow_run_id IN (SELECT id FROM flow_runs WHERE flow_id = ?)", f.FlowID)
+	}
 	w.timeRange("created_at", f.Time)
 	if f.Search != "" {
 		w.add("(instr(lower(title), lower(?)) > 0 OR instr(lower(summary_md), lower(?)) > 0)", f.Search, f.Search)
 	}
-	return listPage(ctx, s.rdb, "SELECT "+inboxCols+" FROM inbox_items", &w, f.ListOpts, "id",
-		scanInbox, func(i InboxItem) string { return i.ID })
+	if !f.ByPriority {
+		return listPage(ctx, s.rdb, "SELECT "+inboxCols+" FROM inbox_items", &w, f.ListOpts, "id",
+			scanInbox, func(i InboxItem) string { return i.ID })
+	}
+	if f.Cursor != "" {
+		w.add("("+inboxRank+" < (SELECT "+inboxRank+" FROM inbox_items c WHERE c.id = ?) OR ("+inboxRank+" = (SELECT "+inboxRank+" FROM inbox_items c WHERE c.id = ?) AND id < ?))",
+			f.Cursor, f.Cursor, f.Cursor)
+	}
+	limit := limitOf(f.ListOpts)
+	rows, err := s.rdb.QueryContext(ctx,
+		sqlJoin("SELECT ", inboxCols, " FROM inbox_items", w.clause(), " ORDER BY ", inboxRank, " DESC, id DESC LIMIT ?"),
+		append(append([]any{}, w.args...), limit+1)...)
+	if err != nil {
+		return Page[InboxItem]{}, fmt.Errorf("store: list inbox: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	page := Page[InboxItem]{Items: []InboxItem{}}
+	for rows.Next() {
+		it, err := scanInbox(rows)
+		if err != nil {
+			return Page[InboxItem]{}, err
+		}
+		page.Items = append(page.Items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return Page[InboxItem]{}, fmt.Errorf("store: list inbox: %w", err)
+	}
+	if len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		page.NextCursor = page.Items[limit-1].ID
+	}
+	return page, nil
 }

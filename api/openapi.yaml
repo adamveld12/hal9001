@@ -1043,13 +1043,20 @@ paths:
       tags: [approvals]
       summary: Approval queue and history
       description: |
-        Both types (`proposal`, `tool_call`). `status=pending` is the queue; any other filter or none gives history.
-        Newest first.
+        Both types (`proposal`, `tool_call`). `status=pending` is the queue; `status=approved,denied,expired` is the
+        history. `status` takes one or more comma-separated values; without it every status is listed. Newest first.
       x-hal-service: api
       parameters:
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
-        - {name: status, in: query, schema: {$ref: '#/components/schemas/ApprovalStatus'}}
+        - name: status
+          in: query
+          description: Comma-separated statuses to include.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: {$ref: '#/components/schemas/ApprovalStatus'}
         - {name: type, in: query, schema: {$ref: '#/components/schemas/ApprovalType'}}
         - {name: agent_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
@@ -3281,7 +3288,7 @@ components:
           type: object
           required: [kind]
           properties:
-            kind: {type: string, description: 'What to send back, for example `password` or `webauthn_assertion`.'}
+            kind: {type: string, description: 'What to send back, for example `password` or `webauthn.assertion`.'}
             data: {$ref: '#/components/schemas/JsonValue'}
         methods: {type: array, items: {type: string}, description: Interactive modules of the service's stack.}
         trace: {type: array, items: {$ref: '#/components/schemas/PublicModuleTrace'}}

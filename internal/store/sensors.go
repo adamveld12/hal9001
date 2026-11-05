@@ -342,12 +342,18 @@ func getEvent(ctx context.Context, q dbq, id string, slim bool) (*Event, error) 
 }
 
 // EventFilter selects events for ListEvents.
+//
+// FlowID, RunStatuses, RunKinds and RunDecision restrict to events that have
+// at least one flow run matching all of the given run conditions at once.
 type EventFilter struct {
-	SensorID string
-	FlowID   string // events that have at least one flow run in this flow
-	Search   string // case-insensitive substring of the inline payload or dedup key
-	Time     TimeRange
-	Slim     bool // omit inline payload text
+	SensorID    string
+	FlowID      string
+	RunStatuses []FlowRunStatus
+	RunKinds    []FlowRunKind
+	RunDecision NodeDecision // run has a node run with this decision
+	Search      string       // case-insensitive substring of the inline payload or dedup key
+	Time        TimeRange
+	Slim        bool // omit inline payload text
 	ListOpts
 }
 
@@ -357,8 +363,16 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) (Page[Event], err
 	var w where
 	w.eq("sensor_id", f.SensorID)
 	w.timeRange("created_at", f.Time)
-	if f.FlowID != "" {
-		w.add("EXISTS (SELECT 1 FROM flow_runs fr WHERE fr.event_id = events.id AND fr.flow_id = ?)", f.FlowID)
+	if f.FlowID != "" || len(f.RunStatuses) > 0 || len(f.RunKinds) > 0 || f.RunDecision != "" {
+		var rw where
+		rw.add("fr.event_id = events.id")
+		rw.eq("fr.flow_id", f.FlowID)
+		rw.in("fr.status", strs(f.RunStatuses))
+		rw.in("fr.kind", strs(f.RunKinds))
+		if f.RunDecision != "" {
+			rw.add("EXISTS (SELECT 1 FROM node_runs n WHERE n.flow_run_id = fr.id AND n.decision = ?)", f.RunDecision)
+		}
+		w.add("EXISTS (SELECT 1 FROM flow_runs fr"+rw.clause()+")", rw.args...)
 	}
 	if f.Search != "" {
 		w.add("(instr(lower(payload_text), lower(?)) > 0 OR instr(lower(dedup_key), lower(?)) > 0)", f.Search, f.Search)
