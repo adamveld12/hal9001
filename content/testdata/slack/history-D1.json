@@ -1,0 +1,6 @@
+{"ok":true,"messages":[
+ {"type":"message","user":"U2","text":"got a minute?","ts":"1793880000.000200"},
+ {"type":"message","user":"UME","text":"sure","ts":"1793883600.000000"},
+ {"type":"message","subtype":"bot_message","bot_id":"B1","text":"automated","ts":"1793883700.000000"},
+ {"type":"message","subtype":"channel_join","user":"U2","text":"joined","ts":"1793883800.000000"}
+]}

@@ -1,0 +1,13 @@
+# Credential-free sensor for demos and tests: emits the same three sample items on every poll.
+id: demo-ticker
+interval: 5m
+lang: bash
+script: |
+  cat <<'JSONL'
+  {"source":"demo","id":"demo-1","title":"Production deploy is failing","text":"The 14:05 deploy of api-gateway rolled back twice.","author":"ci-bot","url":"https://example.com/demo/1","severity":"urgent","updated_at":"2026-01-01T14:05:00Z"}
+  {"source":"demo","id":"demo-2","title":"Docs PR is ready for review","text":"Small typo fixes in the setup guide.","author":"sam","url":"https://example.com/demo/2","severity":"normal","updated_at":"2026-01-01T14:10:00Z"}
+  {"source":"demo","id":"demo-3","title":"Weekly newsletter","text":"Ten tips for faster builds.","author":"newsletter","url":"https://example.com/demo/3","severity":"noise","updated_at":"2026-01-01T14:15:00Z"}
+  JSONL
+key: "{{.id}}:{{.updated_at}}"
+first_run: fire
+timeout: 10s

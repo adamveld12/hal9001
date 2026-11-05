@@ -1,0 +1,65 @@
+# Review requests: small PRs get an agent review note, large ones go straight to the inbox.
+id: triage-github
+enabled: false
+dry_run: true
+subscribe: [github-notifications]
+max_concurrent: 2
+nodes:
+  - id: only-review-requests
+    type: command
+    lang: jq
+    script: 'select(.reason == "review_requested" and .type == "PullRequest") | . + {_reason: "review requested"}'
+    ui: {x: 100, y: 120}
+
+  - id: classify
+    type: command
+    lang: python
+    ports: [small, large]
+    timeout: 30s
+    script: |
+      import json
+      import subprocess
+      import sys
+
+      ev = json.load(sys.stdin)
+      # Pass the API URL through gh; subject.url is https://api.github.com/repos/<owner>/<repo>/pulls/<n>.
+      path = ev["subject"]["url"].replace("https://api.github.com/", "")
+      try:
+          out = subprocess.run(
+              ["gh", "api", path, "-q", "{additions: .additions, deletions: .deletions}"],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          size = json.loads(out)
+          changed = size["additions"] + size["deletions"]
+          ev["lines_changed"] = changed
+          ev["_port"] = "small" if changed < 200 else "large"
+          ev["_reason"] = f"{changed} lines changed"
+      except Exception as exc:  # unknown size: a human looks at it
+          print(f"could not size PR: {exc}", file=sys.stderr)
+          ev["_port"] = "large"
+          ev["_reason"] = "size unknown"
+      print(json.dumps(ev))
+    ui: {x: 340, y: 120}
+
+  - id: review-small
+    type: agent
+    runtime: claude
+    mode: readonly
+    prompt: pr-review
+    cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
+    allow:
+      commands: ['^gh (pr|issue) (view|diff|list|checks)\b', '^git (log|diff|show)\b']
+    timeout: 20m
+    ui: {x: 600, y: 60}
+
+  - id: note-large
+    type: inbox
+    title: "Large PR needs you: {{.input.title}}"
+    priority: high
+    summary_md: "{{.input.repo}}: {{.input.lines_changed}} lines changed\n\n{{.input.url}}"
+    ui: {x: 600, y: 200}
+
+edges:
+  - {from: only-review-requests, to: classify}
+  - {from: classify, port: small, to: review-small}
+  - {from: classify, port: large, to: note-large}

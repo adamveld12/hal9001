@@ -1,0 +1,53 @@
+# hal9001 config. Hot-reloaded on change.
+
+# Agent concurrency (global), command-node pool, and per-flow default live here;
+# flows override max_concurrent individually.
+max_agent_runs: 2
+max_command_runs: 8
+
+# Retention. Nightly prune removes runs, events, blobs and worktrees older than
+# retention_days (except anything linked to a starred inbox item or a pending
+# approval). Dedup keys are kept longer so old items do not re-fire.
+retention_days: 30
+dedup_retention_days: 180
+
+# Items at or above this priority raise a macOS notification
+# (low | normal | high | urgent).
+notify_min_priority: high
+
+# How long a per-tool approval request waits before it is rejected and the run
+# fails with approval_timeout.
+approval_timeout: 1h
+
+# Hostnames (besides localhost:9001 and 127.0.0.1:9001) the server accepts.
+# Add your Tailscale hostname, e.g. my-mac.my-tailnet.ts.net, to use `tailscale serve`.
+allowed_hosts: []
+
+# Logins accepted by the tailscale-identity auth module. Empty = the login that
+# owns this Mac.
+allowed_logins: []
+
+# ACP agent runtimes. A runtime is a command speaking ACP over stdio; install the
+# adapters globally at pinned versions (not via npx).
+#
+# `modes` maps hal9001's two policies onto the agent's own session-mode names:
+#   ask  - most restrictive "ask for permission" mode (used for readonly and approve nodes)
+#   full - most permissive mode (used for auto nodes and approved proposals)
+# The claude and codex names below are the expected ones and the omp names are
+# unknown (TBD). All of them MUST be confirmed by the ACP gate; see docs/acp-gate.md.
+runtimes:
+  claude: {command: [claude-agent-acp], modes: {ask: default, full: bypassPermissions}}
+  codex: {command: [codex-acp], modes: {ask: read-only, full: full-access}}
+  omp: {command: [omp, acp], modes: {ask: TBD, full: TBD}} # TBD: set after the ACP gate confirms omp's mode names
+
+# Auth: PAM-style stacks per service (see REQUIREMENTS section 10.4).
+# localhost-trust lets local requests in; tailscale-identity signs in tailnet
+# devices that arrive through `tailscale serve`; webauthn and password are fallbacks.
+auth:
+  stacks:
+    default:
+      - {module: localhost-trust, control: sufficient}
+      - {module: tailscale-identity, control: sufficient}
+      - {module: webauthn, control: sufficient}
+      - {module: password, control: sufficient}
+  services: {ui: default, api: default, approve: default, admin: default}

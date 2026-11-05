@@ -1,0 +1,23 @@
+# Slack mentions and DMs: drop empty and bot noise, then a read-only agent writes an inbox note with a draft reply.
+id: triage-slack
+enabled: false
+dry_run: true
+subscribe: [slack-mentions-dms]
+max_concurrent: 2
+nodes:
+  - id: filter
+    type: command
+    lang: jq
+    script: 'select((.text // "") | test("\\S")) | . + {_reason: "has text"}'
+    ui: {x: 100, y: 120}
+
+  - id: triage
+    type: agent
+    runtime: claude
+    mode: readonly
+    prompt: triage-slack
+    timeout: 10m
+    ui: {x: 340, y: 120}
+
+edges:
+  - {from: filter, to: triage}

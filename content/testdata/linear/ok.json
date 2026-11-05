@@ -1,0 +1,8 @@
+{"data":{"viewer":{"id":"me-id","assignedIssues":{"nodes":[
+ {"id":"iss-1","identifier":"ENG-12","title":"Fix upload retries","description":"Uploads fail on 503.","url":"https://linear.app/acme/issue/ENG-12","priority":2,"priorityLabel":"High","updatedAt":"2026-11-05T11:00:00.000Z","state":{"name":"In Progress","type":"started"},"team":{"key":"ENG"},"creator":{"name":"Dana"}},
+ {"id":"iss-2","identifier":"ENG-13","title":"No description","description":null,"url":"https://linear.app/acme/issue/ENG-13","priority":0,"priorityLabel":"No priority","updatedAt":"2026-11-05T11:10:00.000Z","state":{"name":"Todo","type":"unstarted"},"team":{"key":"ENG"},"creator":null}
+]}},
+"comments":{"nodes":[
+ {"id":"cm-1","body":"Can you take this today?","url":"https://linear.app/acme/issue/ENG-12#comment-cm-1","updatedAt":"2026-11-05T11:20:00.000Z","user":{"id":"dana-id","name":"Dana"},"issue":{"id":"iss-1","identifier":"ENG-12","title":"Fix upload retries"}},
+ {"id":"cm-2","body":"My own note","url":"https://linear.app/acme/issue/ENG-12#comment-cm-2","updatedAt":"2026-11-05T11:25:00.000Z","user":{"id":"me-id","name":"Me"},"issue":{"id":"iss-1","identifier":"ENG-12","title":"Fix upload retries"}}
+]}}}
