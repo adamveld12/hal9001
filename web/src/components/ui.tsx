@@ -33,7 +33,7 @@ export function Button({
     <button
       type="button"
       className={cx(
-        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium",
+        "inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium",
         "disabled:cursor-not-allowed disabled:opacity-50",
         BTN[variant],
         className,
@@ -175,7 +175,7 @@ export function Panel({
       className={cx("rounded-md border border-line bg-panel", className)}
     >
       {title && (
-        <header className="flex items-center gap-2 border-b border-line px-3 py-2 text-xs font-semibold">
+        <header className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-xs font-semibold">
           {title}
           <span className="ml-auto flex items-center gap-2 font-normal">
             {actions}
