@@ -488,16 +488,21 @@ func TestInvalidRequestsAreRejectedBeforeSpawning(t *testing.T) {
 
 // codex-acp's only reject option cancels the whole turn. The run must not be
 // reported as a mysterious cancelled stop: a user deny is `denied`, a policy
-// rejection fails with its own reason.
+// rejection is continued with a follow-up prompt in the same session and fails
+// with its own reason only if the agent keeps ending its turns that way.
 func TestRejectThatEndsTheTurnIsClassified(t *testing.T) {
-	script := func() fakeagent.Script {
+	// turn builds the agent's n-th answer in the session (0-based).
+	turn := func(n int, steps ...fakeagent.Step) fakeagent.Turn {
+		return fakeagent.Turn{When: &fakeagent.When{SessionTurn: &n}, Steps: steps}
+	}
+	cancelling := func(n int) fakeagent.Turn {
 		step := editStep("e1", "a.txt", "a")
 		step.CancelOnReject = true
-		return fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{step, msg("never reached")}}}}
+		return turn(n, step, msg("never reached"))
 	}
 
 	t.Run("user deny", func(t *testing.T) {
-		e := newEnv(t, script())
+		e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{cancelling(0)}})
 		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
 		a, ok := e.broker.Next(10 * time.Second)
 		if !ok {
@@ -508,16 +513,40 @@ func TestRejectThatEndsTheTurnIsClassified(t *testing.T) {
 		if rec.Status != agent.StatusDenied || rec.FailureReason != agent.ReasonDenied {
 			t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
 		}
+		if n := len(e.callsOf("session/prompt")); n != 1 {
+			t.Errorf("a user's deny was followed by %d prompts, want just the original", n)
+		}
 	})
 
-	t.Run("policy rejection", func(t *testing.T) {
-		e := newEnv(t, script())
+	t.Run("policy rejection is continued in the same session", func(t *testing.T) {
+		e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{cancelling(0), turn(1, msg("plan: create a.txt"))}})
+		rec := e.run(e.req(agent.ModeReadonly, ""))
+		if rec.Status != agent.StatusSucceeded {
+			t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
+		}
+		if rec.FinalMessage != "plan: create a.txt" {
+			t.Errorf("final message = %q, want the answer to the follow-up", rec.FinalMessage)
+		}
+		prompts := e.callsOf("session/prompt")
+		if len(prompts) != 2 || !strings.Contains(prompts[1]["text"].(string), "Edit a.txt") {
+			t.Fatalf("prompts = %v, want the original and a follow-up naming the rejected call", prompts)
+		}
+		if _, ok := e.file("a.txt"); ok {
+			t.Error("the rejected edit was applied")
+		}
+	})
+
+	t.Run("an agent that keeps trying fails with the policy reason", func(t *testing.T) {
+		e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{cancelling(0), cancelling(1), cancelling(2)}})
 		rec := e.run(e.req(agent.ModeReadonly, ""))
 		if rec.Status != agent.StatusFailed || rec.FailureReason != agent.ReasonPolicyEndedTurn {
 			t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
 		}
 		if !strings.Contains(rec.Error, "Edit a.txt") {
 			t.Errorf("error should name the rejected call: %q", rec.Error)
+		}
+		if n := len(e.callsOf("session/prompt")); n != 3 {
+			t.Errorf("prompts = %d, want the original plus 2 follow-ups", n)
 		}
 	})
 }
@@ -551,5 +580,19 @@ func TestAllowNeverSelectsPersistentOption(t *testing.T) {
 	outs := e.callsOf("permission_outcome")
 	if len(outs) < 1 || outs[0]["option_id"] != "once" {
 		t.Errorf("outcomes = %v", outs)
+	}
+}
+
+// An agent that dies before the handshake says why on stderr; the run error
+// must carry it, so a broken adapter install is diagnosable from the run page.
+func TestAgentDyingAtStartupReportsItsStderr(t *testing.T) {
+	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{msg("x")}}}})
+	e.cfg.Command = []string{"sh", "-c", "echo 'No version is set for shim' >&2; exit 1"}
+	rec := e.run(e.req(agent.ModeReadonly, ""))
+	if rec.Status != agent.StatusFailed || rec.FailureReason != agent.ReasonAgentExit {
+		t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
+	}
+	if !strings.Contains(rec.Error, "stderr: No version is set for shim") {
+		t.Errorf("error lacks the agent's stderr: %q", rec.Error)
 	}
 }
