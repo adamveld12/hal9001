@@ -1,0 +1,386 @@
+# Writing sensors, flows and prompts
+
+Everything here lives in files under the home directory (`~/.hal9001` by default) and is hot-reloaded:
+
+| File | Defines |
+|---|---|
+| `sensors/<id>.yaml` | A scheduled command that prints items. |
+| `flows/<id>.yaml` | A DAG of nodes subscribed to sensors. |
+| `prompts/<name>.md` | A prompt template for agent nodes. |
+| `env` | `KEY=VALUE` secrets injected into every sensor and command node. |
+
+Check your work offline with `hal9001 validate` (add `--json` for machine-readable diagnostics) or against the running
+daemon with `hal9001 flows validate flow.yaml`. Ids are letters, digits, `-` and `_`, at most 64 characters, starting
+with a letter or digit, and must match the file name.
+
+## The node execution contract
+
+It applies to sensors and `command` nodes.
+
+**Process.** `lang` is one of:
+
+| `lang` | Runs |
+|---|---|
+| `bash` | `script` written to a temp file, run with `bash` |
+| `python` | `script` run with `python3` |
+| `node` | `script` run with `node` |
+| `jq` | `script` run as `jq -c -f <file>` |
+| `exec` | `command: [argv...]` run directly (no shell, no `script`) |
+
+The interpreter is looked up on the `PATH` the daemon was given (under launchd: the login-shell `PATH` captured by
+`hal9001 install`). The process starts in its own process group. On timeout or kill-switch the group gets SIGTERM and,
+after 10 seconds, SIGKILL.
+
+**Streams.** stdin is the node's input payload (JSON): the sensor item for an entry node, or the upstream node's output.
+stdout is the result. stderr is captured as logs and shown in the trace. Stdout and stderr are each capped at 16 MiB;
+exceeding the cap on stdout is an error.
+
+**Working directory.** The node's `$HAL_STATE_DIR` unless `cwd` is set (command nodes: `cwd: "~/some/dir"` or
+`cwd: {mode: dir, path: "..."}`; a template over the data model below; `~` is expanded). A sensor's `cwd` is a plain
+path.
+
+**Result.**
+
+| stdout | exit | Meaning |
+|---|---|---|
+| empty | 0 | **Drop**: the branch ends, recorded as decision `dropped`. So `jq 'select(...)'` is a filter. |
+| one JSON value | 0 | Emit on port `out`, or on `_port` if the value is an object that has one. |
+| JSONL, N values | 0 | Emit N payloads (split / fan-out), each routed by its own `_port`. |
+| any | non-zero | Error. Goes to the `error` port if an edge uses it, otherwise the branch fails. |
+| any | killed by timeout | Error `timeout`. |
+
+Invalid JSON, an undeclared `_port`, and truncated stdout are errors too. An undeclared `_port` fails the whole node run
+rather than emitting a partial fan-out. A value that is not an object (a string, number, array) is emitted on `out`
+unchanged.
+
+**Reserved keys.** In an output object, `_port` (string) selects the output port and `_reason` (string) is shown as the
+decision reason in the trace. Both are stripped before the payload reaches downstream nodes.
+
+**Environment.** A node does not inherit the daemon's environment. It gets `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`,
+`LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TZ`, `SSH_AUTH_SOCK`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `PATH`,
+then everything in the `env` file, then:
+
+| Variable | Value |
+|---|---|
+| `HAL_EVENT_FILE` | Path to the original event JSON (not set during a sensor poll). |
+| `HAL_RUN_ID`, `HAL_EVENT_ID`, `HAL_FLOW`, `HAL_NODE` | Ids of the current run, event, flow, node. |
+| `HAL_STATE_DIR` | Persistent scratch directory for this node. |
+| `HAL_DRY_RUN` | `1` in a dry run. |
+| `HAL_LAST_SUCCESS_AT` | Sensors only: RFC 3339 time of the last successful poll, for incremental fetches. Unset before the first success. |
+
+`HAL_*` values from the `env` file are ignored. Values from `env` are replaced with `«KEY»` in all stored stdout,
+stderr, scripts and argv.
+
+Error classes recorded on a failed node run: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`,
+`interrupted`, `template`, `config`, `start_failed`. Defaults: command timeout 60s, agent timeout 30m.
+
+### Examples
+
+jq: a filter that also annotates (empty output drops the item):
+
+```yaml
+- id: only-review-requests
+  type: command
+  lang: jq
+  script: 'select(.reason == "review_requested") | . + {_reason: "review requested"}'
+```
+
+jq: one output object per element of an array (fan-out), because `jq -c` prints one JSON value per line:
+
+```yaml
+- id: split-labels
+  type: command
+  lang: jq
+  script: '.labels[] | {label: ., issue: .id}'
+```
+
+bash: use `HAL_STATE_DIR` for state and `HAL_DRY_RUN` to be careful with side effects:
+
+```yaml
+- id: notify-pager
+  type: command
+  lang: bash
+  side_effect: true        # skipped in dry-run, recorded as skipped:dry_run
+  script: |
+    set -euo pipefail
+    title=$(jq -r .title)
+    curl -fsS -X POST "$PAGER_URL" -d "title=$title"
+    echo '{"paged": true}'
+```
+
+python: route to a declared port:
+
+```yaml
+- id: classify
+  type: command
+  lang: python
+  ports: [small, large]
+  script: |
+    import json, sys
+    ev = json.load(sys.stdin)
+    n = ev.get("lines_changed", 0)
+    ev["_port"] = "small" if n < 200 else "large"
+    ev["_reason"] = f"{n} lines changed"
+    print(json.dumps(ev))
+```
+
+node:
+
+```yaml
+- id: shorten
+  type: command
+  lang: node
+  script: |
+    const ev = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    console.log(JSON.stringify({...ev, title: ev.title.slice(0, 80)}));
+```
+
+exec:
+
+```yaml
+- id: lookup
+  type: command
+  lang: exec
+  command: [/usr/local/bin/my-lookup, --json]
+  timeout: 10s
+```
+
+## Sensors
+
+```yaml
+# sensors/github-notifications.yaml
+id: github-notifications
+interval: 2m              # or: cron: "*/5 9-18 * * 1-5"
+lang: bash
+script: |
+  gh api notifications --paginate -q '.[]'
+key: "{{.id}}:{{.updated_at}}"
+first_run: baseline
+timeout: 60s
+```
+
+| Field | Meaning |
+|---|---|
+| `interval` / `cron` | Exactly one. Interval is a Go duration (`30s`, `2m`, `1h`; minimum `1s`). Cron is 5 fields (minute hour day-of-month month day-of-week) with lists, ranges, steps and names, in local time. |
+| `lang`, `script` / `command`, `cwd`, `timeout` | As in the node contract. `timeout` defaults to 60s. |
+| `key` | Required. A template over one item that yields its dedup key. Items whose key was already seen are dropped; a changed key (for example one that includes `updated_at`) re-triggers. |
+| `first_run` | `baseline` (default): the first poll marks everything seen without firing. `fire`: emit everything. |
+
+The sensor prints a JSON array, or JSONL (one item per line). Every poll is recorded (duration, item count, new count,
+stdout, stderr, exit code); a failed poll does not advance `HAL_LAST_SUCCESS_AT`.
+
+Only sensors subscribed to by at least one **enabled** flow are scheduled. `hal9001 sensors poll <id>` polls any valid
+sensor now (rejected while the kill switch is engaged). `hal9001 events inject <sensor-id> < item.json` pushes one item
+through dedup and fan-out without running the script. Starter sensors and their credentials are listed in the
+[README](../README.md#prerequisites).
+
+## Flows
+
+```yaml
+# flows/triage-github.yaml (abridged; see content/flows/ for the full starters)
+id: triage-github
+enabled: true
+dry_run: false
+subscribe: [github-notifications]
+max_concurrent: 2          # default 2
+nodes:
+  - {id: only-review-requests, type: command, lang: jq, script: 'select(.reason == "review_requested")'}
+  - {id: classify, type: command, lang: python, ports: [small, large], script: "..."}
+  - {id: review-small, type: agent, runtime: claude, mode: readonly, prompt: pr-review}
+  - {id: note-large, type: inbox, title: "Large PR needs you: {{.input.title}}", priority: high}
+edges:
+  - {from: only-review-requests, to: classify}
+  - {from: classify, port: small, to: review-small}
+  - {from: classify, port: large, to: note-large}
+```
+
+- The graph must be a DAG. Validation rejects cycles, unknown nodes or sensors, undeclared ports, unreachable nodes,
+  duplicate ids and fields that do not belong to the node's type.
+- **Entry nodes** (no incoming edge) each receive the event. An edge without `port` uses `out`.
+- **Fan-out:** one port can feed several nodes; they run concurrently.
+- **Ports:** a `command` node declares `ports` (default `[out]`). Every node also has an implicit `error` port; agent
+  nodes in `approve` mode also have `denied`. `error` and `denied` cannot be declared. Inbox nodes and agent nodes emit
+  on `out`.
+- **Error port:** if an edge leaves a node's `error` port, a failed node run is routed there instead of failing the
+  branch, with the payload `{"input": <node input>, "error": <class>, "reason": ..., "exit_code": ..., "stderr": ...}`
+  (stderr cut to 4000 characters). Test runs never route.
+- A flow run fans out once per enabled subscribed flow per event. `max_concurrent` (default 2) limits a flow's parallel
+  runs; globally `max_agent_runs` (2) and `max_command_runs` (8) in `config.yaml`. Excess runs wait as `queued`.
+- Every flow run records the content hash of the flow YAML; each distinct version is stored, so a trace shows exactly
+  what ran.
+- `ui: {x, y}` on a node is only its canvas position.
+
+### Templates and the data model
+
+Templates are Go `text/template`. Where they apply: sensor `key`; command `cwd`; agent `cwd.path`, `cwd.repo`,
+`cwd.ref`, `extra_prompt` and the prompt file body; inbox `title`, `summary_md`, `suggested_reply` and link `label` /
+`url`. Scripts are not templated: they read stdin.
+
+| Name | Value |
+|---|---|
+| `.event` | The original event payload. |
+| `.input` | The input payload of this node (what the upstream node emitted). For entry nodes it equals `.event`. |
+| `.flow.id`, `.flow.hash`, `.flow.dry_run` | The flow being run. |
+| `.run.id`, `.run.event_id`, `.run.kind` | The flow run; `kind` is `live`, `replay` or `test`. |
+
+Helpers: `json VALUE` (compact JSON, no HTML escaping), `default DEFAULT VALUE`, `trunc N STRING` (first N runes).
+`default` and `trunc` take the subject last so they work in pipelines: `{{.input.title | trunc 80}}`.
+
+A missing key is an error (`missingkey=error`), which fails the node with class `template`. Because of that, `default`
+only helps for present-but-empty values; for an optional key use `{{default "n/a" (index .input "maybe")}}`.
+
+## Inbox nodes
+
+```yaml
+- id: note-large
+  type: inbox
+  title: "Large PR needs you: {{.input.title}}"
+  priority: high            # low | normal | high | urgent; default normal
+  summary_md: "{{.input.repo}}: {{.input.lines_changed}} lines changed\n\n{{.input.url}}"
+  suggested_reply: ""
+  links:
+    - {label: Open, url: "{{.input.url}}"}
+```
+
+`title` is required and must not render empty. The node creates an inbox item and passes its input through on `out`. In
+a dry-run flow the item is tagged `dry-run`. Items at or above `notify_min_priority` raise a macOS notification that
+opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|archive`.
+
+## Agent nodes
+
+```yaml
+- id: review-small
+  type: agent
+  runtime: claude          # a key of `runtimes` in config.yaml
+  mode: approve            # auto | approve | readonly (required)
+  approve: proposal        # proposal | per_tool; only with mode approve; default proposal
+  prompt: pr-review        # prompts/pr-review.md (or omit and give extra_prompt)
+  extra_prompt: "Focus on tests. Title: {{.input.title}}"
+  model: sonnet            # optional; set through the agent's `model` config option
+  cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
+  timeout: 20m             # default 30m
+  approval_timeout: 30m    # per_tool only; default config.yaml approval_timeout (1h)
+  allow:
+    tools: ['^mcp__linear__']
+    commands: ['^gh (pr|issue) (view|diff|list)\b', '^git (log|diff|show)\b']
+  mcp_servers:
+    - {name: docs, type: http, url: "https://example.com/mcp", headers: {Authorization: "Bearer ..."}}
+    - {name: local, command: my-mcp, args: [--stdio], env: {TOKEN: abc}}
+```
+
+### Modes
+
+| Mode | Behavior | Output |
+|---|---|---|
+| `readonly` | Read-only policy. Produces a structured note. | Inbox item and notification; port `out`. |
+| `auto` | The agent's most permissive mode; every permission request is allowed (and recorded). | Port `out`; an inbox item only if the prompt has `output: note`. |
+| `approve` + `proposal` | Phase 1 runs read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) under the auto policy with "Approved. Execute the plan." plus your comment. Denying routes to port `denied`. | Port `out` after phase 2. |
+| `approve` + `per_tool` | One session under a gated policy: read-class tool calls are allowed automatically, every other permission request becomes an Approval showing the tool and its input or diff. Allow continues the call; deny rejects it and the agent continues; deny with `--cancel-run` ends the run (`denied`). After `approval_timeout` the request is rejected and the run fails with `approval_timeout`. | Port `out`. |
+
+A flow run waiting on an approval has status `awaiting_approval`; downstream nodes run after the agent finishes.
+Proposal approvals never expire and survive daemon restarts. Per-tool approvals die with the agent process: a restart
+marks them `expired` and the run `interrupted`. Decide with `hal9001 approvals approve|deny <id> [--comment ...]` or in
+the UI.
+
+### Permission policy and `allow` rules
+
+| Policy | Allowed automatically | Everything else |
+|---|---|---|
+| read-only (`readonly`, proposal phase 1, dry-run) | ACP tool kinds `read`, `search`, `fetch`, `think`, plus `allow` matches | Rejected, with the reason recorded |
+| gated (`per_tool`) | Same as read-only | Sent to the approval queue |
+| auto | Everything | n/a |
+
+`allow` extends the read-only set; each entry is a regular expression.
+
+- `allow.commands` is matched against the command of `execute`-kind tool calls. A command that chains or redirects with
+  shell operators is **not** matched (so `gh pr view 1 && rm x` cannot ride on `^gh pr view`).
+- `allow.tools` is matched against the tool title or name of other requests. MCP tools (kind `other`) are rejected
+  unless listed here.
+
+The agent's own session must actually ask for permission for any of this to apply: tools an agent auto-approves from its
+own settings never reach hal9001. That is why the shipped runtimes isolate user settings; see
+[runtimes.md](runtimes.md).
+
+### Working directory
+
+| `cwd` | Meaning |
+|---|---|
+| omitted | `data/state/<flow>/<node>/` |
+| `"<path>"` or `{mode: dir, path: "<path>"}` | An existing directory (template; `~` expanded). |
+| `{mode: worktree, repo: "<path>", ref: "<ref>"}` | `git fetch` (when the repo has remotes), then `git worktree add --detach data/worktrees/<node-run-id> <ref>`. Removed when the run succeeds; kept when it fails or awaits approval; removed by retention pruning. |
+
+Only agent nodes may use `mode: worktree`.
+
+### MCP servers
+
+`mcp_servers` are passed to the agent session. `name` is required and unique. `type` is `stdio` (default; fields
+`command`, `args`, `env`), `http` or `sse` (fields `url`, `headers`).
+
+### Prompts and notes
+
+```markdown
+---
+name: pr-review          # should match the file name; agent nodes select a prompt by file name
+description: Review a PR and leave comments
+output: note             # note = the final message carries the inbox note JSON; none = free text
+---
+You are reviewing {{.input.url}}.
+...
+```
+
+The prompt body is a template over the data model above. The node's `extra_prompt` (also a template) is appended. The
+rendered prompt is stored on the agent run. With `output: note`, or in `readonly` mode, the agent ends its final message
+with one JSON object, which becomes the inbox item:
+
+```json
+{
+  "title": "string",
+  "priority": "low | normal | high | urgent",
+  "summary_md": "markdown",
+  "suggested_reply": "string, optional",
+  "links": [{"label": "string", "url": "string"}]
+}
+```
+
+If parsing fails, an item is still created with the raw final message, priority `normal`, and a `parse_error` flag.
+Starter prompts are in `content/prompts/` (`pr-review`, `triage-slack`, `linear-triage`, `email-secretary`).
+
+### What an agent node emits
+
+Downstream nodes receive `{"input": <the agent node's input>, "agent": {"run_id", "status", "final_message", "note",
+"proposal", "comment"}}`, for example `{{.input.agent.note.title}}` or `{{.input.input.url}}`. The same shape goes out on
+`denied`. Agent failures go to the `error` port (classes include `timeout`, `approval_timeout`, `spawn_failed`,
+`agent_exit`, `agent_error`, `mode_unavailable`, `model_rejected`, `policy_rejected`, `empty_proposal`).
+
+## Dry-run, replay and test-node
+
+- **Dry-run.** A flow with `dry_run: true` (or a replay or test run started with dry-run) runs agent nodes forced to
+  `readonly`, skips command nodes with `side_effect: true` (recorded as `skipped:dry_run`), sets `HAL_DRY_RUN=1`, and tags
+  inbox items `dry-run`. All starter flows except `demo` ship with `dry_run: true`.
+- **Replay.** Re-run a stored event through the **current** version of a flow; the new run records `replay_of` and the
+  new flow hash:
+
+  ```sh
+  hal9001 events replay <event-id> --flow triage-github --dry-run=true
+  ```
+
+  A flow configured `dry_run: true` stays dry. Replay is accepted while the kill switch is engaged; the run stays
+  `queued` until resume.
+- **Test a node.** Run one node on a chosen input without creating timeline noise (the run has `kind: test`, is hidden
+  from the default timeline, and its outputs are not routed downstream):
+
+  ```sh
+  hal9001 flows test-node triage-github classify --json '{"subject": {"url": "..."}}'
+  hal9001 flows test-node triage-github classify --event <event-id>
+  hal9001 flows test-node triage-github review-small --node-run <node-run-id>:0
+  echo '{"x": 1}' | hal9001 flows test-node triage-github classify
+  ```
+
+  Input is exactly one of a stored event, an earlier node run's output (`<id>` or `<id>:<index>`), or JSON. The result is
+  the node run with stdin, stdout, stderr, exit code and duration. Rejected with `423` while the kill switch is
+  engaged. In the UI this is "Run node on sample" in the flow editor.
+- **Follow a run.** `hal9001 runs get <id> --wait` blocks until the run finishes or awaits approval. `runs list --kind
+  live|replay|test` filters by kind.
+- **Kill switch.** `hal9001 killswitch pause` pauses sensors and stops starting nodes; `--kill` also terminates running
+  nodes (SIGTERM, then SIGKILL after 10s; runs are marked `killed`). `killswitch resume` undoes it. The state survives a
+  restart.
