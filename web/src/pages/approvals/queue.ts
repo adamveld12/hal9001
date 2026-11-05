@@ -44,11 +44,11 @@ export function viewToParams(v: ApprovalsView): URLSearchParams {
   return p;
 }
 
-/** The queue asks for `pending`; history leaves the status open (or narrows it) and drops pending client-side. */
+/** The queue asks for `pending`; history asks for every decided status (or one of them). */
 export function viewToQuery(v: ApprovalsView): ApprovalsQuery {
   const q: ApprovalsQuery = {};
-  if (v.tab === "pending") q.status = "pending";
-  else if (v.status) q.status = v.status;
+  if (v.tab === "pending") q.status = ["pending"];
+  else q.status = v.status ? [v.status] : [...HISTORY_STATUSES];
   if (v.type) q.type = v.type;
   return q;
 }
@@ -90,8 +90,7 @@ export function mergeApprovalPages(
     for (const a of page.items) {
       if (seen.has(a.id)) continue;
       seen.add(a.id);
-      // The history query has no "not pending" filter, so it is applied here.
-      if ((tab === "pending") === (a.status === "pending")) out.push(a);
+      out.push(a);
     }
   }
   return out.sort(tab === "pending" ? comparePending : compareHistory);

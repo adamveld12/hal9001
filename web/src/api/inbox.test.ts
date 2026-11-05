@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  compareInbox,
   matchesInboxQuery,
   mergeInboxPages,
   patchInboxPages,
@@ -38,7 +37,7 @@ const page = (...items: InboxItem[]): InboxList => ({
   next_cursor: null,
 });
 
-describe("inbox ordering", () => {
+describe("mergeInboxPages", () => {
   const old = item({
     id: "1",
     priority: "urgent",
@@ -54,39 +53,13 @@ describe("inbox ordering", () => {
     priority: "high",
     created_at: "2026-11-05T09:00:00Z",
   });
-  const freshUrgent = item({
-    id: "4",
-    priority: "urgent",
-    created_at: "2026-11-05T10:00:00Z",
-  });
 
-  it("puts higher priority first and newest first within a priority", () => {
-    const sorted = [fresh, old, freshHigh, freshUrgent].sort(
-      compareInbox("priority"),
-    );
-    expect(sorted.map((i) => i.id)).toEqual(["4", "1", "3", "2"]);
-  });
-
-  it("orders by time alone when asked, regardless of priority", () => {
-    const sorted = [old, freshHigh, fresh].sort(compareInbox("time"));
-    expect(sorted.map((i) => i.id)).toEqual(["2", "3", "1"]);
-  });
-
-  it("breaks equal timestamps by id, newest id first", () => {
-    const a = item({ id: "01A", created_at: "2026-11-05T10:00:00Z" });
-    const b = item({ id: "01B", created_at: "2026-11-05T10:00:00Z" });
-    expect([a, b].sort(compareInbox("time")).map((i) => i.id)).toEqual([
-      "01B",
-      "01A",
+  it("merges pages in server order and lists an item once when it shifted between pages", () => {
+    const merged = mergeInboxPages([
+      page(fresh, freshHigh),
+      page(freshHigh, old),
     ]);
-  });
-
-  it("merges pages, drops duplicates, and orders across page boundaries", () => {
-    const merged = mergeInboxPages(
-      [page(fresh, freshHigh), page(freshHigh, old)],
-      "priority",
-    );
-    expect(merged.map((i) => i.id)).toEqual(["1", "3", "2"]);
+    expect(merged.map((i) => i.id)).toEqual(["2", "3", "1"]);
   });
 });
 

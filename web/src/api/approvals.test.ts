@@ -20,7 +20,7 @@ describe("replaceApprovalInPages", () => {
 
   it("removes a decided approval from the pending queue", () => {
     const out = replaceApprovalInPages([page(mk("a"), mk("b"))], decided, {
-      status: "pending",
+      status: ["pending"],
     });
     expect(out[0]?.items.map((i) => i.id)).toEqual(["b"]);
   });
@@ -29,7 +29,7 @@ describe("replaceApprovalInPages", () => {
     const out = replaceApprovalInPages([page(mk("a"), mk("b"))], decided, {});
     expect(out[0]?.items.map((i) => i.status)).toEqual(["approved", "pending"]);
     const narrowed = replaceApprovalInPages([page(mk("a"))], decided, {
-      status: "approved",
+      status: ["approved"],
     });
     expect(narrowed[0]?.items).toHaveLength(1);
   });

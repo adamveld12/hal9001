@@ -34,35 +34,12 @@ export function priorityRank(p: Priority): number {
   return PRIORITIES.indexOf(p);
 }
 
-function createdMs(item: InboxItem): number {
-  const t = Date.parse(item.created_at);
-  return Number.isNaN(t) ? 0 : t;
-}
-
-/** Newest first; ULIDs break ties between equal timestamps. */
-function byTime(a: InboxItem, b: InboxItem): number {
-  return (
-    createdMs(b) - createdMs(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
-  );
-}
-
-/** `priority`: most important first, then newest. `time`: newest first. */
-export function compareInbox(sort: InboxSort) {
-  return (a: InboxItem, b: InboxItem): number =>
-    sort === "priority"
-      ? priorityRank(b.priority) - priorityRank(a.priority) || byTime(a, b)
-      : byTime(a, b);
-}
-
 /**
- * Flatten loaded pages into one list: duplicates (items that shifted between
- * pages during a refetch) are dropped and the result is ordered client-side,
- * because the cursor follows id order, not priority.
+ * Flatten loaded pages into one list in server order (the server sorts by
+ * priority or time; see `sort`). Items that shifted between pages during a
+ * refetch are listed once.
  */
-export function mergeInboxPages(
-  pages: readonly InboxList[],
-  sort: InboxSort,
-): InboxItem[] {
+export function mergeInboxPages(pages: readonly InboxList[]): InboxItem[] {
   const seen = new Set<string>();
   const out: InboxItem[] = [];
   for (const page of pages) {
@@ -72,7 +49,7 @@ export function mergeInboxPages(
       out.push(item);
     }
   }
-  return out.sort(compareInbox(sort));
+  return out;
 }
 
 /** Whether an item belongs in the list produced by `query` (mirrors the server filter). */

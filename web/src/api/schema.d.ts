@@ -762,8 +762,8 @@ export interface paths {
     };
     /**
      * Approval queue and history
-     * @description Both types (`proposal`, `tool_call`). `status=pending` is the queue; any other filter or none gives history.
-     *     Newest first.
+     * @description Both types (`proposal`, `tool_call`). `status=pending` is the queue; `status=approved,denied,expired` is the
+     *     history. `status` takes one or more comma-separated values; without it every status is listed. Newest first.
      */
     get: operations["listApprovals"];
     put?: never;
@@ -2529,7 +2529,7 @@ export interface components {
       /** @description Module that is waiting for input. */
       module: string;
       step: {
-        /** @description What to send back, for example `password` or `webauthn_assertion`. */
+        /** @description What to send back, for example `password` or `webauthn.assertion`. */
         kind: string;
         data?: components["schemas"]["JsonValue"];
       };
@@ -4348,7 +4348,8 @@ export interface operations {
         /** @description Opaque cursor from a previous response's `next_cursor`. */
         cursor?: components["parameters"]["Cursor"];
         limit?: components["parameters"]["Limit"];
-        status?: components["schemas"]["ApprovalStatus"];
+        /** @description Comma-separated statuses to include. */
+        status?: components["schemas"]["ApprovalStatus"][];
         type?: components["schemas"]["ApprovalType"];
         agent_run_id?: components["schemas"]["Ulid"];
         flow_run_id?: components["schemas"]["Ulid"];

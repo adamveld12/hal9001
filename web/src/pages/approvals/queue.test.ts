@@ -68,16 +68,16 @@ describe("pending queue order", () => {
     expect(out.map((a) => a.id)).toEqual(["soon", "later", "old", "new"]);
   });
 
-  it("drops duplicates across pages and any decided approval", () => {
+  it("lists an approval once when it shifted between pages", () => {
     const a = approval({ id: "a" });
-    const done = approval({ id: "d", status: "approved" });
-    const out = mergeApprovalPages([page(a, done), page(a)], "pending");
-    expect(out.map((x) => x.id)).toEqual(["a"]);
+    const b = approval({ id: "b" });
+    const out = mergeApprovalPages([page(a, b), page(a)], "pending");
+    expect(out.map((x) => x.id)).toEqual(["a", "b"]);
   });
 });
 
 describe("history", () => {
-  it("excludes pending approvals and lists the latest decision first", () => {
+  it("lists the latest decision first", () => {
     const first = approval({
       id: "1",
       status: "approved",
@@ -88,17 +88,13 @@ describe("history", () => {
       status: "denied",
       decided_at: "2026-11-05T11:00:00Z",
     });
-    const waiting = approval({ id: "3" });
     const expired = approval({
       id: "4",
       status: "expired",
       decided_at: null,
       created_at: "2026-11-05T10:00:00Z",
     });
-    const out = mergeApprovalPages(
-      [page(first, second, waiting, expired)],
-      "history",
-    );
+    const out = mergeApprovalPages([page(first, second, expired)], "history");
     expect(out.map((a) => a.id)).toEqual(["2", "4", "1"]);
   });
 });
@@ -121,13 +117,13 @@ describe("view <-> URL <-> query", () => {
   });
 
   it("asks the API for pending only on the queue; history is open or narrowed", () => {
-    expect(viewToQuery(DEFAULT_VIEW)).toEqual({ status: "pending" });
-    expect(viewToQuery({ tab: "history", status: null, type: null })).toEqual(
-      {},
-    );
+    expect(viewToQuery(DEFAULT_VIEW)).toEqual({ status: ["pending"] });
+    expect(viewToQuery({ tab: "history", status: null, type: null })).toEqual({
+      status: ["approved", "denied", "expired"],
+    });
     expect(
       viewToQuery({ tab: "history", status: "expired", type: "proposal" }),
-    ).toEqual({ status: "expired", type: "proposal" });
+    ).toEqual({ status: ["expired"], type: "proposal" });
   });
 
   it("does not carry a history outcome into the queue URL", () => {

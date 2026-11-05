@@ -166,7 +166,7 @@ function credentialJson(
 
 /** True when the challenge step asks for a passkey assertion. */
 export function isAssertionStep(kind: string): boolean {
-  return /^webauthn[._]assertion$/.test(kind);
+  return kind === "webauthn.assertion";
 }
 
 /** True when this browser can create and use passkeys. */
