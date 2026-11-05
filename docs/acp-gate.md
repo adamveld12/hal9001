@@ -229,7 +229,7 @@ shown to be callable. ACP `mcpServers` passed in `session/new` worked (the probe
 ## Recommended `runtimes:` block
 
 `config.yaml` shape follows the Agents slice's `RuntimeConfig` (`command`, `modes`, `env`, `ask`/`full` extras).
-Fields marked **new** are not in REQUIREMENTS §7.3; the gate needs them.
+Fields marked **new** are not in REQUIREMENTS §7.3; the gate needs them. The model option is found by `configOptions` category `model` (values: Claude alias or id, Codex model id with a separate `reasoning_effort` option, omp `provider/model`), so no model field is needed. `session/resume` is not used.
 
 ```yaml
 runtimes:
@@ -238,15 +238,12 @@ runtimes:
     modes: {ask: default, full: bypassPermissions}
     session_meta:                       # new: _meta for session/new, session/load, session/resume
       claudeCode: {options: {settingSources: [project]}}
-    model_config_id: model              # new: session/set_config_option id (values: haiku | sonnet | opus | full ids)
     elicitation: false                  # new: do not advertise elicitation.form
   codex:
     command: [codex-acp]
     modes: {ask: read-only, full: agent-full-access}
     env:
       CODEX_HOME: "<data>/runtimes/codex-home"   # new: stable dir; contains symlink auth.json -> ~/.codex/auth.json
-    model_config_id: model              # reasoning via config id reasoning_effort
-    deny_ends_turn: true                # new: the only reject option cancels the turn
     elicitation: false
   omp:
     command: [omp, acp]
@@ -255,7 +252,6 @@ runtimes:
     full: {args: [--approval-mode, yolo]}
     env:
       PI_CODING_AGENT_DIR: "<data>/runtimes/omp-home"  # new: dir containing symlink agent.db -> ~/.omp/agent/agent.db
-    model_config_id: model              # values are provider/model
     elicitation: true                   # new: needed so edit/MCP approvals reach the harness
 ```
 
@@ -270,7 +266,7 @@ Harness behavior the gate requires:
   line of `message` for `allow.tools`).
 - Never pick Codex `accept_execpolicy_amendment` or any `allow_always`/`allow_session` option; pick `allow_once`
   (Claude `allow-once`, omp `allow_once`, Codex `allow_once`).
-- Reject maps to `reject_once` (omp, Claude `reject`) or Codex `cancel`, which ends the run (`denied`).
+- Reject maps to `reject_once` (omp, Claude `reject`) or Codex `cancel`. Codex's `cancel` ends the turn, so any `stopReason: cancelled` after a harness reject maps to the run's denied/policy-rejected outcome; no per-runtime flag is needed.
 - Per-tool `deny` that must let the agent continue is only possible on Claude and omp.
 
 ## Recommended pins
