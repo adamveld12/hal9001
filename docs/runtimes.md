@@ -71,14 +71,19 @@ handling; for any other isolation, create the directory yourself.
 
 ### Installing the adapters and finding them
 
-`claude-agent-acp` (0.100.0) and `codex-acp` (2.5.0) are pinned in `mise.toml`, so `mise install` installs them. They are
-`#!/usr/bin/env node` scripts. Outside the repository the mise shim on `PATH` fails with `No version is set for shim`
-(observed from `/tmp` with the repo pins), and the daemon does not run from the repository. Either set a global default
-(`mise use -g npm:@agentclientprotocol/claude-agent-acp@0.100.0`, likewise for codex-acp) or use absolute paths. Check
-that the command resolves for the daemon:
-`bin/hal9001 runtimes probe claude` returns `ok: false` with the error and the tail of the agent's stderr when the command
-cannot start. If it does not resolve, put the absolute
-path in `command`:
+`claude-agent-acp` (0.100.0) and `codex-acp` (2.5.0) are pinned in `mise.toml`, so `mise install` installs them. Outside
+the repository a bare `claude-agent-acp` shim fails with `No version is set for shim`, and agents run in their own cwd, so
+the seeded `config.yaml` runs the adapters through `mise exec` with explicit versions:
+
+```yaml
+claude:
+  command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]
+```
+
+This needs only `mise` on the daemon's PATH (`hal9001 install` captures the login-shell PATH). When you bump an adapter in
+`mise.toml`, bump the version in `config.yaml` too. Check that each command resolves for the daemon with
+`bin/hal9001 runtimes probe <name>`: it returns `ok: false` with the error and the tail of the agent's stderr when the
+command cannot start. An absolute path also works:
 
 ```sh
 mise which claude-agent-acp     # run inside the repo

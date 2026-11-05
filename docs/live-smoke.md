@@ -117,14 +117,14 @@ the config of the working directory, so from outside the repo (where the daemon 
 mise ERROR No version is set for shim: claude-agent-acp
 ```
 
-With the shipped `command: [claude-agent-acp]` and the login-shell PATH (which contains the shims dir), the runtime probe
-and every agent run fail until the adapter is made resolvable. `hal9001` shows this clearly: the probe error and the agent run
-error both end with `stderr: No version is set for shim: claude-agent-acp` (before this change the run error omitted stderr).
-What the live harness needed: absolute paths to the installed scripts. They start with `#!/usr/bin/env node`, and `node`
-came from the login-shell PATH (mise global `node`). Other fixes that work outside the repo: `mise use -g` of both adapters
-at the pinned versions, or `command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]`
-(verified for the claude probe and its full scenario set, and for the codex probe). The test process's own PATH hides the problem because Go's `exec` resolves the
-command against the daemon's PATH; that is why the harness sets the process PATH from the login shell.
+With `command: [claude-agent-acp]` and the login-shell PATH (which contains the shims dir), the runtime probe and every
+agent run failed until the adapter was made resolvable; the probe error and the agent run error both end with
+`stderr: No version is set for shim: claude-agent-acp`. The shipped `config.yaml` now uses
+`command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]` (and the same for
+codex-acp). That form was verified for the claude probe and its full scenario set and for the codex probe, and all three
+`runtimes probe` calls passed against a daemon started from `/tmp` with only the login-shell PATH. The test process's own
+PATH hides this class of problem because Go's `exec` resolves the command against the daemon's PATH; that is why the live
+harness sets the process PATH from the login shell.
 
 Also checked: a runtime whose command does not exist fails the run in milliseconds with
 `spawn_failed: exec: "no-such-acp-agent": executable file not found in $PATH` (`TestLiveMissingRuntimeCommand`).

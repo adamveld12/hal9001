@@ -42,14 +42,17 @@ allowed_logins: []
 # <home>/data. The engine creates the isolated CODEX_HOME / PI_CODING_AGENT_DIR
 # directories and symlinks the existing login into them so user settings that
 # auto-allow tools cannot bypass the approval policy.
+# The ACP adapters run through `mise exec` with explicit versions (the same pins
+# as the hal9001 repo's mise.toml): bare `claude-agent-acp` / `codex-acp` shims
+# only resolve inside the repo, and agents run in their own cwd under launchd.
 runtimes:
   claude:
-    command: [claude-agent-acp]
+    command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]
     modes: {ask: default, full: bypassPermissions}
     session_meta:
       claudeCode: {options: {settingSources: [project]}}
   codex:
-    command: [codex-acp]
+    command: [mise, exec, "npm:@agentclientprotocol/codex-acp@2.5.0", --, codex-acp]
     modes: {ask: read-only, full: agent-full-access}
     env:
       CODEX_HOME: "{{data}}/runtimes/codex-home"
