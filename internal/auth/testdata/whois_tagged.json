@@ -1,0 +1,19 @@
+{
+  "Node": {
+    "ID": 1928374650192837,
+    "StableID": "nTaGgEdCNTRL",
+    "Name": "ci-runner.tail1234.ts.net.",
+    "User": 4210000000000001,
+    "Addresses": ["100.64.9.9/32"],
+    "Tags": ["tag:ci"],
+    "Hostinfo": {"OS": "linux", "Hostname": "ci-runner"},
+    "Online": true,
+    "MachineAuthorized": true
+  },
+  "UserProfile": {
+    "ID": 4210000000000001,
+    "LoginName": "tagged-devices",
+    "DisplayName": "Tagged Devices"
+  },
+  "CapMap": {}
+}
