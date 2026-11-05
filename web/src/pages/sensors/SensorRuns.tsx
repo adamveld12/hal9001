@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { useSensorRun, useSensorRuns, type SensorRun } from "../../api/sensors";
 import { BlobView } from "../../components/BlobView";
+import { SensorStdout } from "../../components/SensorStdout";
 import { Time } from "../../components/Time";
 import {
   Badge,
@@ -40,15 +41,13 @@ function RunDetails({ run }: { run: SensorRun }) {
       {full.isError && (
         <ErrorState error={full.error} onRetry={() => void full.refetch()} />
       )}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="space-y-1">
-          <div className="text-[11px] font-medium text-muted">stdout</div>
-          <BlobView blob={r.stdout} />
-        </div>
-        <div className="space-y-1">
-          <div className="text-[11px] font-medium text-muted">stderr</div>
-          <BlobView blob={r.stderr} />
-        </div>
+      <div className="space-y-1">
+        <div className="text-[11px] font-medium text-muted">stdout (items)</div>
+        <SensorStdout blob={r.stdout} />
+      </div>
+      <div className="space-y-1">
+        <div className="text-[11px] font-medium text-muted">stderr</div>
+        <BlobView blob={r.stderr} />
       </div>
     </div>
   );
