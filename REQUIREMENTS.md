@@ -12,7 +12,7 @@ Goals
 
 Non-goals (v1)
 - Webhooks, Slack Socket Mode, or any inbound public endpoint. Polling only.
-- Multi-user, auth beyond localhost protection, remote hosting.
+- Multi-user, binding beyond loopback (remote access is via `tailscale serve` only, §10.5), token/OIDC auth modules.
 - Embedded scripting VM. Nodes are processes.
 - Join/merge nodes, loops, sub-flows.
 - Direct LLM API calls (agents only, over ACP).
@@ -323,20 +323,124 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 | permission_requests | id, agent_run_id, tool_call_id, tool kind, title, raw input, options offered, decision (allow/reject/cancelled/expired), decided_by (policy/user/timeout), matched rule, reason, timestamps |
 | approvals | id, agent_run_id, type (proposal/tool_call), permission_request_id (tool_call only), proposal_md, status, decided_at, comment |
 | inbox_items | id, source (agent_run/node_run), title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run |
+| auth_events | id, ts, service, endpoint, per-module results, outcome, principal, remote addr, host, session id |
+| sessions | id (hashed), principal, modules succeeded, services granted, created, last seen, expires, revoked |
+| webauthn_credentials | id, rp_id, public key, sign count, label, created, last used |
 
 - Payloads > 64 KiB are stored as blobs (content-addressed, zstd).
 - Secret redaction: values from the `env` file are replaced with `«KEY»` in stored stdout/stderr/argv.
 - Retention: `retention_days` (default 30). Nightly prune of runs, events, blobs, and worktrees older than that, except anything linked to a starred inbox item or a pending approval. Dedup keys are retained longer (`dedup_retention_days`, default 180) so old items don't re-fire.
 
-## 10. Daemon and OS integration
+## 10. Daemon, API, network, and auth
+
+### 10.1 Daemon
 
 - Single Go binary, frontend embedded via `go:embed`.
-- CLI: `hal9001 serve`, `install` / `uninstall` (launchd LaunchAgent, `KeepAlive`, logs to `~/Library/Logs/hal9001/`), `open` (opens UI), `validate` (lint sensors/flows/prompts), `pause` / `resume`.
-- HTTP on `127.0.0.1:9001` only. Local protection, because a localhost UI that runs commands is reachable from any webpage via CSRF or DNS rebinding:
-  - reject requests whose `Host` is not `127.0.0.1:9001` / `localhost:9001`;
-  - mutating requests require an `X-Hal-Token` header matching a per-install token (served to the UI only via the same-origin index page); reject cross-origin `Origin`.
+- CLI: `hal9001 serve`, `install` / `uninstall` (launchd LaunchAgent, `KeepAlive`, logs to `~/Library/Logs/hal9001/`), `open` (opens UI), `validate` (lint sensors/flows/prompts). Every other subcommand is a thin client of the REST API (§10.2).
 - Notifications via `terminal-notifier` (installed) with `-open http://localhost:9001/...` deep links; fallback `osascript`. Sent for inbox items with priority ≥ configured threshold (default `normal`) and every new approval.
-- Live updates to the UI via SSE (`/api/stream`): sensor runs, events, run/node status changes, agent transcript events, inbox, approvals.
+
+### 10.2 API-first
+
+The backend is a JSON REST API; the web UI and the CLI are both clients of it and have no private endpoints. Everything the tool does can be driven and verified with `curl` or the CLI.
+
+- Contract: `api/openapi.yaml` (OpenAPI 3.1), updated in the same commit as handlers. TS types for the UI are generated from it.
+- Resources: sensors (incl. `POST /api/sensors/{id}/poll`), events, flows (CRUD on YAML + `validate`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, auth.
+- Test entry points:
+  - `POST /api/events` injects an event for a sensor id without polling (body = item JSON); goes through dedup and fan-out exactly like a polled item.
+  - `POST /api/flows/{id}/test-node` runs one node on a supplied input (same as "Run node on sample").
+  - `POST /api/events/{id}/replay` with `{flow, dry_run}`.
+  - `GET /api/flow-runs/{id}?wait=30s` long-polls until the run reaches a terminal or `awaiting_approval` state, so scripts and tests don't sleep.
+- Errors: `application/problem+json` with a stable `type` per error class.
+- Live updates: SSE on `/api/stream` (sensor runs, events, run/node status, agent events, inbox, approvals, auth events), filterable by resource.
+- CLI mirrors the API: `hal9001 events inject <sensor> < item.json`, `hal9001 runs get <id> --wait`, `hal9001 approvals approve <id> --comment ...`, etc. Output is JSON by default (`--table` for humans).
+- `cmd/fake-acp-agent`: a scripted ACP agent (reads a script of updates, tool calls, permission requests, final message) used by tests and by `runtimes` config in test setups, so agent modes, policy, approvals, resume, timeouts, and cancellation are tested without real models.
+
+### 10.3 Network baseline (not pluggable)
+
+- Listens on `127.0.0.1:9001` only. The bind address is not configurable; remote access goes through Tailscale (§10.5).
+- DNS-rebinding protection: reject requests whose `Host` is not `localhost:9001`, `127.0.0.1:9001`, or an entry in `allowed_hosts` (used for the Tailscale hostname).
+- CSRF protection: reject any request whose `Origin` header is present and not an allowed origin; mutating requests must be `Content-Type: application/json` (cross-site forms can't send that without a CORS preflight, which the server never grants). Session cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` on HTTPS.
+
+### 10.4 Auth: pluggable, PAM-style
+
+```mermaid
+flowchart LR
+  R[Request] --> B[Baseline §10.3] --> S{Service}
+  S --> ST["Service stack (config.yaml)<br/>module: control flag<br/>module: control flag"]
+  ST -->|success| P[Principal]
+  ST -->|fail| D[401 / 403]
+  ST -.challenge.-> C[Multi-step exchange<br/>password, passkey assertion]
+  P & D --> AE[(auth_events)]
+```
+
+Services (what is being accessed):
+
+| Service | Covers |
+|---|---|
+| `ui` | Loading the web UI and establishing a browser session |
+| `api` | Read endpoints and SSE |
+| `approve` | Approve / deny proposals and tool calls |
+| `admin` | Writing flows, sensors, prompts, env, settings; kill switch; replay; test-node. Equivalent to running code on this Mac. |
+
+Each endpoint declares its service. Each service has an ordered stack of `{module, control, options}` entries, evaluated with PAM semantics:
+
+| Control | On success | On failure |
+|---|---|---|
+| `required` | continue | remember failure, continue, fail at end |
+| `requisite` | continue | fail immediately |
+| `sufficient` | succeed immediately if no earlier `required` failed | continue (ignored) |
+| `optional` | counts only if it is the only module that ran | ignored |
+
+A module may also return `ignore` (not applicable to this request, e.g. password module with no credentials presented), which counts as neither success nor failure. A stack where no module succeeded fails.
+
+Module interface (Go, compiled in, registered by name):
+
+```go
+type Module interface {
+    Name() string
+    Authenticate(ctx context.Context, req *AuthRequest) Result // Success(principal) | Fail(reason) | Ignore | Challenge(step)
+}
+```
+
+`Challenge` drives multi-step logins (PAM conversation style) through `POST /api/auth/{service}/begin` and `/continue`. A successful login yields a server-side session (cookie) recording principal, modules that succeeded, and services granted. Sessions last `session_ttl` (default 7d, sliding). No step-up: a valid session covers every service its stack evaluation granted. Logout and "revoke all sessions" are API endpoints.
+
+v1 modules:
+
+| Module | Behavior |
+|---|---|
+| `localhost-trust` | Success when the request is local: TCP peer is loopback, `Host` is `localhost`/`127.0.0.1`, and no proxy headers are present (`Forwarded`, `X-Forwarded-*`, `Tailscale-*`). Otherwise `ignore`. A first-class module with no restrictions on which services' stacks it can appear in. |
+| `password` | argon2id hash in `config.yaml` (set via `hal9001 auth set-password`). `ignore` if no credentials presented. |
+| `webauthn` | Passkeys (Touch ID via the browser). Registration via the API from an already-authenticated session; credentials stored in SQLite per relying-party ID (`localhost` and each Tailscale hostname are separate RP IDs, so a passkey is registered per hostname). |
+
+Default config (all four services):
+
+```yaml
+auth:
+  stacks:
+    default:
+      - {module: localhost-trust, control: sufficient}
+      - {module: webauthn, control: sufficient}
+      - {module: password, control: sufficient}
+  services: {ui: default, api: default, approve: default, admin: default}
+```
+
+Every authentication decision is written to `auth_events` (service, endpoint, each module's result, final outcome, principal, remote addr, host) and visible in the UI and API.
+
+### 10.5 Tailscale
+
+The daemon stays loopback-only; Tailscale does the exposure:
+
+```
+tailscale serve --bg --https=443 http://127.0.0.1:9001
+```
+
+- This publishes `https://<mac>.<tailnet>.ts.net` to devices on your tailnet only, with a valid TLS certificate. Never use `tailscale funnel`, which publishes to the internet.
+- What hal9001 needs for it:
+  1. `allowed_hosts: [<mac>.<tailnet>.ts.net]` so the Host check accepts it.
+  2. `localhost-trust` must not treat these requests as local. tailscaled proxies from loopback, so the peer address alone would pass; the Host and proxy-header conditions in §10.4 are what exclude them. Tailnet requests therefore fall through to `webauthn` or `password`.
+  3. A passkey registered for the ts.net hostname (WebAuthn works there because it's HTTPS).
+- `hal9001 tailscale status` reports whether serve is configured for the port and whether the hostname is in `allowed_hosts`. hal9001 never runs `tailscale serve` itself.
+- Possible later module (not v1): `tailscale-identity`, which trusts the `Tailscale-User-Login` header that `tailscale serve` adds and checks it against an allow-list, so tailnet access needs no passkey.
 
 ## 11. Web UI
 
@@ -355,7 +459,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 | Flows | List (enabled, dry-run, last run, error rate). Editor: canvas with node palette (command, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; save writes YAML. |
 | Sensors | List with status, last poll, new items, errors; edit (same code editor), "Poll now", recent SensorRuns. |
 | Prompts | List / edit prompt files with preview rendered against a sample event. |
-| Settings | Concurrency, retention, notification threshold, env file keys (names only, values masked), kill switch. |
+| Settings | Concurrency, retention, notification threshold, env file keys (names only, values masked), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |
 
 ## 12. Acceptance scenarios (what I will test)
 
@@ -378,8 +482,12 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 15. Restart daemon mid-run → run marked `interrupted`; pending approval still approvable.
 16. Edit a flow in the UI → YAML file updated; edit the YAML by hand → UI reflects it; conflicting save rejected.
 17. Secrets from `env` never appear unredacted in any trace view.
-18. Cross-origin POST to `localhost:9001/api/...` without the token → rejected.
+18. Cross-origin POST (`Origin: https://evil.example`) and a `text/plain` POST to `localhost:9001/api/...` are rejected; a request with `Host: evil.example` (DNS rebinding) is rejected.
 19. Starter sensors (Slack, GitHub, Linear, Gmail) poll successfully with real credentials.
+20. Every scenario above except 1, 6's notification, and 19 is also covered by an automated Go test that drives only the REST API (with `fake-acp-agent` for agent scenarios), and each can be reproduced by hand with `curl` or the CLI.
+21. Auth stacks: with the default config, local curl succeeds via `localhost-trust`. With `localhost-trust` removed from the stack, curl gets 401; password login yields a session cookie that works; a `requisite` failure stops evaluation (visible in `auth_events`); a `required` failure followed by a `sufficient` success still fails.
+22. A request carrying `X-Forwarded-For` or `Tailscale-User-Login`, or with a non-localhost Host, is not accepted by `localhost-trust`.
+23. Tailscale: after `tailscale serve --bg --https=443 http://127.0.0.1:9001` and adding the hostname to `allowed_hosts`, the UI loads from a phone on the tailnet, demands passkey or password, and a passkey registered for the ts.net hostname works.
 
 ## 13. Prerequisites and open items
 
@@ -393,7 +501,9 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 
 ## 14. Build plan (sub-agents)
 
-Phase 0 (sequential except the ACP gate, which runs in parallel): repo skeleton, Go module, `internal/spec` (YAML types + validation), SQLite schema + migrations, store interfaces, HTTP API contract (`docs/api.md` + `web/src/api/types.ts`), node execution contract tests. Everything else builds against these. The ACP gate (§13) runs alongside; its results decide whether any CLI-exec fallback adapter is needed.
+Working rules for every agent (hooks, commits, triage, worktrees, API-first, tests) are in `AGENTS.md`.
+
+Phase 0 (sequential except the ACP gate, which runs in parallel): Go module layout, `internal/spec` (YAML types + validation), SQLite schema + migrations, store interfaces, `api/openapi.yaml` (full v1 contract) with generated TS types in `web/src/api/`, auth `Module` interface and service/endpoint mapping, node execution contract tests. Everything else builds against these. The ACP gate (§13) runs alongside; its results decide whether any CLI-exec fallback adapter is needed.
 
 Phase 1 (parallel):
 
@@ -401,8 +511,10 @@ Phase 1 (parallel):
 |---|---|
 | Engine | sensor scheduler, dedup, command runner (langs, env, timeouts, process groups, redaction), DAG executor, queues/concurrency, kill switch, replay, test runs, dry-run, retention |
 | Agents | Go ACP client on `acp-go-sdk`, session lifecycle (§7.3), permission policy engine + `allow` rules, proposal and per-tool approval, `session/load` resume with fallback, worktrees, transcript storage, note parsing; a CLI-exec fallback adapter only for runtimes that fail the gate |
-| Server | REST API, SSE hub, token/Host/Origin protection, notifications, launchd install, CLI commands, config hot-reload, YAML write with conflict detection |
+| Server | REST handlers per OpenAPI, problem+json errors, `?wait` long-poll, SSE hub, Host/Origin/content-type baseline, notifications, launchd install, CLI as API client, config hot-reload, YAML write with conflict detection, `tailscale status` |
+| Auth | PAM stack evaluator, sessions, `localhost-trust`, `password` (argon2id), `webauthn` (per-RP-ID credentials), `/api/auth/*` begin/continue/logout/revoke, `auth_events` |
+| Fake agent | `cmd/fake-acp-agent` scripted ACP agent (updates, tool calls, permission requests, `loadSession`, delays, crashes) for engine/agent tests |
 | Web | all pages in §11 against the API contract with fixtures, then against the live server |
 | Content | starter sensors, prompts (`triage-slack`, `pr-review`, `linear-triage`, `email-secretary`), example flows, `validate` fixtures |
 
-Phase 2: integration, end-to-end smoke of §12 scenarios against a fake sensor and real CLIs, browser verification of the UI, README with setup steps.
+Phase 2: integration, API-driven end-to-end tests of §12 (scenario 20), live smoke against real ACP agents and sensors, browser verification of the UI, README with setup steps.
