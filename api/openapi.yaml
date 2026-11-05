@@ -2366,7 +2366,7 @@ components:
       required: [id, nodes]
       properties:
         id: {$ref: '#/components/schemas/Slug'}
-        enabled: {type: boolean, default: true}
+        enabled: {type: boolean, default: false, description: A flow without `enabled` is disabled; new flows must opt in.}
         dry_run: {type: boolean, default: false}
         subscribe: {type: array, items: {$ref: '#/components/schemas/Slug'}, description: Sensor ids.}
         max_concurrent: {type: integer, minimum: 1, default: 2}

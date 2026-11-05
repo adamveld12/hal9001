@@ -1752,7 +1752,10 @@ export interface components {
     /** @description Flow definition (§6). */
     Flow: {
       id: components["schemas"]["Slug"];
-      /** @default true */
+      /**
+       * @description A flow without `enabled` is disabled; new flows must opt in.
+       * @default false
+       */
       enabled?: boolean;
       /** @default false */
       dry_run?: boolean;
