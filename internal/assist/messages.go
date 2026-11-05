@@ -190,7 +190,11 @@ func (s *session) applyToolUpdate(t *turn, u update) {
 
 // writeToolLocked stores a tool message, redacting its JSON. s.mu must be held.
 func (s *session) writeToolLocked(tm *toolMsg, create bool) {
-	b, err := json.Marshal(tm.call)
+	call := tm.call
+	if pt := s.pendingTests[call.ToolCallID]; pt != nil {
+		call.Content = append(append([]json.RawMessage(nil), call.Content...), pt.content()...)
+	}
+	b, err := json.Marshal(call)
 	if err != nil {
 		return
 	}

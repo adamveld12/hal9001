@@ -26,6 +26,8 @@ type ToolRequest struct {
 	RawInput any
 	// Paths are the target paths of the call (see ToolPaths).
 	Paths []string
+	// ToolCallID identifies the tool call within the session.
+	ToolCallID string
 }
 
 // Decision is a policy outcome with the evidence recorded on the
@@ -42,6 +44,7 @@ type Engine struct {
 	policy   Policy
 	tools    []*regexp.Regexp
 	commands []*regexp.Regexp
+	veto     func(ToolRequest, int) string
 	paths    pathRules
 }
 
@@ -53,7 +56,7 @@ var editKinds = map[string]bool{"edit": true, "delete": true, "move": true}
 
 // NewEngine compiles the allow rules.
 func NewEngine(p Policy, allow AllowRules) (*Engine, error) {
-	e := &Engine{policy: p}
+	e := &Engine{policy: p, veto: allow.CommandVeto}
 	for _, s := range allow.Tools {
 		re, err := regexp.Compile(s)
 		if err != nil {
@@ -117,10 +120,18 @@ func (e *Engine) Decide(r ToolRequest) Decision {
 		default:
 			for i, re := range e.commands {
 				if re.MatchString(cmd) {
+					if e.veto != nil {
+						if why := e.veto(r, i); why != "" {
+							cmdNote = fmt.Sprintf("command %q matches allow.commands[%d], but %s", cmd, i, why)
+							break
+						}
+					}
 					return Decision{Action: ActionAllow, Rule: fmt.Sprintf("allow.commands[%d]: %s", i, re), Reason: fmt.Sprintf("command %q matches allow.commands", cmd)}
 				}
 			}
-			cmdNote = fmt.Sprintf("command %q matches no allow.commands rule", cmd)
+			if cmdNote == "" {
+				cmdNote = fmt.Sprintf("command %q matches no allow.commands rule", cmd)
+			}
 		}
 	}
 

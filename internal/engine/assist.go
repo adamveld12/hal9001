@@ -12,10 +12,10 @@ import (
 
 // ToolApprovalObserver is told when a gated tool call of an agent run starts
 // waiting for a decision and when it stops waiting (decided, expired or the run
-// ended). The assist manager uses it to link approvals to its conversation.
+// ended; allowed tells whether the user allowed the call). The assist manager uses it to link approvals to its conversation.
 type ToolApprovalObserver interface {
 	ToolApprovalPending(runID, toolCallID, approvalID string)
-	ToolApprovalResolved(runID, approvalID string)
+	ToolApprovalResolved(runID, approvalID string, allowed bool)
 }
 
 type observerSlot struct {
@@ -42,9 +42,9 @@ func (e *Engine) toolApprovalPending(runID, toolCallID, approvalID string) {
 	}
 }
 
-func (e *Engine) toolApprovalResolved(runID, approvalID string) {
+func (e *Engine) toolApprovalResolved(runID, approvalID string, allowed bool) {
 	if o := e.toolApprovalObserver(); o != nil {
-		o.ToolApprovalResolved(runID, approvalID)
+		o.ToolApprovalResolved(runID, approvalID, allowed)
 	}
 }
 

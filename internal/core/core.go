@@ -167,7 +167,9 @@ type Assist interface {
 	// the current draft hash, else *DraftConflictError.
 	UpdateDraft(ctx context.Context, sessionID, yaml, expectedHash string) (*store.AssistSession, error)
 	// TestDraft runs the draft like Poll now and returns the redacted result without recording anything.
-	TestDraft(ctx context.Context, sessionID string) (AssistTestResult, error)
+	// The script runs with real credentials: a test by the user always runs and marks the script approved; a
+	// test byAgent runs only while the script equals the approved one (else ErrInvalidState).
+	TestDraft(ctx context.Context, sessionID string, byAgent bool) (AssistTestResult, error)
 	// Cancel cancels the running turn; without one it returns the session unchanged.
 	Cancel(ctx context.Context, sessionID string) (*store.AssistSession, error)
 	// Close ends the session: stops the agent, removes the draft directory, marks it closed.

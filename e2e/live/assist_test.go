@@ -45,8 +45,9 @@ type liveAssistSession struct {
 }
 
 // One real claude turn on the cheapest model: asked to create a sensor that emits two static items, the agent edits
-// the draft (allowed without asking), runs `hal9001 assist test` (allowed without asking) and ends with a summary.
-// Passes when the draft validates, the daemon's own test of it returns 2 items, and nothing needed approval.
+// the draft (allowed without asking), runs `hal9001 assist test` (a new script, so the user is asked: the test allows
+// it, and checks the approval shows the script) and ends with a summary. Passes when the draft validates, the
+// daemon's own test of it returns 2 items, and nothing but that one test asked for a person.
 func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 	requireLive(t)
 	rt := runtimesUnderTest[0]
@@ -68,6 +69,7 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 	s.must(http.StatusAccepted, http.MethodPost, "/api/assist/sessions/"+created.ID+"/messages", map[string]any{"text": ask}, nil)
 
 	var got liveAssistSession
+	asked := 0
 	deadline := time.Now().Add(8 * time.Minute)
 	for {
 		s.must(http.StatusOK, http.MethodGet, "/api/assist/sessions/"+created.ID, nil, &got)
@@ -75,7 +77,15 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 			break
 		}
 		if got.Status == "awaiting_approval" {
-			t.Logf("the agent asked for approval: %+v", s.approvals("status=pending"))
+			for _, ap := range s.approvals("status=pending") {
+				pr := ap.PermissionRequest
+				if pr == nil || pr.ToolKind != "execute" || !strings.Contains(pr.Title, "assist test") {
+					t.Fatalf("the agent asked for something other than the test of its script: %+v (%+v)", ap, pr)
+				}
+				asked++
+				t.Logf("approving the test of the new script: %s", pr.Title)
+				s.must(http.StatusOK, http.MethodPost, "/api/approvals/"+ap.ID+"/approve", map[string]any{}, nil)
+			}
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("session still %q after 8m", got.Status)
@@ -103,22 +113,26 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 		t.Errorf("test of the agent's draft = %+v", res)
 	}
 
-	// Policy decisions of the turn: the helper command and the draft edit were allowed by policy, nothing asked.
+	// Policy decisions of the turn: the draft edit was allowed by policy, the test of the new script by the user.
 	if got.LastAgentRunID == nil {
 		t.Fatal("no agent run linked to the session")
 	}
 	var ranTest bool
 	for _, p := range s.permissionRequests(*got.LastAgentRunID) {
 		t.Logf("permission: kind=%s title=%q decision=%v by=%v rule=%v", p.ToolKind, p.Title, deref(p.Decision), deref(p.DecidedBy), deref(p.MatchedRule))
-		if p.DecidedBy != nil && *p.DecidedBy == "user" {
-			t.Errorf("a tool call needed a person: %+v", p)
-		}
-		if p.ToolKind == "execute" && strings.Contains(p.Title, "assist test") && deref(p.Decision) == "allow" {
+		isTest := p.ToolKind == "execute" && strings.Contains(p.Title, "assist test")
+		if isTest && deref(p.Decision) == "allow" && deref(p.DecidedBy) == "user" {
 			ranTest = true
+		}
+		if !isTest && p.DecidedBy != nil && *p.DecidedBy == "user" {
+			t.Errorf("a tool call other than the test needed a person: %+v", p)
 		}
 	}
 	if !ranTest {
-		t.Error("the agent never ran `hal9001 assist test` through the policy")
+		t.Error("the agent never ran `hal9001 assist test` with the user's approval")
+	}
+	if asked != 1 {
+		t.Errorf("the user was asked %d times, want once (the new script)", asked)
 	}
 	var summary string
 	for _, m := range got.Messages {

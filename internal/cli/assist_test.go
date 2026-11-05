@@ -270,3 +270,31 @@ func TestSensorsValidatePostsTheFileOrStdinContent(t *testing.T) {
 		}
 	})
 }
+
+// Inside an assist session (the environment variable the daemon sets for the agent) the test request says so; a
+// person at a terminal sends no marker, so their test always runs and approves the script.
+func TestAssistTestMarksRequestsMadeInsideASession(t *testing.T) {
+	route := "POST /api/assist/sessions/" + id2 + "/test"
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		args   []string
+		marked bool
+	}{
+		{"agent, session from the environment", map[string]string{cli.EnvAssistSession: id2}, []string{"assist", "test"}, true},
+		{"agent, session as argument", map[string]string{cli.EnvAssistSession: id1}, []string{"assist", "test", id2}, true},
+		{"person at a terminal", nil, []string{"assist", "test", id2}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeDaemon(t)
+			f.on(route, ok(assistTestResult(0)))
+			res := f.run(runOpts{env: tc.env}, tc.args...)
+			if res.code != 0 {
+				t.Fatalf("exit %d: %s", res.code, res.stderr)
+			}
+			if got := f.only().Header.Get(cli.AssistAgentHeader) != ""; got != tc.marked {
+				t.Errorf("agent marker sent = %v, want %v", got, tc.marked)
+			}
+		})
+	}
+}

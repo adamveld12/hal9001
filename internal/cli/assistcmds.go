@@ -124,9 +124,19 @@ func assistCmds() []*command {
 			if err != nil {
 				return err
 			}
+			// Inside an assist session (the variable the daemon sets for the agent) the request says
+			// so: the daemon runs an agent's test only for a script the user has tested or approved.
+			cl := c.client()
+			if c.env.Getenv(EnvAssistSession) != "" {
+				cl.headers = http.Header{AssistAgentHeader: {"1"}}
+			}
+			resp, err := cl.do(ctx, http.MethodPost, "/api/assist/sessions/"+esc(id)+"/test", nil, []byte("{}"))
+			if err != nil {
+				return err
+			}
 			// A test script that exits non-zero is still a successful request;
 			// its exit_code is part of the printed result.
-			return c.doEmit(ctx, http.MethodPost, "/api/assist/sessions/"+esc(id)+"/test", nil, []byte("{}"))
+			return c.emit(resp)
 		},
 	}
 

@@ -339,3 +339,51 @@ func TestToolPaths(t *testing.T) {
 		})
 	}
 }
+
+// CommandVeto turns an allow.commands match into an ordinary non-allowed call: asked under the gated policy,
+// rejected under read-only, with the veto's reason. Commands the veto lets through, and commands no rule matches,
+// behave as before.
+func TestCommandVetoDowngradesAMatchedAllowRule(t *testing.T) {
+	cmd := func(c string) any { return map[string]any{"command": c} }
+	var seen []string
+	veto := func(r agent.ToolRequest, rule int) string {
+		c, _ := agent.ExtractCommand(r.RawInput)
+		seen = append(seen, c+"@"+r.ToolCallID+"#"+string(rune('0'+rule)))
+		if strings.HasSuffix(c, "test") {
+			return "the script changed"
+		}
+		return ""
+	}
+	allow := agent.AllowRules{Commands: []string{`^tool (draft|test)$`, `^other$`}, CommandVeto: veto}
+	for _, tc := range []struct {
+		name   string
+		policy agent.Policy
+		cmd    string
+		want   agent.Action
+		reason string
+	}{
+		{"not vetoed", agent.PolicyGated, "tool draft", agent.ActionAllow, ""},
+		{"vetoed, gated", agent.PolicyGated, "tool test", agent.ActionAsk, "the script changed"},
+		{"vetoed, read-only", agent.PolicyReadonly, "tool test", agent.ActionReject, "the script changed"},
+		{"second rule", agent.PolicyGated, "other", agent.ActionAllow, ""},
+		{"no rule matches", agent.PolicyGated, "curl x", agent.ActionAsk, "matches no allow.commands rule"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eng, err := agent.NewEngine(tc.policy, allow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := eng.Decide(agent.ToolRequest{Kind: "execute", RawInput: cmd(tc.cmd), ToolCallID: "tc1"})
+			if d.Action != tc.want || !strings.Contains(d.Reason, tc.reason) {
+				t.Fatalf("Decide = %+v, want %s with %q", d, tc.want, tc.reason)
+			}
+			if tc.want != agent.ActionAllow && strings.HasPrefix(d.Rule, "allow.commands") {
+				t.Errorf("a vetoed command keeps its allow rule: %+v", d)
+			}
+		})
+	}
+	want := []string{"tool draft@tc1#0", "tool test@tc1#0", "tool test@tc1#0", "other@tc1#1"}
+	if !slices.Equal(seen, want) {
+		t.Errorf("veto calls = %v, want %v (once per matched command, never for an unmatched one)", seen, want)
+	}
+}
