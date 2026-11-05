@@ -12,7 +12,8 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run --passWithNoTests",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:api": "pnpm --filter gen-api exec openapi-typescript ../../../api/openapi.yaml -o ../../src/api/schema.d.ts"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -38,7 +39,6 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "openapi-typescript": "^7.13.0",
     "oxlint": "^1.89.0",
     "prettier": "^3.9.10",
     "tailwindcss": "^4.3.4",

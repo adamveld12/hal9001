@@ -1,0 +1,10 @@
+{
+  "name": "gen-api",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Runs openapi-typescript with its own TypeScript 5: the generator needs the TS compiler JS API, which the native TypeScript 7 used by the app does not ship.",
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "~5.9.3"
+  }
+}
