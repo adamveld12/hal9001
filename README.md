@@ -291,10 +291,11 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
   real router (`httptest`) or the CLI, not through the UI. Slow suites skip under `-short`.
 - **Agent behavior** is tested against the scripted fake ACP agent ([`cmd/fake-acp-agent`](cmd/fake-acp-agent/README.md)),
   never a real model, so modes, policy, approvals, resume, timeouts and cancellation are deterministic.
-- **End to end:** the scenarios of [REQUIREMENTS.md §12](REQUIREMENTS.md) are driven through the REST API only, with the
-  fake agent, and can each be reproduced by hand with `curl` or the CLI ([docs/api.md](docs/api.md) has a walkthrough).
-- **Live:** smoke tests against the real ACP runtimes and sensors are explicitly marked and need real credentials; see
-  [docs/live-smoke.md](docs/live-smoke.md).
+- **End to end:** `mise run e2e` (`go test -race ./e2e/...`) starts the real daemon in-process and drives the scenarios of
+  [REQUIREMENTS.md §12](REQUIREMENTS.md) through the REST API and CLI only, with the fake agent. Each can be reproduced by
+  hand with `curl` or the CLI ([docs/api.md](docs/api.md) has a walkthrough). The suite skips under `-short`.
+- **Live:** `HAL9001_LIVE=1 mise exec -- go test -count=1 ./e2e/live/` runs the real claude/codex/omp runtimes and the real
+  GitHub sensor (skipped without the env var); see [docs/live-smoke.md](docs/live-smoke.md).
 - **Real adapters:** `hal9001 runtimes probe <name>` and `cmd/acp-probe` check a runtime by hand
   ([docs/runtimes.md](docs/runtimes.md)).
 
