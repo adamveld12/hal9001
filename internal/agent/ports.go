@@ -78,10 +78,11 @@ type PermissionRecord struct {
 	DecidedAt   *time.Time
 }
 
-// Recorder receives everything an AgentRun produces. Calls for one run are
-// serialised in order; implementations must tolerate calls from several runs
-// concurrently. Failures are the recorder's to log: a store error must not
-// kill the agent.
+// Recorder receives everything an AgentRun produces. RunUpdated, Event and
+// Permission calls for one run are serialised and arrive in order; Raw may be
+// called concurrently with them (it is fed by the transport goroutines), and
+// implementations must tolerate several runs at once. Failures are the
+// recorder's to log: a store error must not kill the agent.
 type Recorder interface {
 	// RunUpdated upserts the agent_runs row.
 	RunUpdated(RunRecord)

@@ -289,8 +289,3 @@ type RunRecord struct {
 	// Stderr is the tail of the agent's stderr.
 	Stderr string
 }
-
-// Terminal reports whether the run reached a final state.
-func (r RunRecord) Terminal() bool {
-	return r.Status != StatusRunning && r.Status != ""
-}
