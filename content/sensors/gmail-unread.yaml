@@ -1,0 +1,29 @@
+# Unread inbox mail via the gog CLI (github.com/steipete/gogcli), read-only.
+# Auth is gog's own OAuth: `gog auth add you@example.com`. Set GOG_ACCOUNT to pick an account.
+id: gmail-unread
+interval: 5m
+lang: bash
+script: |
+  set -euo pipefail
+  acct=()
+  [ -z "${GOG_ACCOUNT:-}" ] || acct=(--account "$GOG_ACCOUNT")
+
+  out=$(gog ${acct[@]+"${acct[@]}"} --readonly --gmail-no-send --no-input \
+    gmail messages search 'is:unread in:inbox' --max 50 \
+    --include-body --sanitize-content --json) || {
+    echo "gog: gmail search failed (exit $?); is gog installed and authorised?" >&2
+    exit 1
+  }
+
+  jq -c '(.messages? // .)[] | {
+    source: "gmail",
+    id, thread_id: .threadId, from, to, subject, date, labels,
+    title: (.subject // "(no subject)"),
+    author: .from,
+    text: ((.body // "") | .[0:2000]),
+    url: "https://mail.google.com/mail/u/0/#inbox/\(.threadId // .id)",
+    updated_at: (.internalDateIso // .date)
+  }' <<<"$out"
+key: "{{.id}}"
+first_run: baseline
+timeout: 60s
