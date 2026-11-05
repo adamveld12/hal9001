@@ -196,9 +196,19 @@ function CommandForm({
         </Field>
         <Field label="Working directory" error={msgs(diags, "cwd")}>
           <TextInput
-            value={node.cwd ?? ""}
+            value={node.cwd?.path ?? ""}
             placeholder="$HAL_STATE_DIR"
-            onChange={(e) => onChange((n) => setOpt(n, "cwd", e.target.value))}
+            onChange={(e) =>
+              onChange((n) =>
+                setOpt(
+                  n,
+                  "cwd",
+                  e.target.value === ""
+                    ? undefined
+                    : { mode: "dir", path: e.target.value },
+                ),
+              )
+            }
           />
         </Field>
       </div>
@@ -370,9 +380,9 @@ function AgentForm({
         <Select
           value={node.prompt ?? ""}
           invalid={msgs(diags, "prompt").length > 0}
-          onChange={(e) => onChange((n) => setOpt(n, "prompt", e.target.value))}
+          onChange={(e) => onChange((n) => ({ ...n, prompt: e.target.value }))}
         >
-          <option value="">(none)</option>
+          <option value="">(choose a prompt)</option>
           {promptOptions.map((p) => (
             <option key={p}>{p}</option>
           ))}

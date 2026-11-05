@@ -149,9 +149,8 @@ function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
     }
     case "agent": {
       if (node.runtime.trim() === "") at("runtime", "an agent needs a runtime");
-      if (!node.prompt || node.prompt.trim() === "") {
-        at("prompt", "choose a prompt from the library", "warning");
-      }
+      if (node.prompt.trim() === "")
+        at("prompt", "choose a prompt from the library");
       if (node.mode === "approve" && !node.approve) {
         at("approve", "approve mode defaults to proposal", "warning");
       }

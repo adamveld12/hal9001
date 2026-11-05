@@ -28,9 +28,19 @@ export interface UIPos {
   y: number;
 }
 
+export type DirCwd = { mode: "dir"; path?: string };
 export type AgentCwd =
-  | { mode: "dir"; path?: string }
-  | { mode: "worktree"; repo?: string; ref?: string };
+  DirCwd | { mode: "worktree"; repo?: string; ref?: string };
+
+export interface McpServer {
+  name: string;
+  type?: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
 
 export interface AllowRules {
   tools?: string[];
@@ -46,7 +56,8 @@ export interface CommandNode {
   ports?: string[];
   timeout?: string;
   side_effect?: boolean;
-  cwd?: string;
+  /** Command nodes accept `dir` only. */
+  cwd?: DirCwd;
   ui?: UIPos;
 }
 
@@ -56,11 +67,12 @@ export interface AgentNode {
   runtime: string;
   mode: AgentMode;
   approve?: ApproveStyle;
-  prompt?: string;
+  prompt: string;
   extra_prompt?: string;
   model?: string;
   cwd?: AgentCwd;
   allow?: AllowRules;
+  mcp_servers?: McpServer[];
   timeout?: string;
   approval_timeout?: string;
   ui?: UIPos;
@@ -73,6 +85,7 @@ export interface InboxNode {
   priority?: Priority;
   summary_md?: string;
   suggested_reply?: string;
+  links?: { label: string; url: string }[];
   ui?: UIPos;
 }
 
@@ -96,10 +109,12 @@ export interface Flow {
   edges: FlowEdge[];
 }
 
-export type Severity = "error" | "warning";
+export type Severity = "error" | "warning" | "info";
 
 /** API diagnostic shape; client-side validation produces the same shape. */
 export interface Diagnostic {
+  code?: string;
+  line?: number;
   file?: string;
   path?: string;
   node_id?: string;
@@ -174,7 +189,7 @@ export function newNode(type: NodeType, id: string, ui: UIPos): FlowNode {
     case "command":
       return { id, type, lang: "bash", script: "cat\n", ui };
     case "agent":
-      return { id, type, runtime: "claude", mode: "readonly", ui };
+      return { id, type, runtime: "claude", mode: "readonly", prompt: "", ui };
     case "inbox":
       return { id, type, title: "{{.input.title}}", priority: "normal", ui };
   }

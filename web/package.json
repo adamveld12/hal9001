@@ -13,7 +13,7 @@
     "test": "vitest run --passWithNoTests",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "preview": "vite preview",
-    "gen:api": "pnpm --filter gen-api exec openapi-typescript ../../../api/openapi.yaml -o ../../src/api/schema.d.ts"
+    "gen:api": "pnpm --filter gen-api exec openapi-typescript ../../../api/openapi.yaml -o ../../src/api/schema.d.ts --default-non-nullable false"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -31,6 +31,7 @@
     "openapi-fetch": "^0.17.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
     "react-router": "^8.5.1"
   },
   "devDependencies": {

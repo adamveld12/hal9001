@@ -42,6 +42,8 @@ export interface FlowEditorProps {
   saveError?: string;
   /** Resolves when the server accepted the flow; reject to keep it dirty. */
   onSave: (flow: Flow) => Promise<unknown>;
+  /** Reports the serialized flow and dirty state after every change. */
+  onChange?: (flow: Flow, dirty: boolean) => void;
   /** Extra controls under the node form (e.g. "Run node on sample"). */
   nodeActions?: (node: FlowNode, flow: Flow) => ReactNode;
 }
@@ -76,6 +78,11 @@ export function FlowEditor(props: FlowEditorProps) {
   const knownSensors = useMemo(() => new Set(props.sensors), [props.sensors]);
   const selected = selectedFlowNode(state);
   const blocked = hasErrors(clientDiagnostics);
+
+  const { onChange } = props;
+  useEffect(() => {
+    onChange?.(flow, dirty);
+  }, [flow, dirty, onChange]);
 
   const save = useCallback(() => {
     if (blocked || !dirty || props.saving) return;
