@@ -1788,6 +1788,23 @@ export interface components {
       env?: {
         [key: string]: string;
       };
+      /** @description Extra argv/env for restrictive (readonly, approve) runs, for runtimes that pick approval behaviour with a process flag. */
+      ask?: components["schemas"]["RuntimeSpawn"];
+      /** @description Extra argv/env for permissive (auto, approved proposal) runs. */
+      full?: components["schemas"]["RuntimeSpawn"];
+      /** @description Sent as `_meta` on session/new and session/load (e.g. claude settingSources isolation). */
+      session_meta?: {
+        [key: string]: unknown;
+      };
+      /** @description Advertise form elicitation so the runtime routes edit/MCP approvals to the harness (omp). */
+      elicitation?: boolean;
+    };
+    RuntimeSpawn: {
+      args?: string[];
+      /** @description Values are returned as `«redacted»`. */
+      env?: {
+        [key: string]: string;
+      };
     };
     AuthModuleEntry: {
       /** @example localhost-trust */
