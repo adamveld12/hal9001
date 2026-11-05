@@ -3,6 +3,7 @@ module hal9001
 go 1.27.3
 
 require (
+	github.com/coder/acp-go-sdk v0.13.5
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getkin/kin-openapi v0.152.0
