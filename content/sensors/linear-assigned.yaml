@@ -1,0 +1,56 @@
+# Issues assigned to you and comments on them, updated since the last successful poll.
+# Needs LINEAR_API_KEY.
+id: linear-assigned
+interval: 5m
+lang: bash
+script: |
+  set -euo pipefail
+  : "${LINEAR_API_KEY:?LINEAR_API_KEY is not set (see env.example)}"
+
+  since=${HAL_LAST_SUCCESS_AT:-}
+  [ -n "$since" ] || since=$(jq -nr 'now - 86400 | todate')
+
+  query='query Hal($since: DateTimeOrDuration!) {
+    viewer {
+      id
+      assignedIssues(first: 100, orderBy: updatedAt, filter: {updatedAt: {gt: $since}}) {
+        nodes { id identifier title description url priority priorityLabel updatedAt
+                state { name type } team { key } creator { name } }
+      }
+    }
+    comments(first: 100, filter: {updatedAt: {gt: $since}, issue: {assignee: {isMe: {eq: true}}}}) {
+      nodes { id body url updatedAt user { id name } issue { id identifier title } }
+    }
+  }'
+
+  payload=$(jq -nc --arg q "$query" --arg since "$since" '{query: $q, variables: {since: $since}}')
+  resp=$(curl -sS --fail-with-body https://api.linear.app/graphql \
+    -H "Authorization: $LINEAR_API_KEY" -H 'Content-Type: application/json' \
+    --data "$payload") || {
+    echo "linear: request failed: $resp" >&2
+    exit 1
+  }
+  if [ "$(jq 'has("errors") and (.errors | length > 0)' <<<"$resp")" = "true" ]; then
+    echo "linear: graphql error: $(jq -r '[.errors[].message] | join("; ")' <<<"$resp")" >&2
+    exit 1
+  fi
+
+  jq -c '
+    .data as $d | $d.viewer.id as $me |
+    ($d.viewer.assignedIssues.nodes[] | {
+      source: "linear", kind: "issue", id, identifier, updatedAt, url,
+      title: "\(.identifier): \(.title)",
+      author: (.creator.name // "unknown"),
+      text: ((.description // "") | .[0:2000]),
+      state: .state.name, state_type: .state.type, priority: .priorityLabel, team: .team.key
+    }),
+    ($d.comments.nodes[] | select(.user.id != $me) | {
+      source: "linear", kind: "comment", id, updatedAt, url,
+      title: "Comment on \(.issue.identifier): \(.issue.title)",
+      author: (.user.name // "unknown"),
+      text: (.body | .[0:2000]),
+      issue_id: .issue.id, identifier: .issue.identifier
+    })' <<<"$resp"
+key: "{{.id}}:{{.updatedAt}}"
+first_run: baseline
+timeout: 60s

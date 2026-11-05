@@ -1,0 +1,21 @@
+# GitHub notifications (review requests, mentions, assignments, ...) via the existing gh login.
+# Each item is the notification object plus: source, title, url (browser URL), repo, type.
+id: github-notifications
+interval: 2m
+lang: bash
+script: |
+  set -euo pipefail
+  gh api notifications --paginate -q '.[]' |
+    jq -c '. + {
+      source: "github",
+      title: .subject.title,
+      type: .subject.type,
+      repo: .repository.full_name,
+      url: ((.subject.url // .repository.html_url)
+            | sub("^https://api\\.github\\.com/repos/"; "https://github.com/")
+            | sub("/pulls/"; "/pull/")
+            | sub("/commits/"; "/commit/"))
+    }'
+key: "{{.id}}:{{.updated_at}}"
+first_run: baseline
+timeout: 60s

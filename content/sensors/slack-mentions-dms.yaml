@@ -1,0 +1,89 @@
+# Mentions of you (search.messages) and direct messages to you (conversations.list/history).
+# Needs SLACK_USER_TOKEN (xoxp; search:read, im:history, im:read, users:read).
+id: slack-mentions-dms
+interval: 2m
+lang: bash
+script: |
+  set -euo pipefail
+  : "${SLACK_USER_TOKEN:?SLACK_USER_TOKEN is not set (see env.example)}"
+
+  now=$(date -u +%s)
+  if [ -n "${HAL_LAST_SUCCESS_AT:-}" ]; then
+    since=$(jq -nr --arg t "$HAL_LAST_SUCCESS_AT" '$t | sub("\\.[0-9]+"; "") | fromdateiso8601')
+  else
+    since=$((now - 86400))
+  fi
+
+  # slack METHOD [curl-data-args...]: GET with form args, fail on transport errors or ok:false.
+  slack() {
+    local method=$1 body
+    shift
+    body=$(curl -sS --fail-with-body -G "https://slack.com/api/$method" \
+      -H "Authorization: Bearer $SLACK_USER_TOKEN" "$@") || {
+      echo "slack $method: request failed: $body" >&2
+      return 1
+    }
+    if [ "$(jq -r '.ok // false' <<<"$body")" != "true" ]; then
+      echo "slack $method: error: $(jq -r '.error // "unknown error"' <<<"$body")" >&2
+      return 1
+    fi
+    printf '%s\n' "$body"
+  }
+
+  auth=$(slack auth.test)
+  me=$(jq -r '.user_id' <<<"$auth")
+  team=$(jq -r '.team_id // ""' <<<"$auth")
+
+  # Mentions. search `after:` takes a date, so ask for a day of slack and filter by ts below.
+  day=$(jq -nr --argjson s "$since" '($s - 86400) | strftime("%Y-%m-%d")')
+  mentions=$(slack search.messages \
+    --data-urlencode "query=<@$me> after:$day" \
+    --data-urlencode "sort=timestamp" --data-urlencode "count=100" |
+    jq -c --argjson since "$since" --arg me "$me" '
+      [.messages.matches[]?
+       | select((.ts | tonumber) > $since and .user != $me)
+       | {kind: "mention", channel: .channel.id, channel_name: (.channel.name // .channel.id),
+          ts, user, author: (.username // .user), text, url: .permalink}]')
+
+  # Direct messages: every IM conversation, messages from the other party since the last poll.
+  dms='[]'
+  cursor=''
+  while :; do
+    page=$(slack conversations.list --data-urlencode "types=im" --data-urlencode "limit=200" \
+      --data-urlencode "exclude_archived=true" --data-urlencode "cursor=$cursor")
+    for ch in $(jq -r '.channels[]?.id' <<<"$page"); do
+      hist=$(slack conversations.history --data-urlencode "channel=$ch" \
+        --data-urlencode "oldest=$since" --data-urlencode "limit=50")
+      dms=$(jq -c --argjson prev "$dms" --argjson since "$since" --arg me "$me" --arg ch "$ch" --arg team "$team" '
+        $prev + [.messages[]?
+          | select((.ts | tonumber) > $since and .user != $me and (.subtype // "") == "" and (.bot_id | not))
+          | {kind: "dm", channel: $ch, channel_name: "dm", ts, user, author: .user, text,
+             url: ("https://slack.com/app_redirect?channel=\($ch)&message_ts=\(.ts)" + (if $team != "" then "&team=\($team)" else "" end))}]' <<<"$hist")
+    done
+    cursor=$(jq -r '.response_metadata.next_cursor // ""' <<<"$page")
+    [ -n "$cursor" ] || break
+  done
+
+  items=$(jq -c -n --argjson a "$mentions" --argjson b "$dms" '$a + $b | unique_by([.channel, .ts])')
+
+  # Replace user ids with display names; a failed lookup keeps the id.
+  names='{}'
+  for u in $(jq -r '[.[] | .user // empty] | unique | .[] | select(test("^[UW][A-Z0-9]+$"))' <<<"$items"); do
+    if info=$(slack users.info --data-urlencode "user=$u" 2>/dev/null); then
+      names=$(jq -c --arg u "$u" --argjson n "$names" \
+        '$n + {($u): ((.user.profile.display_name | select(. != null and . != "")) // .user.real_name // .user.name // $u)}' <<<"$info")
+    fi
+  done
+
+  jq -c --argjson names "$names" '
+    .[] | . + {
+      source: "slack",
+      id: "\(.channel):\(.ts)",
+      author_id: .user,
+      author: ($names[.user // ""] // .author),
+      title: "\(if .kind == "dm" then "DM" else "Mention in #\(.channel_name)" end) from \($names[.user // ""] // .author)",
+      updated_at: (.ts | tonumber | floor | todate)
+    }' <<<"$items"
+key: "{{.channel}}:{{.ts}}"
+first_run: baseline
+timeout: 90s

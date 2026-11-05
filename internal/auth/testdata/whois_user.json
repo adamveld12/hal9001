@@ -1,0 +1,21 @@
+{
+  "Node": {
+    "ID": 3472902419163253,
+    "StableID": "nGkwbA3CNTRL",
+    "Name": "alices-iphone.tail1234.ts.net.",
+    "User": 5812946537210413,
+    "Addresses": ["100.101.102.103/32", "fd7a:115c:a1e0::1234:5678/128"],
+    "AllowedIPs": ["100.101.102.103/32", "fd7a:115c:a1e0::1234:5678/128"],
+    "Hostinfo": {"OS": "iOS", "Hostname": "alices-iphone", "Services": []},
+    "Created": "2026-03-02T18:21:44.512Z",
+    "Online": true,
+    "MachineAuthorized": true
+  },
+  "UserProfile": {
+    "ID": 5812946537210413,
+    "LoginName": "alice@example.com",
+    "DisplayName": "Alice Architect",
+    "ProfilePicURL": "https://lh3.googleusercontent.com/a/example=s96-c"
+  },
+  "CapMap": {}
+}

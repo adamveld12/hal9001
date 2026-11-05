@@ -1,0 +1,5 @@
+{"ok":true,"query":"<@UME>","messages":{"total":3,"matches":[
+ {"iid":"a","team":"T1","channel":{"id":"C1","name":"eng"},"user":"U2","username":"bob","ts":"1793876400.000100","text":"<@UME> can you look at the deploy?","permalink":"https://acme.slack.com/archives/C1/p1793876400000100"},
+ {"iid":"b","team":"T1","channel":{"id":"C1","name":"eng"},"user":"U3","username":"old","ts":"1793869200.000000","text":"<@UME> stale mention before last poll","permalink":"https://acme.slack.com/archives/C1/p1793869200000000"},
+ {"iid":"c","team":"T1","channel":{"id":"C1","name":"eng"},"user":"UME","username":"me","ts":"1793877000.000000","text":"I mentioned <@UME> myself","permalink":"https://acme.slack.com/archives/C1/p1793877000000000"}
+]}}

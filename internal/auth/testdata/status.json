@@ -1,0 +1,35 @@
+{
+  "Version": "1.90.1-t0f3a2b1c4-g9d8e7f6a5",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": ["100.64.0.7", "fd7a:115c:a1e0::7"],
+  "Self": {
+    "ID": "nMacbookCNTRL",
+    "HostName": "alices-macbook",
+    "DNSName": "alices-macbook.tail1234.ts.net.",
+    "OS": "macOS",
+    "UserID": 5812946537210413,
+    "TailscaleIPs": ["100.64.0.7", "fd7a:115c:a1e0::7"],
+    "Online": true
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tail1234.ts.net",
+  "CurrentTailnet": {"Name": "alice@example.com", "MagicDNSSuffix": "tail1234.ts.net", "MagicDNSEnabled": true},
+  "CertDomains": ["alices-macbook.tail1234.ts.net"],
+  "Peer": {},
+  "User": {
+    "5812946537210413": {
+      "ID": 5812946537210413,
+      "LoginName": "alice@example.com",
+      "DisplayName": "Alice Architect",
+      "ProfilePicURL": "https://lh3.googleusercontent.com/a/example=s96-c"
+    },
+    "7710000000000002": {
+      "ID": 7710000000000002,
+      "LoginName": "bob@example.com",
+      "DisplayName": "Bob Builder"
+    }
+  }
+}

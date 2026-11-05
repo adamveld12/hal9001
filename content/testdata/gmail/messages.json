@@ -1,0 +1,4 @@
+{"messages":[
+ {"id":"m1","threadId":"t1","date":"2026-11-05 11:00","internalDateIso":"2026-11-05T11:00:03-08:00","from":"Alice <alice@example.com>","to":"me@example.com","subject":"Contract review by Friday","labels":["INBOX","UNREAD"],"body":"Hi, can you review the attached contract by Friday?"},
+ {"id":"m2","threadId":"t2","date":"2026-11-05 11:30","from":"Bot <noreply@example.com>","subject":null,"labels":["INBOX","UNREAD"]}
+],"nextPageToken":""}
