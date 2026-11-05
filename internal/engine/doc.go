@@ -49,7 +49,7 @@
 // (awaiting_approval, no concurrency slot); approving requeues it and the next
 // claim resumes the same session, denying routes to port denied. A per-tool
 // approval keeps the agent process, and its slot, alive while it waits.
-// agent_runs.result is {"final_message", "note", "parse_error"}; raw JSON-RPC is
+// agent_runs.result is {"final_message", "note", "parse_error", "resume_fallback"}; raw JSON-RPC is
 // stored as JSON lines {"t","dir":"->"|"<-","msg"}. Isolated CODEX_HOME and
 // PI_CODING_AGENT_DIR directories named in a runtime's env are created with a
 // symlink to the existing login (docs/acp-gate.md); "{{data}}" in runtime
