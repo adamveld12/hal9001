@@ -7,3 +7,6 @@ coverage.*
 
 web/node_modules/
 web/dist/
+
+# Global gitignores on this machine ignore *.sql; migrations must be tracked.
+!internal/store/migrations/*.sql
