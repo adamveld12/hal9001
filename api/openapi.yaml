@@ -1,0 +1,3694 @@
+openapi: 3.1.0
+info:
+  title: hal9001 API
+  version: 1.0.0
+  summary: REST contract for the hal9001 daemon, used by the web UI, the CLI, and tests.
+  description: |
+    Single interface for the hal9001 daemon (REQUIREMENTS §10.2). The web UI and the `hal9001` CLI are clients of this
+    document and have no private endpoints. Change it in the same commit as the handler.
+
+    Conventions
+    - JSON bodies use snake_case names that match the trace-model columns in REQUIREMENTS §9. IDs of runs, events,
+      approvals, and inbox items are ULIDs. Times are RFC 3339 with nanoseconds, in UTC.
+    - Flow, sensor, prompt, and config JSON mirror the YAML formats in REQUIREMENTS §5-§7 and the `internal/spec`
+      types. Durations are strings such as `60s`, `20m`, `7d`.
+    - Content hashes are the lowercase hex SHA-256 of the raw file bytes. Writes that replace or delete a file carry
+      `expected_hash`; a mismatch is a 409 `conflict`. An empty `expected_hash` on create means the file must not
+      exist yet.
+    - Lists are `{items, next_cursor}`; pass `next_cursor` back as `cursor`. Newest first unless stated.
+    - Every error is `application/problem+json` with a stable `type` URI (see `ProblemType`).
+    - Every request that is not GET/HEAD must send `Content-Type: application/json`, including body-less POSTs. The
+      body may then be empty or `{}`. Otherwise the server answers 415.
+    - Each operation declares the auth service that guards it in `x-hal-service` (`ui`, `api`, `approve`, `admin`).
+      Operations with `x-hal-public: true` are reachable without a session so that clients can log in or probe
+      liveness; the baseline checks (Host, Origin, content type) still apply.
+    - `x-hal-paused` marks operations that behave differently while the kill switch is engaged; see each operation.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://127.0.0.1:9001
+    description: Loopback listener. Remote access goes through `tailscale serve` and uses the same paths.
+security:
+  - {}
+  - sessionCookie: []
+tags:
+  - {name: meta, description: 'Health, version, status, SSE stream, UI shell'}
+  - {name: killswitch, description: Pause and resume the daemon}
+  - {name: sensors, description: Sensor definitions and polls}
+  - {name: events, description: 'Events, injection, replay'}
+  - {name: flows, description: 'Flow definitions, versions, validation, node test runs'}
+  - {name: runs, description: Flow runs and node runs}
+  - {name: agents, description: 'Agent runs, transcripts, permission requests'}
+  - {name: approvals, description: Approval queue}
+  - {name: inbox, description: Inbox items}
+  - {name: prompts, description: Prompt library}
+  - {name: runtimes, description: Configured ACP runtimes}
+  - {name: settings, description: Settings and environment keys}
+  - {name: auth, description: 'Login, sessions, passkeys, auth events'}
+paths:
+  /:
+    get:
+      operationId: getUIShell
+      tags: [meta]
+      summary: Web UI shell (index.html)
+      description: |
+        Serves the embedded single-page app. Any other GET path that does not start with `/api/` and is not an
+        embedded asset also serves this document, so client-side routes work on reload. All of these are guarded by
+        the `ui` service.
+      x-hal-service: ui
+      responses:
+        '200':
+          description: HTML document.
+          content:
+            text/html:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /assets/{path}:
+    get:
+      operationId: getUIAsset
+      tags: [meta]
+      summary: Embedded web UI asset
+      x-hal-service: ui
+      parameters:
+        - name: path
+          in: path
+          required: true
+          description: Asset path under `assets/`; may contain slashes.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Asset bytes with a content type derived from the file extension.
+          content:
+            '*/*':
+              schema: {type: string, format: binary}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/health:
+    get:
+      operationId: getHealth
+      tags: [meta]
+      summary: Liveness probe
+      description: Minimal and public so launchd, scripts, and `hal9001 install` can check that the daemon is up.
+      x-hal-service: api
+      x-hal-public: true
+      security: []
+      responses:
+        '200':
+          description: Daemon is up.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/version:
+    get:
+      operationId: getVersion
+      tags: [meta]
+      summary: Build and runtime information
+      x-hal-service: api
+      responses:
+        '200':
+          description: Version details.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Version'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/status:
+    get:
+      operationId: getStatus
+      tags: [meta]
+      summary: Header counters and kill-switch state
+      description: One cheap call for the UI header badges. Changes are also pushed as `status.changed` on the stream.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Current counters.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Status'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/stream:
+    get:
+      operationId: streamEvents
+      tags: [meta]
+      summary: Server-sent events
+      description: |
+        Live updates as `text/event-stream`. Each message has `id: <sequence>`, `event: <type>`, and one
+        `data:` line holding the JSON envelope for that type (`StreamEvent`; the per-type schema is in the
+        `x-hal-sse-events` map of this operation). `: keepalive` comment lines are sent every 15 seconds.
+
+        Filtering: `types` limits the event types (default: all). The resource filters (`sensor_id`, `flow_id`,
+        `flow_run_id`, `agent_run_id`) apply to the types that carry that resource and leave other types untouched.
+        `stream.ready` and `stream.resync` are always delivered.
+
+        Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
+        buffers. When the gap is larger than the buffer it sends `stream.resync`; clients must then refetch the
+        resources they display.
+      x-hal-service: api
+      x-hal-sse-events:
+        stream.ready: '#/components/schemas/StreamReadyEvent'
+        stream.resync: '#/components/schemas/StreamResyncEvent'
+        status.changed: '#/components/schemas/StatusChangedEvent'
+        killswitch.changed: '#/components/schemas/KillSwitchChangedEvent'
+        config.changed: '#/components/schemas/ConfigChangedEvent'
+        sensor_run.created: '#/components/schemas/SensorRunCreatedEvent'
+        sensor_run.updated: '#/components/schemas/SensorRunUpdatedEvent'
+        event.created: '#/components/schemas/EventCreatedEvent'
+        flow_run.created: '#/components/schemas/FlowRunCreatedEvent'
+        flow_run.updated: '#/components/schemas/FlowRunUpdatedEvent'
+        node_run.created: '#/components/schemas/NodeRunCreatedEvent'
+        node_run.updated: '#/components/schemas/NodeRunUpdatedEvent'
+        agent_run.created: '#/components/schemas/AgentRunCreatedEvent'
+        agent_run.updated: '#/components/schemas/AgentRunUpdatedEvent'
+        agent_event.appended: '#/components/schemas/AgentEventAppendedEvent'
+        permission_request.created: '#/components/schemas/PermissionRequestCreatedEvent'
+        permission_request.updated: '#/components/schemas/PermissionRequestUpdatedEvent'
+        approval.created: '#/components/schemas/ApprovalCreatedEvent'
+        approval.updated: '#/components/schemas/ApprovalUpdatedEvent'
+        inbox.created: '#/components/schemas/InboxCreatedEvent'
+        inbox.updated: '#/components/schemas/InboxUpdatedEvent'
+        auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
+      parameters:
+        - name: types
+          in: query
+          description: Comma-separated event types to receive. Default is every type.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: {$ref: '#/components/schemas/StreamEventType'}
+        - {name: sensor_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: agent_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - name: Last-Event-ID
+          in: header
+          description: Last sequence number the client saw.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Event stream. Never ends on its own.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-sent events. Each `data:` line parses as a `StreamEvent`.
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/blobs/{hash}:
+    get:
+      operationId: getBlob
+      tags: [meta]
+      summary: Download a stored blob
+      description: |
+        Payloads over 64 KiB (stdout, stderr, stdin, transcripts) are stored as content-addressed blobs and referenced
+        by `TextBlob.blob`. Returns the decompressed bytes. Secrets were already redacted when stored.
+      x-hal-service: api
+      parameters:
+        - {name: hash, in: path, required: true, schema: {$ref: '#/components/schemas/Hash'}}
+      responses:
+        '200':
+          description: Blob content.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/killswitch:
+    get:
+      operationId: getKillSwitch
+      tags: [killswitch]
+      summary: Kill-switch state
+      x-hal-service: api
+      responses:
+        '200':
+          description: Current state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KillSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/killswitch/pause:
+    post:
+      operationId: pauseKillSwitch
+      tags: [killswitch]
+      summary: Pause sensors and stop starting nodes
+      description: |
+        Pauses all sensor polling and stops starting new nodes. With `kill_running: true` also stops running work:
+        SIGTERM to process groups, SIGKILL after 10 seconds, runs marked `killed`. Idempotent; pausing an already
+        paused daemon with `kill_running: true` still kills what is running. State survives restarts.
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PauseRequest'}
+      responses:
+        '200':
+          description: New state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KillSwitch'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/killswitch/resume:
+    post:
+      operationId: resumeKillSwitch
+      tags: [killswitch]
+      summary: Resume sensors and node starts
+      description: Queued runs start again and sensors resume on their schedule. Idempotent.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: New state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KillSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors:
+    get:
+      operationId: listSensors
+      tags: [sensors]
+      summary: List sensors with status
+      description: Every sensor file under `sensors/`, including ones that fail validation, with last-poll status.
+      x-hal-service: api
+      responses:
+        '200':
+          description: All sensors, ordered by id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createSensor
+      tags: [sensors]
+      summary: Create a sensor
+      description: |
+        Writes `sensors/<id>.yaml`. Send either `yaml` (raw file text) or `sensor` (JSON form). Rejected with 422 when
+        validation reports errors and 409 `already-exists` when the id is taken.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SensorCreateRequest'}
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/validate:
+    post:
+      operationId: validateSensor
+      tags: [sensors]
+      summary: Validate a sensor without saving
+      description: Always 200 when the request itself is well formed; check `valid` and `diagnostics`.
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SensorValidateRequest'}
+      responses:
+        '200':
+          description: Validation result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorValidation'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    get:
+      operationId: getSensor
+      tags: [sensors]
+      summary: Get a sensor
+      x-hal-service: api
+      responses:
+        '200':
+          description: Sensor with raw YAML, parsed JSON, and diagnostics.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateSensor
+      tags: [sensors]
+      summary: Replace a sensor
+      description: |
+        Send `expected_hash` (the `hash` from the last read) and either `yaml` or `sensor`. 409 `conflict` when the file
+        changed on disk since.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SensorUpdateRequest'}
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteSensor
+      tags: [sensors]
+      summary: Delete a sensor
+      description: |
+        Removes the file. Flows that subscribe to it get an `unknown_sensor` diagnostic. Stored events and runs stay
+        until retention pruning.
+      x-hal-service: admin
+      parameters:
+        - {$ref: '#/components/parameters/ExpectedHash'}
+      responses:
+        '204': {description: Deleted.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/poll:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    post:
+      operationId: pollSensor
+      tags: [sensors]
+      summary: Poll now
+      description: |
+        Starts a poll outside the schedule and returns the new SensorRun immediately. Follow it with
+        `GET /api/sensor-runs/{id}?wait=30s`. 409 `invalid-state` when a poll of this sensor is already running;
+        423 `paused` while the kill switch is engaged.
+      x-hal-service: admin
+      x-hal-paused: reject
+      responses:
+        '202':
+          description: Poll started.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorRun'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/runs:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    get:
+      operationId: listSensorRuns
+      tags: [sensors]
+      summary: Recent polls of a sensor
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - name: status
+          in: query
+          schema: {$ref: '#/components/schemas/SensorRunStatus'}
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorRunList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensor-runs/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/SensorRunId'}
+    get:
+      operationId: getSensorRun
+      tags: [sensors]
+      summary: Get a sensor run
+      description: With `wait`, blocks until the run is no longer `running` or the wait elapses; the current state is returned either way.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Wait'}
+      responses:
+        '200':
+          description: The run, including stdout and stderr.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorRun'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/events:
+    get:
+      operationId: listEvents
+      tags: [events]
+      summary: Timeline of events with their flow runs
+      description: |
+        Events newest first, each with brief entries for the flow runs it fanned out to. `flow_id`, `status`,
+        `decision`, and `kind` keep events that have at least one matching run. Test runs (`kind: test`) are hidden
+        unless `kind=test` is requested.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: sensor_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: status, in: query, description: Flow run status., schema: {$ref: '#/components/schemas/FlowRunStatus'}}
+        - {name: decision, in: query, description: Decision of any node run in the flow run., schema: {$ref: '#/components/schemas/NodeRunDecision'}}
+        - {name: kind, in: query, description: 'Flow run kind. Default is `live` and `replay`.', schema: {$ref: '#/components/schemas/FlowRunKind'}}
+        - {name: q, in: query, description: Case-insensitive substring search over the payload text., schema: {type: string, minLength: 1}}
+        - {$ref: '#/components/parameters/Since'}
+        - {$ref: '#/components/parameters/Until'}
+      responses:
+        '200':
+          description: One page of events.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EventList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: injectEvent
+      tags: [events]
+      summary: Inject an event for a sensor without polling
+      description: |
+        The body is the item JSON, any JSON value. The item goes through the sensor's `key` template, dedup, and flow
+        fan-out exactly like a polled item. 201 with the new event; 200 with `deduplicated: true` when the key was seen
+        before (nothing is created). Injection is accepted while paused and the resulting runs stay `queued`.
+      x-hal-service: admin
+      x-hal-paused: queue
+      parameters:
+        - {name: sensor_id, in: query, required: true, schema: {$ref: '#/components/schemas/Slug'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/JsonValue'}
+      responses:
+        '200':
+          description: Item was already seen; nothing was created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InjectResult'}
+        '201':
+          description: Event created and fanned out.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InjectResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/events/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/EventId'}
+    get:
+      operationId: getEvent
+      tags: [events]
+      summary: Get an event with its fan-out tree
+      description: |
+        The raw payload, dedup key, originating sensor run, and for each flow the event reached the flow run with its
+        node runs as a tree (child = node run fed by its parent's output), which gives each branch's decision path.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Event detail.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EventDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/events/{id}/replay:
+    parameters:
+      - {$ref: '#/components/parameters/EventId'}
+    post:
+      operationId: replayEvent
+      tags: [events]
+      summary: Replay an event into a flow
+      description: |
+        Runs the stored event through the current version of the flow. Creates a new FlowRun with `kind: replay` and
+        `replay_of` set to the most recent earlier run of that event in that flow, or to null if there was none.
+        Accepted while paused; the run stays `queued`.
+      x-hal-service: admin
+      x-hal-paused: queue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReplayRequest'}
+      responses:
+        '202':
+          description: Replay queued.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowRun'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows:
+    get:
+      operationId: listFlows
+      tags: [flows]
+      summary: List flows with health stats
+      description: Every flow file under `flows/`, including ones that fail validation, with run statistics.
+      x-hal-service: api
+      responses:
+        '200':
+          description: All flows, ordered by id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createFlow
+      tags: [flows]
+      summary: Create a flow
+      description: |
+        Writes `flows/<id>.yaml`. Send either `yaml` or `flow`. 422 when validation reports errors (warnings do not
+        block), 409 `already-exists` when the id is taken.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FlowCreateRequest'}
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/validate:
+    post:
+      operationId: validateFlow
+      tags: [flows]
+      summary: Validate a flow without saving
+      description: |
+        Checks the graph (cycles, unknown nodes, undeclared ports, unreachable nodes), field values, templates, and
+        references to sensors, prompts, and runtimes. Always 200 when the request itself is well formed; check `valid`
+        and `diagnostics`. When the input is YAML the parsed `flow` is returned; when it is JSON the canonical `yaml`
+        is returned.
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FlowValidateRequest'}
+      responses:
+        '200':
+          description: Validation result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowValidation'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+    get:
+      operationId: getFlow
+      tags: [flows]
+      summary: Get a flow
+      description: |
+        `yaml` is the file as on disk, `flow` its parsed form (null when the YAML does not parse), `hash` the file
+        hash to send back as `expected_hash`.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Flow definition.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateFlow
+      tags: [flows]
+      summary: Replace a flow
+      description: |
+        Send `expected_hash` and either `yaml` or `flow`. 409 `conflict` when the file changed since that hash, 422
+        when validation reports errors. Saving a changed flow creates a new version snapshot; runs already in progress
+        keep the version they started with.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FlowUpdateRequest'}
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteFlow
+      tags: [flows]
+      summary: Delete a flow
+      description: Removes the file. Version snapshots and past runs stay until retention pruning.
+      x-hal-service: admin
+      parameters:
+        - {$ref: '#/components/parameters/ExpectedHash'}
+      responses:
+        '204': {description: Deleted.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}/test-node:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+    post:
+      operationId: testFlowNode
+      tags: [flows]
+      summary: Run one node on a sample input
+      description: |
+        Executes a single node against a stored event, an upstream node run's output, or pasted JSON ("Run node on
+        sample"). Recorded as a FlowRun with `kind: test`, which default timeline views hide. The node does not feed
+        downstream nodes. `node` may carry an unsaved draft of the node to run instead of the saved one.
+
+        Blocks up to `wait` (default 30s) for the node run to finish. 200 when it finished, 202 when it is still
+        running (poll `GET /api/node-runs/{id}`). 423 `paused` while the kill switch is engaged.
+      x-hal-service: admin
+      x-hal-paused: reject
+      parameters:
+        - {$ref: '#/components/parameters/Wait'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TestNodeRequest'}
+      responses:
+        '200':
+          description: Node run finished.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TestNodeResult'}
+        '202':
+          description: Node run still in progress when `wait` elapsed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TestNodeResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}/versions:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+    get:
+      operationId: listFlowVersions
+      tags: [flows]
+      summary: Snapshots of a flow
+      description: Every distinct version that was saved or loaded, newest first. Works for deleted flows while their runs exist.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Versions without YAML bodies.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowVersionList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}/versions/{hash}:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+      - {$ref: '#/components/parameters/HashPath'}
+    get:
+      operationId: getFlowVersion
+      tags: [flows]
+      summary: Get one flow version
+      description: The exact YAML a run used, as raw text and parsed JSON. `FlowRun.flow_hash` links here.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Version snapshot.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flow-runs:
+    get:
+      operationId: listFlowRuns
+      tags: [runs]
+      summary: List flow runs
+      description: Newest first. `kind` defaults to live and replay; ask for `test` explicitly.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: event_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/FlowRunStatus'}}
+        - {name: kind, in: query, schema: {$ref: '#/components/schemas/FlowRunKind'}}
+        - {name: replay_of, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {$ref: '#/components/parameters/Since'}
+        - {$ref: '#/components/parameters/Until'}
+      responses:
+        '200':
+          description: One page of runs.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowRunList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flow-runs/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/FlowRunId'}
+    get:
+      operationId: getFlowRun
+      tags: [runs]
+      summary: Get a flow run with its node runs
+      description: |
+        With `wait`, long-polls until the run reaches a terminal status (`succeeded`, `failed`, `killed`,
+        `interrupted`) or `awaiting_approval`, or until the wait elapses. The current state is returned either way, so
+        callers check `status` rather than relying on the HTTP status. Returns immediately when the run is already
+        there.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Wait'}
+      responses:
+        '200':
+          description: The run and every node run recorded so far.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowRunDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/node-runs/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/NodeRunId'}
+    get:
+      operationId: getNodeRun
+      tags: [runs]
+      summary: Get a node run
+      description: Includes the agent runs behind an agent node, one per phase. `wait` behaves as on flow runs, for the node run's own statuses.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Wait'}
+      responses:
+        '200':
+          description: The node run with stdin, stdout, stderr, and command snapshot.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NodeRunDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs:
+    get:
+      operationId: listAgentRuns
+      tags: [agents]
+      summary: List agent runs
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/AgentRunStatus'}}
+        - {name: runtime, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: node_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+      responses:
+        '200':
+          description: One page, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentRunList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/AgentRunId'}
+    get:
+      operationId: getAgentRun
+      tags: [agents]
+      summary: Get an agent run
+      description: Agent info and capabilities, rendered prompt, argv, cwd, phase, result, and the approvals raised by this run.
+      x-hal-service: api
+      responses:
+        '200':
+          description: The agent run.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentRunDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs/{id}/events:
+    parameters:
+      - {$ref: '#/components/parameters/AgentRunId'}
+    get:
+      operationId: listAgentEvents
+      tags: [agents]
+      summary: Transcript events of an agent run
+      description: |
+        `session/update` records in `seq` order. Page forward with `after_seq` (exclusive); `has_more` says whether
+        another page follows. To tail a running run, load once, then follow `agent_event.appended` on the stream and
+        refetch with `after_seq` after a `stream.resync`.
+      x-hal-service: api
+      parameters:
+        - name: after_seq
+          in: query
+          description: Return only events with `seq` greater than this. Default 0 (from the start).
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+        - name: kind
+          in: query
+          description: Comma-separated kinds to include.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: {type: string}
+      responses:
+        '200':
+          description: Events in ascending `seq`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentEventList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs/{id}/permission-requests:
+    parameters:
+      - {$ref: '#/components/parameters/AgentRunId'}
+    get:
+      operationId: listAgentPermissionRequests
+      tags: [agents]
+      summary: Permission requests of an agent run
+      description: Every `session/request_permission` the agent sent, with who decided, the matched rule, and the reason. Ordered by request time.
+      x-hal-service: api
+      responses:
+        '200':
+          description: All permission requests of the run.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PermissionRequestList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs/{id}/raw:
+    parameters:
+      - {$ref: '#/components/parameters/AgentRunId'}
+    get:
+      operationId: downloadAgentRunRaw
+      tags: [agents]
+      summary: Download the raw JSON-RPC traffic
+      description: |
+        Newline-delimited JSON, one frame per line, in wire order, as a download. Each line is
+        `{"ts": <RFC 3339>, "dir": "in"|"out", "msg": <JSON-RPC message>}` where `dir` is relative to the harness.
+        Secrets from the env file are redacted.
+      x-hal-service: api
+      responses:
+        '200':
+          description: NDJSON file.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename="agent-run-<id>.jsonl"`'
+              schema: {type: string}
+          content:
+            application/x-ndjson:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/approvals:
+    get:
+      operationId: listApprovals
+      tags: [approvals]
+      summary: Approval queue and history
+      description: |
+        Both types (`proposal`, `tool_call`). `status=pending` is the queue; any other filter or none gives history.
+        Newest first.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/ApprovalStatus'}}
+        - {name: type, in: query, schema: {$ref: '#/components/schemas/ApprovalType'}}
+        - {name: agent_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+      responses:
+        '200':
+          description: One page of approvals.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApprovalList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/approvals/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ApprovalId'}
+    get:
+      operationId: getApproval
+      tags: [approvals]
+      summary: Get an approval
+      description: Includes the originating event and run ids, the proposal markdown or the tool call, and for tool calls the time left before `approval_timeout`.
+      x-hal-service: api
+      responses:
+        '200':
+          description: The approval.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Approval'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/approvals/{id}/approve:
+    parameters:
+      - {$ref: '#/components/parameters/ApprovalId'}
+    post:
+      operationId: approveApproval
+      tags: [approvals]
+      summary: Approve a proposal or allow a tool call
+      description: |
+        `proposal`: resumes the same session (or a new one, recorded as `resumed_via`) under the auto policy with
+        "Approved. Execute the plan." plus the comment. `tool_call`: allows the pending call and the agent continues.
+        409 `invalid-state` when the approval is no longer pending (decided, or expired after a restart or timeout).
+        Accepted while paused; the resumed run starts when the kill switch is released.
+      x-hal-service: approve
+      x-hal-paused: queue
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApproveRequest'}
+      responses:
+        '200':
+          description: Decision recorded.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Approval'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/approvals/{id}/deny:
+    parameters:
+      - {$ref: '#/components/parameters/ApprovalId'}
+    post:
+      operationId: denyApproval
+      tags: [approvals]
+      summary: Deny a proposal or tool call
+      description: |
+        `proposal`: records the denial and routes the node to port `denied`.
+        `tool_call`: rejects that call and the agent continues. With `cancel_run: true` the run is cancelled instead
+        (`session/cancel`, status `denied`). `cancel_run` on a proposal is a 422. 409 `invalid-state` when the
+        approval is no longer pending.
+      x-hal-service: approve
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DenyRequest'}
+      responses:
+        '200':
+          description: Decision recorded.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Approval'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/inbox:
+    get:
+      operationId: listInbox
+      tags: [inbox]
+      summary: List inbox items
+      description: Archived items are hidden unless `archived=true` (only archived) or `archived=any`.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: priority, in: query, description: Minimum priority., schema: {$ref: '#/components/schemas/Priority'}}
+        - {name: read, in: query, schema: {type: boolean}}
+        - {name: starred, in: query, schema: {type: boolean}}
+        - name: archived
+          in: query
+          schema: {type: string, enum: ['true', 'false', any], default: 'false'}
+        - {name: dry_run, in: query, schema: {type: boolean}}
+        - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: q, in: query, description: Case-insensitive substring search over title and summary., schema: {type: string, minLength: 1}}
+        - name: sort
+          in: query
+          description: '`priority` orders by priority then time; `time` orders by time only.'
+          schema: {type: string, enum: [priority, time], default: priority}
+      responses:
+        '200':
+          description: One page of items.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/inbox/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/InboxId'}
+    get:
+      operationId: getInboxItem
+      tags: [inbox]
+      summary: Get an inbox item
+      x-hal-service: api
+      responses:
+        '200':
+          description: The item.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxItem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateInboxItem
+      tags: [inbox]
+      summary: Mark read, starred, or archived
+      description: Only the listed fields change. Starred items are exempt from retention pruning.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InboxPatch'}
+      responses:
+        '200':
+          description: Updated item.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxItem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/prompts:
+    get:
+      operationId: listPrompts
+      tags: [prompts]
+      summary: List prompts
+      x-hal-service: api
+      responses:
+        '200':
+          description: All prompt files, ordered by name.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createPrompt
+      tags: [prompts]
+      summary: Create a prompt
+      description: Writes `prompts/<name>.md`. Send `markdown` (the file text) or `prompt`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PromptCreateRequest'}
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/prompts/render:
+    post:
+      operationId: renderPrompt
+      tags: [prompts]
+      summary: Render a prompt preview
+      description: |
+        Renders a saved prompt (`name`) or unsaved text (`markdown`) with Go `text/template` against the sample.
+        The sample is a stored event (`event_id`, bound to `.event` and `.input`) or pasted JSON (`input`, bound to
+        `.input`; `.event` is then an event wrapper around it). Template errors are returned as diagnostics, not as a
+        failure status.
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PromptRenderRequest'}
+      responses:
+        '200':
+          description: Rendered text or diagnostics.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptRender'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/prompts/{name}:
+    parameters:
+      - {$ref: '#/components/parameters/PromptName'}
+    get:
+      operationId: getPrompt
+      tags: [prompts]
+      summary: Get a prompt
+      x-hal-service: api
+      responses:
+        '200':
+          description: Prompt with raw markdown, parsed form, and diagnostics.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updatePrompt
+      tags: [prompts]
+      summary: Replace a prompt
+      description: Send `expected_hash` and `markdown` or `prompt`. 409 `conflict` when the file changed since.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PromptUpdateRequest'}
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deletePrompt
+      tags: [prompts]
+      summary: Delete a prompt
+      description: Flows that select it get an `unknown_prompt` diagnostic.
+      x-hal-service: admin
+      parameters:
+        - {$ref: '#/components/parameters/ExpectedHash'}
+      responses:
+        '204': {description: Deleted.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/runtimes:
+    get:
+      operationId: listRuntimes
+      tags: [runtimes]
+      summary: Configured ACP runtimes
+      description: The `runtimes` map of `config.yaml`, with the most recent probe result of each, if any.
+      x-hal-service: api
+      responses:
+        '200':
+          description: All runtimes, ordered by name.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/runtimes/{name}/probe:
+    parameters:
+      - {$ref: '#/components/parameters/RuntimeName'}
+    post:
+      operationId: probeRuntime
+      tags: [runtimes]
+      summary: Probe a runtime
+      description: |
+        Spawns the runtime command, runs `initialize` and a throwaway `session/new`, records agent info,
+        capabilities (`loadSession`), and available session modes and models, then stops the process. A failing
+        runtime is still a 200 with `ok: false` and the reason; non-200 means the probe could not be attempted.
+        Equivalent to running the configured command, hence `admin`.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Probe outcome.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProbeResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/settings:
+    get:
+      operationId: getSettings
+      tags: [settings]
+      summary: Get settings
+      description: |
+        `config.yaml` as JSON. Password hashes and other secrets in auth module options are replaced by `«redacted»`.
+        Only `SettingsPatch` fields can be changed through the API; the rest (listener, allowed hosts and logins,
+        runtimes, auth stacks) are edited in `config.yaml` and hot-reloaded.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Current settings.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Settings'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      operationId: updateSettings
+      tags: [settings]
+      summary: Change settings
+      description: Merge patch of the editable fields. With `expected_hash`, 409 `conflict` when `config.yaml` changed since.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SettingsPatch'}
+      responses:
+        '200':
+          description: Settings after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Settings'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/env:
+    get:
+      operationId: listEnvKeys
+      tags: [settings]
+      summary: Environment key names
+      description: Names from the `env` file only. Values are write-only and never returned by any endpoint.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Key names, sorted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnvKeyList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/env/{key}:
+    parameters:
+      - {$ref: '#/components/parameters/EnvKey'}
+    put:
+      operationId: setEnvValue
+      tags: [settings]
+      summary: Set an environment value
+      description: Creates or replaces the key in the `env` file. The value is injected into every node process and redacted from stored output.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnvSetRequest'}
+      responses:
+        '204': {description: Stored.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteEnvValue
+      tags: [settings]
+      summary: Remove an environment key
+      x-hal-service: admin
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/{service}/begin:
+    parameters:
+      - {$ref: '#/components/parameters/AuthService'}
+    post:
+      operationId: beginAuth
+      tags: [auth]
+      summary: Start authentication for a service
+      description: |
+        Evaluates the `{service}` stack (PAM semantics, REQUIREMENTS §10.4) for this request. `method` may name one
+        module to use; other members of the body are module inputs (for example `{"password": "..."}`).
+
+        - Success: 200 `status: success`; a session cookie is set and `services` lists everything the session grants.
+          When the caller already has a session covering the service, the same shape is returned with
+          `already_authenticated: true`.
+        - A module needs more input (password prompt, passkey assertion): 200 `status: challenge` with `login_id`
+          and the `step`; answer it with `/continue`.
+        - Failure: 401 `authentication-failed` with `service`, `methods`, and `trace`.
+
+        Public: reachable without a session. Every decision is recorded as an auth event.
+      x-hal-service: ui
+      x-hal-public: true
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthBeginRequest'}
+      responses:
+        '200':
+          description: Authenticated, or a challenge to answer.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/{service}/continue:
+    parameters:
+      - {$ref: '#/components/parameters/AuthService'}
+    post:
+      operationId: continueAuth
+      tags: [auth]
+      summary: Answer an authentication challenge
+      description: |
+        Sends the client's `response` to the open exchange `login_id`. Same result shapes as `begin`; a further
+        challenge is possible. An exchange is single-use, bound to the service, Host, and peer address that started
+        it, and expires after a few minutes: 410 `login-expired`, start again with `begin`. Public.
+      x-hal-service: ui
+      x-hal-public: true
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthContinueRequest'}
+      responses:
+        '200':
+          description: Authenticated, or another challenge.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/LoginExpired'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the current session
+      description: 'Revokes the session behind the cookie and clears it. 200 with `revoked: false` when there was no session.'
+      x-hal-service: ui
+      x-hal-public: true
+      security: []
+      responses:
+        '200':
+          description: Logged out.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevokeResult'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/whoami:
+    get:
+      operationId: whoami
+      tags: [auth]
+      summary: Who the server thinks you are
+      description: |
+        With a session cookie, reports that session. Otherwise evaluates each distinct stack once and reports the
+        union of granted services (`source: stack`). Always 200: `authenticated: false` tells the UI to show a login.
+        Public so that the UI can decide what to render.
+      x-hal-service: ui
+      x-hal-public: true
+      security: []
+      responses:
+        '200':
+          description: Current identity.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WhoAmI'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/sessions:
+    get:
+      operationId: listSessions
+      tags: [auth]
+      summary: Active sessions
+      description: Sessions that are not expired or revoked. Session ids are hashes, not cookie values.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Sessions and the id of the caller's own session, if any.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SessionList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: revokeAllSessions
+      tags: [auth]
+      summary: Revoke all sessions
+      description: Revokes every session including the caller's own, and clears the cookie.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: How many sessions were revoked.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevokeCount'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/sessions/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/SessionId'}
+    delete:
+      operationId: revokeSession
+      tags: [auth]
+      summary: Revoke one session
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RevokeCount'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/events:
+    get:
+      operationId: listAuthEvents
+      tags: [auth]
+      summary: Authentication decisions
+      description: Most recent decisions with each module's result, newest first.
+      x-hal-service: admin
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+      responses:
+        '200':
+          description: Events.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthEventList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/tailscale:
+    get:
+      operationId: getTailscaleStatus
+      tags: [auth]
+      summary: Tailscale exposure status
+      description: |
+        Whether the `tailscale` CLI is reachable, this Mac's tailnet hostname and owner login, whether `tailscale
+        serve` is configured for the daemon port, whether anything is exposed through funnel, and whether the hostname
+        is in `allowed_hosts`. The daemon never runs `tailscale serve` itself. A missing CLI is a 200 with
+        `available: false`.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Status.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TailscaleStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/webauthn/credentials:
+    get:
+      operationId: listPasskeys
+      tags: [auth]
+      summary: Registered passkeys
+      description: Credentials are stored per relying-party ID, so `localhost` and each Tailscale hostname list separately.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Passkeys.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/webauthn/credentials/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/PasskeyId'}
+    delete:
+      operationId: deletePasskey
+      tags: [auth]
+      summary: Remove a passkey
+      x-hal-service: admin
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/webauthn/register/begin:
+    post:
+      operationId: beginPasskeyRegistration
+      tags: [auth]
+      summary: Start passkey registration
+      description: |
+        Requires a real session cookie that covers `admin` (a per-request stack decision is not enough, because the
+        result is a standing credential). The relying-party ID is the request's Host name without port, which must be
+        `localhost` or an entry of `allowed_hosts`. Pass `options` to `navigator.credentials.create`.
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyRegisterBeginRequest'}
+      responses:
+        '200':
+          description: Creation options.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasskeyRegisterBegin'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/webauthn/register/finish:
+    post:
+      operationId: finishPasskeyRegistration
+      tags: [auth]
+      summary: Finish passkey registration
+      description: |
+        Sends the `PublicKeyCredential` returned by the browser. Same session requirement as `begin`. 410
+        `login-expired` when the registration expired or is unknown; 400 when attestation verification fails.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PasskeyRegisterFinishRequest'}
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Passkey'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '410': {$ref: '#/components/responses/LoginExpired'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: hal9001_session
+      description: |
+        Server-side session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS) obtained from
+        `POST /api/auth/{service}/begin`. The top-level `security: [{}, {sessionCookie: []}]` means a request may also
+        be authenticated without a cookie, for example by the `localhost-trust` or `tailscale-identity` module.
+  headers:
+    Location:
+      description: Absolute path of the created or started resource.
+      schema: {type: string}
+    SetSessionCookie:
+      description: Sets or clears the `hal9001_session` cookie.
+      schema: {type: string}
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response's `next_cursor`.
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    Since:
+      name: since
+      in: query
+      description: Only records created at or after this time.
+      schema: {type: string, format: date-time}
+    Until:
+      name: until
+      in: query
+      description: Only records created before this time.
+      schema: {type: string, format: date-time}
+    Wait:
+      name: wait
+      in: query
+      description: |
+        Long-poll duration such as `30s` or `2m`. Capped at 5 minutes; omit or `0s` to return immediately. Reaching
+        the cap is not an error: the current state is returned with 200.
+      schema: {$ref: '#/components/schemas/Duration'}
+    ExpectedHash:
+      name: expected_hash
+      in: query
+      required: true
+      description: Hash from the last read of the file. 409 `conflict` when the file differs.
+      schema: {$ref: '#/components/schemas/Hash'}
+    HashPath:
+      name: hash
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Hash'}
+    SensorId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Slug'}
+    FlowId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Slug'}
+    PromptName:
+      name: name
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Slug'}
+    RuntimeName:
+      name: name
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Slug'}
+    SensorRunId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    EventId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    FlowRunId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    NodeRunId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    AgentRunId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    ApprovalId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    InboxId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    SessionId:
+      name: id
+      in: path
+      required: true
+      description: Session handle from `Session.id`.
+      schema: {type: string}
+    PasskeyId:
+      name: id
+      in: path
+      required: true
+      description: Credential id from `Passkey.id` (base64url).
+      schema: {type: string}
+    AuthService:
+      name: service
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/AuthService'}
+    EnvKey:
+      name: key
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/EnvKeyName'}
+  responses:
+    Error:
+      description: Any other error, including 5xx. The `type` URI says which class.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    BadRequest:
+      description: Malformed JSON, unknown field, or an invalid query or path parameter.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/BadRequestProblem'}
+    Unauthorized:
+      description: |
+        `unauthenticated`: no principal could be established for the service. `authentication-failed`: a login attempt
+        failed. The body carries the service and the login `methods` available for it.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/UnauthorizedProblem'}
+    Forbidden:
+      description: |
+        The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`) or the session does not grant the
+        service (`forbidden`).
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ForbiddenProblem'}
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/NotFoundProblem'}
+    Conflict:
+      description: |
+        The write conflicts with the current state: `conflict` (hash mismatch; carries `current_hash`),
+        `already-exists`, or `invalid-state` (for example approving an approval that is no longer pending).
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ConflictProblem'}
+    PayloadTooLarge:
+      description: Request body exceeds the size limit.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/PayloadTooLargeProblem'}
+    UnsupportedMediaType:
+      description: 'Mutating requests must send `Content-Type: application/json`.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/UnsupportedMediaTypeProblem'}
+    ValidationFailed:
+      description: The request was well formed but its content is invalid. `diagnostics` lists every problem found.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ValidationProblem'}
+    Paused:
+      description: The kill switch is engaged and this operation would start work.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/PausedProblem'}
+    LoginExpired:
+      description: The login exchange or passkey registration expired or is unknown. Start again with `begin`.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/LoginExpiredProblem'}
+  schemas:
+    # ---------------------------------------------------------------- primitives
+    Ulid:
+      type: string
+      pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+      description: ULID.
+      examples: ['01JC7Z3K9Q8V5T2M4N6P8R0S1T']
+    NullableUlid:
+      type: [string, 'null']
+      pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+    Slug:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+      description: Identifier used as a file name (sensor, flow, prompt, runtime) or a node id.
+      examples: [github-notifications]
+    Hash:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+      description: Lowercase hex SHA-256 of the raw file (or blob) bytes.
+    NullableHash:
+      type: [string, 'null']
+      pattern: '^[0-9a-f]{64}$'
+    Duration:
+      type: string
+      pattern: '^([0-9]+(\.[0-9]+)?(ns|us|ms|s|m|h|d))+$'
+      description: Duration string. `d` means 24 hours.
+      examples: [60s, 20m, 1h, 7d]
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339 with nanoseconds, UTC.
+    NullableTimestamp:
+      type: [string, 'null']
+      format: date-time
+    NextCursor:
+      type: [string, 'null']
+      description: Pass as `cursor` to get the next page; null on the last page.
+    JsonValue:
+      description: Any JSON value.
+    EnvKeyName:
+      type: string
+      pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+      maxLength: 128
+    TextBlob:
+      type: object
+      description: |
+        Captured text (stdin, stdout, stderr). `text` holds up to 64 KiB inline in detail responses and up to 4 KiB in
+        list responses, event detail, and stream events (`truncated` is then true). When the full content is larger
+        than 64 KiB, `blob` is its hash for `GET /api/blobs/{hash}`.
+      required: [text, size, truncated, blob]
+      properties:
+        text: {type: string}
+        size: {type: integer, minimum: 0, description: Full size in bytes.}
+        truncated: {type: boolean}
+        blob: {$ref: '#/components/schemas/NullableHash'}
+    # ---------------------------------------------------------------- enums
+    FlowRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, killed, interrupted]}
+    FlowRunKind: {type: string, enum: [live, replay, test]}
+    NodeRunStatus: {type: string, enum: [queued, running, awaiting_approval, done, failed, killed, interrupted, skipped]}
+    NodeRunDecision: {type: string, enum: [emitted, dropped, error, skipped]}
+    NodeType: {type: string, enum: [command, agent, inbox]}
+    AgentRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, denied, killed, interrupted, timeout]}
+    AgentRunPhase: {type: string, enum: [propose, execute]}
+    ResumedVia: {type: string, enum: [load, new_session]}
+    AgentMode: {type: string, enum: [auto, approve, readonly]}
+    ApproveStyle: {type: string, enum: [proposal, per_tool]}
+    PermissionPolicy: {type: string, enum: [readonly, gated, auto]}
+    ApprovalType: {type: string, enum: [proposal, tool_call]}
+    ApprovalStatus: {type: string, enum: [pending, approved, denied, expired]}
+    PermissionDecision: {type: string, enum: [allow, reject, cancelled, expired]}
+    DecidedBy: {type: string, enum: [policy, user, timeout]}
+    Priority: {type: string, enum: [low, normal, high, urgent]}
+    AuthService: {type: string, enum: [ui, api, approve, admin]}
+    ModuleResultCode: {type: string, enum: [success, fail, ignore, challenge]}
+    ModuleControl: {type: string, enum: [required, requisite, sufficient, optional]}
+    AuthOutcome: {type: string, enum: [success, fail, challenge]}
+    SensorRunStatus: {type: string, enum: [running, succeeded, failed, timeout, killed, interrupted]}
+    Lang: {type: string, enum: [bash, python, node, jq, exec]}
+    FirstRun: {type: string, enum: [baseline, fire]}
+    Severity: {type: string, enum: [error, warning, info]}
+    # ---------------------------------------------------------------- problems (RFC 9457)
+    ProblemType:
+      type: string
+      description: |
+        Stable error class. The URIs are identifiers, not links. HTTP status per class: bad-request 400,
+        unauthenticated 401, authentication-failed 401, forbidden 403, host-not-allowed 403,
+        origin-not-allowed 403, not-found 404, conflict/already-exists/invalid-state 409, login-expired 410,
+        payload-too-large 413, unsupported-media-type 415, validation-failed 422, paused 423, internal 500,
+        unavailable 503.
+      enum:
+        - 'urn:hal9001:problem:bad-request'
+        - 'urn:hal9001:problem:unauthenticated'
+        - 'urn:hal9001:problem:authentication-failed'
+        - 'urn:hal9001:problem:forbidden'
+        - 'urn:hal9001:problem:host-not-allowed'
+        - 'urn:hal9001:problem:origin-not-allowed'
+        - 'urn:hal9001:problem:not-found'
+        - 'urn:hal9001:problem:conflict'
+        - 'urn:hal9001:problem:already-exists'
+        - 'urn:hal9001:problem:invalid-state'
+        - 'urn:hal9001:problem:login-expired'
+        - 'urn:hal9001:problem:payload-too-large'
+        - 'urn:hal9001:problem:unsupported-media-type'
+        - 'urn:hal9001:problem:validation-failed'
+        - 'urn:hal9001:problem:paused'
+        - 'urn:hal9001:problem:internal'
+        - 'urn:hal9001:problem:unavailable'
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: {$ref: '#/components/schemas/ProblemType'}
+        title: {type: string, description: Short summary of the class.}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string, description: Human-readable explanation of this occurrence.}
+    BadRequestProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:bad-request']}
+            status: {enum: [400]}
+    UnauthorizedProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          required: [service, methods]
+          properties:
+            type:
+              description: '`unauthenticated`: the service needs a session or a stack decision and none succeeded. `authentication-failed`: a login attempt through `begin`/`continue` failed.'
+              enum:
+                - 'urn:hal9001:problem:unauthenticated'
+                - 'urn:hal9001:problem:authentication-failed'
+            status: {enum: [401]}
+            service: {$ref: '#/components/schemas/AuthService'}
+            methods:
+              type: array
+              description: Interactive modules of the service's stack that a client can log in with, in stack order. An empty list means only per-request modules apply.
+              items: {type: string, examples: [password]}
+            trace:
+              type: array
+              description: Per-module results of a failed login attempt (`authentication-failed` only).
+              items: {$ref: '#/components/schemas/PublicModuleTrace'}
+            next_step:
+              type: object
+              description: The call that starts a login for `service`.
+              required: [method, href]
+              properties:
+                method: {type: string, enum: [POST]}
+                href: {type: string, examples: [/api/auth/api/begin]}
+    ForbiddenProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type:
+              description: '`host-not-allowed` (DNS-rebinding check), `origin-not-allowed` (CSRF check), `forbidden` (the session does not grant the service).'
+              enum:
+                - 'urn:hal9001:problem:forbidden'
+                - 'urn:hal9001:problem:host-not-allowed'
+                - 'urn:hal9001:problem:origin-not-allowed'
+            status: {enum: [403]}
+            service: {$ref: '#/components/schemas/AuthService'}
+            methods: {type: array, items: {type: string}}
+    NotFoundProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:not-found']}
+            status: {enum: [404]}
+    ConflictProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type:
+              description: '`conflict`: `expected_hash` does not match the file. `already-exists`: create of an existing id. `invalid-state`: the resource is not in a state that allows the operation.'
+              enum:
+                - 'urn:hal9001:problem:conflict'
+                - 'urn:hal9001:problem:already-exists'
+                - 'urn:hal9001:problem:invalid-state'
+            status: {enum: [409]}
+            expected_hash: {type: string, description: The hash the client sent.}
+            current_hash: {$ref: '#/components/schemas/NullableHash'}
+            current_state: {type: string, description: 'For `invalid-state`: the state that blocks the operation, such as `approved` or `running`.'}
+    LoginExpiredProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:login-expired']}
+            status: {enum: [410]}
+    PayloadTooLargeProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:payload-too-large']}
+            status: {enum: [413]}
+    UnsupportedMediaTypeProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:unsupported-media-type']}
+            status: {enum: [415]}
+    ValidationProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          required: [diagnostics]
+          properties:
+            type: {enum: ['urn:hal9001:problem:validation-failed']}
+            status: {enum: [422]}
+            diagnostics:
+              type: array
+              items: {$ref: '#/components/schemas/Diagnostic'}
+    PausedProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:paused']}
+            status: {enum: [423]}
+            paused_since: {$ref: '#/components/schemas/NullableTimestamp'}
+    Diagnostic:
+      type: object
+      description: One validation finding for a sensor, flow, prompt, or config file (`internal/spec`).
+      required: [severity, code, message]
+      properties:
+        severity: {$ref: '#/components/schemas/Severity'}
+        code:
+          type: string
+          description: |
+            Stable snake_case code, for example `cycle`, `unknown_node`, `undeclared_port`, `unreachable`,
+            `duplicate_id`, `unknown_sensor`, `unknown_prompt`, `unknown_runtime`, `invalid_enum`, `invalid_regex`,
+            `invalid_template`, `invalid_schedule`, `invalid_duration`, `required`, `field_not_allowed`,
+            `unknown_field`, `yaml_syntax`, `yaml_type`, `id_mismatch`.
+        message: {type: string}
+        file: {type: string, description: 'Path relative to the home dir, for example `flows/triage-github.yaml`.'}
+        path: {type: string, description: 'Location in the document, for example `nodes[2].script`.'}
+        node_id: {type: string, description: 'Flow node the finding belongs to, when it has one.'}
+        line: {type: integer, minimum: 1, description: '1-based YAML line, when known.'}
+    # ---------------------------------------------------------------- spec formats (REQUIREMENTS §5-§7, internal/spec)
+    Sensor:
+      type: object
+      description: |
+        Sensor definition (§5). Exactly one of `interval` and `cron`. `exec` takes `command`; every other `lang`
+        takes `script`.
+      additionalProperties: false
+      required: [id, lang]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        interval: {$ref: '#/components/schemas/Duration'}
+        cron: {type: string, examples: ['*/5 9-18 * * 1-5']}
+        lang: {$ref: '#/components/schemas/Lang'}
+        script: {type: string}
+        command: {type: array, items: {type: string}, description: 'argv for `lang: exec`.'}
+        cwd: {type: string, description: Working directory; default is the sensor's state dir.}
+        key: {type: string, description: Go text/template over the item that produces the dedup key.}
+        first_run: {$ref: '#/components/schemas/FirstRun'}
+        timeout: {$ref: '#/components/schemas/Duration'}
+    Cwd:
+      type: object
+      description: |
+        Working directory of a node (§7.5). `mode: dir` uses `path`; `mode: worktree` uses `repo` and `ref`. All
+        string fields are templates. In YAML a bare string means `{mode: dir, path}`. Command nodes and sensors accept
+        `dir` only.
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: {type: string, enum: [dir, worktree]}
+        path: {type: string}
+        repo: {type: string}
+        ref: {type: string}
+    NodeUI:
+      type: object
+      description: Canvas position.
+      additionalProperties: false
+      required: [x, y]
+      properties:
+        x: {type: number}
+        y: {type: number}
+    NoteLink:
+      type: object
+      additionalProperties: false
+      required: [label, url]
+      properties:
+        label: {type: string}
+        url: {type: string}
+    AgentAllow:
+      type: object
+      description: Extends the read-only policy (§7.2). Entries are regular expressions.
+      additionalProperties: false
+      properties:
+        tools: {type: array, items: {type: string}, description: Regexes over tool title or name.}
+        commands: {type: array, items: {type: string}, description: Regexes over the command of execute-kind tool calls.}
+    McpServer:
+      type: object
+      description: MCP server passed through to `session/new`.
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string}
+        type: {type: string, enum: [stdio, http, sse]}
+        command: {type: string}
+        args: {type: array, items: {type: string}}
+        env: {type: object, additionalProperties: {type: string}}
+        url: {type: string}
+        headers: {type: object, additionalProperties: {type: string}}
+    CommandNode:
+      type: object
+      description: Runs a process (§4). Implicit port `error`; declared `ports` default to `[out]`.
+      additionalProperties: false
+      required: [id, type, lang]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        type: {type: string, enum: [command]}
+        lang: {$ref: '#/components/schemas/Lang'}
+        script: {type: string}
+        command: {type: array, items: {type: string}}
+        ports: {type: array, items: {type: string}}
+        cwd: {$ref: '#/components/schemas/Cwd'}
+        timeout: {$ref: '#/components/schemas/Duration'}
+        side_effect: {type: boolean, description: 'Skipped in dry-run, recorded as decision `skipped` with reason `dry_run`.'}
+        ui: {$ref: '#/components/schemas/NodeUI'}
+    AgentNode:
+      type: object
+      description: |
+        Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
+        `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
+      additionalProperties: false
+      required: [id, type, runtime, mode, prompt]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        type: {type: string, enum: [agent]}
+        runtime: {$ref: '#/components/schemas/Slug'}
+        mode: {$ref: '#/components/schemas/AgentMode'}
+        approve: {$ref: '#/components/schemas/ApproveStyle'}
+        prompt: {$ref: '#/components/schemas/Slug'}
+        extra_prompt: {type: string}
+        model: {type: string}
+        cwd: {$ref: '#/components/schemas/Cwd'}
+        timeout: {$ref: '#/components/schemas/Duration'}
+        approval_timeout: {$ref: '#/components/schemas/Duration'}
+        allow: {$ref: '#/components/schemas/AgentAllow'}
+        mcp_servers: {type: array, items: {$ref: '#/components/schemas/McpServer'}}
+        ui: {$ref: '#/components/schemas/NodeUI'}
+    InboxNode:
+      type: object
+      description: Writes an inbox item. Fields are Go templates over `{.event, .input, .flow, .run}`. Port `out` only.
+      additionalProperties: false
+      required: [id, type, title]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        type: {type: string, enum: [inbox]}
+        title: {type: string}
+        priority: {$ref: '#/components/schemas/Priority'}
+        summary_md: {type: string}
+        suggested_reply: {type: string}
+        links: {type: array, items: {$ref: '#/components/schemas/NoteLink'}}
+        ui: {$ref: '#/components/schemas/NodeUI'}
+    Node:
+      oneOf:
+        - {$ref: '#/components/schemas/CommandNode'}
+        - {$ref: '#/components/schemas/AgentNode'}
+        - {$ref: '#/components/schemas/InboxNode'}
+      discriminator:
+        propertyName: type
+        mapping:
+          command: '#/components/schemas/CommandNode'
+          agent: '#/components/schemas/AgentNode'
+          inbox: '#/components/schemas/InboxNode'
+    Edge:
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from: {type: string, description: Source node id.}
+        to: {type: string, description: Target node id.}
+        port: {type: string, description: 'Source port; omitted means `out`.'}
+    Flow:
+      type: object
+      description: Flow definition (§6).
+      additionalProperties: false
+      required: [id, nodes]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        enabled: {type: boolean, default: true}
+        dry_run: {type: boolean, default: false}
+        subscribe: {type: array, items: {$ref: '#/components/schemas/Slug'}, description: Sensor ids.}
+        max_concurrent: {type: integer, minimum: 1, default: 2}
+        nodes: {type: array, items: {$ref: '#/components/schemas/Node'}}
+        edges: {type: array, items: {$ref: '#/components/schemas/Edge'}}
+    Prompt:
+      type: object
+      description: |
+        Prompt file (§7.1) as JSON: the front matter (`name`, `description`, `output`) plus the template `body`.
+        `output: note` expects the structured note schema; `none` is free text.
+      additionalProperties: false
+      required: [name, body]
+      properties:
+        name: {$ref: '#/components/schemas/Slug'}
+        description: {type: string}
+        output: {type: string, enum: [note, none], default: none}
+        body: {type: string}
+    RuntimeConfig:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command: {type: array, items: {type: string}, minItems: 1}
+        modes:
+          type: object
+          description: Names of the agent's session modes for restrictive and permissive runs.
+          additionalProperties: false
+          properties:
+            ask: {type: string}
+            full: {type: string}
+        env:
+          type: object
+          description: Extra environment for the process. Values are returned as `«redacted»`.
+          additionalProperties: {type: string}
+    AuthModuleEntry:
+      type: object
+      additionalProperties: false
+      required: [module, control]
+      properties:
+        module: {type: string, examples: [localhost-trust]}
+        control: {$ref: '#/components/schemas/ModuleControl'}
+        options:
+          type: object
+          description: Module options. Values of keys containing `hash`, `secret`, `password`, `token`, or `key` are returned as `«redacted»`.
+          additionalProperties: true
+    AuthConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        stacks:
+          type: object
+          description: Named ordered module stacks.
+          additionalProperties:
+            type: array
+            items: {$ref: '#/components/schemas/AuthModuleEntry'}
+        services:
+          type: object
+          description: Which stack guards each service.
+          additionalProperties: false
+          properties:
+            ui: {type: string}
+            api: {type: string}
+            approve: {type: string}
+            admin: {type: string}
+    Config:
+      type: object
+      description: '`config.yaml` (§3, §7.3, §10.4). Defaults apply for omitted keys.'
+      additionalProperties: false
+      properties:
+        max_agent_runs: {type: integer, minimum: 1, default: 2}
+        max_command_runs: {type: integer, minimum: 1, default: 8}
+        retention_days: {type: integer, minimum: 1, default: 30}
+        dedup_retention_days: {type: integer, minimum: 1, default: 180}
+        notify_min_priority: {$ref: '#/components/schemas/Priority'}
+        approval_timeout: {$ref: '#/components/schemas/Duration'}
+        session_ttl: {$ref: '#/components/schemas/Duration'}
+        allowed_hosts: {type: array, items: {type: string}}
+        allowed_logins: {type: array, items: {type: string}}
+        runtimes:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/RuntimeConfig'}
+        auth: {$ref: '#/components/schemas/AuthConfig'}
+    StructuredNote:
+      type: object
+      description: Structured agent result (§7.4).
+      required: [title, priority, summary_md]
+      properties:
+        title: {type: string}
+        priority: {$ref: '#/components/schemas/Priority'}
+        summary_md: {type: string}
+        suggested_reply: {type: string}
+        links: {type: array, items: {$ref: '#/components/schemas/NoteLink'}}
+    # ---------------------------------------------------------------- meta
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status: {type: string, enum: [ok]}
+        version: {type: string}
+    Version:
+      type: object
+      required: [version, commit, build_time, go_version, started_at, home]
+      properties:
+        version: {type: string}
+        commit: {type: string}
+        build_time: {type: string}
+        go_version: {type: string}
+        started_at: {$ref: '#/components/schemas/Timestamp'}
+        home: {type: string, description: Home directory the daemon serves.}
+    KillSwitch:
+      type: object
+      required: [paused, kill_running, since, by, reason]
+      properties:
+        paused: {type: boolean}
+        kill_running: {type: boolean, description: True when the pause also killed running work.}
+        since: {$ref: '#/components/schemas/NullableTimestamp'}
+        by: {type: [string, 'null'], description: Principal that paused.}
+        reason: {type: [string, 'null']}
+    PauseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        kill_running: {type: boolean, default: false}
+        reason: {type: string}
+    Status:
+      type: object
+      description: Counters for the UI header.
+      required: [kill_switch, running_flow_runs, queued_flow_runs, running_agent_runs, queued_agent_runs, pending_approvals, unread_inbox]
+      properties:
+        kill_switch: {$ref: '#/components/schemas/KillSwitch'}
+        running_flow_runs: {type: integer, minimum: 0}
+        queued_flow_runs: {type: integer, minimum: 0}
+        running_agent_runs: {type: integer, minimum: 0}
+        queued_agent_runs: {type: integer, minimum: 0}
+        pending_approvals: {type: integer, minimum: 0}
+        unread_inbox: {type: integer, minimum: 0, description: 'Unread, unarchived, non-dry-run items.'}
+    # ---------------------------------------------------------------- file resources (sensors, flows, prompts)
+    SensorStatus:
+      type: object
+      required: [state, last_run, last_success_at, next_poll_at, new_items_24h]
+      properties:
+        state:
+          type: string
+          enum: [idle, running, failing, paused, invalid]
+          description: '`failing` when the last poll failed; `paused` while the kill switch is engaged; `invalid` when the file has errors.'
+        last_run: {oneOf: [{$ref: '#/components/schemas/SensorRun'}, {type: 'null'}]}
+        last_success_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        next_poll_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        new_items_24h: {type: integer, minimum: 0}
+    SensorSummary:
+      type: object
+      required: [id, path, hash, sensor, diagnostics, status]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        path: {type: string, description: 'Relative to the home dir, e.g. `sensors/github-notifications.yaml`.'}
+        hash: {$ref: '#/components/schemas/Hash'}
+        sensor: {oneOf: [{$ref: '#/components/schemas/Sensor'}, {type: 'null'}], description: Null when the YAML does not parse.}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        status: {$ref: '#/components/schemas/SensorStatus'}
+    SensorDetail:
+      allOf:
+        - {$ref: '#/components/schemas/SensorSummary'}
+        - type: object
+          required: [yaml]
+          properties:
+            yaml: {type: string, description: The file as on disk.}
+    SensorList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SensorSummary'}}
+    SensorCreateRequest:
+      type: object
+      description: Exactly one of `yaml` and `sensor`.
+      additionalProperties: false
+      properties:
+        yaml: {type: string}
+        sensor: {$ref: '#/components/schemas/Sensor'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [sensor]}
+    SensorUpdateRequest:
+      type: object
+      description: '`expected_hash` plus exactly one of `yaml` and `sensor`.'
+      additionalProperties: false
+      required: [expected_hash]
+      properties:
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        yaml: {type: string}
+        sensor: {$ref: '#/components/schemas/Sensor'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [sensor]}
+    SensorValidateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        yaml: {type: string}
+        sensor: {$ref: '#/components/schemas/Sensor'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [sensor]}
+    SensorValidation:
+      type: object
+      required: [valid, diagnostics, yaml, sensor]
+      properties:
+        valid: {type: boolean, description: 'True when there are no `error` diagnostics.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        yaml: {type: [string, 'null'], description: 'Canonical YAML of the sensor, null when the input did not parse.'}
+        sensor: {oneOf: [{$ref: '#/components/schemas/Sensor'}, {type: 'null'}]}
+    FlowHealth:
+      type: object
+      description: Run statistics over the last 7 days (bounded by retention). `live` and `replay` runs only.
+      required: [window_hours, runs, failed, error_rate, running, queued, awaiting_approval, last_run_id, last_run_at, last_run_status]
+      properties:
+        window_hours: {type: integer, examples: [168]}
+        runs: {type: integer, minimum: 0}
+        failed: {type: integer, minimum: 0, description: 'Runs that ended `failed`, `killed`, or `interrupted`.'}
+        error_rate: {type: number, minimum: 0, maximum: 1, description: '`failed / finished runs`; 0 when none finished.'}
+        running: {type: integer, minimum: 0}
+        queued: {type: integer, minimum: 0}
+        awaiting_approval: {type: integer, minimum: 0}
+        last_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        last_run_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        last_run_status: {oneOf: [{$ref: '#/components/schemas/FlowRunStatus'}, {type: 'null'}]}
+    FlowSummary:
+      type: object
+      required: [id, path, hash, enabled, dry_run, subscribe, node_count, diagnostics, health]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        path: {type: string}
+        hash: {$ref: '#/components/schemas/Hash'}
+        enabled: {type: [boolean, 'null'], description: Null when the YAML does not parse.}
+        dry_run: {type: [boolean, 'null']}
+        subscribe: {type: array, items: {$ref: '#/components/schemas/Slug'}}
+        node_count: {type: integer, minimum: 0}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        health: {$ref: '#/components/schemas/FlowHealth'}
+    FlowList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/FlowSummary'}}
+    FlowDetail:
+      type: object
+      required: [id, path, hash, yaml, flow, diagnostics]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        path: {type: string}
+        hash: {$ref: '#/components/schemas/Hash'}
+        yaml: {type: string, description: The file as on disk.}
+        flow: {oneOf: [{$ref: '#/components/schemas/Flow'}, {type: 'null'}], description: Parsed flow; null when the YAML does not parse.}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    FlowCreateRequest:
+      type: object
+      description: Exactly one of `yaml` and `flow`.
+      additionalProperties: false
+      properties:
+        yaml: {type: string}
+        flow: {$ref: '#/components/schemas/Flow'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [flow]}
+    FlowUpdateRequest:
+      type: object
+      description: '`expected_hash` plus exactly one of `yaml` and `flow`. The flow `id` must match the path.'
+      additionalProperties: false
+      required: [expected_hash]
+      properties:
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        yaml: {type: string}
+        flow: {$ref: '#/components/schemas/Flow'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [flow]}
+    FlowValidateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        yaml: {type: string}
+        flow: {$ref: '#/components/schemas/Flow'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [flow]}
+    FlowValidation:
+      type: object
+      required: [valid, diagnostics, hash, yaml, flow]
+      properties:
+        valid: {type: boolean, description: 'True when there are no `error` diagnostics.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        hash: {$ref: '#/components/schemas/NullableHash'}
+        yaml: {type: [string, 'null'], description: 'YAML text (the input, or the canonical rendering of the JSON input).'}
+        flow: {oneOf: [{$ref: '#/components/schemas/Flow'}, {type: 'null'}], description: Parsed flow; null when the YAML did not parse.}
+    FlowVersionSummary:
+      type: object
+      required: [flow_id, hash, created_at, run_count]
+      properties:
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        hash: {$ref: '#/components/schemas/Hash'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        run_count: {type: integer, minimum: 0}
+    FlowVersion:
+      allOf:
+        - {$ref: '#/components/schemas/FlowVersionSummary'}
+        - type: object
+          required: [yaml, flow]
+          properties:
+            yaml: {type: string}
+            flow: {oneOf: [{$ref: '#/components/schemas/Flow'}, {type: 'null'}]}
+    FlowVersionList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/FlowVersionSummary'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    TestNodeInput:
+      description: What the node receives on stdin.
+      oneOf:
+        - type: object
+          description: A stored event's payload (as if the node were an entry node).
+          additionalProperties: false
+          required: [source, event_id]
+          properties:
+            source: {type: string, enum: [event]}
+            event_id: {$ref: '#/components/schemas/Ulid'}
+        - type: object
+          description: An output payload of an earlier node run (its stdout parsed as JSON or JSONL).
+          additionalProperties: false
+          required: [source, node_run_id]
+          properties:
+            source: {type: string, enum: [node_run]}
+            node_run_id: {$ref: '#/components/schemas/Ulid'}
+            output_index: {type: integer, minimum: 0, default: 0, description: Which payload when the node emitted several.}
+        - type: object
+          description: Pasted JSON.
+          additionalProperties: false
+          required: [source, json]
+          properties:
+            source: {type: string, enum: [json]}
+            json: {$ref: '#/components/schemas/JsonValue'}
+      discriminator:
+        propertyName: source
+    TestNodeRequest:
+      type: object
+      additionalProperties: false
+      required: [node_id, input]
+      properties:
+        node_id: {$ref: '#/components/schemas/Slug'}
+        node: {$ref: '#/components/schemas/Node'}
+        input: {$ref: '#/components/schemas/TestNodeInput'}
+        dry_run: {type: boolean, default: false, description: 'Run with dry-run semantics (`HAL_DRY_RUN=1`, agents forced readonly, `side_effect` skipped).'}
+    TestNodeResult:
+      type: object
+      required: [flow_run, node_run]
+      properties:
+        flow_run: {$ref: '#/components/schemas/FlowRun'}
+        node_run: {$ref: '#/components/schemas/NodeRun'}
+    PromptSummary:
+      type: object
+      required: [name, path, hash, prompt, diagnostics]
+      properties:
+        name: {$ref: '#/components/schemas/Slug'}
+        path: {type: string}
+        hash: {$ref: '#/components/schemas/Hash'}
+        prompt: {oneOf: [{$ref: '#/components/schemas/Prompt'}, {type: 'null'}], description: Null when the file does not parse.}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    PromptDetail:
+      allOf:
+        - {$ref: '#/components/schemas/PromptSummary'}
+        - type: object
+          required: [markdown]
+          properties:
+            markdown: {type: string, description: The file as on disk.}
+    PromptList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/PromptSummary'}}
+    PromptCreateRequest:
+      type: object
+      description: Exactly one of `markdown` and `prompt`.
+      additionalProperties: false
+      properties:
+        markdown: {type: string}
+        prompt: {$ref: '#/components/schemas/Prompt'}
+      oneOf:
+        - {required: [markdown]}
+        - {required: [prompt]}
+    PromptUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_hash]
+      properties:
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        markdown: {type: string}
+        prompt: {$ref: '#/components/schemas/Prompt'}
+      oneOf:
+        - {required: [markdown]}
+        - {required: [prompt]}
+    PromptRenderRequest:
+      type: object
+      description: One of `name` or `markdown`, and one of `event_id` or `input`.
+      additionalProperties: false
+      properties:
+        name: {$ref: '#/components/schemas/Slug'}
+        markdown: {type: string}
+        event_id: {$ref: '#/components/schemas/Ulid'}
+        input: {$ref: '#/components/schemas/JsonValue'}
+        extra_prompt: {type: string}
+      allOf:
+        - oneOf:
+            - {required: [name]}
+            - {required: [markdown]}
+        - oneOf:
+            - {required: [event_id]}
+            - {required: [input]}
+    PromptRender:
+      type: object
+      required: [rendered, diagnostics]
+      properties:
+        rendered: {type: [string, 'null'], description: Null when rendering failed.}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    # ---------------------------------------------------------------- settings, env, runtimes
+    Settings:
+      type: object
+      required: [hash, config]
+      properties:
+        hash: {$ref: '#/components/schemas/Hash'}
+        config: {$ref: '#/components/schemas/Config'}
+    SettingsPatch:
+      type: object
+      description: Editable `config.yaml` fields. Absent fields are unchanged.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        max_agent_runs: {type: integer, minimum: 1}
+        max_command_runs: {type: integer, minimum: 1}
+        retention_days: {type: integer, minimum: 1}
+        dedup_retention_days: {type: integer, minimum: 1}
+        notify_min_priority: {$ref: '#/components/schemas/Priority'}
+        approval_timeout: {$ref: '#/components/schemas/Duration'}
+    EnvKeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [key]
+            properties:
+              key: {$ref: '#/components/schemas/EnvKeyName'}
+    EnvSetRequest:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value: {type: string, writeOnly: true}
+    AgentInfo:
+      type: object
+      description: '`agentInfo` from the ACP `initialize` response.'
+      properties:
+        name: {type: string}
+        title: {type: [string, 'null']}
+        version: {type: string}
+    Runtime:
+      type: object
+      required: [name, command, modes, last_probe]
+      properties:
+        name: {$ref: '#/components/schemas/Slug'}
+        command: {type: array, items: {type: string}}
+        modes:
+          type: object
+          properties:
+            ask: {type: string}
+            full: {type: string}
+        env_keys: {type: array, items: {type: string}, description: Names of the extra environment variables; values are never returned.}
+        last_probe: {oneOf: [{$ref: '#/components/schemas/ProbeResult'}, {type: 'null'}], description: Result of the last probe since the daemon started.}
+    RuntimeList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Runtime'}}
+    ProbeResult:
+      type: object
+      required: [runtime, ok, checked_at, duration_ms, error]
+      properties:
+        runtime: {$ref: '#/components/schemas/Slug'}
+        ok: {type: boolean}
+        checked_at: {$ref: '#/components/schemas/Timestamp'}
+        duration_ms: {type: integer, minimum: 0}
+        error: {type: [string, 'null'], description: Why the probe failed.}
+        stderr: {type: string, description: 'Tail of the process''s stderr, redacted.'}
+        protocol_version: {type: [integer, 'null']}
+        agent_info: {oneOf: [{$ref: '#/components/schemas/AgentInfo'}, {type: 'null'}]}
+        capabilities: {$ref: '#/components/schemas/JsonValue'}
+        load_session: {type: boolean, description: 'Whether the agent advertises `loadSession`.'}
+        available_modes:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              description: {type: [string, 'null']}
+        available_models:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: {type: string}
+              name: {type: string}
+        ask_mode_available: {type: boolean, description: 'The configured `modes.ask` is among `available_modes`.'}
+        full_mode_available: {type: boolean}
+    # ---------------------------------------------------------------- trace records (REQUIREMENTS §9)
+    SensorRun:
+      type: object
+      required: [id, sensor_id, trigger, status, baseline, started_at, ended_at, duration_ms, exit_code, item_count, new_count, stdout, stderr, error]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        sensor_id: {$ref: '#/components/schemas/Slug'}
+        trigger: {type: string, enum: [scheduled, manual]}
+        status: {$ref: '#/components/schemas/SensorRunStatus'}
+        baseline: {type: boolean, description: 'True for a `first_run: baseline` poll that marked items seen without firing.'}
+        started_at: {$ref: '#/components/schemas/Timestamp'}
+        ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        duration_ms: {type: [integer, 'null'], minimum: 0}
+        exit_code: {type: [integer, 'null']}
+        item_count: {type: [integer, 'null'], minimum: 0}
+        new_count: {type: [integer, 'null'], minimum: 0}
+        stdout: {$ref: '#/components/schemas/TextBlob'}
+        stderr: {$ref: '#/components/schemas/TextBlob'}
+        error: {type: [string, 'null'], description: 'Failure class: `timeout`, `exit_nonzero`, `invalid_output`, `killed`, `interrupted`.'}
+    SensorRunList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SensorRun'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    Event:
+      type: object
+      required: [id, sensor_id, sensor_run_id, dedup_key, payload, created_at, injected]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        sensor_id: {$ref: '#/components/schemas/Slug'}
+        sensor_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        dedup_key: {type: string}
+        payload: {$ref: '#/components/schemas/JsonValue'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        injected: {type: boolean, description: 'Created by `POST /api/events`, not by a poll.'}
+    FlowRunBrief:
+      type: object
+      required: [id, flow_id, flow_hash, kind, dry_run, status, replay_of, created_at, ended_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        flow_hash: {$ref: '#/components/schemas/Hash'}
+        kind: {$ref: '#/components/schemas/FlowRunKind'}
+        dry_run: {type: boolean}
+        status: {$ref: '#/components/schemas/FlowRunStatus'}
+        replay_of: {$ref: '#/components/schemas/NullableUlid'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    EventSummary:
+      type: object
+      required: [id, sensor_id, sensor_run_id, dedup_key, payload_preview, created_at, injected, flow_runs]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        sensor_id: {$ref: '#/components/schemas/Slug'}
+        sensor_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        dedup_key: {type: string}
+        payload_preview: {type: string, maxLength: 512, description: Compact JSON of the payload cut to 512 characters.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        injected: {type: boolean}
+        flow_runs: {type: array, items: {$ref: '#/components/schemas/FlowRunBrief'}, description: 'Runs matching the list filters (default: live and replay).'}
+    EventList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/EventSummary'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    NodeRunTree:
+      type: object
+      required: [node_run, children]
+      properties:
+        node_run: {$ref: '#/components/schemas/NodeRun'}
+        children: {type: array, items: {$ref: '#/components/schemas/NodeRunTree'}, description: 'Node runs whose `parent_node_run_id` is this one.'}
+    FanOutBranch:
+      type: object
+      required: [flow_run, node_runs]
+      properties:
+        flow_run: {$ref: '#/components/schemas/FlowRun'}
+        node_runs: {type: array, items: {$ref: '#/components/schemas/NodeRunTree'}, description: Entry node runs of the flow run. Text previews are truncated to 4 KiB.}
+    EventDetail:
+      type: object
+      required: [event, sensor_run, fan_out]
+      properties:
+        event: {$ref: '#/components/schemas/Event'}
+        sensor_run: {oneOf: [{$ref: '#/components/schemas/SensorRun'}, {type: 'null'}]}
+        fan_out: {type: array, items: {$ref: '#/components/schemas/FanOutBranch'}, description: 'One branch per flow run of this event, oldest first.'}
+    InjectResult:
+      type: object
+      required: [event, deduplicated, dedup_key, flow_runs]
+      properties:
+        event: {$ref: '#/components/schemas/Event'}
+        deduplicated: {type: boolean, description: 'True when the key was already seen; `event` is then the existing event and no runs were created.'}
+        dedup_key: {type: string}
+        flow_runs: {type: array, items: {$ref: '#/components/schemas/FlowRunBrief'}}
+    ReplayRequest:
+      type: object
+      additionalProperties: false
+      required: [flow]
+      properties:
+        flow: {$ref: '#/components/schemas/Slug'}
+        dry_run: {type: boolean, description: 'Overrides the flow''s `dry_run` for this run; absent keeps the flow''s setting.'}
+    FlowRun:
+      type: object
+      required: [id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, created_at, started_at, ended_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        flow_hash: {$ref: '#/components/schemas/Hash'}
+        event_id: {$ref: '#/components/schemas/NullableUlid'}
+        kind: {$ref: '#/components/schemas/FlowRunKind'}
+        replay_of: {$ref: '#/components/schemas/NullableUlid'}
+        dry_run: {type: boolean}
+        status: {$ref: '#/components/schemas/FlowRunStatus'}
+        error: {type: [string, 'null']}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        started_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    FlowRunList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/FlowRun'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    NodeRun:
+      type: object
+      required: [id, flow_run_id, node_id, node_type, parent_node_run_id, status, decision, reason, error, ports, emitted_count, node, argv, env_keys, stdin, stdout, stderr, exit_code, duration_ms, created_at, started_at, ended_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        flow_run_id: {$ref: '#/components/schemas/Ulid'}
+        node_id: {$ref: '#/components/schemas/Slug'}
+        node_type: {$ref: '#/components/schemas/NodeType'}
+        parent_node_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        status: {$ref: '#/components/schemas/NodeRunStatus'}
+        decision: {oneOf: [{$ref: '#/components/schemas/NodeRunDecision'}, {type: 'null'}], description: Null until the node run has finished.}
+        reason: {type: [string, 'null'], description: '`_reason` from the output, a skip reason such as `dry_run`, or an error summary.'}
+        error: {type: [string, 'null'], description: 'Error class: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`, `interrupted`, `approval_timeout`, `denied`.'}
+        ports: {type: array, items: {type: string}, description: Distinct ports the node emitted on. Empty when dropped.}
+        emitted_count: {type: integer, minimum: 0, description: Number of payloads emitted.}
+        node: {$ref: '#/components/schemas/Node'}
+        argv: {type: [array, 'null'], items: {type: string}, description: Exact command line with secrets redacted.}
+        env_keys: {type: array, items: {type: string}, description: Names of the environment variables injected; values are never stored.}
+        stdin: {$ref: '#/components/schemas/TextBlob'}
+        stdout: {$ref: '#/components/schemas/TextBlob'}
+        stderr: {$ref: '#/components/schemas/TextBlob'}
+        exit_code: {type: [integer, 'null']}
+        duration_ms: {type: [integer, 'null'], minimum: 0}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        started_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    NodeRunDetail:
+      allOf:
+        - {$ref: '#/components/schemas/NodeRun'}
+        - type: object
+          required: [agent_runs]
+          properties:
+            agent_runs: {type: array, items: {$ref: '#/components/schemas/AgentRun'}, description: 'Agent runs behind an agent node, one per phase, in order. Empty for other nodes.'}
+    FlowRunDetail:
+      type: object
+      required: [flow_run, node_runs]
+      properties:
+        flow_run: {$ref: '#/components/schemas/FlowRun'}
+        node_runs: {type: array, items: {$ref: '#/components/schemas/NodeRun'}, description: 'In creation order. Use `parent_node_run_id` to rebuild the tree.'}
+    AgentRun:
+      type: object
+      required: [id, node_run_id, flow_run_id, flow_id, node_id, runtime, agent_info, capabilities, mode, approve_style, policy, phase, session_id, resumed_via, resume_fallback, cwd, rendered_prompt, argv, status, stop_reason, final_message, result, parse_error, error, raw_blob, raw_size, created_at, started_at, ended_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        flow_run_id: {$ref: '#/components/schemas/Ulid'}
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        node_id: {$ref: '#/components/schemas/Slug'}
+        runtime: {$ref: '#/components/schemas/Slug'}
+        agent_info: {oneOf: [{$ref: '#/components/schemas/AgentInfo'}, {type: 'null'}], description: 'Null until `initialize` completed.'}
+        capabilities: {$ref: '#/components/schemas/JsonValue'}
+        mode: {$ref: '#/components/schemas/AgentMode'}
+        approve_style: {oneOf: [{$ref: '#/components/schemas/ApproveStyle'}, {type: 'null'}], description: 'Set for mode `approve` only.'}
+        policy: {$ref: '#/components/schemas/PermissionPolicy'}
+        phase: {$ref: '#/components/schemas/AgentRunPhase'}
+        session_id: {type: [string, 'null']}
+        resumed_via: {oneOf: [{$ref: '#/components/schemas/ResumedVia'}, {type: 'null'}], description: 'Set on the `execute` phase of a proposal run.'}
+        resume_fallback: {type: [string, 'null'], description: 'Why `session/load` was not used when `resumed_via` is `new_session`.'}
+        cwd: {type: [string, 'null'], description: Resolved working directory.}
+        rendered_prompt: {type: string}
+        argv: {type: array, items: {type: string}}
+        status: {$ref: '#/components/schemas/AgentRunStatus'}
+        stop_reason: {type: [string, 'null'], description: 'ACP `stopReason`.'}
+        final_message: {type: [string, 'null'], description: Text of the agent's final message.}
+        result: {oneOf: [{$ref: '#/components/schemas/StructuredNote'}, {type: 'null'}], description: 'Parsed structured note when the prompt''s `output` is `note` and parsing succeeded.'}
+        parse_error: {type: boolean, description: The prompt expects a note but the final message did not parse.}
+        error: {type: [string, 'null']}
+        raw_blob: {$ref: '#/components/schemas/NullableHash'}
+        raw_size: {type: integer, minimum: 0, description: Size of the raw JSON-RPC log in bytes.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        started_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    AgentRunDetail:
+      allOf:
+        - {$ref: '#/components/schemas/AgentRun'}
+        - type: object
+          required: [phase_run_ids, approvals]
+          properties:
+            phase_run_ids: {type: array, items: {$ref: '#/components/schemas/Ulid'}, description: 'All agent runs of the same node run in phase order, including this one.'}
+            approvals: {type: array, items: {$ref: '#/components/schemas/Approval'}}
+    AgentRunList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AgentRun'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    AgentEvent:
+      type: object
+      required: [agent_run_id, seq, ts, kind, tool_call_id, payload]
+      properties:
+        agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        seq: {type: integer, minimum: 1}
+        ts: {$ref: '#/components/schemas/Timestamp'}
+        kind:
+          type: string
+          description: |
+            ACP `session/update` kind: `message`, `thought`, `user_message`, `tool_call`, `tool_call_update`, `plan`,
+            `mode_update`, `commands_update`, or another value passed through from the agent.
+        tool_call_id: {type: [string, 'null']}
+        payload: {$ref: '#/components/schemas/JsonValue'}
+    AgentEventList:
+      type: object
+      required: [items, last_seq, has_more]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AgentEvent'}}
+        last_seq: {type: integer, minimum: 0, description: '`seq` of the last event in `items`, or the requested `after_seq` when empty.'}
+        has_more: {type: boolean}
+    PermissionOption:
+      type: object
+      required: [option_id, name, kind]
+      properties:
+        option_id: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [allow_once, allow_always, reject_once, reject_always]}
+    PermissionRequest:
+      type: object
+      required: [id, agent_run_id, tool_call_id, tool_kind, title, raw_input, options, decision, decided_by, matched_rule, reason, approval_id, requested_at, decided_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        tool_call_id: {type: string}
+        tool_kind: {type: string, description: 'ACP tool kind: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`.'}
+        title: {type: string}
+        raw_input: {$ref: '#/components/schemas/JsonValue'}
+        options: {type: array, items: {$ref: '#/components/schemas/PermissionOption'}}
+        decision: {oneOf: [{$ref: '#/components/schemas/PermissionDecision'}, {type: 'null'}], description: Null while pending.}
+        decided_by: {oneOf: [{$ref: '#/components/schemas/DecidedBy'}, {type: 'null'}]}
+        matched_rule: {type: [string, 'null'], description: 'The policy rule that decided, for example `kind:read` or `allow.commands[0]`.'}
+        reason: {type: [string, 'null']}
+        approval_id: {$ref: '#/components/schemas/NullableUlid'}
+        requested_at: {$ref: '#/components/schemas/Timestamp'}
+        decided_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    PermissionRequestList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/PermissionRequest'}}
+    Approval:
+      type: object
+      required: [id, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, event_id, runtime, type, permission_request_id, permission_request, proposal_md, status, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        flow_run_id: {$ref: '#/components/schemas/Ulid'}
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        node_id: {$ref: '#/components/schemas/Slug'}
+        event_id: {$ref: '#/components/schemas/NullableUlid'}
+        runtime: {$ref: '#/components/schemas/Slug'}
+        type: {$ref: '#/components/schemas/ApprovalType'}
+        permission_request_id: {$ref: '#/components/schemas/NullableUlid'}
+        permission_request: {oneOf: [{$ref: '#/components/schemas/PermissionRequest'}, {type: 'null'}], description: 'Embedded for `tool_call` approvals.'}
+        proposal_md: {type: [string, 'null'], description: 'Set for `proposal` approvals.'}
+        status: {$ref: '#/components/schemas/ApprovalStatus'}
+        comment: {type: [string, 'null']}
+        cancel_run: {type: [boolean, 'null'], description: 'For a denied `tool_call`, whether the run was cancelled.'}
+        decided_by: {type: [string, 'null'], description: 'Principal that decided; null for `expired`.'}
+        decided_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        expires_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    ApprovalList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Approval'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    ApproveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        comment: {type: string}
+    DenyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        comment: {type: string}
+        cancel_run: {type: boolean, default: false, description: '`tool_call` only: cancel the run instead of letting the agent continue.'}
+    InboxItem:
+      type: object
+      required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        source: {type: string, enum: [agent_run, node_run]}
+        source_id: {$ref: '#/components/schemas/Ulid'}
+        flow_run_id: {$ref: '#/components/schemas/Ulid'}
+        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        node_id: {$ref: '#/components/schemas/Slug'}
+        event_id: {$ref: '#/components/schemas/NullableUlid'}
+        title: {type: string}
+        priority: {$ref: '#/components/schemas/Priority'}
+        summary_md: {type: string}
+        suggested_reply: {type: [string, 'null']}
+        links: {type: array, items: {$ref: '#/components/schemas/NoteLink'}}
+        read: {type: boolean}
+        starred: {type: boolean}
+        archived: {type: boolean}
+        dry_run: {type: boolean, description: 'Tagged `dry-run` in the UI.'}
+        parse_error: {type: boolean, description: 'The note could not be parsed; `summary_md` holds the raw final message.'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    InboxList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/InboxItem'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    InboxPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        read: {type: boolean}
+        starred: {type: boolean}
+        archived: {type: boolean}
+    # ---------------------------------------------------------------- auth (shapes follow internal/auth)
+    Principal:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, description: 'Identity: a Tailscale login, `localhost`, or `owner` for password and passkey logins.'}
+    PublicModuleTrace:
+      type: object
+      description: Module result shown to the caller. Reasons are omitted because they can reveal configuration.
+      required: [module, result]
+      properties:
+        module: {type: string}
+        result: {$ref: '#/components/schemas/ModuleResultCode'}
+    ModuleTrace:
+      type: object
+      required: [module, control, result]
+      properties:
+        module: {type: string}
+        control: {$ref: '#/components/schemas/ModuleControl'}
+        result: {$ref: '#/components/schemas/ModuleResultCode'}
+        reason: {type: string}
+    AuthBeginRequest:
+      type: object
+      description: '`method` selects a module; the other members are module inputs such as `password`.'
+      properties:
+        method: {type: string, examples: [password]}
+        password: {type: string, writeOnly: true}
+      additionalProperties: true
+    AuthContinueRequest:
+      type: object
+      additionalProperties: false
+      required: [login_id]
+      properties:
+        login_id: {type: string}
+        response: {$ref: '#/components/schemas/JsonValue'}
+    AuthSessionView:
+      type: object
+      required: [id, expires_at, services]
+      properties:
+        id: {type: string}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        services: {type: array, items: {$ref: '#/components/schemas/AuthService'}}
+    AuthSuccess:
+      type: object
+      required: [status, service, principal, modules, services, session]
+      properties:
+        status: {type: string, enum: [success]}
+        service: {$ref: '#/components/schemas/AuthService'}
+        principal: {$ref: '#/components/schemas/Principal'}
+        modules: {type: array, items: {type: string}, description: Modules that succeeded.}
+        services: {type: array, items: {$ref: '#/components/schemas/AuthService'}, description: Services the session grants.}
+        session: {$ref: '#/components/schemas/AuthSessionView'}
+        trace: {type: array, items: {$ref: '#/components/schemas/PublicModuleTrace'}}
+        already_authenticated: {type: boolean}
+    AuthChallenge:
+      type: object
+      required: [status, service, login_id, module, step, methods]
+      properties:
+        status: {type: string, enum: [challenge]}
+        service: {$ref: '#/components/schemas/AuthService'}
+        login_id: {type: string, description: 'Pass to `/continue`.'}
+        module: {type: string, description: Module that is waiting for input.}
+        step:
+          type: object
+          required: [kind]
+          properties:
+            kind: {type: string, description: 'What to send back, for example `password` or `webauthn_assertion`.'}
+            data: {$ref: '#/components/schemas/JsonValue'}
+        methods: {type: array, items: {type: string}, description: Interactive modules of the service's stack.}
+        trace: {type: array, items: {$ref: '#/components/schemas/PublicModuleTrace'}}
+    AuthResult:
+      oneOf:
+        - {$ref: '#/components/schemas/AuthSuccess'}
+        - {$ref: '#/components/schemas/AuthChallenge'}
+      discriminator:
+        propertyName: status
+        mapping:
+          success: '#/components/schemas/AuthSuccess'
+          challenge: '#/components/schemas/AuthChallenge'
+    WhoAmI:
+      type: object
+      required: [authenticated]
+      properties:
+        authenticated: {type: boolean}
+        source: {type: string, enum: [session, stack], description: 'Absent when not authenticated.'}
+        principal: {$ref: '#/components/schemas/Principal'}
+        modules: {type: array, items: {type: string}}
+        services: {type: array, items: {$ref: '#/components/schemas/AuthService'}}
+        session: {$ref: '#/components/schemas/AuthSessionView'}
+    Session:
+      type: object
+      required: [id, principal, modules, services, created_at, last_seen_at, expires_at]
+      properties:
+        id: {type: string}
+        principal: {type: string}
+        modules: {type: array, items: {type: string}}
+        services: {type: array, items: {$ref: '#/components/schemas/AuthService'}}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        revoked_at: {$ref: '#/components/schemas/Timestamp'}
+        host: {type: string}
+        remote_addr: {type: string}
+    SessionList:
+      type: object
+      required: [sessions, current]
+      properties:
+        sessions: {type: array, items: {$ref: '#/components/schemas/Session'}}
+        current: {type: string, description: Id of the caller's own session; empty when the caller has none.}
+    RevokeResult:
+      type: object
+      required: [revoked]
+      properties:
+        revoked: {type: boolean}
+    RevokeCount:
+      type: object
+      required: [revoked]
+      properties:
+        revoked: {type: integer, minimum: 0}
+    AuthEvent:
+      type: object
+      required: [id, ts, action, endpoint, outcome, remote_addr, host]
+      properties:
+        id: {type: string}
+        ts: {$ref: '#/components/schemas/Timestamp'}
+        action:
+          type: string
+          description: '`request`, `whoami`, `login_begin`, `login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register`, `webauthn_delete`.'
+        service: {$ref: '#/components/schemas/AuthService'}
+        endpoint: {type: string, examples: ['GET /api/flows']}
+        modules: {type: array, items: {$ref: '#/components/schemas/ModuleTrace'}}
+        outcome: {$ref: '#/components/schemas/AuthOutcome'}
+        reason: {type: string}
+        principal: {type: string}
+        remote_addr: {type: string}
+        host: {type: string}
+        session_id: {type: string}
+    AuthEventList:
+      type: object
+      required: [events]
+      properties:
+        events: {type: array, items: {$ref: '#/components/schemas/AuthEvent'}}
+    Passkey:
+      type: object
+      required: [id, rp_id, sign_count, label, created_at]
+      properties:
+        id: {type: string, description: Base64url credential id.}
+        rp_id: {type: string, description: 'Relying-party ID: `localhost` or a Tailscale hostname.'}
+        sign_count: {type: integer, minimum: 0}
+        label: {type: string}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        last_used_at: {$ref: '#/components/schemas/Timestamp'}
+    PasskeyList:
+      type: object
+      required: [credentials]
+      properties:
+        credentials: {type: array, items: {$ref: '#/components/schemas/Passkey'}}
+    PasskeyRegisterBeginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        label: {type: string}
+    PasskeyRegisterBegin:
+      type: object
+      required: [registration_id, options]
+      properties:
+        registration_id: {type: string}
+        options: {type: object, additionalProperties: true, description: 'WebAuthn `PublicKeyCredentialCreationOptions` for `navigator.credentials.create`.'}
+    PasskeyRegisterFinishRequest:
+      type: object
+      additionalProperties: false
+      required: [registration_id, credential]
+      properties:
+        registration_id: {type: string}
+        credential: {type: object, additionalProperties: true, description: 'The `PublicKeyCredential` (attestation) JSON from the browser.'}
+    TailscaleStatus:
+      type: object
+      required: [available, serve_configured, funnel_enabled, host_allowed, allowed_logins]
+      properties:
+        available: {type: boolean, description: 'False when the CLI is missing or tailscaled is unreachable; `error` says why.'}
+        error: {type: string}
+        backend_state: {type: string, examples: [Running]}
+        hostname: {type: string, description: This Mac's tailnet DNS name.}
+        owner_login: {type: string}
+        serve_configured: {type: boolean, description: '`tailscale serve` proxies to the daemon port.'}
+        funnel_enabled: {type: boolean, description: Any serve entry is exposed to the internet. hal9001 never wants this.}
+        host_allowed: {type: boolean, description: '`hostname` is in `allowed_hosts`.'}
+        allowed_logins: {type: array, items: {type: string}}
+    # ---------------------------------------------------------------- SSE envelopes (GET /api/stream)
+    StreamEventType:
+      type: string
+      description: |
+        Value of the SSE `event:` field and of `StreamEvent.type`.
+        `stream.ready` and `stream.resync` are control messages and always delivered.
+        `status.changed`, `killswitch.changed`, and `config.changed` carry daemon-wide state.
+        The rest announce that a record was created (`.created`, `.appended`) or changed (`.updated`).
+      enum:
+        - stream.ready
+        - stream.resync
+        - status.changed
+        - killswitch.changed
+        - config.changed
+        - sensor_run.created
+        - sensor_run.updated
+        - event.created
+        - flow_run.created
+        - flow_run.updated
+        - node_run.created
+        - node_run.updated
+        - agent_run.created
+        - agent_run.updated
+        - agent_event.appended
+        - permission_request.created
+        - permission_request.updated
+        - approval.created
+        - approval.updated
+        - inbox.created
+        - inbox.updated
+        - auth_event.created
+    StreamEnvelope:
+      type: object
+      description: |
+        Fields shared by every message. `id` equals the SSE `id:` field and increases monotonically within one daemon
+        run. Records in `data` have text previews truncated to 4 KiB; fetch the resource for full content.
+      required: [type, id, ts, data]
+      properties:
+        type: {$ref: '#/components/schemas/StreamEventType'}
+        id: {type: string}
+        ts: {$ref: '#/components/schemas/Timestamp'}
+        data: {}
+    StreamEvent:
+      description: One message of `GET /api/stream`, discriminated by `type`.
+      oneOf:
+        - {$ref: '#/components/schemas/StreamReadyEvent'}
+        - {$ref: '#/components/schemas/StreamResyncEvent'}
+        - {$ref: '#/components/schemas/StatusChangedEvent'}
+        - {$ref: '#/components/schemas/KillSwitchChangedEvent'}
+        - {$ref: '#/components/schemas/ConfigChangedEvent'}
+        - {$ref: '#/components/schemas/SensorRunCreatedEvent'}
+        - {$ref: '#/components/schemas/SensorRunUpdatedEvent'}
+        - {$ref: '#/components/schemas/EventCreatedEvent'}
+        - {$ref: '#/components/schemas/FlowRunCreatedEvent'}
+        - {$ref: '#/components/schemas/FlowRunUpdatedEvent'}
+        - {$ref: '#/components/schemas/NodeRunCreatedEvent'}
+        - {$ref: '#/components/schemas/NodeRunUpdatedEvent'}
+        - {$ref: '#/components/schemas/AgentRunCreatedEvent'}
+        - {$ref: '#/components/schemas/AgentRunUpdatedEvent'}
+        - {$ref: '#/components/schemas/AgentEventAppendedEvent'}
+        - {$ref: '#/components/schemas/PermissionRequestCreatedEvent'}
+        - {$ref: '#/components/schemas/PermissionRequestUpdatedEvent'}
+        - {$ref: '#/components/schemas/ApprovalCreatedEvent'}
+        - {$ref: '#/components/schemas/ApprovalUpdatedEvent'}
+        - {$ref: '#/components/schemas/InboxCreatedEvent'}
+        - {$ref: '#/components/schemas/InboxUpdatedEvent'}
+        - {$ref: '#/components/schemas/AuthEventCreatedEvent'}
+      discriminator:
+        propertyName: type
+        mapping:
+          stream.ready: '#/components/schemas/StreamReadyEvent'
+          stream.resync: '#/components/schemas/StreamResyncEvent'
+          status.changed: '#/components/schemas/StatusChangedEvent'
+          killswitch.changed: '#/components/schemas/KillSwitchChangedEvent'
+          config.changed: '#/components/schemas/ConfigChangedEvent'
+          sensor_run.created: '#/components/schemas/SensorRunCreatedEvent'
+          sensor_run.updated: '#/components/schemas/SensorRunUpdatedEvent'
+          event.created: '#/components/schemas/EventCreatedEvent'
+          flow_run.created: '#/components/schemas/FlowRunCreatedEvent'
+          flow_run.updated: '#/components/schemas/FlowRunUpdatedEvent'
+          node_run.created: '#/components/schemas/NodeRunCreatedEvent'
+          node_run.updated: '#/components/schemas/NodeRunUpdatedEvent'
+          agent_run.created: '#/components/schemas/AgentRunCreatedEvent'
+          agent_run.updated: '#/components/schemas/AgentRunUpdatedEvent'
+          agent_event.appended: '#/components/schemas/AgentEventAppendedEvent'
+          permission_request.created: '#/components/schemas/PermissionRequestCreatedEvent'
+          permission_request.updated: '#/components/schemas/PermissionRequestUpdatedEvent'
+          approval.created: '#/components/schemas/ApprovalCreatedEvent'
+          approval.updated: '#/components/schemas/ApprovalUpdatedEvent'
+          inbox.created: '#/components/schemas/InboxCreatedEvent'
+          inbox.updated: '#/components/schemas/InboxUpdatedEvent'
+          auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
+    StreamReady:
+      type: object
+      required: [server_time, version, last_event_id]
+      properties:
+        server_time: {$ref: '#/components/schemas/Timestamp'}
+        version: {type: string}
+        last_event_id: {type: string, description: Id of the newest buffered message; empty when none.}
+    StreamResync:
+      type: object
+      required: [reason]
+      properties:
+        reason: {type: string, description: 'For example `buffer_overrun` or `daemon_restarted`.'}
+    ConfigChange:
+      type: object
+      description: A file under the home dir changed on disk or through the API (hot reload).
+      required: [kind, id, hash, deleted]
+      properties:
+        kind: {type: string, enum: [sensor, flow, prompt, settings, env]}
+        id: {type: [string, 'null'], description: 'Sensor id, flow id, or prompt name; null for settings and env.'}
+        hash: {$ref: '#/components/schemas/NullableHash'}
+        deleted: {type: boolean}
+    StreamReadyEvent:
+      description: First message on every connection. `data` is `StreamReady`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [stream.ready]}
+            data: {$ref: '#/components/schemas/StreamReady'}
+    StreamResyncEvent:
+      description: The server could not replay everything after `Last-Event-ID`. Refetch displayed resources.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [stream.resync]}
+            data: {$ref: '#/components/schemas/StreamResync'}
+    StatusChangedEvent:
+      description: Header counters changed. `data` is `Status`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [status.changed]}
+            data: {$ref: '#/components/schemas/Status'}
+    KillSwitchChangedEvent:
+      description: The kill switch was engaged or released. `data` is `KillSwitch`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [killswitch.changed]}
+            data: {$ref: '#/components/schemas/KillSwitch'}
+    ConfigChangedEvent:
+      description: A sensor, flow, prompt, settings, or env file changed. `data` is `ConfigChange`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [config.changed]}
+            data: {$ref: '#/components/schemas/ConfigChange'}
+    SensorRunCreatedEvent:
+      description: A poll started. `data` is `SensorRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [sensor_run.created]}
+            data: {$ref: '#/components/schemas/SensorRun'}
+    SensorRunUpdatedEvent:
+      description: A poll finished or its counts changed. `data` is `SensorRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [sensor_run.updated]}
+            data: {$ref: '#/components/schemas/SensorRun'}
+    EventCreatedEvent:
+      description: A new event passed dedup. `data` is `EventSummary` with the flow runs created so far.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [event.created]}
+            data: {$ref: '#/components/schemas/EventSummary'}
+    FlowRunCreatedEvent:
+      description: A flow run was queued. `data` is `FlowRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [flow_run.created]}
+            data: {$ref: '#/components/schemas/FlowRun'}
+    FlowRunUpdatedEvent:
+      description: A flow run changed status. `data` is `FlowRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [flow_run.updated]}
+            data: {$ref: '#/components/schemas/FlowRun'}
+    NodeRunCreatedEvent:
+      description: A node run was queued or started. `data` is `NodeRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [node_run.created]}
+            data: {$ref: '#/components/schemas/NodeRun'}
+    NodeRunUpdatedEvent:
+      description: A node run changed status or finished. `data` is `NodeRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [node_run.updated]}
+            data: {$ref: '#/components/schemas/NodeRun'}
+    AgentRunCreatedEvent:
+      description: An agent run was queued. `data` is `AgentRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [agent_run.created]}
+            data: {$ref: '#/components/schemas/AgentRun'}
+    AgentRunUpdatedEvent:
+      description: An agent run changed status or phase. `data` is `AgentRun`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [agent_run.updated]}
+            data: {$ref: '#/components/schemas/AgentRun'}
+    AgentEventAppendedEvent:
+      description: A transcript event was appended. `data` is `AgentEvent`; the stream filter `agent_run_id` applies.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [agent_event.appended]}
+            data: {$ref: '#/components/schemas/AgentEvent'}
+    PermissionRequestCreatedEvent:
+      description: The agent asked for permission. `data` is `PermissionRequest`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [permission_request.created]}
+            data: {$ref: '#/components/schemas/PermissionRequest'}
+    PermissionRequestUpdatedEvent:
+      description: A permission request was decided or expired. `data` is `PermissionRequest`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [permission_request.updated]}
+            data: {$ref: '#/components/schemas/PermissionRequest'}
+    ApprovalCreatedEvent:
+      description: A proposal or tool call is waiting for a decision. `data` is `Approval`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [approval.created]}
+            data: {$ref: '#/components/schemas/Approval'}
+    ApprovalUpdatedEvent:
+      description: An approval was decided or expired. `data` is `Approval`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [approval.updated]}
+            data: {$ref: '#/components/schemas/Approval'}
+    InboxCreatedEvent:
+      description: A new inbox item. `data` is `InboxItem`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [inbox.created]}
+            data: {$ref: '#/components/schemas/InboxItem'}
+    InboxUpdatedEvent:
+      description: An inbox item was read, starred, or archived. `data` is `InboxItem`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [inbox.updated]}
+            data: {$ref: '#/components/schemas/InboxItem'}
+    AuthEventCreatedEvent:
+      description: An authentication decision was recorded. `data` is `AuthEvent`. Delivered only to callers granted `admin`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [auth_event.created]}
+            data: {$ref: '#/components/schemas/AuthEvent'}
