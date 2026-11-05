@@ -108,6 +108,29 @@ func (r *run) failed() bool {
 	return r.rec.FailureReason != ""
 }
 
+// drainUpdates waits for the notifications the agent sent before its
+// connection closed to be recorded. The SDK reports the closed connection
+// first and hands over the queued notifications afterwards, so the final
+// message and the transcript would otherwise miss the agent's last output.
+func (r *run) drainUpdates() {
+	if r.conn == nil || r.proc == nil || r.proc.updates == nil {
+		return
+	}
+	if r.proc.waitExit(0) { // the connection follows the exit at once
+		t := time.NewTimer(time.Second)
+		defer t.Stop()
+		select {
+		case <-r.conn.Done():
+		case <-t.C:
+		}
+	}
+	select {
+	case <-r.conn.Done():
+		r.proc.updates.drain(drainLimit)
+	default:
+	}
+}
+
 // callFailed classifies a failed ACP call: a cancelled run is reported by
 // finish from the cancellation cause; a dead process is an agent exit.
 func (r *run) callFailed(what string, err error) {
@@ -125,11 +148,18 @@ func (r *run) callFailed(what string, err error) {
 // connection already dropped, the exit is imminent, so give it a moment to be
 // reaped instead of racing it.
 func (r *run) processGone() bool {
+	// A failed call on a dead process shows up as a write error or a closed connection, which can come before
+	// the process is reaped: give the exit a moment to be noticed instead of reporting a live agent that
+	// merely errored.
+	t := time.NewTimer(time.Second)
+	defer t.Stop()
 	select {
 	case <-r.conn.Done():
 		return r.proc.waitExit(2 * time.Second)
-	default:
-		return r.proc.waitExit(0)
+	case <-r.proc.done:
+		return true
+	case <-t.C:
+		return false
 	}
 }
 
@@ -497,6 +527,7 @@ func (r *run) shutdown() {
 // finish derives the final status. The agent's completed response wins over a
 // cancellation that raced it; otherwise the cancellation cause decides.
 func (r *run) finish() {
+	r.drainUpdates()
 	r.mu.Lock()
 	rec := &r.rec
 	rec.FinalMessage = strings.TrimSpace(r.cur.String())

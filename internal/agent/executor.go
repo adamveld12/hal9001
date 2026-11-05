@@ -207,10 +207,16 @@ func (e *Executor) dial(argv []string, cwd string, env []string, client acp.Clie
 	if err != nil {
 		return nil, nil, err
 	}
+	gate := newUpdateGate()
+	proc.updates = gate
 	tw := newTeeWriter(proc.stdin, func(l []byte) { raw("send", l) })
-	tr := newTeeReader(proc.stdout, func(l []byte) { raw("recv", l) })
-	conn := acp.NewClientSideConnection(client, tw, tr)
+	tr := newTeeReader(proc.stdout, func(l []byte) {
+		gate.observe(l)
+		raw("recv", l)
+	})
+	conn := acp.NewClientSideConnection(gatedClient{Client: client, gate: gate}, tw, tr)
 	conn.SetLogger(e.log())
+	proc.eof = conn.Done()
 	return conn, proc, nil
 }
 
