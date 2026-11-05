@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/acp-go-sdk"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -174,19 +175,8 @@ func (e *Executor) execute(parent context.Context, p plan) (RunRecord, error) {
 	if err != nil {
 		return RunRecord{}, err
 	}
-	ctx, cancel := context.WithCancelCause(parent)
-	defer cancel(nil)
-	r.ctx, r.cancel = ctx, cancel
-
-	timeout := orDefault(p.req.Timeout, DefaultTimeout)
-	timer := e.clock().After(timeout)
-	go func() {
-		select {
-		case <-timer:
-			cancel(errTimeout)
-		case <-ctx.Done():
-		}
-	}()
+	end := r.begin(parent, orDefault(p.req.Timeout, DefaultTimeout))
+	defer end()
 
 	r.save()
 	r.drive()
@@ -194,9 +184,46 @@ func (e *Executor) execute(parent context.Context, p plan) (RunRecord, error) {
 	return r.snapshot(), nil
 }
 
+// begin gives the run its context: cancelled by the caller (with a cause) or
+// by the timeout. The returned func releases it.
+func (r *run) begin(parent context.Context, timeout time.Duration) (end func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	r.ctx, r.cancel = ctx, cancel
+	timer := r.e.clock().After(timeout)
+	go func() {
+		select {
+		case <-timer:
+			cancel(errTimeout)
+		case <-ctx.Done():
+		}
+	}()
+	return func() { cancel(nil) }
+}
+
+// dial starts the agent process and opens the ACP connection on its stdio. Raw
+// JSON-RPC lines are reported to raw.
+func (e *Executor) dial(argv []string, cwd string, env []string, client acp.Client, raw func(dir string, line []byte)) (*acp.ClientSideConnection, *process, error) {
+	proc, err := startProcess(argv, cwd, env)
+	if err != nil {
+		return nil, nil, err
+	}
+	tw := newTeeWriter(proc.stdin, func(l []byte) { raw("send", l) })
+	tr := newTeeReader(proc.stdout, func(l []byte) { raw("recv", l) })
+	conn := acp.NewClientSideConnection(client, tw, tr)
+	conn.SetLogger(e.log())
+	return conn, proc, nil
+}
+
 func newID() string { return ulid.Make().String() }
 
 func newRun(e *Executor, p plan) (*run, error) {
+	cwd := p.req.Cwd
+	if _, err := os.Stat(cwd); err != nil {
+		return nil, fmt.Errorf("cwd: %w", err)
+	}
+	if p.req.Allow.Base == "" {
+		p.req.Allow.Base = cwd
+	}
 	eng, err := NewEngine(p.policy, p.req.Allow)
 	if err != nil {
 		return nil, err
@@ -208,10 +235,6 @@ func newRun(e *Executor, p plan) (*run, error) {
 	var style ApproveStyle
 	if p.req.Mode == ModeApprove {
 		style = p.req.style()
-	}
-	cwd := p.req.Cwd
-	if _, err := os.Stat(cwd); err != nil {
-		return nil, fmt.Errorf("cwd: %w", err)
 	}
 	r := &run{
 		e:      e,

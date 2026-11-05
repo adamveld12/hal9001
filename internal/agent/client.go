@@ -70,7 +70,7 @@ func (r *run) SessionUpdate(_ context.Context, n acp.SessionNotification) error 
 	switch {
 	case u.ToolCall != nil:
 		tc := u.ToolCall
-		ti := &toolInfo{id: string(tc.ToolCallId), kind: string(tc.Kind), title: tc.Title, rawIn: tc.RawInput, status: string(tc.Status)}
+		ti := &toolInfo{id: string(tc.ToolCallId), kind: string(tc.Kind), title: tc.Title, rawIn: tc.RawInput, status: string(tc.Status), locations: locationPaths(tc.Locations)}
 		ti.content, _ = marshalOpt(tc.Content)
 		r.tools[ti.id] = ti
 		r.toolOrder = append(r.toolOrder, ti.id)
@@ -97,10 +97,24 @@ func (r *run) SessionUpdate(_ context.Context, n acp.SessionNotification) error 
 		if len(tc.Content) > 0 {
 			ti.content, _ = marshalOpt(tc.Content)
 		}
+		if len(tc.Locations) > 0 {
+			ti.locations = locationPaths(tc.Locations)
+		}
 	}
 	r.seq++
 	r.e.Recorder.Event(Event{RunID: r.rec.ID, Seq: r.seq, TS: r.now(), Kind: kind, ToolCallID: tcID, Payload: payload})
 	return nil
+}
+
+// locationPaths lists the paths of ACP tool call locations.
+func locationPaths(locs []acp.ToolCallLocation) []string {
+	var out []string
+	for _, l := range locs {
+		if l.Path != "" {
+			out = append(out, l.Path)
+		}
+	}
+	return out
 }
 
 func marshalOpt(v any) (json.RawMessage, error) {
@@ -141,6 +155,7 @@ func (r *run) RequestPermission(_ context.Context, p acp.RequestPermissionReques
 		title = *p.ToolCall.Title
 	}
 	content, _ := marshalOpt(p.ToolCall.Content)
+	locations := locationPaths(p.ToolCall.Locations)
 	if known != nil {
 		kind = firstNonEmpty(kind, known.kind)
 		title = firstNonEmpty(title, known.title)
@@ -150,12 +165,13 @@ func (r *run) RequestPermission(_ context.Context, p acp.RequestPermissionReques
 		if content == nil {
 			content = known.content
 		}
+		locations = append(locations, known.locations...)
 	}
 	var opts []PermissionOption
 	for _, o := range p.Options {
 		opts = append(opts, PermissionOption{ID: string(o.OptionId), Name: o.Name, Kind: string(o.Kind)})
 	}
-	v := r.decide(permissionCtx{toolCallID: tcID, kind: kind, title: title, rawIn: rawIn, content: content, options: opts})
+	v := r.decide(permissionCtx{toolCallID: tcID, kind: kind, title: title, rawIn: rawIn, content: content, locations: locations, options: opts})
 	if v.decision == DecisionAllow || v.decision == DecisionReject {
 		return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: acp.PermissionOptionId(v.optionID)}}}, nil
 	}
@@ -183,6 +199,7 @@ type permissionCtx struct {
 	name       string // tool name when the transport gives one (elicitation)
 	rawIn      any
 	content    json.RawMessage
+	locations  []string // ACP tool call locations
 	options    []PermissionOption
 }
 
@@ -208,7 +225,7 @@ func (r *run) decide(pc permissionCtx) verdict {
 	if r.ctx.Err() != nil {
 		return r.finish1(pr, DecisionCancelled, DecidedByPolicy, "run was already cancelled: "+cancelWhy(r.ctx))
 	}
-	d := r.engine.Decide(ToolRequest{Kind: pc.kind, Title: pc.title, Name: pc.name, RawInput: pc.rawIn})
+	d := r.engine.Decide(ToolRequest{Kind: pc.kind, Title: pc.title, Name: pc.name, RawInput: pc.rawIn, Paths: ToolPaths(pc.rawIn, pc.content, pc.locations)})
 	pr.MatchedRule, pr.Reason = d.Rule, d.Reason
 	switch d.Action {
 	case ActionAllow:
@@ -374,7 +391,7 @@ func (r *run) UnstableCreateElicitation(_ context.Context, req acp.UnstableCreat
 		},
 	}
 	if ti != nil {
-		pc.toolCallID, pc.kind, pc.title, pc.rawIn, pc.content = ti.id, ti.kind, ti.title, ti.rawIn, ti.content
+		pc.toolCallID, pc.kind, pc.title, pc.rawIn, pc.content, pc.locations = ti.id, ti.kind, ti.title, ti.rawIn, ti.content, ti.locations
 	}
 	v := r.decide(pc)
 	switch v.decision {
@@ -449,32 +466,34 @@ func (r *run) UnstableCompleteElicitation(context.Context, acp.UnstableCompleteE
 	return nil
 }
 
-// Client methods for capabilities we never advertise.
+// noCapabilities answers the client methods of capabilities we never
+// advertise (fs, terminal). run and the session's router embed it.
+type noCapabilities struct{}
 
-func (r *run) ReadTextFile(context.Context, acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
+func (noCapabilities) ReadTextFile(context.Context, acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
 	return acp.ReadTextFileResponse{}, acp.NewMethodNotFound(acp.ClientMethodFsReadTextFile)
 }
 
-func (r *run) WriteTextFile(context.Context, acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
+func (noCapabilities) WriteTextFile(context.Context, acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
 	return acp.WriteTextFileResponse{}, acp.NewMethodNotFound(acp.ClientMethodFsWriteTextFile)
 }
 
-func (r *run) CreateTerminal(context.Context, acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
+func (noCapabilities) CreateTerminal(context.Context, acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
 	return acp.CreateTerminalResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalCreate)
 }
 
-func (r *run) KillTerminal(context.Context, acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
+func (noCapabilities) KillTerminal(context.Context, acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
 	return acp.KillTerminalResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalKill)
 }
 
-func (r *run) TerminalOutput(context.Context, acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
+func (noCapabilities) TerminalOutput(context.Context, acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
 	return acp.TerminalOutputResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalOutput)
 }
 
-func (r *run) ReleaseTerminal(context.Context, acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
+func (noCapabilities) ReleaseTerminal(context.Context, acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
 	return acp.ReleaseTerminalResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalRelease)
 }
 
-func (r *run) WaitForTerminalExit(context.Context, acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
+func (noCapabilities) WaitForTerminalExit(context.Context, acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
 	return acp.WaitForTerminalExitResponse{}, acp.NewMethodNotFound(acp.ClientMethodTerminalWaitForExit)
 }

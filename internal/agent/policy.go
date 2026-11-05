@@ -24,6 +24,8 @@ type ToolRequest struct {
 	Name string
 	// RawInput is the decoded rawInput of the tool call (usually a map).
 	RawInput any
+	// Paths are the target paths of the call (see ToolPaths).
+	Paths []string
 }
 
 // Decision is a policy outcome with the evidence recorded on the
@@ -40,10 +42,14 @@ type Engine struct {
 	policy   Policy
 	tools    []*regexp.Regexp
 	commands []*regexp.Regexp
+	paths    pathRules
 }
 
 // autoKinds are allowed without asking under readonly and gated.
 var autoKinds = map[string]bool{"read": true, "search": true, "fetch": true, "think": true}
+
+// editKinds are the tool kinds allow.edit_under applies to.
+var editKinds = map[string]bool{"edit": true, "delete": true, "move": true}
 
 // NewEngine compiles the allow rules.
 func NewEngine(p Policy, allow AllowRules) (*Engine, error) {
@@ -67,6 +73,7 @@ func NewEngine(p Policy, allow AllowRules) (*Engine, error) {
 	default:
 		return nil, fmt.Errorf("unknown policy %q", p)
 	}
+	e.paths = newPathRules(allow)
 	return e, nil
 }
 
@@ -75,8 +82,27 @@ func (e *Engine) Decide(r ToolRequest) Decision {
 	if e.policy == PolicyAuto {
 		return Decision{Action: ActionAllow, Rule: "policy:auto", Reason: "auto policy allows every request"}
 	}
+	// A read-class call on a protected path is not allowed by its kind; it
+	// falls through to the allow rules and then to ask/reject.
+	var protected string
 	if autoKinds[r.Kind] {
-		return Decision{Action: ActionAllow, Rule: "kind:" + r.Kind, Reason: "tool kind " + r.Kind + " is read-class"}
+		p, hit := e.paths.protected(r.Paths)
+		if !hit {
+			return Decision{Action: ActionAllow, Rule: "kind:" + r.Kind, Reason: "tool kind " + r.Kind + " is read-class"}
+		}
+		protected = "protected:" + p
+	}
+
+	var editNote string
+	if editKinds[r.Kind] && len(e.paths.editUnder) > 0 {
+		if i, dir, ok := e.paths.editAllowed(r.Paths); ok {
+			return Decision{Action: ActionAllow, Rule: fmt.Sprintf("allow.edit_under[%d]: %s", i, dir), Reason: fmt.Sprintf("every target path of the %s call is inside %s", r.Kind, dir)}
+		}
+		if len(r.Paths) == 0 {
+			editNote = "the " + r.Kind + " call names no target path, so allow.edit_under cannot apply"
+		} else {
+			editNote = "a target path of the " + r.Kind + " call is outside allow.edit_under"
+		}
 	}
 
 	// allow.commands applies to execute-kind tools only.
@@ -115,10 +141,18 @@ func (e *Engine) Decide(r ToolRequest) Decision {
 	if cmdNote != "" {
 		reason = cmdNote
 	}
-	if e.policy == PolicyGated {
-		return Decision{Action: ActionAsk, Rule: "policy:gated", Reason: reason + "; sent to the approval queue"}
+	if editNote != "" {
+		reason = editNote
 	}
-	return Decision{Action: ActionReject, Rule: "policy:readonly", Reason: reason + "; rejected by the read-only policy"}
+	suffix := ""
+	if protected != "" {
+		reason = "tool kind " + r.Kind + " names " + protected + ", which is not readable without approval"
+		suffix = "; " + protected
+	}
+	if e.policy == PolicyGated {
+		return Decision{Action: ActionAsk, Rule: "policy:gated" + suffix, Reason: reason + "; sent to the approval queue"}
+	}
+	return Decision{Action: ActionReject, Rule: "policy:readonly" + suffix, Reason: reason + "; rejected by the read-only policy"}
 }
 
 func kindOrOther(k string) string {

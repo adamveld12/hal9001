@@ -21,11 +21,16 @@ type toolInfo struct {
 	status  string
 	rawIn   any
 	content json.RawMessage
+	// locations are the target paths from the ACP tool call locations.
+	locations []string
 }
 
-// run is the state of one agent process / AgentRun. It is also the
-// acp.Client the agent talks to.
+// run is the state of one AgentRun (one Run/Resume, or one session turn). It
+// is the acp.Client of a single-run process; a Session routes its connection
+// to the current turn's run.
 type run struct {
+	noCapabilities
+
 	e      *Executor
 	p      plan
 	engine *Engine
@@ -167,21 +172,16 @@ func (r *run) rawFrame(dir string, line []byte) {
 // drive runs the whole session: spawn, handshake, prompt, shutdown. It leaves
 // the outcome in r.rec / r.stop / r.promptErr for finish.
 func (r *run) drive() {
-	proc, err := startProcess(r.argv(), r.rec.Cwd, r.environ())
+	conn, proc, err := r.e.dial(r.argv(), r.rec.Cwd, r.environ(), r, r.rawFrame)
 	if err != nil {
 		r.fail(ReasonSpawn, err)
 		return
 	}
-	r.proc = proc
+	r.conn, r.proc = conn, proc
 	r.mu.Lock()
 	r.rec.Argv = r.argv()
 	r.mu.Unlock()
 	defer r.shutdown()
-
-	tw := newTeeWriter(proc.stdin, func(l []byte) { r.rawFrame("send", l) })
-	tr := newTeeReader(proc.stdout, func(l []byte) { r.rawFrame("recv", l) })
-	r.conn = acp.NewClientSideConnection(r, tw, tr)
-	r.conn.SetLogger(r.e.log())
 
 	if !r.handshake() {
 		return
@@ -258,7 +258,9 @@ func (r *run) handshake() bool {
 		r.rec.SessionID = string(resp.SessionId)
 		if r.p.loadSession != "" {
 			r.rec.ResumedVia = ResumedNewSession
-			r.rec.Prompt = r.p.fallbackPrompt
+			if r.p.fallbackPrompt != "" {
+				r.rec.Prompt = r.p.fallbackPrompt
+			}
 		}
 		r.modes, r.configs = resp.Modes, resp.ConfigOptions
 		r.mu.Unlock()
@@ -520,6 +522,8 @@ func (r *run) finish() {
 		r.end(StatusDenied, ReasonDenied, "a tool call was denied and the run cancelled")
 	case errors.Is(cause, ErrInterrupted):
 		r.end(StatusInterrupted, ReasonInterrupted, "run interrupted")
+	case errors.Is(cause, ErrCancelled):
+		r.end(StatusKilled, ReasonCancelled, "turn cancelled")
 	case cause != nil:
 		r.end(StatusKilled, ReasonKilled, "run killed")
 	case r.failed():
