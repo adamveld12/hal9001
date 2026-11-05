@@ -14,8 +14,9 @@ export interface paths {
     /**
      * Web UI shell (index.html)
      * @description Serves the embedded single-page app. Any other GET path that does not start with `/api/` and is not an
-     *     embedded asset also serves this document, so client-side routes work on reload. All of these are guarded by
-     *     the `ui` service.
+     *     embedded asset also serves this document, so client-side routes work on reload. The shell and its assets
+     *     are public: they hold no data, and the login page is part of them, so a stack that does not admit the
+     *     request (for example password only) must still be able to load it. Every `/api/` call stays guarded.
      */
     get: operations["getUIShell"];
     put?: never;
@@ -33,7 +34,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Embedded web UI asset */
+    /**
+     * Embedded web UI asset
+     * @description Public, like the shell (see `getUIShell`).
+     */
     get: operations["getUIAsset"];
     put?: never;
     post?: never;
