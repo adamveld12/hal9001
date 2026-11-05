@@ -118,7 +118,7 @@ export interface paths {
      *     `x-hal-sse-events` map of this operation). `: keepalive` comment lines are sent every 15 seconds.
      *
      *     Filtering: `types` limits the event types (default: all). The resource filters (`sensor_id`, `flow_id`,
-     *     `flow_run_id`, `agent_run_id`) apply to the types that carry that resource and leave other types untouched.
+     *     `flow_run_id`, `agent_run_id`, `assist_session_id`) apply to the types that carry that resource and leave other types untouched.
      *     `stream.ready` and `stream.resync` are always delivered.
      *
      *     Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
@@ -1064,6 +1064,159 @@ export interface paths {
      * @description Flows that select it get an `unknown_prompt` diagnostic.
      */
     delete: operations["deletePrompt"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List assist sessions
+     * @description Recent and active AI-assisted authoring sessions, newest first. `target_kind` and `target_id` narrow the list
+     *     to the sessions of one target (for example the sensor an editor is open on). Closed sessions are not listed.
+     */
+    get: operations["listAssistSessions"];
+    put?: never;
+    /**
+     * Start an assist session
+     * @description Creates a session and its draft. With `target.id` the draft starts from that sensor's file (or from `yaml` when
+     *     given); without it the draft starts from `yaml` or a commented skeleton. No agent process starts until the
+     *     first message. The sensor file is never touched: only the normal sensor create/update endpoints persist a
+     *     sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`.
+     */
+    post: operations["createAssistSession"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Get a session with its messages
+     * @description The session, its draft and the whole conversation in order. Live updates arrive as `assist.updated` and `assist.message` on `/api/stream`.
+     */
+    get: operations["getAssistSession"];
+    put?: never;
+    post?: never;
+    /**
+     * End a session
+     * @description Stops the agent process, cancels a running turn, and removes the draft directory. The conversation stays readable until retention prunes it (status `closed`).
+     */
+    delete: operations["deleteAssistSession"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Send a message and start a turn
+     * @description Stores the user message and starts one agent turn; the agent's work arrives as `assist.message` events and as
+     *     draft changes (`assist.updated`). `yaml`, when sent, first replaces the draft so the agent sees the editor's
+     *     latest content. 409 `invalid-state` while a turn is running or the session is closed; 423 `paused` while the
+     *     kill switch is engaged.
+     */
+    post: operations["sendAssistMessage"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}/draft": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Replace the draft
+     * @description The editor's way to hand its content to the session. `expected_hash` (the draft `hash` from the last read)
+     *     guards against overwriting a change the agent made meanwhile; 409 `conflict` on mismatch, carrying
+     *     `current_hash`. Allowed while a turn runs. The draft is validated like a sensor file, with diagnostics
+     *     returned in the draft; invalid YAML is accepted.
+     */
+    put: operations["updateAssistDraft"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}/test": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run the draft like Poll now
+     * @description Runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
+     *     with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
+     *     in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
+     *     events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
+     *     the secret values. 422 `validation-failed` when the draft does not parse as a sensor; 423 `paused` while the
+     *     kill switch is engaged.
+     */
+    post: operations["testAssistDraft"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}/cancel": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Cancel the running turn
+     * @description Cancels the running turn (`session/cancel`, then the process if the agent does not answer). The session stays usable. Idempotent: without a running turn it returns the session unchanged.
+     */
+    post: operations["cancelAssistSession"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -2443,10 +2596,16 @@ export interface components {
     };
     AgentRun: {
       id: components["schemas"]["Ulid"];
-      node_run_id: components["schemas"]["Ulid"];
-      flow_run_id: components["schemas"]["Ulid"];
-      flow_id: components["schemas"]["Slug"];
-      node_id: components["schemas"]["Slug"];
+      /** @description Null for a turn of an assist session. */
+      node_run_id: components["schemas"]["Ulid"] | null;
+      /** @description Null for a turn of an assist session. */
+      flow_run_id: components["schemas"]["Ulid"] | null;
+      /** @description Null for a turn of an assist session. */
+      flow_id: components["schemas"]["Slug"] | null;
+      /** @description Null for a turn of an assist session. */
+      node_id: components["schemas"]["Slug"] | null;
+      /** @description Set when the run is one turn of an assist session (mode `approve`, style `per_tool`, policy `gated`, phase `execute`). */
+      assist_session_id: components["schemas"]["Ulid"] | null;
       runtime: components["schemas"]["Slug"];
       /** @description Null until `initialize` completed. */
       agent_info: components["schemas"]["AgentInfo"] | null;
@@ -2540,10 +2699,16 @@ export interface components {
     Approval: {
       id: components["schemas"]["Ulid"];
       agent_run_id: components["schemas"]["Ulid"];
-      node_run_id: components["schemas"]["Ulid"];
-      flow_run_id: components["schemas"]["Ulid"];
-      flow_id: components["schemas"]["Slug"];
-      node_id: components["schemas"]["Slug"];
+      /** @description Null for an approval of an assist session. */
+      node_run_id: components["schemas"]["Ulid"] | null;
+      /** @description Null for an approval of an assist session. */
+      flow_run_id: components["schemas"]["Ulid"] | null;
+      /** @description Null for an approval of an assist session. */
+      flow_id: components["schemas"]["Slug"] | null;
+      /** @description Null for an approval of an assist session. */
+      node_id: components["schemas"]["Slug"] | null;
+      /** @description Set for a tool-call approval raised by an assist session turn. */
+      assist_session_id: components["schemas"]["Ulid"] | null;
       event_id: components["schemas"]["NullableUlid"];
       runtime: components["schemas"]["Slug"];
       type: components["schemas"]["ApprovalType"];
@@ -2783,6 +2948,134 @@ export interface components {
       host_allowed: boolean;
       allowed_logins: string[];
     };
+    /** @enum {string} */
+    AssistTargetKind: "sensor";
+    /**
+     * @description `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
+     *     approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
+     *     can still take a message. `closed`: ended; the draft directory is gone.
+     * @enum {string}
+     */
+    AssistStatus:
+      "idle" | "running" | "awaiting_approval" | "failed" | "closed";
+    /** @enum {string} */
+    AssistRole: "user" | "assistant" | "tool" | "system";
+    /** @enum {string} */
+    AssistDraftAuthor: "agent" | "user";
+    AssistTarget: {
+      kind: components["schemas"]["AssistTargetKind"];
+      /** @description Sensor id; null when the session authors a new sensor. */
+      id: components["schemas"]["Slug"] | null;
+    };
+    AssistTargetRequest: {
+      kind: components["schemas"]["AssistTargetKind"];
+      id?: components["schemas"]["Slug"];
+    };
+    /**
+     * @description The sensor YAML the session works on, stored in the session's draft directory (`sensor.yaml`). Only the user's
+     *     Save writes a real sensor file.
+     */
+    AssistDraft: {
+      yaml: string;
+      hash: components["schemas"]["Hash"];
+      /** @description The `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. */
+      sensor_id: components["schemas"]["Slug"] | null;
+      /** @description Findings of the sensor validator (the same checks as `POST /api/sensors/validate`). */
+      diagnostics: components["schemas"]["Diagnostic"][];
+      updated_at: components["schemas"]["Timestamp"];
+      updated_by: components["schemas"]["AssistDraftAuthor"];
+    };
+    AssistSession: {
+      id: components["schemas"]["Ulid"];
+      target: components["schemas"]["AssistTarget"];
+      runtime: components["schemas"]["Slug"];
+      model: string | null;
+      status: components["schemas"]["AssistStatus"];
+      /** @description Why the last turn failed; null otherwise. */
+      error: string | null;
+      draft: components["schemas"]["AssistDraft"];
+      /** @description The agent run of the latest turn (`GET /api/agent-runs/{id}`). Every turn is one agent run. */
+      last_agent_run_id: components["schemas"]["Ulid"] | null;
+      created_at: components["schemas"]["Timestamp"];
+      updated_at: components["schemas"]["Timestamp"];
+    };
+    AssistSessionList: {
+      items: components["schemas"]["AssistSession"][];
+    };
+    /** @description The agent's tool call, updated in place as it progresses. */
+    AssistToolCall: {
+      tool_call_id: string;
+      title: string;
+      /** @description ACP tool kind: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`. */
+      kind: string;
+      /** @description ACP status: `pending`, `in_progress`, `completed`, `failed`. */
+      status: string;
+      raw_input: components["schemas"]["JsonValue"];
+      /** @description ACP tool call content, including diffs (`{type: diff, path, oldText, newText}`). */
+      content: components["schemas"]["JsonValue"][];
+    };
+    /**
+     * @description One entry of the conversation. Consecutive assistant text chunks are merged into one message; each tool call is
+     *     one message that is updated in place (same `id`, new `assist.message` event) as its status changes.
+     */
+    AssistMessage: {
+      id: components["schemas"]["Ulid"];
+      role: components["schemas"]["AssistRole"];
+      /** @description Null for `tool` messages. */
+      text: string | null;
+      /** @description The turn's agent run; null for user messages. */
+      agent_run_id: components["schemas"]["Ulid"] | null;
+      tool_call: components["schemas"]["AssistToolCall"] | null;
+      /** @description The tool-call approval that gated this call, to be decided with `POST /api/approvals/{id}/approve|deny`. */
+      approval_id: components["schemas"]["Ulid"] | null;
+      created_at: components["schemas"]["Timestamp"];
+    };
+    AssistStreamMessage: components["schemas"]["AssistMessage"] & {
+      session_id: components["schemas"]["Ulid"];
+    };
+    AssistSessionDetail: components["schemas"]["AssistSession"] & {
+      /** @description Oldest first. */
+      messages: components["schemas"]["AssistMessage"][];
+    };
+    AssistCreateRequest: {
+      target: components["schemas"]["AssistTargetRequest"];
+      runtime: components["schemas"]["Slug"];
+      model?: string;
+      /** @description Initial draft. Defaults to the target sensor's file, or a commented skeleton for a new sensor. */
+      yaml?: string;
+    };
+    AssistSendRequest: {
+      text: string;
+      /** @description Replaces the draft before the turn starts (the editor's current content). */
+      yaml?: string;
+    };
+    AssistDraftRequest: {
+      yaml: string;
+      expected_hash?: components["schemas"]["Hash"];
+    };
+    AssistTestItem: {
+      /** @description The draft's `key` template rendered over the item; null when it failed. */
+      dedup_key: string | null;
+      /** @description Why the key template failed on this item. */
+      key_error: string | null;
+      item: components["schemas"]["JsonValue"];
+    };
+    /**
+     * @description Outcome of one test run of the draft, redacted: values of the global env file and of the target sensor's env
+     *     file are replaced by `«KEY»`. `items` lists at most the first 200 parsed items; `item_count` is the total.
+     */
+    AssistTestResult: {
+      /** @description -1 when the process was killed by a signal (for example on timeout). */
+      exit_code: number;
+      duration_ms: number;
+      timed_out: boolean;
+      items: components["schemas"]["AssistTestItem"][];
+      item_count: number;
+      /** @description Why stdout is not a JSON array or JSONL of items (items is then empty). */
+      parse_error: string | null;
+      stdout: components["schemas"]["TextBlob"];
+      stderr: components["schemas"]["TextBlob"];
+    };
     /**
      * @description Value of the SSE `event:` field and of `StreamEvent.type`.
      *     `stream.ready` and `stream.resync` are control messages and always delivered.
@@ -2814,7 +3107,9 @@ export interface components {
       | "approval.updated"
       | "inbox.created"
       | "inbox.updated"
-      | "auth_event.created";
+      | "auth_event.created"
+      | "assist.updated"
+      | "assist.message";
     /**
      * @description Fields shared by every message. `id` equals the SSE `id:` field and increases monotonically within one daemon
      *     run. Records in `data` have text previews truncated to 4 KiB; fetch the resource for full content.
@@ -2849,7 +3144,9 @@ export interface components {
       | components["schemas"]["ApprovalUpdatedEvent"]
       | components["schemas"]["InboxCreatedEvent"]
       | components["schemas"]["InboxUpdatedEvent"]
-      | components["schemas"]["AuthEventCreatedEvent"];
+      | components["schemas"]["AuthEventCreatedEvent"]
+      | components["schemas"]["AssistUpdatedEvent"]
+      | components["schemas"]["AssistMessageEvent"];
     StreamReady: {
       server_time: components["schemas"]["Timestamp"];
       version: string;
@@ -3152,6 +3449,30 @@ export interface components {
        */
       type: "auth_event.created";
     };
+    /** @description An assist session changed status, draft, or last run. `data` is `AssistSession`; the stream filter `assist_session_id` applies. */
+    AssistUpdatedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "assist.updated";
+      data?: components["schemas"]["AssistSession"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "assist.updated";
+    };
+    /** @description A conversation message was added or a tool call message changed. `data` is `AssistStreamMessage`; the stream filter `assist_session_id` applies. */
+    AssistMessageEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "assist.message";
+      data?: components["schemas"]["AssistStreamMessage"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "assist.message";
+    };
   };
   responses: {
     /** @description Any other error, including 5xx. The `type` URI says which class. */
@@ -3290,6 +3611,7 @@ export interface components {
     AgentRunId: components["schemas"]["Ulid"];
     ApprovalId: components["schemas"]["Ulid"];
     InboxId: components["schemas"]["Ulid"];
+    AssistSessionId: components["schemas"]["Ulid"];
     /** @description Session handle from `Session.id`. */
     SessionId: string;
     /** @description Credential id from `Passkey.id` (base64url). */
@@ -3435,6 +3757,8 @@ export interface operations {
         flow_id?: components["schemas"]["Slug"];
         flow_run_id?: components["schemas"]["Ulid"];
         agent_run_id?: components["schemas"]["Ulid"];
+        /** @description Applies to `assist.updated`, `assist.message`, and to the agent run and approval events of that session. */
+        assist_session_id?: components["schemas"]["Ulid"];
       };
       header?: {
         /** @description Last sequence number the client saw. */
@@ -4509,6 +4833,8 @@ export interface operations {
         runtime?: components["schemas"]["Slug"];
         flow_run_id?: components["schemas"]["Ulid"];
         node_run_id?: components["schemas"]["Ulid"];
+        /** @description Only the turns of one assist session. */
+        assist_session_id?: components["schemas"]["Ulid"];
       };
       header?: never;
       path?: never;
@@ -5040,6 +5366,240 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listAssistSessions: {
+    parameters: {
+      query?: {
+        target_kind?: components["schemas"]["AssistTargetKind"];
+        /** @description Sensor id. Only sessions that edit that sensor. */
+        target_id?: components["schemas"]["Slug"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sessions, newest first. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSessionList"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  createAssistSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AssistCreateRequest"];
+      };
+    };
+    responses: {
+      /** @description Session created. */
+      201: {
+        headers: {
+          Location: components["headers"]["Location"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSession"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getAssistSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Session detail. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSessionDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  deleteAssistSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Session ended. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  sendAssistMessage: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AssistSendRequest"];
+      };
+    };
+    responses: {
+      /** @description Turn started. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSession"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  updateAssistDraft: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AssistDraftRequest"];
+      };
+    };
+    responses: {
+      /** @description Draft replaced. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistDraft"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  testAssistDraft: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The run finished (a failing script still answers 200; see `exit_code`). */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistTestResult"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  cancelAssistSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The session. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSession"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       415: components["responses"]["UnsupportedMediaType"];
       default: components["responses"]["Error"];
     };

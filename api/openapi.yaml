@@ -45,6 +45,7 @@ tags:
   - {name: prompts, description: Prompt library}
   - {name: runtimes, description: Configured ACP runtimes}
   - {name: settings, description: Settings and environment keys}
+  - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
 paths:
   /:
@@ -153,7 +154,7 @@ paths:
         `x-hal-sse-events` map of this operation). `: keepalive` comment lines are sent every 15 seconds.
 
         Filtering: `types` limits the event types (default: all). The resource filters (`sensor_id`, `flow_id`,
-        `flow_run_id`, `agent_run_id`) apply to the types that carry that resource and leave other types untouched.
+        `flow_run_id`, `agent_run_id`, `assist_session_id`) apply to the types that carry that resource and leave other types untouched.
         `stream.ready` and `stream.resync` are always delivered.
 
         Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
@@ -184,6 +185,8 @@ paths:
         inbox.created: '#/components/schemas/InboxCreatedEvent'
         inbox.updated: '#/components/schemas/InboxUpdatedEvent'
         auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
+        assist.updated: '#/components/schemas/AssistUpdatedEvent'
+        assist.message: '#/components/schemas/AssistMessageEvent'
       parameters:
         - name: types
           in: query
@@ -197,6 +200,7 @@ paths:
         - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
         - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: agent_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: assist_session_id, in: query, description: 'Applies to `assist.updated`, `assist.message`, and to the agent run and approval events of that session.', schema: {$ref: '#/components/schemas/Ulid'}}
         - name: Last-Event-ID
           in: header
           description: Last sequence number the client saw.
@@ -1045,6 +1049,7 @@ paths:
         - {name: runtime, in: query, schema: {$ref: '#/components/schemas/Slug'}}
         - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: node_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: assist_session_id, in: query, description: 'Only the turns of one assist session.', schema: {$ref: '#/components/schemas/Ulid'}}
       responses:
         '200':
           description: One page, newest first.
@@ -1477,6 +1482,203 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions:
+    get:
+      operationId: listAssistSessions
+      tags: [assist]
+      summary: List assist sessions
+      description: |
+        Recent and active AI-assisted authoring sessions, newest first. `target_kind` and `target_id` narrow the list
+        to the sessions of one target (for example the sensor an editor is open on). Closed sessions are not listed.
+      x-hal-service: api
+      parameters:
+        - {name: target_kind, in: query, schema: {$ref: '#/components/schemas/AssistTargetKind'}}
+        - {name: target_id, in: query, description: 'Sensor id. Only sessions that edit that sensor.', schema: {$ref: '#/components/schemas/Slug'}}
+      responses:
+        '200':
+          description: Sessions, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistSessionList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createAssistSession
+      tags: [assist]
+      summary: Start an assist session
+      description: |
+        Creates a session and its draft. With `target.id` the draft starts from that sensor's file (or from `yaml` when
+        given); without it the draft starts from `yaml` or a commented skeleton. No agent process starts until the
+        first message. The sensor file is never touched: only the normal sensor create/update endpoints persist a
+        sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssistCreateRequest'}
+      responses:
+        '201':
+          description: Session created.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistSession'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/AssistSessionId'}
+    get:
+      operationId: getAssistSession
+      tags: [assist]
+      summary: Get a session with its messages
+      description: The session, its draft and the whole conversation in order. Live updates arrive as `assist.updated` and `assist.message` on `/api/stream`.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Session detail.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistSessionDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteAssistSession
+      tags: [assist]
+      summary: End a session
+      description: Stops the agent process, cancels a running turn, and removes the draft directory. The conversation stays readable until retention prunes it (status `closed`).
+      x-hal-service: admin
+      responses:
+        '204': {description: Session ended.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions/{id}/messages:
+    parameters:
+      - {$ref: '#/components/parameters/AssistSessionId'}
+    post:
+      operationId: sendAssistMessage
+      tags: [assist]
+      summary: Send a message and start a turn
+      description: |
+        Stores the user message and starts one agent turn; the agent's work arrives as `assist.message` events and as
+        draft changes (`assist.updated`). `yaml`, when sent, first replaces the draft so the agent sees the editor's
+        latest content. 409 `invalid-state` while a turn is running or the session is closed; 423 `paused` while the
+        kill switch is engaged.
+      x-hal-service: admin
+      x-hal-paused: reject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssistSendRequest'}
+      responses:
+        '202':
+          description: Turn started.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistSession'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions/{id}/draft:
+    parameters:
+      - {$ref: '#/components/parameters/AssistSessionId'}
+    put:
+      operationId: updateAssistDraft
+      tags: [assist]
+      summary: Replace the draft
+      description: |
+        The editor's way to hand its content to the session. `expected_hash` (the draft `hash` from the last read)
+        guards against overwriting a change the agent made meanwhile; 409 `conflict` on mismatch, carrying
+        `current_hash`. Allowed while a turn runs. The draft is validated like a sensor file, with diagnostics
+        returned in the draft; invalid YAML is accepted.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssistDraftRequest'}
+      responses:
+        '200':
+          description: Draft replaced.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistDraft'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions/{id}/test:
+    parameters:
+      - {$ref: '#/components/parameters/AssistSessionId'}
+    post:
+      operationId: testAssistDraft
+      tags: [assist]
+      summary: Run the draft like Poll now
+      description: |
+        Runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
+        with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
+        in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
+        events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
+        the secret values. 422 `validation-failed` when the draft does not parse as a sensor; 423 `paused` while the
+        kill switch is engaged.
+      x-hal-service: admin
+      x-hal-paused: reject
+      responses:
+        '200':
+          description: The run finished (a failing script still answers 200; see `exit_code`).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistTestResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions/{id}/cancel:
+    parameters:
+      - {$ref: '#/components/parameters/AssistSessionId'}
+    post:
+      operationId: cancelAssistSession
+      tags: [assist]
+      summary: Cancel the running turn
+      description: 'Cancels the running turn (`session/cancel`, then the process if the agent does not answer). The session stays usable. Idempotent: without a running turn it returns the session unchanged.'
+      x-hal-service: admin
+      responses:
+        '200':
+          description: The session.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistSession'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
   /api/runtimes:
@@ -2010,6 +2212,11 @@ components:
       required: true
       schema: {$ref: '#/components/schemas/Ulid'}
     InboxId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Ulid'}
+    AssistSessionId:
       name: id
       in: path
       required: true
@@ -3211,13 +3418,14 @@ components:
         node_runs: {type: array, items: {$ref: '#/components/schemas/NodeRun'}, description: 'In creation order. Use `parent_node_run_id` to rebuild the tree.'}
     AgentRun:
       type: object
-      required: [id, node_run_id, flow_run_id, flow_id, node_id, runtime, agent_info, capabilities, mode, approve_style, policy, phase, session_id, resumed_via, resume_fallback, cwd, rendered_prompt, argv, status, stop_reason, final_message, result, parse_error, error, raw_blob, raw_size, created_at, started_at, ended_at]
+      required: [id, node_run_id, flow_run_id, flow_id, node_id, assist_session_id, runtime, agent_info, capabilities, mode, approve_style, policy, phase, session_id, resumed_via, resume_fallback, cwd, rendered_prompt, argv, status, stop_reason, final_message, result, parse_error, error, raw_blob, raw_size, created_at, started_at, ended_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
-        node_run_id: {$ref: '#/components/schemas/Ulid'}
-        flow_run_id: {$ref: '#/components/schemas/Ulid'}
-        flow_id: {$ref: '#/components/schemas/Slug'}
-        node_id: {$ref: '#/components/schemas/Slug'}
+        node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for a turn of an assist session.'}
+        flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for a turn of an assist session.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for a turn of an assist session.'}
+        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for a turn of an assist session.'}
+        assist_session_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Set when the run is one turn of an assist session (mode `approve`, style `per_tool`, policy `gated`, phase `execute`).'}
         runtime: {$ref: '#/components/schemas/Slug'}
         agent_info: {oneOf: [{$ref: '#/components/schemas/AgentInfo'}, {type: 'null'}], description: 'Null until `initialize` completed.'}
         capabilities: {$ref: '#/components/schemas/JsonValue'}
@@ -3309,14 +3517,15 @@ components:
         items: {type: array, items: {$ref: '#/components/schemas/PermissionRequest'}}
     Approval:
       type: object
-      required: [id, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, event_id, runtime, type, permission_request_id, permission_request, proposal_md, status, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
+      required: [id, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, assist_session_id, event_id, runtime, type, permission_request_id, permission_request, proposal_md, status, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         agent_run_id: {$ref: '#/components/schemas/Ulid'}
-        node_run_id: {$ref: '#/components/schemas/Ulid'}
-        flow_run_id: {$ref: '#/components/schemas/Ulid'}
-        flow_id: {$ref: '#/components/schemas/Slug'}
-        node_id: {$ref: '#/components/schemas/Slug'}
+        node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
+        flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
+        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
+        assist_session_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: Set for a tool-call approval raised by an assist session turn.}
         event_id: {$ref: '#/components/schemas/NullableUlid'}
         runtime: {$ref: '#/components/schemas/Slug'}
         type: {$ref: '#/components/schemas/ApprovalType'}
@@ -3573,6 +3782,146 @@ components:
         funnel_enabled: {type: boolean, description: Any serve entry is exposed to the internet. hal9001 never wants this.}
         host_allowed: {type: boolean, description: '`hostname` is in `allowed_hosts`.'}
         allowed_logins: {type: array, items: {type: string}}
+    # ---------------------------------------------------------------- assist (AI-assisted sensor authoring)
+    AssistTargetKind: {type: string, enum: [sensor]}
+    AssistStatus:
+      type: string
+      description: |
+        `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
+        approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
+        can still take a message. `closed`: ended; the draft directory is gone.
+      enum: [idle, running, awaiting_approval, failed, closed]
+    AssistRole: {type: string, enum: [user, assistant, tool, system]}
+    AssistDraftAuthor: {type: string, enum: [agent, user]}
+    AssistTarget:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: {$ref: '#/components/schemas/AssistTargetKind'}
+        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: Sensor id; null when the session authors a new sensor.}
+    AssistTargetRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: {$ref: '#/components/schemas/AssistTargetKind'}
+        id: {$ref: '#/components/schemas/Slug'}
+    AssistDraft:
+      type: object
+      description: |
+        The sensor YAML the session works on, stored in the session's draft directory (`sensor.yaml`). Only the user's
+        Save writes a real sensor file.
+      required: [yaml, hash, sensor_id, diagnostics, updated_at, updated_by]
+      properties:
+        yaml: {type: string}
+        hash: {$ref: '#/components/schemas/Hash'}
+        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'The `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the sensor validator (the same checks as `POST /api/sensors/validate`).'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_by: {$ref: '#/components/schemas/AssistDraftAuthor'}
+    AssistSession:
+      type: object
+      required: [id, target, runtime, model, status, error, draft, last_agent_run_id, created_at, updated_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        target: {$ref: '#/components/schemas/AssistTarget'}
+        runtime: {$ref: '#/components/schemas/Slug'}
+        model: {type: [string, 'null']}
+        status: {$ref: '#/components/schemas/AssistStatus'}
+        error: {type: [string, 'null'], description: Why the last turn failed; null otherwise.}
+        draft: {$ref: '#/components/schemas/AssistDraft'}
+        last_agent_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'The agent run of the latest turn (`GET /api/agent-runs/{id}`). Every turn is one agent run.'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+    AssistSessionList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AssistSession'}}
+    AssistToolCall:
+      type: object
+      description: The agent's tool call, updated in place as it progresses.
+      required: [tool_call_id, title, kind, status, raw_input, content]
+      properties:
+        tool_call_id: {type: string}
+        title: {type: string}
+        kind: {type: string, description: 'ACP tool kind: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, `other`.'}
+        status: {type: string, description: 'ACP status: `pending`, `in_progress`, `completed`, `failed`.'}
+        raw_input: {$ref: '#/components/schemas/JsonValue'}
+        content: {type: array, items: {$ref: '#/components/schemas/JsonValue'}, description: 'ACP tool call content, including diffs (`{type: diff, path, oldText, newText}`).'}
+    AssistMessage:
+      type: object
+      description: |
+        One entry of the conversation. Consecutive assistant text chunks are merged into one message; each tool call is
+        one message that is updated in place (same `id`, new `assist.message` event) as its status changes.
+      required: [id, role, text, agent_run_id, tool_call, approval_id, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        role: {$ref: '#/components/schemas/AssistRole'}
+        text: {type: [string, 'null'], description: 'Null for `tool` messages.'}
+        agent_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: The turn's agent run; null for user messages.}
+        tool_call: {oneOf: [{$ref: '#/components/schemas/AssistToolCall'}, {type: 'null'}]}
+        approval_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'The tool-call approval that gated this call, to be decided with `POST /api/approvals/{id}/approve|deny`.'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    AssistStreamMessage:
+      allOf:
+        - {$ref: '#/components/schemas/AssistMessage'}
+        - type: object
+          required: [session_id]
+          properties:
+            session_id: {$ref: '#/components/schemas/Ulid'}
+    AssistSessionDetail:
+      allOf:
+        - {$ref: '#/components/schemas/AssistSession'}
+        - type: object
+          required: [messages]
+          properties:
+            messages: {type: array, items: {$ref: '#/components/schemas/AssistMessage'}, description: Oldest first.}
+    AssistCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [target, runtime]
+      properties:
+        target: {$ref: '#/components/schemas/AssistTargetRequest'}
+        runtime: {$ref: '#/components/schemas/Slug'}
+        model: {type: string}
+        yaml: {type: string, description: "Initial draft. Defaults to the target sensor's file, or a commented skeleton for a new sensor."}
+    AssistSendRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: {type: string, minLength: 1}
+        yaml: {type: string, description: 'Replaces the draft before the turn starts (the editor''s current content).'}
+    AssistDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [yaml]
+      properties:
+        yaml: {type: string}
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+    AssistTestItem:
+      type: object
+      required: [dedup_key, key_error, item]
+      properties:
+        dedup_key: {type: [string, 'null'], description: 'The draft''s `key` template rendered over the item; null when it failed.'}
+        key_error: {type: [string, 'null'], description: Why the key template failed on this item.}
+        item: {$ref: '#/components/schemas/JsonValue'}
+    AssistTestResult:
+      type: object
+      description: |
+        Outcome of one test run of the draft, redacted: values of the global env file and of the target sensor's env
+        file are replaced by `«KEY»`. `items` lists at most the first 200 parsed items; `item_count` is the total.
+      required: [exit_code, duration_ms, timed_out, items, item_count, parse_error, stdout, stderr]
+      properties:
+        exit_code: {type: integer, description: '-1 when the process was killed by a signal (for example on timeout).'}
+        duration_ms: {type: integer, minimum: 0}
+        timed_out: {type: boolean}
+        items: {type: array, items: {$ref: '#/components/schemas/AssistTestItem'}}
+        item_count: {type: integer, minimum: 0}
+        parse_error: {type: [string, 'null'], description: 'Why stdout is not a JSON array or JSONL of items (items is then empty).'}
+        stdout: {$ref: '#/components/schemas/TextBlob'}
+        stderr: {$ref: '#/components/schemas/TextBlob'}
     # ---------------------------------------------------------------- SSE envelopes (GET /api/stream)
     StreamEventType:
       type: string
@@ -3606,6 +3955,8 @@ components:
         - inbox.created
         - inbox.updated
         - auth_event.created
+        - assist.updated
+        - assist.message
     StreamEnvelope:
       type: object
       description: |
@@ -3643,6 +3994,8 @@ components:
         - {$ref: '#/components/schemas/InboxCreatedEvent'}
         - {$ref: '#/components/schemas/InboxUpdatedEvent'}
         - {$ref: '#/components/schemas/AuthEventCreatedEvent'}
+        - {$ref: '#/components/schemas/AssistUpdatedEvent'}
+        - {$ref: '#/components/schemas/AssistMessageEvent'}
       discriminator:
         propertyName: type
         mapping:
@@ -3669,6 +4022,8 @@ components:
           inbox.created: '#/components/schemas/InboxCreatedEvent'
           inbox.updated: '#/components/schemas/InboxUpdatedEvent'
           auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
+          assist.updated: '#/components/schemas/AssistUpdatedEvent'
+          assist.message: '#/components/schemas/AssistMessageEvent'
     StreamReady:
       type: object
       required: [server_time, version, last_event_id]
@@ -3882,3 +4237,19 @@ components:
           properties:
             type: {enum: [auth_event.created]}
             data: {$ref: '#/components/schemas/AuthEvent'}
+    AssistUpdatedEvent:
+      description: An assist session changed status, draft, or last run. `data` is `AssistSession`; the stream filter `assist_session_id` applies.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [assist.updated]}
+            data: {$ref: '#/components/schemas/AssistSession'}
+    AssistMessageEvent:
+      description: A conversation message was added or a tool call message changed. `data` is `AssistStreamMessage`; the stream filter `assist_session_id` applies.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [assist.message]}
+            data: {$ref: '#/components/schemas/AssistStreamMessage'}

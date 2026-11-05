@@ -105,6 +105,7 @@ func TestEveryOperationIsDeclaredAndDocumentsProblems(t *testing.T) {
 		"listInbox", "getInboxItem", "updateInboxItem",
 		"listPrompts", "createPrompt", "getPrompt", "updatePrompt", "deletePrompt", "renderPrompt",
 		"listRuntimes", "probeRuntime",
+		"listAssistSessions", "createAssistSession", "getAssistSession", "deleteAssistSession", "sendAssistMessage", "updateAssistDraft", "testAssistDraft", "cancelAssistSession",
 		"getSettings", "updateSettings", "listEnvKeys", "setEnvValue", "deleteEnvValue",
 		"getKillSwitch", "pauseKillSwitch", "resumeKillSwitch",
 		"beginAuth", "continueAuth", "logout", "whoami", "listSessions", "revokeSession", "revokeAllSessions",

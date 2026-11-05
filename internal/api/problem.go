@@ -78,9 +78,12 @@ func fileConflict(w http.ResponseWriter, detail, expected, current string) {
 // returned.
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var verr *core.ValidationError
+	var dconf *core.DraftConflictError
 	switch {
 	case errors.As(err, &verr):
 		validationProblem(w, "validation failed", verr.Diagnostics)
+	case errors.As(err, &dconf):
+		fileConflict(w, dconf.Error(), dconf.Expected, dconf.Current)
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, spec.ErrNotFound), errors.Is(err, core.ErrUnknownRef):
 		notFound(w, "%s", err.Error())
 	case errors.Is(err, core.ErrPaused):

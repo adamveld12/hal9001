@@ -93,7 +93,7 @@ func inboxItem(read bool) map[string]any {
 func approval(status string) map[string]any {
 	return map[string]any{
 		"id": id1, "agent_run_id": id2, "node_run_id": id3, "flow_run_id": id1, "flow_id": "triage-github",
-		"node_id": "review", "event_id": nil, "runtime": "claude", "type": "proposal", "permission_request_id": nil,
+		"node_id": "review", "assist_session_id": nil, "event_id": nil, "runtime": "claude", "type": "proposal", "permission_request_id": nil,
 		"permission_request": nil, "proposal_md": "Fix the flaky test", "status": status, "comment": nil, "cancel_run": nil,
 		"decided_by": nil, "decided_at": nil, "created_at": ts, "expires_at": nil,
 	}
@@ -101,7 +101,7 @@ func approval(status string) map[string]any {
 
 func agentRun(status string) map[string]any {
 	return map[string]any{
-		"id": id2, "node_run_id": id3, "flow_run_id": id1, "flow_id": "triage-github", "node_id": "review",
+		"id": id2, "node_run_id": id3, "flow_run_id": id1, "flow_id": "triage-github", "node_id": "review", "assist_session_id": nil,
 		"runtime": "claude", "agent_info": nil, "capabilities": map[string]any{}, "mode": "readonly", "approve_style": nil,
 		"policy": "readonly", "phase": "execute", "session_id": nil, "resumed_via": nil, "resume_fallback": nil,
 		"cwd": nil, "rendered_prompt": "Review it", "argv": []string{"claude-agent-acp"}, "status": status,

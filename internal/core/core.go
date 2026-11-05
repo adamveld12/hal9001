@@ -112,3 +112,73 @@ type Notification struct {
 type Notifier interface {
 	Notify(ctx context.Context, n Notification) error
 }
+
+// AssistCreateRequest is POST /api/assist/sessions.
+type AssistCreateRequest struct {
+	TargetKind string // "sensor"
+	// TargetID is the sensor to edit; empty authors a new sensor.
+	TargetID string
+	Runtime  string
+	Model    string
+	// YAML, when non-nil, is the initial draft instead of the sensor's file or the skeleton.
+	YAML *string
+	// Principal is the authenticated caller, recorded on the session's agent runs.
+	Principal string
+}
+
+// AssistTestItem is one parsed item of a draft test run.
+type AssistTestItem struct {
+	DedupKey *string         `json:"dedup_key"`
+	KeyError *string         `json:"key_error"`
+	Item     json.RawMessage `json:"item"`
+}
+
+// AssistText is captured, redacted process output (the contract's TextBlob).
+type AssistText struct {
+	Text      string  `json:"text"`
+	Size      int64   `json:"size"`
+	Truncated bool    `json:"truncated"`
+	Blob      *string `json:"blob"`
+}
+
+// AssistTestResult is the outcome of POST /api/assist/sessions/{id}/test.
+type AssistTestResult struct {
+	ExitCode   int              `json:"exit_code"`
+	DurationMS int64            `json:"duration_ms"`
+	TimedOut   bool             `json:"timed_out"`
+	Items      []AssistTestItem `json:"items"`
+	ItemCount  int              `json:"item_count"`
+	ParseError *string          `json:"parse_error"`
+	Stdout     AssistText       `json:"stdout"`
+	Stderr     AssistText       `json:"stderr"`
+}
+
+// Assist is the AI-assisted sensor authoring service, implemented by
+// *assist.Manager. Reads (sessions, messages, the draft) come straight from the
+// store; everything that starts an agent turn, runs code or changes a draft goes
+// through here. Errors follow the Engine conventions: store.ErrNotFound,
+// ErrPaused, ErrInvalidState, *ValidationError, plus *DraftConflictError.
+type Assist interface {
+	CreateSession(ctx context.Context, req AssistCreateRequest) (*store.AssistSession, error)
+	// SendMessage stores the user's message and starts one agent turn. yaml, when non-nil,
+	// first replaces the draft. ErrInvalidState while a turn runs; ErrPaused under the kill switch.
+	SendMessage(ctx context.Context, sessionID, text string, yaml *string) (*store.AssistSession, error)
+	// UpdateDraft replaces the draft (updated_by user). expectedHash, when non-empty, must equal
+	// the current draft hash, else *DraftConflictError.
+	UpdateDraft(ctx context.Context, sessionID, yaml, expectedHash string) (*store.AssistSession, error)
+	// TestDraft runs the draft like Poll now and returns the redacted result without recording anything.
+	TestDraft(ctx context.Context, sessionID string) (AssistTestResult, error)
+	// Cancel cancels the running turn; without one it returns the session unchanged.
+	Cancel(ctx context.Context, sessionID string) (*store.AssistSession, error)
+	// Close ends the session: stops the agent, removes the draft directory, marks it closed.
+	Close(ctx context.Context, sessionID string) error
+}
+
+// DraftConflictError is UpdateDraft's hash mismatch (409 conflict).
+type DraftConflictError struct {
+	Expected, Current string
+}
+
+func (e *DraftConflictError) Error() string {
+	return "the draft changed since it was read (hash " + e.Current + ", expected " + e.Expected + ")"
+}

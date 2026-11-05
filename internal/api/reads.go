@@ -543,10 +543,11 @@ func (s *Server) listAgentRuns(w http.ResponseWriter, r *http.Request) {
 	runtimeName := q.slug("runtime")
 	flowRunID := q.ulid("flow_run_id")
 	nodeRunID := q.ulid("node_run_id")
+	assistSessionID := q.ulid("assist_session_id")
 	if !q.ok(w) {
 		return
 	}
-	f := store.AgentRunFilter{Runtime: runtimeName, FlowRunID: flowRunID, NodeRunID: nodeRunID, ListOpts: opts}
+	f := store.AgentRunFilter{Runtime: runtimeName, FlowRunID: flowRunID, NodeRunID: nodeRunID, AssistSessionID: assistSessionID, ListOpts: opts}
 	if status != "" {
 		f.Statuses = []store.AgentStatus{store.AgentStatus(status)}
 	}
@@ -588,7 +589,8 @@ func (s *Server) getAgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := agentRunDetailView{agentRunView: base, PhaseRunIDs: []string{}, Approvals: []approvalView{}}
-	phases, err := st.ListAgentRuns(r.Context(), store.AgentRunFilter{NodeRunID: ar.NodeRunID, Slim: true, ListOpts: store.ListOpts{Limit: 500, Oldest: true}})
+	// The phases of a flow run's agent node, or the turns of an assist session.
+	phases, err := st.ListAgentRuns(r.Context(), store.AgentRunFilter{NodeRunID: ar.NodeRunID, AssistSessionID: ar.AssistSessionID, Slim: true, ListOpts: store.ListOpts{Limit: 500, Oldest: true}})
 	if err != nil {
 		s.writeError(w, r, err)
 		return
