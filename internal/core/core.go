@@ -90,3 +90,17 @@ type Engine interface {
 	// Apply hands the engine a freshly loaded workspace (startup and hot reload).
 	Apply(ws *spec.Workspace)
 }
+
+// Notification is a macOS notification request. URL is an absolute deep link
+// into the UI (e.g. http://localhost:9001/inbox/<id>).
+type Notification struct {
+	Kind  string // "inbox" | "approval"
+	Title string
+	Body  string
+	URL   string
+}
+
+// Notifier delivers notifications; implemented by internal/notify.
+type Notifier interface {
+	Notify(ctx context.Context, n Notification) error
+}
