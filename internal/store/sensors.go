@@ -191,13 +191,13 @@ func (s *Store) ListSensorStates(ctx context.Context) ([]SensorState, error) {
 	return out, rows.Err()
 }
 
-const sensorStateSQL = `SELECT sensor_id, last_run_id, last_run_at, last_success_at, last_error, consecutive_failures, updated_at FROM sensor_state`
+const sensorStateSQL = `SELECT sensor_id, last_run_id, last_run_at, last_success_at, last_error, consecutive_failures, paused_at, paused_by, updated_at FROM sensor_state`
 
 func scanSensorState(r rowScanner) (SensorState, error) {
 	var st SensorState
-	var lastRun, lastOK sql.NullString
+	var lastRun, lastOK, paused sql.NullString
 	var updated string
-	if err := r.Scan(&st.SensorID, &st.LastRunID, &lastRun, &lastOK, &st.LastError, &st.ConsecutiveFailures, &updated); err != nil {
+	if err := r.Scan(&st.SensorID, &st.LastRunID, &lastRun, &lastOK, &st.LastError, &st.ConsecutiveFailures, &paused, &st.PausedBy, &updated); err != nil {
 		return SensorState{}, scanErr(err)
 	}
 	var err error
@@ -207,10 +207,43 @@ func scanSensorState(r rowScanner) (SensorState, error) {
 	if st.LastSuccessAt, err = parseTSPtr(lastOK); err != nil {
 		return SensorState{}, err
 	}
+	if st.PausedAt, err = parseTSPtr(paused); err != nil {
+		return SensorState{}, err
+	}
 	if st.UpdatedAt, err = parseTS(updated); err != nil {
 		return SensorState{}, err
 	}
 	return st, nil
+}
+
+// SetSensorPaused pauses or resumes one sensor and returns its new state.
+// Both directions are idempotent: pausing an already paused sensor keeps the
+// original PausedAt and PausedBy; resuming a sensor that is not paused changes
+// nothing. The state is operational and survives restarts.
+func (s *Store) SetSensorPaused(ctx context.Context, sensorID string, paused bool, by string) (SensorState, error) {
+	if sensorID == "" {
+		return SensorState{}, fmt.Errorf("%w: sensor_id required", ErrInvalid)
+	}
+	err := s.write(ctx, func(t *txn) error {
+		now := ts(s.now())
+		var err error
+		if paused {
+			_, err = t.ExecContext(ctx, `INSERT INTO sensor_state (sensor_id, paused_at, paused_by, updated_at) VALUES (?, ?, ?, ?)
+				ON CONFLICT (sensor_id) DO UPDATE SET paused_at=excluded.paused_at, paused_by=excluded.paused_by, updated_at=excluded.updated_at
+				WHERE sensor_state.paused_at IS NULL`, sensorID, now, by, now)
+		} else {
+			_, err = t.ExecContext(ctx, `UPDATE sensor_state SET paused_at=NULL, paused_by='', updated_at=? WHERE sensor_id=? AND paused_at IS NOT NULL`, now, sensorID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: set sensor paused: %w", err)
+		}
+		t.note(ResSensorState, sensorID, OpUpdate)
+		return nil
+	})
+	if err != nil {
+		return SensorState{}, err
+	}
+	return s.GetSensorState(ctx, sensorID)
 }
 
 // RecordSensorOutcome updates the sensor's state after a poll finishes at the

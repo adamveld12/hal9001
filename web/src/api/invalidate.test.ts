@@ -20,6 +20,10 @@ describe("stream invalidation", () => {
     expect(rootsFor("approval.updated")).toContain("approvals");
   });
 
+  it("refreshes the sensor list and the sensor page when a sensor is paused or resumed", () => {
+    expect(rootsFor("sensor.changed")).toEqual(["sensors", "sensor"]);
+  });
+
   it("does not refetch for status.changed because the payload is applied directly", () => {
     expect(rootsFor("status.changed")).toEqual([]);
   });

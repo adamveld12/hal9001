@@ -4,6 +4,7 @@ import type { SensorSummary } from "../../api/sensors";
 import { Time } from "../../components/Time";
 import { Badge, Table, Td, Th } from "../../components/ui";
 import { cx } from "../../lib/cx";
+import { PauseToggle } from "./PauseToggle";
 import {
   UNSCHEDULED_TITLE,
   sensorRow,
@@ -45,6 +46,7 @@ export function SensorTable({
           <Th>New (24h)</Th>
           <Th>Next poll</Th>
           <Th>Errors</Th>
+          <Th className="w-px" />
         </tr>
       </thead>
       <tbody>
@@ -53,7 +55,9 @@ export function SensorTable({
           return (
             <tr key={r.id} className="hover:bg-raised">
               <Td>
-                <Badge tone={sensorStateTone(r.state)}>{r.state}</Badge>
+                <span title={r.pausedTitle ?? undefined}>
+                  <Badge tone={sensorStateTone(r.state)}>{r.state}</Badge>
+                </span>
               </Td>
               <Td>
                 <Link
@@ -80,6 +84,13 @@ export function SensorTable({
               </Td>
               <Td>
                 <Problems problems={r.problems} />
+              </Td>
+              <Td>
+                <PauseToggle
+                  sensorId={r.id}
+                  paused={r.paused}
+                  disabled={r.state === "invalid"}
+                />
               </Td>
             </tr>
           );
@@ -118,12 +129,12 @@ export function SensorSidebar({
                 <span className="min-w-0 truncate font-mono font-medium">
                   {r.id}
                 </span>
-                <Badge
-                  tone={sensorStateTone(r.state)}
+                <span
                   className="ml-auto shrink-0"
+                  title={r.pausedTitle ?? undefined}
                 >
-                  {r.state}
-                </Badge>
+                  <Badge tone={sensorStateTone(r.state)}>{r.state}</Badge>
+                </span>
               </span>
               <span className="flex items-center gap-1.5 text-muted">
                 <Time ts={r.lastPollAt} />

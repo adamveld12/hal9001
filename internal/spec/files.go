@@ -20,6 +20,9 @@ const (
 	KindSensor Kind = "sensor"
 	KindFlow   Kind = "flow"
 	KindPrompt Kind = "prompt"
+	// KindSensorEnv is a sensor's own env file, env.d/sensors/<id>.env. It
+	// holds secrets, so it lives outside the git-versioned sensor YAML.
+	KindSensorEnv Kind = "sensor_env"
 )
 
 // Directory names under the home dir (REQUIREMENTS §3).
@@ -27,6 +30,8 @@ const (
 	DirSensors   = "sensors"
 	DirFlows     = "flows"
 	DirPrompts   = "prompts"
+	DirEnvD      = "env.d"
+	DirSensorEnv = "env.d/sensors"
 	DirData      = "data"
 	DirBlobs     = "data/blobs"
 	DirState     = "data/state"
@@ -50,6 +55,8 @@ func (k Kind) Rel(id string) string {
 		return idPath(DirFlows, id, ".yaml")
 	case KindPrompt:
 		return idPath(DirPrompts, id, ".md")
+	case KindSensorEnv:
+		return idPath(DirSensorEnv, id, ".env")
 	}
 	return ""
 }
@@ -64,7 +71,9 @@ func idPath(dir, id, ext string) string {
 // Path returns the absolute path of the file under home.
 func (k Kind) Path(home, id string) string { return filepath.Join(home, filepath.FromSlash(k.Rel(id))) }
 
-func (k Kind) needsID() bool { return k == KindSensor || k == KindFlow || k == KindPrompt }
+func (k Kind) needsID() bool {
+	return k == KindSensor || k == KindFlow || k == KindPrompt || k == KindSensorEnv
+}
 
 // Errors returned by the file functions.
 var (
@@ -131,6 +140,11 @@ func WriteFile(home string, k Kind, id string, data []byte, expectedHash string)
 	mode, err := checkExpected(path, k.Rel(id), expectedHash)
 	if err != nil {
 		return "", err
+	}
+	if k == KindSensorEnv {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return "", err
+		}
 	}
 	if err := writeAtomic(path, data, mode); err != nil {
 		return "", err

@@ -151,3 +151,64 @@ export function usePollSensor() {
     onSettled: () => void invalidateSensorFiles(qc),
   });
 }
+
+/** Pauses the scheduled polls of one sensor. "Poll now" and event injection keep working. Idempotent. */
+export function usePauseSensor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.POST("/api/sensors/{id}/pause", { params: { path: { id } } })),
+    onSettled: () => void invalidateSensorFiles(qc),
+  });
+}
+
+/** Lets the scheduler poll the sensor again. Idempotent. */
+export function useResumeSensor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(
+        api.POST("/api/sensors/{id}/resume", { params: { path: { id } } }),
+      ),
+    onSettled: () => void invalidateSensorFiles(qc),
+  });
+}
+
+export type SensorEnvKey = Schemas["SensorEnvKeyList"]["items"][number];
+
+/** Names in the sensor's own env file and whether each overrides a global key. Values are never available. */
+export function useSensorEnv(id: string) {
+  return useQuery({
+    queryKey: qk("sensor-env", id),
+    queryFn: () =>
+      unwrap(api.GET("/api/sensors/{id}/env", { params: { path: { id } } })),
+    select: (d) => d.items,
+  });
+}
+
+export function useSetSensorEnv(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { key: string; value: string }) =>
+      unwrapVoid(
+        api.PUT("/api/sensors/{id}/env/{key}", {
+          params: { path: { id, key: v.key } },
+          body: { value: v.value },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk("sensor-env", id) }),
+  });
+}
+
+export function useDeleteSensorEnv(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      unwrapVoid(
+        api.DELETE("/api/sensors/{id}/env/{key}", {
+          params: { path: { id, key } },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk("sensor-env", id) }),
+  });
+}

@@ -8,6 +8,7 @@ Everything here lives in files under the home directory (`~/.hal9001` by default
 | `flows/<id>.yaml` | A DAG of nodes subscribed to sensors. |
 | `prompts/<name>.md` | A prompt template for agent nodes. |
 | `env` | `KEY=VALUE` secrets injected into every sensor and command node. |
+| `env.d/sensors/<id>.env` | `KEY=VALUE` secrets of one sensor, same format as `env`. Not in git. |
 
 Check your work offline with `hal9001 validate` (add `--json` for machine-readable diagnostics) or against the running
 daemon with `hal9001 flows validate flow.yaml`. Ids are letters, digits, `-` and `_`, at most 64 characters, starting
@@ -173,6 +174,21 @@ Only sensors subscribed to by at least one **enabled** flow are scheduled. `hal9
 sensor now (rejected while the kill switch is engaged). `hal9001 events inject <sensor-id> < item.json` pushes one item
 through dedup and fan-out without running the script. Starter sensors and their credentials are listed in the
 [README](../README.md#prerequisites).
+
+**Pausing one sensor.** `hal9001 sensors pause <id>` (UI: the pause toggle on the Sensors list and the sensor page)
+stops the scheduler polling that sensor until `sensors resume <id>`. The state is operational, not part of the YAML: it
+lives in the database, survives restarts and records who paused the sensor and when. A paused sensor has state `paused`
+and no next poll. Explicit actions still work: `sensors poll` ("Poll now") and `events inject` are user requests, not
+scheduled polls. Resuming starts the schedule over (an overdue interval sensor polls at once). The kill switch is
+separate: it pauses every sensor and also rejects "Poll now".
+
+**Per-sensor environment.** Credentials a single sensor needs can be set on the sensor instead of the global `env`
+file: the Environment section of the sensor page, or `hal9001 sensors env set <id> KEY`. They are stored in
+`env.d/sensors/<id>.env` (mode 0600, git-ignored; sensor YAML stays safe to commit), not in the sensor YAML. A poll
+gets the global `env` values with the sensor's own values on top (the sensor's value wins; the UI marks keys that
+override a global one). Values are write-only: the API and UI list key names only. They are redacted from stored
+output like the global values. A change applies on the next poll without a restart, and deleting the sensor deletes its
+env file.
 
 ## Flows
 

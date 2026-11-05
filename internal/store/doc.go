@@ -5,7 +5,7 @@
 // # Tables (REQUIREMENTS §9, with what §5, §8 and §10 imply)
 //
 //	sensor_runs           one poll: times, exit, item/new counts, stdout/stderr
-//	sensor_state          per sensor: last_success_at (HAL_LAST_SUCCESS_AT), failure streak
+//	sensor_state          per sensor: last_success_at (HAL_LAST_SUCCESS_AT), failure streak, pause (paused_at/by)
 //	seen_keys             (sensor_id, dedup_key, first_seen); outlives events
 //	events                deduplicated sensor items, immutable
 //	flow_versions         (flow_id, hash) -> YAML snapshot

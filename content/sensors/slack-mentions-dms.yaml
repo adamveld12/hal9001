@@ -5,7 +5,7 @@ interval: 2m
 lang: bash
 script: |
   set -euo pipefail
-  : "${SLACK_USER_TOKEN:?SLACK_USER_TOKEN is not set (see env.example)}"
+  : "${SLACK_USER_TOKEN:?SLACK_USER_TOKEN is not set - set it in the sensor Environment section of the UI or in the global env file, see env.example}"
 
   now=$(date -u +%s)
   if [ -n "${HAL_LAST_SUCCESS_AT:-}" ]; then

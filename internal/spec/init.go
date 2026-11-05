@@ -7,18 +7,23 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // gitignoreContent keeps runtime data and secrets out of a git-versioned home
 // dir (REQUIREMENTS §3).
-const gitignoreContent = "# hal9001 runtime data and secrets\ndata/\nenv\n"
+const gitignoreContent = "# hal9001 runtime data and secrets\ndata/\nenv\nenv.d/\n"
+
+// ignoredLines are the entries .gitignore must contain.
+var ignoredLines = []string{"data/", "env", "env.d/"}
 
 // Init creates the home dir layout of REQUIREMENTS §3 (sensors/, flows/,
 // prompts/, data/blobs, data/state, data/worktrees) and copies files from seed
 // into it. Existing files are never overwritten, so Init is safe to run on
 // every start. seed mirrors the home layout at its root (config.yaml,
 // sensors/..., prompts/...); it may be nil. Files under data/ in the seed are
-// ignored. A .gitignore excluding data/ and env is added if absent.
+// ignored. A .gitignore excluding data/, env and env.d/ is added if absent; an
+// existing one gets any of those lines it lacks appended.
 //
 // Init returns the home-relative paths of the files it created.
 func Init(home string, seed fs.FS) ([]string, error) {
@@ -56,9 +61,15 @@ func Init(home string, seed fs.FS) ([]string, error) {
 			return created, fmt.Errorf("init %s: %w", home, err)
 		}
 	}
+	if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(DirSensorEnv)), 0o700); err != nil {
+		return nil, fmt.Errorf("init %s: %w", home, err)
+	}
 	made, err := createIfMissing(home, ".gitignore", []byte(gitignoreContent))
 	if made {
 		created = append(created, ".gitignore")
+	}
+	if err == nil && !made {
+		err = ensureIgnored(filepath.Join(home, ".gitignore"))
 	}
 	if err != nil {
 		return created, fmt.Errorf("init %s: %w", home, err)
@@ -91,4 +102,31 @@ func createIfMissing(home, rel string, data []byte) (made bool, err error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// ensureIgnored appends the entries of ignoredLines that the existing
+// .gitignore at path lacks, leaving everything else as the user wrote it.
+func ensureIgnored(path string) error {
+	b, err := os.ReadFile(path) //nolint:gosec // fixed name under home
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for _, l := range strings.Split(string(b), "\n") {
+		have[strings.TrimPrefix(strings.TrimSpace(l), "/")] = true
+	}
+	var add strings.Builder
+	for _, l := range ignoredLines {
+		if !have[l] {
+			add.WriteString(l + "\n")
+		}
+	}
+	if add.Len() == 0 {
+		return nil
+	}
+	out := string(b)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return os.WriteFile(path, []byte(out+add.String()), 0o600) //nolint:gosec // fixed name under home
 }

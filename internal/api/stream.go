@@ -328,6 +328,22 @@ func (h *hub) handle(c store.Change) bool {
 			h.publish("killswitch.changed", v, nil, false)
 		}
 		return true
+	case store.ResSensorState:
+		f := h.s.opts.Workspace().Sensor(c.ID)
+		if f == nil {
+			return false
+		}
+		ks, err := st.GetKillSwitch(ctx)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		status, err := h.s.sensorStatus(ctx, f.Name, f.Value, f.Valid(), ks.Paused)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		h.publish("sensor.changed", sensorChangedView{ID: f.Name, Status: status}, map[string]string{"sensor_id": f.Name}, false)
 	case store.ResSensorRun:
 		r, err := st.GetSensorRun(ctx, c.ID)
 		if err != nil {
@@ -449,6 +465,13 @@ func (h *hub) handle(c store.Change) bool {
 	return false
 }
 
+// sensorChangedView is the data of `sensor.changed`: a sensor's status moved
+// (paused or resumed, or a poll recorded its outcome).
+type sensorChangedView struct {
+	ID     string           `json:"id"`
+	Status sensorStatusView `json:"status"`
+}
+
 // ---- config changes ----
 
 type configChangeView struct {
@@ -479,7 +502,11 @@ func (s *Server) PublishConfigChange(paths []string) {
 			v.ID = &id
 		}
 		if _, hash, err := spec.ReadFile(s.opts.Home, k, id); err == nil {
-			v.Hash = &hash
+			// A hash of a secrets file would let a stream reader test guesses
+			// against it, so per-sensor env files announce no hash.
+			if k != spec.KindSensorEnv {
+				v.Hash = &hash
+			}
 		} else {
 			v.Deleted = true
 		}

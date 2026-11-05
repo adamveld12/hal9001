@@ -25,14 +25,16 @@ import (
 // engineDouble stands in for core.Engine. Tests script the call they exercise;
 // an unscripted call fails with an error so it surfaces as a 500.
 type engineDouble struct {
-	inject   func(ctx context.Context, sensorID string, item json.RawMessage) (core.InjectResult, error)
-	poll     func(ctx context.Context, sensorID string) (*store.SensorRun, error)
-	replay   func(ctx context.Context, eventID, flowID string, dryRun bool) (*store.FlowRun, error)
-	testNode func(ctx context.Context, req core.TestNodeRequest) (*store.FlowRun, *store.NodeRun, error)
-	decide   func(ctx context.Context, id string, d core.ApprovalDecision) (*store.Approval, error)
-	pause    func(ctx context.Context, killRunning bool, principal string) (store.KillSwitch, error)
-	resume   func(ctx context.Context, principal string) (store.KillSwitch, error)
-	probe    func(ctx context.Context, name string) (core.ProbeResult, error)
+	inject       func(ctx context.Context, sensorID string, item json.RawMessage) (core.InjectResult, error)
+	poll         func(ctx context.Context, sensorID string) (*store.SensorRun, error)
+	pauseSensor  func(ctx context.Context, sensorID, principal string) (store.SensorState, error)
+	resumeSensor func(ctx context.Context, sensorID string) (store.SensorState, error)
+	replay       func(ctx context.Context, eventID, flowID string, dryRun bool) (*store.FlowRun, error)
+	testNode     func(ctx context.Context, req core.TestNodeRequest) (*store.FlowRun, *store.NodeRun, error)
+	decide       func(ctx context.Context, id string, d core.ApprovalDecision) (*store.Approval, error)
+	pause        func(ctx context.Context, killRunning bool, principal string) (store.KillSwitch, error)
+	resume       func(ctx context.Context, principal string) (store.KillSwitch, error)
+	probe        func(ctx context.Context, name string) (core.ProbeResult, error)
 }
 
 var errUnscripted = errors.New("engineDouble: call not scripted")
@@ -49,6 +51,20 @@ func (d *engineDouble) PollSensor(ctx context.Context, sensorID string) (*store.
 		return nil, errUnscripted
 	}
 	return d.poll(ctx, sensorID)
+}
+
+func (d *engineDouble) PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error) {
+	if d.pauseSensor == nil {
+		return store.SensorState{}, errUnscripted
+	}
+	return d.pauseSensor(ctx, sensorID, principal)
+}
+
+func (d *engineDouble) ResumeSensor(ctx context.Context, sensorID string) (store.SensorState, error) {
+	if d.resumeSensor == nil {
+		return store.SensorState{}, errUnscripted
+	}
+	return d.resumeSensor(ctx, sensorID)
 }
 
 func (d *engineDouble) Replay(ctx context.Context, eventID, flowID string, dryRun bool) (*store.FlowRun, error) {

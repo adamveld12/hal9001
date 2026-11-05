@@ -21,19 +21,24 @@ type Redactor struct {
 // contains another is replaced as a whole. The JSON-escaped form of each value is
 // also redacted, since stdout is usually JSON. When several keys share a value the
 // alphabetically first key names it.
-func NewRedactor(secrets map[string]string) *Redactor {
+//
+// Several maps may be given (the global env and per-sensor env files): every
+// value of every map is redacted, named by its own key.
+func NewRedactor(secrets ...map[string]string) *Redactor {
 	type pair struct{ val, key string }
 	byVal := map[string]string{}
-	for k, v := range secrets {
-		if len(v) < MinSecretLen {
-			continue
-		}
-		if cur, ok := byVal[v]; !ok || k < cur {
-			byVal[v] = k
-		}
-		if esc := jsonEscaped(v); esc != v {
-			if cur, ok := byVal[esc]; !ok || k < cur {
-				byVal[esc] = k
+	for _, m := range secrets {
+		for k, v := range m {
+			if len(v) < MinSecretLen {
+				continue
+			}
+			if cur, ok := byVal[v]; !ok || k < cur {
+				byVal[v] = k
+			}
+			if esc := jsonEscaped(v); esc != v {
+				if cur, ok := byVal[esc]; !ok || k < cur {
+					byVal[esc] = k
+				}
 			}
 		}
 	}

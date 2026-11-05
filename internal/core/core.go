@@ -80,6 +80,11 @@ type Engine interface {
 	InjectEvent(ctx context.Context, sensorID string, item json.RawMessage) (InjectResult, error)
 	// PollSensor runs one poll now and returns the recorded sensor run.
 	PollSensor(ctx context.Context, sensorID string) (*store.SensorRun, error)
+	// PauseSensor stops the scheduler polling one sensor (persisted; idempotent).
+	// Poll now and event injection still work. principal is recorded as who paused it.
+	PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error)
+	// ResumeSensor lets the scheduler poll the sensor again (idempotent).
+	ResumeSensor(ctx context.Context, sensorID string) (store.SensorState, error)
 	// Replay creates a kind=replay flow run of eventID through the current flow version.
 	Replay(ctx context.Context, eventID, flowID string, dryRun bool) (*store.FlowRun, error)
 	// TestNode runs a single node as a kind=test flow run and waits for it to finish.

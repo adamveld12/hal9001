@@ -82,13 +82,18 @@ mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --
 | Remote access | Tailscale (optional) | See [docs/auth.md](docs/auth.md#tailscale). |
 
 Credentials go in `~/.hal9001/env` (`KEY=VALUE` per line, injected into every sensor and command node, never shown by
-the UI or API, and redacted from stored output). The first run seeds `env.example` next to it:
+the UI or API, and redacted from stored output). A sensor can also have its own values (for example `LINEAR_API_KEY`
+on the Linear sensor): set them in the sensor's Environment section in the UI or with `hal9001 sensors env set`. They
+are stored in `env.d/sensors/<id>.env`, reach only that sensor and override a same-named global value. The first run
+seeds `env.example` next to it:
 
 ```sh
 cp ~/.hal9001/env.example ~/.hal9001/env && chmod 600 ~/.hal9001/env
 $EDITOR ~/.hal9001/env
 # or, without exposing the value in the process list or shell history:
 printf %s "$LINEAR_API_KEY" | bin/hal9001 env set LINEAR_API_KEY --stdin
+# or only for one sensor:
+printf %s "$LINEAR_API_KEY" | bin/hal9001 sensors env set linear-assigned LINEAR_API_KEY --stdin
 ```
 
 The ACP runtimes need extra care (isolated agent homes, adapter paths): see [docs/runtimes.md](docs/runtimes.md).
@@ -136,12 +141,13 @@ agents are forced read-only and side-effect nodes are skipped.
 ## Home directory
 
 `~/.hal9001` (override with `--home` / `HAL9001_HOME`). Config files are meant to be versioned in git; the seeded
-`.gitignore` excludes `data/` and `env`.
+`.gitignore` excludes `data/`, `env` and `env.d/` (an existing `.gitignore` gets missing lines appended at start).
 
 ```
 ~/.hal9001/
   config.yaml          # concurrency, retention, notifications, allowed_hosts/logins, runtimes, auth
   env                  # KEY=VALUE secrets injected into every node (not in git)
+  env.d/sensors/<id>.env  # per-sensor KEY=VALUE secrets (mode 0600, not in git); override env for that sensor
   env.example          # seeded template for env
   sensors/*.yaml       # one file per sensor
   flows/*.yaml         # one file per flow
@@ -228,7 +234,11 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `status` | Daemon counters and kill switch state. |
 | `tailscale status` | Tailscale CLI reachability, this Mac's tailnet hostname and owner, whether serve is configured, whether the hostname is in `allowed_hosts`. |
 | `sensors list` / `sensors get <id>` | |
-| `sensors poll <id>` | Poll now (rejected while paused). |
+| `sensors poll <id>` | Poll now (rejected while the kill switch is engaged; works on a paused sensor). |
+| `sensors pause <id>` / `sensors resume <id>` | Stop or restart the scheduled polls of one sensor. Persisted across restarts; `poll` and `events inject` still work while paused. |
+| `sensors env list <id>` | Key names of the sensor's own env, and whether each overrides a global key. Values are never shown. |
+| `sensors env set <id> <KEY> [value]` | `--stdin` reads the value from stdin. Takes effect on the next poll. |
+| `sensors env unset <id> <KEY>` | |
 | `events list` | `--sensor`, `--flow`, `--kind`, `--status`, `--decision`, `--q`, `--since`, `--until` (RFC 3339), `--limit`, `--cursor` |
 | `events get <id>` | The event with its fan-out of flow runs. |
 | `events inject <sensor-id>` | `--file item.json` (default: JSON on stdin). Goes through dedup and fan-out like a polled item. |

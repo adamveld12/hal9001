@@ -8,6 +8,7 @@ export const QUERY_ROOTS = [
   "sensors",
   "sensor",
   "sensor-runs",
+  "sensor-env",
   "flows",
   "flow",
   "flow-versions",

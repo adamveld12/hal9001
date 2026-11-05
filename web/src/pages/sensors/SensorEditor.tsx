@@ -30,9 +30,12 @@ import {
 } from "../files/diagnostics";
 import { DiagnosticsList } from "../files/DiagnosticsList";
 import { useEditState } from "../files/useEditState";
+import { PauseToggle } from "./PauseToggle";
+import { SensorEnvSection } from "./SensorEnvSection";
 import { SensorRuns } from "./SensorRuns";
 import {
   UNSCHEDULED_TITLE,
+  pausedTitle,
   pollErrorMessage,
   scheduleLabel,
   sensorStateTone,
@@ -135,9 +138,16 @@ function Editor({
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="m-0 font-mono text-sm font-semibold">{id}</h2>
-        <Badge tone={sensorStateTone(status.state)}>{status.state}</Badge>
+        <span title={pausedTitle(status) ?? undefined}>
+          <Badge tone={sensorStateTone(status.state)}>{status.state}</Badge>
+        </span>
         <span className="text-xs text-muted">{detail.path}</span>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-start gap-2">
+          <PauseToggle
+            sensorId={id}
+            paused={status.paused}
+            disabled={status.state === "invalid"}
+          />
           <Button
             icon="play"
             disabled={poll.isPending || status.state === "invalid"}
@@ -176,6 +186,24 @@ function Editor({
         />
         <Meta label="New items (24h)" value={status.new_items_24h} />
       </dl>
+
+      {status.paused && (
+        <div
+          role="status"
+          className="rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn"
+        >
+          Paused
+          {status.paused_by ? ` by ${status.paused_by}` : ""}
+          {status.paused_at ? (
+            <>
+              {" "}
+              <Time ts={status.paused_at} />
+            </>
+          ) : null}
+          . The scheduler does not poll this sensor; Poll now and event
+          injection still work.
+        </div>
+      )}
 
       {poll.isError && (
         <div role="alert" className="text-xs text-bad">
@@ -270,6 +298,8 @@ function Editor({
           />
         </div>
       </Panel>
+
+      <SensorEnvSection sensorId={id} />
 
       <Panel title="Recent polls" className="overflow-hidden">
         <div className="-m-3">

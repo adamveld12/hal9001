@@ -94,7 +94,7 @@ func TestEveryOperationIsDeclaredAndDocumentsProblems(t *testing.T) {
 	})
 	// Capabilities of REQUIREMENTS §10.2 and §11 that must exist as operations.
 	for _, id := range []string{
-		"listSensors", "createSensor", "getSensor", "updateSensor", "deleteSensor", "validateSensor", "pollSensor",
+		"listSensors", "createSensor", "getSensor", "updateSensor", "deleteSensor", "validateSensor", "pollSensor", "pauseSensor", "resumeSensor", "listSensorEnv", "setSensorEnv", "deleteSensorEnv",
 		"listSensorRuns", "getSensorRun",
 		"listEvents", "injectEvent", "getEvent", "replayEvent",
 		"listFlows", "createFlow", "getFlow", "updateFlow", "deleteFlow", "validateFlow", "testFlowNode",

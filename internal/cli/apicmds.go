@@ -117,7 +117,7 @@ func (a *app) tree() *command {
 		group("killswitch", "pause and resume the daemon", killswitchCmds()...),
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
-		group("env", "list, set and unset env variables", envCmds()...),
+		group("env", "list, set and unset env variables", envCmds(false)...),
 	}}
 	return root
 }
@@ -140,6 +140,13 @@ func sensorCmds() []*command {
 	return []*command{
 		cmd("list", "list sensors", apiGet("/api/sensors", "id", "status.state", "status.last_success_at", "status.new_items_24h")),
 		cmd("get", "show one sensor", idGet("/api/sensors/%s")),
+		cmd("pause", "stop scheduled polls of a sensor (poll now and inject still work)", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
+			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/pause", nil, nil)
+		}}),
+		cmd("resume", "resume scheduled polls of a paused sensor", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
+			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/resume", nil, nil)
+		}}),
+		group("env", "list, set and unset a sensor's own env variables (secrets, write-only)", envCmds(true)...),
 		cmd("poll", "poll a sensor now", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/poll", nil, nil)
 		}}),
@@ -615,20 +622,31 @@ func runtimeCmds() []*command {
 	}
 }
 
-func envCmds() []*command {
+// envCmds are the env list/set/unset commands. With perSensor they work on
+// one sensor's own env (`sensors env ... <id> ...`): the sensor id is the
+// first argument and the paths are under /api/sensors/<id>/env. The values are
+// write-only either way.
+func envCmds(perSensor bool) []*command {
 	var fromStdin bool
+	name, who, idArg, n := "env", "", "", 0
+	base := func(c *call) (string, []string) { return "/api/env", c.args }
+	if perSensor {
+		name, who, idArg, n = "sensors env", " on a sensor", "<sensor-id> ", 1
+		base = func(c *call) (string, []string) { return "/api/sensors/" + esc(c.args[0]) + "/env", c.args[1:] }
+	}
 	set := &leaf{
-		usage: "<KEY> [value]   (without a value, or with --stdin, the value is read from stdin)", minArgs: 1, maxArgs: 2,
+		usage: idArg + "<KEY> [value]   (without a value, or with --stdin, the value is read from stdin)", minArgs: 1 + n, maxArgs: 2 + n,
 		flags: func(fs *flag.FlagSet) {
 			fs.BoolVar(&fromStdin, "stdin", false, "read the value from stdin (keeps it out of the process list and shell history)")
 		},
 		run: func(ctx context.Context, c *call) error {
+			path, rest := base(c)
 			var value string
 			switch {
-			case len(c.args) == 2 && !fromStdin:
-				value = c.args[1]
-			case len(c.args) == 2:
-				return usagef("env set: give the value as an argument or with --stdin, not both")
+			case len(rest) == 2 && !fromStdin:
+				value = rest[1]
+			case len(rest) == 2:
+				return usagef("%s set: give the value as an argument or with --stdin, not both", name)
 			default:
 				data, err := c.readInput("-")
 				if err != nil {
@@ -637,14 +655,22 @@ func envCmds() []*command {
 				value = strings.TrimRight(string(data), "\r\n")
 			}
 			body, _ := jsonBody(map[string]string{"value": value})
-			return c.doEmit(ctx, http.MethodPut, "/api/env/"+esc(c.args[0]), nil, body)
+			return c.doEmit(ctx, http.MethodPut, path+"/"+esc(rest[0]), nil, body)
 		},
 	}
+	list := apiGet("/api/env", "key")
+	if perSensor {
+		list = &leaf{usage: "<sensor-id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
+			path, _ := base(c)
+			return c.doEmit(ctx, http.MethodGet, path, nil, nil, "key", "overrides_global")
+		}}
+	}
 	return []*command{
-		cmd("list", "list env variable names (values are never shown)", apiGet("/api/env", "key")),
-		cmd("set", "create or replace an env variable", set),
-		cmd("unset", "remove an env variable", &leaf{usage: "<KEY>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
-			return c.doEmit(ctx, http.MethodDelete, "/api/env/"+esc(c.args[0]), nil, nil)
+		cmd("list", "list env variable names"+who+" (values are never shown)", list),
+		cmd("set", "create or replace an env variable"+who, set),
+		cmd("unset", "remove an env variable"+who, &leaf{usage: idArg + "<KEY>", minArgs: 1 + n, maxArgs: 1 + n, run: func(ctx context.Context, c *call) error {
+			path, rest := base(c)
+			return c.doEmit(ctx, http.MethodDelete, path+"/"+esc(rest[0]), nil, nil)
 		}}),
 	}
 }

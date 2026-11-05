@@ -5,7 +5,7 @@ interval: 5m
 lang: bash
 script: |
   set -euo pipefail
-  : "${LINEAR_API_KEY:?LINEAR_API_KEY is not set (see env.example)}"
+  : "${LINEAR_API_KEY:?LINEAR_API_KEY is not set - set it in the sensor Environment section of the UI or in the global env file, see env.example}"
 
   since=${HAL_LAST_SUCCESS_AT:-}
   [ -n "$since" ] || since=$(jq -nr 'now - 86400 | todate')
