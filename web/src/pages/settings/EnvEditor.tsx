@@ -12,15 +12,20 @@ import {
   Td,
   TextInput,
   Th,
+  Toggle,
 } from "../../components/ui";
 import { ConfirmButton } from "./ConfirmButton";
 import { envKeyError } from "./envKey";
+import {
+  rowDisplay,
+  saveInput,
+  secretForKey,
+  toggleInput,
+  type EnvKeyRow,
+  type EnvSetInput,
+} from "./envView";
 
-export interface EnvKeyRow {
-  key: string;
-  /** Shown as a badge: the key also exists in the global env and this one wins. */
-  overridesGlobal?: boolean;
-}
+export type { EnvKeyRow };
 
 interface Mutation<V> {
   mutate: (v: V, o?: { onSuccess?: () => void }) => void;
@@ -30,8 +35,8 @@ interface Mutation<V> {
 }
 
 /**
- * Lists key names of an env file and sets, replaces or removes a value. Values
- * are write-only: nothing here can read one back. Used for the global `env`
+ * Lists the keys of an env file and sets, replaces, removes or re-flags them.
+ * Secret values are write-only; plain values are shown. Used for the global `env`
  * file (Settings) and for a sensor's own env file (sensor page).
  */
 export function EnvEditor({
@@ -51,7 +56,7 @@ export function EnvEditor({
     data: readonly EnvKeyRow[] | undefined;
     refetch: () => unknown;
   };
-  set: Mutation<{ key: string; value: string }>;
+  set: Mutation<EnvSetInput>;
   remove: Mutation<string>;
   listTitle: string;
   description: ReactNode;
@@ -60,6 +65,7 @@ export function EnvEditor({
 }) {
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
+  const [secret, setSecret] = useState(true);
   const formRef = useRef<HTMLFormElement>(null);
 
   const keyProblem = key === "" ? undefined : envKeyError(key);
@@ -69,15 +75,13 @@ export function EnvEditor({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (envKeyError(key) || value === "") return;
-    set.mutate(
-      { key, value },
-      {
-        onSuccess: () => {
-          setKey("");
-          setValue("");
-        },
+    set.mutate(saveInput(key, value, secret), {
+      onSuccess: () => {
+        setKey("");
+        setValue("");
+        setSecret(true);
       },
-    );
+    });
   };
 
   return (
@@ -111,15 +115,22 @@ export function EnvEditor({
                       </Badge>
                     )}
                   </Td>
-                  <Td className="text-muted">
-                    <span aria-label="hidden">••••••••</span>
+                  <Td className="font-mono text-muted">
+                    <RowValue row={r} />
                   </Td>
                   <Td>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex items-center justify-end gap-2">
+                      <Toggle
+                        label="Secret"
+                        checked={r.secret}
+                        disabled={set.isPending}
+                        onChange={() => set.mutate(toggleInput(r))}
+                      />
                       <Button
                         onClick={() => {
                           setKey(r.key);
-                          setValue("");
+                          setValue(r.value ?? "");
+                          setSecret(r.secret);
                           formRef.current
                             ?.querySelector<HTMLInputElement>(
                               "input[name=value]",
@@ -160,7 +171,10 @@ export function EnvEditor({
                 autoComplete="off"
                 placeholder={namePlaceholder}
                 invalid={!!keyProblem}
-                onChange={(e) => setKey(e.target.value)}
+                onChange={(e) => {
+                  setKey(e.target.value);
+                  setSecret(secretForKey(rows, e.target.value, secret));
+                }}
               />
             </Field>
             <Field
@@ -169,7 +183,7 @@ export function EnvEditor({
             >
               <TextInput
                 name="value"
-                type="password"
+                type={secret ? "password" : "text"}
                 value={value}
                 autoComplete="new-password"
                 // Password managers must not offer to save an env value as a login.
@@ -180,6 +194,7 @@ export function EnvEditor({
               />
             </Field>
           </div>
+          <Toggle label="Secret" checked={secret} onChange={setSecret} />
           <div className="flex items-center gap-2">
             <Button
               type="submit"
@@ -201,4 +216,10 @@ export function EnvEditor({
       </Panel>
     </div>
   );
+}
+
+function RowValue({ row }: { row: EnvKeyRow }) {
+  const d = rowDisplay(row);
+  if (d.kind === "secret") return <span aria-label="hidden">••••••••</span>;
+  return d.empty ? <span className="italic">(empty)</span> : <>{d.text}</>;
 }

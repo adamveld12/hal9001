@@ -114,7 +114,7 @@ What the agent can and cannot see:
 | Names of the variables of the `env` file and of the target sensor's `env.d` file | Yes (in `AGENTS.md`, `CLAUDE.md` and the prompt) |
 | Values of those variables | **No.** The agent process starts from a minimal environment (`HOME`, `USER`, `PATH`, ... as for nodes) plus `HAL9001_URL` and `HAL9001_ASSIST_SESSION`. `PATH` has the directory of the running `hal9001` binary first, so `hal9001 assist test` works. |
 | Values of another sensor's `env.d` file | No, and names only for the target sensor. |
-| The result of `hal9001 assist test` | Yes, **redacted**: every value of the global env file and of every sensor env file is replaced by `«KEY»` in stdout, stderr and the rendered dedup keys. |
+| The result of `hal9001 assist test` | Yes, **redacted**: every secret value of the global env file and of every sensor env file (values marked plain are not secret) is replaced by `«KEY»` in stdout, stderr and the rendered dedup keys. |
 
 `POST /api/assist/sessions/{id}/test` (the endpoint behind `hal9001 assist test`) runs the draft **like Poll now**: `lang`,
 `script`/`command`, `cwd` and `timeout` of the draft, the `HAL_*` variables with `HAL_STATE_DIR` in a temporary directory and

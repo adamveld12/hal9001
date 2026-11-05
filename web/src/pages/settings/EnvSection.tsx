@@ -5,7 +5,7 @@ import {
 } from "../../api/settings";
 import { EnvEditor } from "./EnvEditor";
 
-/** Names in the `env` file. Values are write-only: nothing here can read one back. */
+/** Keys in the `env` file. Secret values are write-only; plain values are shown. */
 export function EnvSection() {
   const keys = useEnvKeys();
   const set = useSetEnvValue();
@@ -17,13 +17,13 @@ export function EnvSection() {
         isError: keys.isError,
         isSuccess: keys.isSuccess,
         error: keys.error,
-        data: keys.data?.map((key) => ({ key })),
+        data: keys.data,
         refetch: keys.refetch,
       }}
       set={set}
       remove={remove}
       listTitle="Environment keys"
-      description="Injected into every node process and redacted from stored output. Values are write-only: they are never shown, even here."
+      description="Injected into every node process and redacted from stored output unless marked not secret. Secret values (the default) are write-only: never shown, even here. Plain values are shown and not redacted."
       emptyHint="Add a key below, for example a token a command node needs."
     />
   );

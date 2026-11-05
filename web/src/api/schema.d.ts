@@ -376,10 +376,11 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Environment key names of a sensor
-     * @description Names from the sensor's own env file (`env.d/sensors/<id>.env`) only. Values are write-only and never returned
-     *     by any endpoint. `overrides_global` tells whether the key also exists in the global `env` file, whose value
-     *     the sensor's own value then replaces for this sensor's polls.
+     * Environment keys of a sensor
+     * @description Keys from the sensor's own env file (`env.d/sensors/<id>.env`) only. Secret values (the default) are write-only
+     *     and never returned by any endpoint; a key marked plain (`secret: false`) returns its `value` and is not
+     *     redacted from output. `overrides_global` tells whether the key also exists in the global `env` file, whose
+     *     value the sensor's own value then replaces for this sensor's polls.
      */
     get: operations["listSensorEnv"];
     put?: never;
@@ -405,7 +406,9 @@ export interface paths {
      * Set an environment value on a sensor
      * @description Creates or replaces the key in the sensor's own env file. The file is not part of the sensor YAML and is
      *     git-ignored. The value is injected into this sensor's poll process on top of the global env (the sensor's value
-     *     wins) and redacted, like every global env value, from stored output. Takes effect on the next poll.
+     *     wins) and, unless `secret` is false, redacted like every global env value from stored output. Takes effect on
+     *     the next poll. Omit `value` to change only the `secret` flag of an existing key (404 when the key does not
+     *     exist).
      */
     put: operations["setSensorEnv"];
     post?: never;
@@ -1301,8 +1304,9 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Environment key names
-     * @description Names from the `env` file only. Values are write-only and never returned by any endpoint.
+     * Environment keys
+     * @description Keys from the `env` file only. Secret values (the default) are write-only and never returned by any endpoint;
+     *     a key marked plain (`secret: false`) returns its `value` and is not redacted from output.
      */
     get: operations["listEnvKeys"];
     put?: never;
@@ -1325,7 +1329,9 @@ export interface paths {
     get?: never;
     /**
      * Set an environment value
-     * @description Creates or replaces the key in the `env` file. The value is injected into every node process and redacted from stored output.
+     * @description Creates or replaces the key in the `env` file. The value is injected into every node process and, unless
+     *     `secret` is false, redacted from stored output. Omit `value` to change only the `secret` flag of an existing
+     *     key (404 when the key does not exist). The flag is stored in the file as a `# hal:plain KEY ...` comment line.
      */
     put: operations["setEnvValue"];
     post?: never;
@@ -2388,17 +2394,31 @@ export interface components {
     EnvKeyList: {
       items: {
         key: components["schemas"]["EnvKeyName"];
+        /** @description Secret values are redacted from output and never returned. A key is secret unless marked plain. */
+        secret: boolean;
+        /** @description The value of a plain key (`secret: false`); null for a secret key. */
+        value: string | null;
       }[];
     };
     SensorEnvKeyList: {
       items: {
         key: components["schemas"]["EnvKeyName"];
+        /** @description Secret values are redacted from output and never returned. A key is secret unless marked plain. */
+        secret: boolean;
+        /** @description The value of a plain key (`secret: false`); null for a secret key. */
+        value: string | null;
         /** @description The global `env` file has the same key; this sensor sees its own value. */
         overrides_global: boolean;
       }[];
     };
+    /**
+     * @description At least one of `value` and `secret` is required. With `value`, the key is created or replaced and `secret`
+     *     defaults to true. Without `value`, only the flag of an existing key changes.
+     */
     EnvSetRequest: {
-      value: string;
+      value?: string;
+      /** @description false marks the value as not secret: it is not redacted from output and the API returns it. Default true. */
+      secret?: boolean;
     };
     /** @description `agentInfo` from the ACP `initialize` response. */
     AgentInfo: {
@@ -5756,6 +5776,7 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];

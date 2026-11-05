@@ -10,6 +10,9 @@
 #   IMAP_SEARCH    IMAP search criteria, default UNSEEN
 #   IMAP_MAX       newest messages per poll, default 50
 #
+# Mark everything except IMAP_PASSWORD plain (the Secret toggle in the Environment section, or `--plain`): plain values
+# are not redacted, so your own address shows normally in stored items instead of as «IMAP_USER».
+#
 # Gmail needs IMAP enabled (Gmail Settings > Forwarding and POP/IMAP). A Workspace admin can disable IMAP or app
 # passwords; the poll then fails with AUTHENTICATIONFAILED and only the admin can fix it.
 #

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+
+	"hal9001/internal/spec"
 )
 
 type flowDef struct {
@@ -384,5 +386,20 @@ func TestClassifyRoutesBySize(t *testing.T) {
 				t.Errorf("want port %s, got %s", tc.port, out)
 			}
 		})
+	}
+}
+
+// env.example is copied to the global env file as is: it must not mark anything plain by accident.
+func TestEnvExampleMarksNothingPlain(t *testing.T) {
+	raw, err := FS.ReadFile("env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, ds := spec.ParseEnv(raw)
+	if spec.HasErrors(ds) {
+		t.Fatal(ds)
+	}
+	if len(env.Plain) != 0 {
+		t.Errorf("env.example marks %v plain", env.Plain)
 	}
 }

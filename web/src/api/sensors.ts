@@ -176,7 +176,7 @@ export function useResumeSensor() {
 
 export type SensorEnvKey = Schemas["SensorEnvKeyList"]["items"][number];
 
-/** Names in the sensor's own env file and whether each overrides a global key. Values are never available. */
+/** Keys in the sensor's own env file: secret flag, whether each overrides a global key, and the value of plain keys only. */
 export function useSensorEnv(id: string) {
   return useQuery({
     queryKey: qk("sensor-env", id),
@@ -189,11 +189,11 @@ export function useSensorEnv(id: string) {
 export function useSetSensorEnv(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { key: string; value: string }) =>
+    mutationFn: (v: { key: string; value?: string; secret?: boolean }) =>
       unwrapVoid(
         api.PUT("/api/sensors/{id}/env/{key}", {
           params: { path: { id, key: v.key } },
-          body: { value: v.value },
+          body: { value: v.value, secret: v.secret },
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk("sensor-env", id) }),

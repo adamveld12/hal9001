@@ -29,23 +29,23 @@ export function useUpdateSettings() {
   });
 }
 
-/** Names of keys in the `env` file. Values are never available. */
+/** Keys in the `env` file: secret flag, and the value of plain keys only. */
 export function useEnvKeys() {
   return useQuery({
     queryKey: qk("env"),
     queryFn: () => unwrap(api.GET("/api/env")),
-    select: (d) => d.items.map((i) => i.key),
+    select: (d) => d.items,
   });
 }
 
 export function useSetEnvValue() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { key: string; value: string }) =>
+    mutationFn: (v: { key: string; value?: string; secret?: boolean }) =>
       unwrapVoid(
         api.PUT("/api/env/{key}", {
           params: { path: { key: v.key } },
-          body: { value: v.value },
+          body: { value: v.value, secret: v.secret },
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk("env") }),

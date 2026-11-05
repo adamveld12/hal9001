@@ -186,9 +186,18 @@ separate: it pauses every sensor and also rejects "Poll now".
 file: the Environment section of the sensor page, or `hal9001 sensors env set <id> KEY`. They are stored in
 `env.d/sensors/<id>.env` (mode 0600, git-ignored; sensor YAML stays safe to commit), not in the sensor YAML. A poll
 gets the global `env` values with the sensor's own values on top (the sensor's value wins; the UI marks keys that
-override a global one). Values are write-only: the API and UI list key names only. They are redacted from stored
-output like the global values. A change applies on the next poll without a restart, and deleting the sensor deletes its
-env file.
+override a global one). Secret values are write-only: the API and UI list key names only. They are redacted from
+stored output like the global values. A change applies on the next poll without a restart, and deleting the sensor
+deletes its env file.
+
+**Plain (non-secret) values.** Every env value is secret by default. A value that is not sensitive, such as a login
+name or a host name, can be marked plain: the Secret toggle in the env editor (global or per sensor),
+`hal9001 env set KEY --plain` / `hal9001 sensors env set <id> KEY --plain` (with no value, `--plain` and `--secret`
+flip the flag of an existing key), or `secret: false` in `PUT /api/env/{key}` and `PUT /api/sensors/{id}/env/{key}`
+(omit `value` to flip only the flag). The flag is stored in the same file as a comment line,
+`# hal:plain KEY1 KEY2`, so the file stays plain `KEY=VALUE` text and the marker survives hand edits. A plain value is
+still injected into the process, but it is not redacted from stored output, and the env listings return its `value`.
+Secret values are never returned. A key written with `value` and without `secret` becomes secret again.
 
 **Email: the `imap-mail` sensor.** The default email sensor reads any IMAP mailbox with the Python 3 standard library
 (no packages, no OAuth). It is meant for Gmail with an app password and is configured entirely in its own Environment
@@ -210,8 +219,10 @@ section (`IMAP_USER`, `IMAP_PASSWORD`; optional `IMAP_HOST`, `IMAP_PORT`, `IMAP_
   app passwords; the poll then fails with `AUTHENTICATIONFAILED` in its stderr and only the admin can fix that.
 - `IMAP_TLS=none` sends the password in clear and exists for tests and local bridges only. Failures (login, TLS,
   connection, unknown mailbox) exit non-zero with a message that never contains the password.
-- Stored output is redacted like any env value, so your own address (the `IMAP_USER` value) shows as `«IMAP_USER»`
-  in `to`/`cc`/`from` fields of stored events.
+- Stored output is redacted like any secret env value, so while `IMAP_USER` is secret your own address shows as
+  `«IMAP_USER»` in the `to`/`cc`/`from_address` fields of stored events. Mark `IMAP_USER`, `IMAP_HOST`, `IMAP_PORT`,
+  `IMAP_TLS`, `IMAP_MAILBOX`, `IMAP_SEARCH` and `IMAP_MAX` plain (they are not sensitive) and the address appears as
+  is. Keep `IMAP_PASSWORD` secret.
 - `gmail-unread` (the `gog` CLI) remains as an alternative, but it needs Google OAuth, which a Workspace admin can
   block. To use it, change the `email-secretary` flow to subscribe to `gmail-unread` and the prompt's
   `{{.input.snippet}}` to `{{.input.text}}`.

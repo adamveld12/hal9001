@@ -136,7 +136,7 @@ timeout: 60s
 
 Pause: a sensor can be paused on its own (`POST /api/sensors/{id}/pause`, `hal9001 sensors pause`). The state is stored in the database (not the YAML), survives restarts and records who and when. The scheduler skips a paused sensor and `next_poll_at` is null; "Poll now" and event injection still work, since they are explicit user actions.
 
-Per-sensor env: a sensor's own secrets live in `env.d/sensors/<id>.env`, never in its YAML. A poll gets `env` overlaid with the sensor's values (the sensor wins). Values are write-only (API and UI list names only).
+Per-sensor env: a sensor's own secrets live in `env.d/sensors/<id>.env`, never in its YAML. A poll gets `env` overlaid with the sensor's values (the sensor wins). Secret values are write-only (API and UI list names only). A key can be marked plain (not secret) with a `# hal:plain KEY ...` comment line in the env file (UI Secret toggle, `--plain` in the CLI, `secret: false` in the API); a plain value is returned by the env listings and is not redacted. Default is secret.
 
 Email: the default is `imap-mail` because Google OAuth can be blocked by Workspace admins. Gmail CLI: neither `gog` nor `gws` is installed yet. The alternative `gmail-unread` uses `gog`; its template is verified once installed (see §13). The `email-secretary` flow subscribes to `imap-mail`.
 
@@ -359,7 +359,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 | webauthn_credentials | id, rp_id, public key, sign count, label, created, last used |
 
 - Payloads > 64 KiB are stored as blobs (content-addressed, zstd).
-- Secret redaction: values from the `env` file and the per-sensor env files are replaced with `«KEY»` in stored stdout/stderr/argv.
+- Secret redaction: secret values from the `env` file and the per-sensor env files are replaced with `«KEY»` in stored stdout/stderr/argv. Values marked plain (`# hal:plain KEY ...`) are not secret and are not redacted.
 - Retention: `retention_days` (default 30). Nightly prune of runs, events, blobs, and worktrees older than that, except anything linked to a starred inbox item or a pending approval. Dedup keys are retained longer (`dedup_retention_days`, default 180) so old items don't re-fire.
 
 ## 10. Daemon, API, network, and auth
@@ -493,7 +493,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 | Flows | List (enabled, dry-run, last run, error rate). Editor: canvas with node palette (command, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; save writes YAML. |
 | Sensors | List with status, last poll, new items, errors; edit (same code editor), "Poll now", recent SensorRuns. |
 | Prompts | List / edit prompt files with preview rendered against a sample event. |
-| Settings | Concurrency, retention, notification threshold, env file keys (names only, values masked), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |
+| Settings | Concurrency, retention, notification threshold, env file keys (names and secret flag; secret values masked, plain values shown, per-key Secret toggle), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |
 
 ## 12. Acceptance scenarios (what I will test)
 
@@ -515,7 +515,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 14. Kill switch: sensors stop polling; "pause + kill" terminates a running agent; state survives restart.
 15. Restart daemon mid-run → run marked `interrupted`; pending approval still approvable.
 16. Edit a flow in the UI → YAML file updated; edit the YAML by hand → UI reflects it; conflicting save rejected.
-17. Secrets from `env` never appear unredacted in any trace view.
+17. Secret values from `env` never appear unredacted in any trace view.
 18. Cross-origin POST (`Origin: https://evil.example`) and a `text/plain` POST to `localhost:9001/api/...` are rejected; a request with `Host: evil.example` (DNS rebinding) is rejected.
 19. Starter sensors (Slack, GitHub, Linear, Gmail) poll successfully with real credentials.
 20. Every scenario above except 1, 6's notification, and 19 is also covered by an automated Go test that drives only the REST API (with `fake-acp-agent` for agent scenarios), and each can be reproduced by hand with `curl` or the CLI.

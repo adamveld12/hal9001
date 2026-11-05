@@ -147,7 +147,7 @@ func sensorCmds() []*command {
 		cmd("resume", "resume scheduled polls of a paused sensor", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/resume", nil, nil)
 		}}),
-		group("env", "list, set and unset a sensor's own env variables (secrets, write-only)", envCmds(true)...),
+		group("env", "list, set and unset a sensor's own env variables (values are secret and write-only unless set with --plain)", envCmds(true)...),
 		cmd("poll", "poll a sensor now", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/poll", nil, nil)
 		}}),
@@ -626,10 +626,11 @@ func runtimeCmds() []*command {
 
 // envCmds are the env list/set/unset commands. With perSensor they work on
 // one sensor's own env (`sensors env ... <id> ...`): the sensor id is the
-// first argument and the paths are under /api/sensors/<id>/env. The values are
-// write-only either way.
+// first argument and the paths are under /api/sensors/<id>/env. Values are
+// secret (write-only) unless set with --plain; the API returns only plain
+// values.
 func envCmds(perSensor bool) []*command {
-	var fromStdin bool
+	var fromStdin, plain, secret bool
 	name, who, idArg, n := "env", "", "", 0
 	base := func(c *call) (string, []string) { return "/api/env", c.args }
 	if perSensor {
@@ -637,16 +638,24 @@ func envCmds(perSensor bool) []*command {
 		base = func(c *call) (string, []string) { return "/api/sensors/" + esc(c.args[0]) + "/env", c.args[1:] }
 	}
 	set := &leaf{
-		usage: idArg + "<KEY> [value]   (without a value, or with --stdin, the value is read from stdin)", minArgs: 1 + n, maxArgs: 2 + n,
+		usage: idArg + "<KEY> [value] [--stdin] [--plain|--secret]   (without a value or --stdin, and without --plain/--secret, the value is read from stdin;\n" +
+			"with --plain or --secret and no value or --stdin, the value is kept and only its secret flag changes)", minArgs: 1 + n, maxArgs: 2 + n,
 		flags: func(fs *flag.FlagSet) {
 			fs.BoolVar(&fromStdin, "stdin", false, "read the value from stdin (keeps it out of the process list and shell history)")
+			fs.BoolVar(&plain, "plain", false, "mark the value not secret: it is shown by `env list` and not redacted from output (default: secret)")
+			fs.BoolVar(&secret, "secret", false, "mark the value secret (the default when a value is set)")
 		},
 		run: func(ctx context.Context, c *call) error {
 			path, rest := base(c)
-			var value string
+			if plain && secret {
+				return usagef("%s set: --plain and --secret are mutually exclusive", name)
+			}
+			req := map[string]any{}
 			switch {
+			case len(rest) == 1 && !fromStdin && (plain || secret):
+				// Flag-only update of an existing key: no value is sent.
 			case len(rest) == 2 && !fromStdin:
-				value = rest[1]
+				req["value"] = rest[1]
 			case len(rest) == 2:
 				return usagef("%s set: give the value as an argument or with --stdin, not both", name)
 			default:
@@ -654,22 +663,25 @@ func envCmds(perSensor bool) []*command {
 				if err != nil {
 					return err
 				}
-				value = strings.TrimRight(string(data), "\r\n")
+				req["value"] = strings.TrimRight(string(data), "\r\n")
 			}
-			body, _ := jsonBody(map[string]string{"value": value})
+			if plain || secret {
+				req["secret"] = secret
+			}
+			body, _ := jsonBody(req)
 			return c.doEmit(ctx, http.MethodPut, path+"/"+esc(rest[0]), nil, body)
 		},
 	}
-	list := apiGet("/api/env", "key")
+	list := apiGet("/api/env", "key", "secret", "value")
 	if perSensor {
 		list = &leaf{usage: "<sensor-id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			path, _ := base(c)
-			return c.doEmit(ctx, http.MethodGet, path, nil, nil, "key", "overrides_global")
+			return c.doEmit(ctx, http.MethodGet, path, nil, nil, "key", "overrides_global", "secret", "value")
 		}}
 	}
 	return []*command{
-		cmd("list", "list env variable names"+who+" (values are never shown)", list),
-		cmd("set", "create or replace an env variable"+who, set),
+		cmd("list", "list env variables"+who+" with their secret flag (secret values are never shown; plain values are)", list),
+		cmd("set", "create or replace an env variable"+who+", or change only its secret flag (value is secret unless --plain)", set),
 		cmd("unset", "remove an env variable"+who, &leaf{usage: idArg + "<KEY>", minArgs: 1 + n, maxArgs: 1 + n, run: func(ctx context.Context, c *call) error {
 			path, rest := base(c)
 			return c.doEmit(ctx, http.MethodDelete, path+"/"+esc(rest[0]), nil, nil)

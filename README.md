@@ -86,7 +86,10 @@ Credentials go in `~/.hal9001/env` (`KEY=VALUE` per line, injected into every se
 the UI or API, and redacted from stored output). A sensor can also have its own values (for example `LINEAR_API_KEY`
 on the Linear sensor): set them in the sensor's Environment section in the UI or with `hal9001 sensors env set`. They
 are stored in `env.d/sensors/<id>.env`, reach only that sensor and override a same-named global value. The first run
-seeds `env.example` next to it:
+seeds `env.example` next to it. Every value is secret unless you mark it plain: for a value that is not sensitive (a
+login name, a host name) use the Secret toggle in the UI, `--plain` on `env set` / `sensors env set`, or a
+`# hal:plain KEY ...` comment line in the file. Plain values are shown by the UI and API and are not redacted from
+output.
 
 ```sh
 cp ~/.hal9001/env.example ~/.hal9001/env && chmod 600 ~/.hal9001/env

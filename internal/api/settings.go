@@ -315,7 +315,24 @@ func (s *Server) envFile(k spec.Kind, id string) (raw []byte, hash string, err e
 	return raw, hash, err
 }
 
-// listEnvKeys returns variable names only. Values are never returned by any endpoint.
+// envItem is one listed env key. Value is set only for a key marked plain; a
+// secret value is never returned by any endpoint.
+type envItem struct {
+	Key    string  `json:"key"`
+	Secret bool    `json:"secret"`
+	Value  *string `json:"value"`
+}
+
+func newEnvItem(env *spec.Env, key string) envItem {
+	it := envItem{Key: key, Secret: !env.IsPlain(key)}
+	if !it.Secret {
+		v := env.Vars[key]
+		it.Value = &v
+	}
+	return it
+}
+
+// listEnvKeys returns the variable names with their secret flag; only plain values are returned.
 func (s *Server) listEnvKeys(w http.ResponseWriter, r *http.Request) {
 	raw, _, err := s.envFile(spec.KindEnv, "")
 	if err != nil {
@@ -325,14 +342,11 @@ func (s *Server) listEnvKeys(w http.ResponseWriter, r *http.Request) {
 	env, _ := spec.ParseEnv(raw)
 	keys := slices.Clone(env.Keys)
 	sort.Strings(keys)
-	type item struct {
-		Key string `json:"key"`
-	}
 	out := struct {
-		Items []item `json:"items"`
-	}{Items: []item{}}
+		Items []envItem `json:"items"`
+	}{Items: []envItem{}}
 	for _, k := range keys {
-		out.Items = append(out.Items, item{Key: k})
+		out.Items = append(out.Items, newEnvItem(env, k))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -433,7 +447,8 @@ func (s *Server) setEnvValue(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setEnv(w http.ResponseWriter, r *http.Request, k spec.Kind, id string) {
 	key := r.PathValue("key")
 	var req struct {
-		Value *string `json:"value"`
+		Value  *string `json:"value"`
+		Secret *bool   `json:"secret"`
 	}
 	if !decodeJSON(w, r, &req, false) {
 		return
@@ -442,21 +457,34 @@ func (s *Server) setEnv(w http.ResponseWriter, r *http.Request, k spec.Kind, id 
 	case len(key) > 128 || !envKeyRE.MatchString(key):
 		fieldProblem(w, "key", "key must be letters, digits and _, not starting with a digit (max 128)")
 		return
-	case req.Value == nil:
-		fieldProblem(w, "value", "value is required")
+	case req.Value == nil && req.Secret == nil:
+		fieldProblem(w, "value", "value or secret is required")
 		return
-	case len(*req.Value) > maxEnvValue || strings.ContainsRune(*req.Value, 0):
+	case req.Value != nil && (len(*req.Value) > maxEnvValue || strings.ContainsRune(*req.Value, 0)):
 		fieldProblem(w, "value", "value must be text of at most 64 KiB without NUL bytes")
 		return
 	}
+	secret := req.Secret == nil || *req.Secret
 	err := s.writeEnv(k, id, func(raw []byte) ([]byte, error) {
-		out, _ := withEnvKey(raw, key, *req.Value, true)
+		out := raw
+		if req.Value == nil {
+			if env, _ := spec.ParseEnv(raw); !slices.Contains(env.Keys, key) {
+				return nil, errEnvKeyMissing
+			}
+		} else {
+			out, _ = withEnvKey(raw, key, *req.Value, true)
+		}
+		out = spec.SetEnvPlain(out, key, !secret)
 		env, ds := spec.ParseEnv(out)
-		if spec.HasErrors(ds) || env.Vars[key] != *req.Value {
+		if spec.HasErrors(ds) || (req.Value != nil && env.Vars[key] != *req.Value) || env.IsPlain(key) == secret {
 			return nil, fmt.Errorf("%w: the env file cannot hold this value", spec.ErrInvalidID)
 		}
 		return out, nil
 	})
+	if errors.Is(err, errEnvKeyMissing) {
+		notFound(w, "no environment key %q", key)
+		return
+	}
 	if err != nil {
 		s.writeError(w, r, err)
 		return
@@ -480,7 +508,7 @@ func (s *Server) deleteEnv(w http.ResponseWriter, r *http.Request, k spec.Kind, 
 		if !found {
 			return nil, errEnvKeyMissing
 		}
-		return out, nil
+		return spec.SetEnvPlain(out, key, false), nil
 	})
 	switch {
 	case errors.Is(err, errEnvKeyMissing):
@@ -497,8 +525,9 @@ func (s *Server) deleteEnv(w http.ResponseWriter, r *http.Request, k spec.Kind, 
 
 // ---- per-sensor env ----
 
-// listSensorEnv returns the key names of the sensor's own env file and whether
-// each one overrides a key of the global env file. Values are never returned.
+// listSensorEnv returns the keys of the sensor's own env file with their secret
+// flag and whether each one overrides a key of the global env file. Only plain
+// values are returned.
 func (s *Server) listSensorEnv(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !s.sensorExists(w, id) {
@@ -519,15 +548,15 @@ func (s *Server) listSensorEnv(w http.ResponseWriter, r *http.Request) {
 	keys := slices.Clone(own.Keys)
 	sort.Strings(keys)
 	type item struct {
-		Key             string `json:"key"`
-		OverridesGlobal bool   `json:"overrides_global"`
+		envItem
+		OverridesGlobal bool `json:"overrides_global"`
 	}
 	out := struct {
 		Items []item `json:"items"`
 	}{Items: []item{}}
 	for _, k := range keys {
 		_, ok := global.Vars[k]
-		out.Items = append(out.Items, item{Key: k, OverridesGlobal: ok})
+		out.Items = append(out.Items, item{envItem: newEnvItem(own, k), OverridesGlobal: ok})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
