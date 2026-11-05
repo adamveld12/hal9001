@@ -1,0 +1,265 @@
+package spec
+
+import "time"
+
+// Enum values. The wire format is the plain string, so fields below use
+// string rather than a named type; these constants are the only legal values.
+const (
+	NodeCommand = "command"
+	NodeAgent   = "agent"
+	NodeInbox   = "inbox"
+
+	LangBash   = "bash"
+	LangPython = "python"
+	LangNode   = "node"
+	LangJQ     = "jq"
+	LangExec   = "exec"
+
+	ModeAuto     = "auto"
+	ModeApprove  = "approve"
+	ModeReadonly = "readonly"
+
+	ApproveProposal = "proposal"
+	ApprovePerTool  = "per_tool"
+
+	CwdDir      = "dir"
+	CwdWorktree = "worktree"
+
+	FirstRunBaseline = "baseline"
+	FirstRunFire     = "fire"
+
+	PriorityLow    = "low"
+	PriorityNormal = "normal"
+	PriorityHigh   = "high"
+	PriorityUrgent = "urgent"
+
+	OutputNote = "note"
+	OutputNone = "none"
+
+	MCPStdio = "stdio"
+	MCPHTTP  = "http"
+	MCPSSE   = "sse"
+
+	// Ports. Every node has PortError implicitly; agent nodes in approve mode
+	// also have PortDenied. PortOut is the default declared port.
+	PortOut    = "out"
+	PortError  = "error"
+	PortDenied = "denied"
+
+	ServiceUI      = "ui"
+	ServiceAPI     = "api"
+	ServiceApprove = "approve"
+	ServiceAdmin   = "admin"
+
+	ControlRequired   = "required"
+	ControlRequisite  = "requisite"
+	ControlSufficient = "sufficient"
+	ControlOptional   = "optional"
+
+	// DefaultStack is the stack name used for every service when config.yaml
+	// does not say otherwise.
+	DefaultStack = "default"
+)
+
+// Languages lists the legal values of lang.
+var Languages = []string{LangBash, LangPython, LangNode, LangJQ, LangExec}
+
+// Priorities lists inbox priorities from lowest to highest.
+var Priorities = []string{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent}
+
+// Services lists the auth services.
+var Services = []string{ServiceUI, ServiceAPI, ServiceApprove, ServiceAdmin}
+
+// KnownAuthModules are the compiled-in auth module names (REQUIREMENTS §10.4).
+// Add a name here when the auth package registers a new module.
+var KnownAuthModules = []string{"localhost-trust", "tailscale-identity", "webauthn", "password"}
+
+// Defaults (REQUIREMENTS §4, §6, §7.2, §8, §9, §10).
+const (
+	DefaultMaxAgentRuns       = 2
+	DefaultMaxCommandRuns     = 8
+	DefaultRetentionDays      = 30
+	DefaultDedupRetentionDays = 180
+	DefaultNotifyMinPriority  = PriorityNormal
+	DefaultSessionTTL         = Duration(7 * 24 * time.Hour)
+	DefaultMaxConcurrent      = 2
+	DefaultCommandTimeout     = Duration(time.Minute)
+	DefaultAgentTimeout       = Duration(30 * time.Minute)
+	DefaultApprovalTimeout    = Duration(time.Hour)
+)
+
+// Config is config.yaml. Zero numeric values mean "unset" and get the default.
+// There is no port key: the bind address is fixed at 127.0.0.1:9001.
+type Config struct {
+	MaxAgentRuns       int    `yaml:"max_agent_runs,omitempty" json:"max_agent_runs"`
+	MaxCommandRuns     int    `yaml:"max_command_runs,omitempty" json:"max_command_runs"`
+	RetentionDays      int    `yaml:"retention_days,omitempty" json:"retention_days"`
+	DedupRetentionDays int    `yaml:"dedup_retention_days,omitempty" json:"dedup_retention_days"`
+	NotifyMinPriority  string `yaml:"notify_min_priority,omitempty" json:"notify_min_priority"`
+	// ApprovalTimeout is the default for agent nodes that do not set their own
+	// approval_timeout (see Config.ApprovalTimeoutFor).
+	ApprovalTimeout Duration           `yaml:"approval_timeout,omitempty" json:"approval_timeout"`
+	SessionTTL      Duration           `yaml:"session_ttl,omitempty" json:"session_ttl"`
+	AllowedHosts    []string           `yaml:"allowed_hosts,omitempty" json:"allowed_hosts"`
+	AllowedLogins   []string           `yaml:"allowed_logins,omitempty" json:"allowed_logins"`
+	Runtimes        map[string]Runtime `yaml:"runtimes,omitempty" json:"runtimes"`
+	Auth            Auth               `yaml:"auth,omitempty" json:"auth"`
+}
+
+// Runtime is one configured ACP agent command (REQUIREMENTS §7.3).
+type Runtime struct {
+	Command []string          `yaml:"command" json:"command"`
+	Modes   RuntimeModes      `yaml:"modes,omitempty" json:"modes"`
+	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+}
+
+// RuntimeModes names the agent's ACP session modes for the restrictive
+// ("ask") and permissive ("full") policies.
+type RuntimeModes struct {
+	Ask  string `yaml:"ask,omitempty" json:"ask"`
+	Full string `yaml:"full,omitempty" json:"full"`
+}
+
+// Auth is the PAM-style auth configuration (REQUIREMENTS §10.4).
+type Auth struct {
+	// Stacks maps stack name to its ordered module entries.
+	Stacks map[string][]AuthModule `yaml:"stacks,omitempty" json:"stacks"`
+	// Services maps each service (ui, api, approve, admin) to a stack name.
+	Services map[string]string `yaml:"services,omitempty" json:"services"`
+}
+
+// AuthModule is one entry of an auth stack.
+type AuthModule struct {
+	Module  string         `yaml:"module" json:"module"`
+	Control string         `yaml:"control" json:"control"`
+	Options map[string]any `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+// Sensor is sensors/<id>.yaml (REQUIREMENTS §5). Exactly one of Interval and
+// Cron is set.
+type Sensor struct {
+	ID       string   `yaml:"id" json:"id"`
+	Interval Duration `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Cron     string   `yaml:"cron,omitempty" json:"cron,omitempty"`
+	Lang     string   `yaml:"lang" json:"lang"`
+	Script   string   `yaml:"script,omitempty" json:"script,omitempty"`
+	Command  []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Cwd      string   `yaml:"cwd,omitempty" json:"cwd,omitempty"`
+	// Key is a text/template over one item producing its dedup key.
+	Key      string   `yaml:"key" json:"key"`
+	FirstRun string   `yaml:"first_run,omitempty" json:"first_run"`
+	Timeout  Duration `yaml:"timeout,omitempty" json:"timeout"`
+}
+
+// Flow is flows/<id>.yaml (REQUIREMENTS §6).
+type Flow struct {
+	ID            string   `yaml:"id" json:"id"`
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	DryRun        bool     `yaml:"dry_run" json:"dry_run"`
+	Subscribe     []string `yaml:"subscribe" json:"subscribe"`
+	MaxConcurrent int      `yaml:"max_concurrent,omitempty" json:"max_concurrent"`
+	Nodes         []Node   `yaml:"nodes" json:"nodes"`
+	Edges         []Edge   `yaml:"edges" json:"edges"`
+}
+
+// Node is one flow node. Type selects which of the type-specific fields apply;
+// validation rejects fields that do not belong to the node's type.
+//
+//	command: lang, script|command, ports, cwd (dir only), timeout, side_effect
+//	agent:   runtime, mode, approve, prompt, extra_prompt, model, cwd, timeout,
+//	         approval_timeout, allow, mcp_servers
+//	inbox:   title, priority, summary_md, suggested_reply, links
+type Node struct {
+	ID   string `yaml:"id" json:"id"`
+	Type string `yaml:"type" json:"type"`
+
+	// command
+	Lang    string   `yaml:"lang,omitempty" json:"lang,omitempty"`
+	Ports   []string `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Script  string   `yaml:"script,omitempty" json:"script,omitempty"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
+
+	// agent
+	Runtime     string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Mode        string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Approve     string `yaml:"approve,omitempty" json:"approve,omitempty"`
+	Prompt      string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	ExtraPrompt string `yaml:"extra_prompt,omitempty" json:"extra_prompt,omitempty"`
+	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
+
+	// inbox
+	Title          string `yaml:"title,omitempty" json:"title,omitempty"`
+	Priority       string `yaml:"priority,omitempty" json:"priority,omitempty"`
+	SummaryMD      string `yaml:"summary_md,omitempty" json:"summary_md,omitempty"`
+	SuggestedReply string `yaml:"suggested_reply,omitempty" json:"suggested_reply,omitempty"`
+	Links          []Link `yaml:"links,omitempty" json:"links,omitempty"`
+
+	// command and agent
+	Cwd             *Cwd     `yaml:"cwd,omitempty" json:"cwd,omitempty"`
+	Timeout         Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	ApprovalTimeout Duration `yaml:"approval_timeout,omitempty" json:"approval_timeout,omitempty"`
+	SideEffect      bool     `yaml:"side_effect,omitempty" json:"side_effect,omitempty"`
+
+	Allow      *Allow      `yaml:"allow,omitempty" json:"allow,omitempty"`
+	MCPServers []MCPServer `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+
+	UI UI `yaml:"ui,omitempty" json:"ui"`
+}
+
+// Cwd is a working-directory selection (REQUIREMENTS §7.5). In YAML a plain
+// string is shorthand for {mode: dir, path: <string>}. Path, Repo and Ref are
+// text/templates.
+type Cwd struct {
+	Mode string `yaml:"mode" json:"mode"`
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+	Repo string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Ref  string `yaml:"ref,omitempty" json:"ref,omitempty"`
+}
+
+// Allow extends the read-only permission policy of an agent node (§7.2). Each
+// entry is a regular expression.
+type Allow struct {
+	Tools    []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Commands []string `yaml:"commands,omitempty" json:"commands,omitempty"`
+}
+
+// Link is an inbox link; both fields are templates on inbox nodes.
+type Link struct {
+	Label string `yaml:"label" json:"label"`
+	URL   string `yaml:"url" json:"url"`
+}
+
+// MCPServer is an MCP server passed through to the agent session.
+type MCPServer struct {
+	Name    string            `yaml:"name" json:"name"`
+	Type    string            `yaml:"type,omitempty" json:"type"`
+	Command string            `yaml:"command,omitempty" json:"command,omitempty"`
+	Args    []string          `yaml:"args,omitempty" json:"args,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	URL     string            `yaml:"url,omitempty" json:"url,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+}
+
+// UI is the canvas position of a node.
+type UI struct {
+	X float64 `yaml:"x" json:"x"`
+	Y float64 `yaml:"y" json:"y"`
+}
+
+// Edge connects an output port of one node to another node. An empty Port
+// means PortOut.
+type Edge struct {
+	From string `yaml:"from" json:"from"`
+	Port string `yaml:"port,omitempty" json:"port,omitempty"`
+	To   string `yaml:"to" json:"to"`
+}
+
+// Prompt is prompts/<name>.md: YAML frontmatter plus a template body
+// (REQUIREMENTS §7.1).
+type Prompt struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description,omitempty" json:"description"`
+	// Output is OutputNote (structured inbox schema, §7.4) or OutputNone.
+	Output string `yaml:"output,omitempty" json:"output"`
+	Body   string `yaml:"-" json:"body"`
+}

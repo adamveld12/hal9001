@@ -4,9 +4,10 @@ go 1.27.3
 
 require (
 	github.com/descope/virtualwebauthn v1.0.5
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/oklog/ulid/v2 v2.1.2
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/crypto v0.58.0
 )
 
