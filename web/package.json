@@ -13,7 +13,7 @@
     "test": "vitest run --passWithNoTests",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "preview": "vite preview",
-    "gen:api": "pnpm --filter gen-api exec openapi-typescript ../../../api/openapi.yaml -o ../../src/api/schema.d.ts --default-non-nullable false"
+    "gen:api": "pnpm --filter gen-api exec openapi-typescript ../../../api/openapi.yaml -o ../../src/api/schema.d.ts --default-non-nullable false && prettier --write src/api/schema.d.ts"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
