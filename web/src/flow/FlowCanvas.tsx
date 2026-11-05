@@ -10,7 +10,14 @@ import {
   type EdgeChange,
   type NodeChange,
 } from "@xyflow/react";
-import { useCallback, useMemo, type DragEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
+import { withMeasured, type MeasuredDims } from "./measured";
 import { CanvasContext, type CanvasContextValue } from "./canvasContext";
 import { styleEdges } from "./edgeStyle";
 import { displayEdges } from "./editorState";
@@ -57,6 +64,42 @@ const EMPTY_SET: ReadonlySet<string> = new Set();
 function Inner(props: FlowCanvasProps) {
   const rf = useReactFlow();
   const readOnly = props.readOnly === true;
+
+  // A canvas without onNodesChange (run and version views) never stores the
+  // sizes React Flow measures on the node objects, and the MiniMap skips nodes
+  // without a size. Keep the measured sizes here and hand them back.
+  const [dims, setDims] = useState<ReadonlyMap<string, MeasuredDims>>(
+    new Map(),
+  );
+  const { onNodesChange } = props;
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<GraphNode>[]) => {
+      if (onNodesChange) {
+        onNodesChange(changes);
+        return;
+      }
+      setDims((prev) => {
+        let next: Map<string, MeasuredDims> | undefined;
+        for (const c of changes) {
+          if (c.type !== "dimensions" || !c.dimensions) continue;
+          const old = prev.get(c.id);
+          if (
+            old?.width === c.dimensions.width &&
+            old.height === c.dimensions.height
+          )
+            continue;
+          next ??= new Map(prev);
+          next.set(c.id, c.dimensions);
+        }
+        return next ?? prev;
+      });
+    },
+    [onNodesChange],
+  );
+  const nodes = useMemo(
+    () => (onNodesChange ? props.nodes : withMeasured(props.nodes, dims)),
+    [onNodesChange, props.nodes, dims],
+  );
 
   const edges = useMemo(
     () =>
@@ -114,10 +157,10 @@ function Inner(props: FlowCanvasProps) {
   return (
     <CanvasContext.Provider value={ctx}>
       <ReactFlow<GraphNode, GraphEdge>
-        nodes={props.nodes}
+        nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
-        onNodesChange={props.onNodesChange}
+        onNodesChange={handleNodesChange}
         onEdgesChange={props.onEdgesChange}
         onConnect={props.onConnect}
         isValidConnection={props.isValidConnection}

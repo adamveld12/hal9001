@@ -84,13 +84,19 @@ function Loaded({
 
   const changedOnDisk = refetched.hash !== loaded.hash;
 
-  const adopt = useCallback((d: FlowDetail) => {
-    setLoaded(d);
-    setYamlText(d.yaml);
-    setServerDiags(d.diagnostics);
-    setDirty(false);
-    setGeneration((g) => g + 1);
-  }, []);
+  const { reset: resetUpdate } = update;
+  const adopt = useCallback(
+    (d: FlowDetail) => {
+      setLoaded(d);
+      setYamlText(d.yaml);
+      setServerDiags(d.diagnostics);
+      setDirty(false);
+      setGeneration((g) => g + 1);
+      // A rejected save refers to the version that was just discarded.
+      resetUpdate();
+    },
+    [resetUpdate],
+  );
 
   // Pick up edits made on disk right away unless there is unsaved work.
   // (State adjusted during render; the condition is false again after adopt.)

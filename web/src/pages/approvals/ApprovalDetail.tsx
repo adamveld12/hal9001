@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Link } from "react-router";
+import { useAgentTranscript } from "../../api/runs";
+import { buildTranscript } from "../runs/transcript";
 import type { Approval } from "../../api/approvals";
 import { JsonView } from "../../components/JsonView";
 import { Markdown } from "../../components/Markdown";
@@ -17,7 +19,7 @@ import { shortId } from "../../lib/format";
 import { TypeBadge } from "./ApprovalList";
 import { Countdown } from "./Countdown";
 import { timeLeft, useNow } from "./timeLeft";
-import { extractCommand, extractDiffs } from "./diff";
+import { diffsFromToolContent, extractCommand, extractDiffs } from "./diff";
 import { DiffView } from "./DiffView";
 import { approvalTitle, describeDecision } from "./queue";
 
@@ -52,8 +54,28 @@ function ToolCall({ a }: { a: Approval }) {
   if (!req) {
     return <p className="m-0 text-xs text-muted">No tool call was recorded.</p>;
   }
+  return <ToolCallBody a={a} req={req} />;
+}
+
+function ToolCallBody({
+  a,
+  req,
+}: {
+  a: Approval;
+  req: NonNullable<Approval["permission_request"]>;
+}) {
   const command = extractCommand(req.raw_input);
-  const diffs = extractDiffs(req.raw_input);
+  const transcript = useAgentTranscript(a.agent_run_id);
+  const diffs = useMemo(() => {
+    const fromInput = extractDiffs(req.raw_input);
+    if (fromInput.length > 0 || !transcript.data) return fromInput;
+    for (const item of buildTranscript(transcript.data)) {
+      if (item.type === "tool" && item.toolCallId === req.tool_call_id) {
+        return diffsFromToolContent(item.content);
+      }
+    }
+    return fromInput;
+  }, [req.raw_input, req.tool_call_id, transcript.data]);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">

@@ -15,7 +15,7 @@ export interface SensorForm {
   script: string;
   /** argv for `exec`, one argument per line. */
   command: string;
-  /** Go template for the dedup key; empty uses the server default. */
+  /** Go template for the dedup key. The server requires one. */
   key: string;
   firstRun: Schemas["FirstRun"];
   /** Duration such as `60s`; empty uses the server default. */
@@ -71,6 +71,8 @@ export function validateSensorForm(
     e.script = "Required.";
   }
 
+  if (f.key.trim() === "") e.key = "Required, for example {{.id}}.";
+
   if (f.timeout !== "" && !DURATION.test(f.timeout)) {
     e.timeout = "Use a duration like 60s.";
   }
@@ -89,7 +91,7 @@ export function buildSensorYaml(f: SensorForm): string {
   if (f.lang === "exec")
     lines.push(...yamlList("command", commandArgs(f.command)));
   else lines.push(...yamlBlock("script", f.script));
-  if (f.key.trim() !== "") lines.push(`key: ${yamlScalar(f.key.trim())}`);
+  lines.push(`key: ${yamlScalar(f.key.trim())}`);
   lines.push(`first_run: ${f.firstRun}`);
   if (f.timeout !== "") lines.push(`timeout: ${yamlScalar(f.timeout)}`);
   return `${lines.join("\n")}\n`;

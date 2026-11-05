@@ -17,7 +17,7 @@ nodes:
     mode: readonly
     prompt: linear-triage
     timeout: 10m
-    ui: {x: 340, y: 120}
+    ui: {x: 400, y: 120}
 
 edges:
   - {from: skip-closed, to: triage}

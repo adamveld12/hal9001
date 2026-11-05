@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  isRoutineAuthEvent,
   rootsForBatch,
   STREAM_TYPES,
   type DataStreamType,
@@ -62,6 +63,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
           qc.setQueryData(qk("status"), event.data);
           break;
         default:
+          if (isRoutineAuthEvent(event)) break;
           pending.add(event.type);
           timer ??= setTimeout(flush, INVALIDATE_DELAY_MS);
       }

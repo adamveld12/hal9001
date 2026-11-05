@@ -5,7 +5,7 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { cx } from "../lib/cx";
+import { cx, defaultFullWidth } from "../lib/cx";
 import { statusTone, TONE_BADGE, type Tone } from "../lib/status";
 import { Icon, type IconName } from "./icons";
 
@@ -225,7 +225,7 @@ export function Field({
 }
 
 const CONTROL =
-  "w-full rounded-md border border-line bg-panel px-2 py-1 text-xs placeholder:text-muted/70 disabled:opacity-60";
+  "rounded-md border border-line bg-panel px-2 py-1 text-xs placeholder:text-muted/70 disabled:opacity-60";
 
 export function TextInput({
   invalid,
@@ -234,7 +234,13 @@ export function TextInput({
 }: InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
   return (
     <input
-      className={cx(CONTROL, "h-7", invalid && "border-bad", className)}
+      className={cx(
+        defaultFullWidth(className),
+        CONTROL,
+        "h-7",
+        invalid && "border-bad",
+        className,
+      )}
       {...rest}
     />
   );
@@ -247,7 +253,13 @@ export function TextArea({
 }: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }) {
   return (
     <textarea
-      className={cx(CONTROL, "font-mono", invalid && "border-bad", className)}
+      className={cx(
+        defaultFullWidth(className),
+        CONTROL,
+        "font-mono",
+        invalid && "border-bad",
+        className,
+      )}
       {...rest}
     />
   );
@@ -261,7 +273,13 @@ export function Select({
 }: SelectHTMLAttributes<HTMLSelectElement> & { invalid?: boolean }) {
   return (
     <select
-      className={cx(CONTROL, "h-7", invalid && "border-bad", className)}
+      className={cx(
+        defaultFullWidth(className),
+        CONTROL,
+        "h-7",
+        invalid && "border-bad",
+        className,
+      )}
       {...rest}
     >
       {children}

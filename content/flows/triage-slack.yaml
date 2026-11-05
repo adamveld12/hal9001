@@ -17,7 +17,7 @@ nodes:
     mode: readonly
     prompt: triage-slack
     timeout: 10m
-    ui: {x: 340, y: 120}
+    ui: {x: 400, y: 120}
 
 edges:
   - {from: filter, to: triage}

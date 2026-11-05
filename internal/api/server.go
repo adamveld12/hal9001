@@ -168,10 +168,12 @@ func muxPath(path string) string {
 }
 
 // fallback serves everything no contract operation matched: the web UI for
-// GET and HEAD outside /api/ (guarded by the ui service), a problem otherwise.
+// GET and HEAD outside /api/, a problem otherwise. Like getUIShell and
+// getUIAsset it is public: the login page lives in the shell, so a stack that
+// does not admit the request must still be able to load it.
 func (s *Server) fallback(w http.ResponseWriter, r *http.Request) {
 	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api" {
-		s.opts.Auth.Require(auth.Service(apispec.ServiceFor(r.Method, r.URL.Path)))(http.HandlerFunc(s.serveUI)).ServeHTTP(w, r)
+		s.serveUI(w, r)
 		return
 	}
 	notFound(w, "no route for %s %s", r.Method, r.URL.Path)

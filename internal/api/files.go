@@ -165,7 +165,8 @@ func (s *Server) sensorStatus(r *http.Request, id string, sensor *spec.Sensor, v
 	case state.ConsecutiveFailures > 0:
 		v.State = "failing"
 	}
-	if valid && !paused && sensor != nil {
+	// The engine only schedules sensors that an enabled flow subscribes to.
+	if valid && !paused && sensor != nil && s.sensorSubscribed(id) {
 		if sched, err := sensor.Schedule(); err == nil {
 			now := time.Now()
 			base := now
@@ -181,6 +182,16 @@ func (s *Server) sensorStatus(r *http.Request, id string, sensor *spec.Sensor, v
 		}
 	}
 	return v, nil
+}
+
+// sensorSubscribed reports whether an enabled, valid flow subscribes to the sensor.
+func (s *Server) sensorSubscribed(id string) bool {
+	for _, f := range s.opts.Workspace().Flows {
+		if f.Valid() && f.Value.Enabled && slices.Contains(f.Value.Subscribe, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) sensorSummary(r *http.Request, f *spec.File[spec.Sensor], paused bool) (sensorSummaryView, error) {

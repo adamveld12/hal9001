@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collapseContext,
+  diffsFromToolContent,
   extractCommand,
   extractDiffs,
   lineDiff,
@@ -157,5 +158,23 @@ describe("extractCommand", () => {
     expect(extractCommand({ path: "x" })).toBeNull();
     expect(extractCommand("git status")).toBeNull();
     expect(extractCommand({ command: [1, 2] })).toBeNull();
+  });
+});
+
+describe("diffsFromToolContent", () => {
+  it("turns ACP diff content into file diffs and ignores other content", () => {
+    const out = diffsFromToolContent([
+      { type: "text", text: "ignored" },
+      { type: "diff", path: "a.go", oldText: "x\ny\n", newText: "x\nz\n" },
+      { type: "diff", path: "new.txt", oldText: null, newText: "hi\n" },
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]!.path).toBe("a.go");
+    expect(summary(out[0]!.lines)).toEqual([" x", "-y", "+z"]);
+    expect(summary(out[1]!.lines)).toEqual(["+hi"]);
+  });
+
+  it("is empty when the call carries no diff", () => {
+    expect(diffsFromToolContent([{ type: "text", text: "t" }])).toEqual([]);
   });
 });

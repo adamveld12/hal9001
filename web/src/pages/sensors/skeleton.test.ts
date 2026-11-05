@@ -10,6 +10,7 @@ const form = (over: Partial<SensorForm>): SensorForm => ({
   ...EMPTY_SENSOR_FORM,
   id: "github-notifications",
   script: "gh api notifications --paginate -q '.[]'\n",
+  key: "{{.id}}",
   ...over,
 });
 
@@ -51,9 +52,9 @@ describe("buildSensorYaml", () => {
     expect(yaml).not.toContain("script");
   });
 
-  it("omits optional fields that are empty and keeps first_run", () => {
+  it("omits optional fields that are empty and keeps key and first_run", () => {
     const yaml = buildSensorYaml(form({ firstRun: "fire" }));
-    expect(yaml).not.toContain("key:");
+    expect(yaml).toContain('key: "{{.id}}"');
     expect(yaml).not.toContain("timeout:");
     expect(yaml).toContain("first_run: fire");
   });
@@ -64,6 +65,10 @@ describe("buildSensorYaml", () => {
 });
 
 describe("validateSensorForm", () => {
+  it("requires a dedup key, which the server also requires", () => {
+    expect(validateSensorForm(form({ key: "  " })).key).toMatch(/Required/);
+  });
+
   it("accepts a complete form", () => {
     expect(validateSensorForm(form({}))).toEqual({});
   });

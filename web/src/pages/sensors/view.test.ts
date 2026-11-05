@@ -7,6 +7,7 @@ import {
   scheduleLabel,
   sensorRow,
   sensorStateTone,
+  unscheduledLabel,
 } from "./view";
 
 const blob = { text: "", size: 0, truncated: false, blob: null };
@@ -48,6 +49,18 @@ function summary(over: Partial<SensorSummary>): SensorSummary {
     ...over,
   };
 }
+
+describe("unscheduledLabel", () => {
+  it("explains a running-state sensor that has no next poll", () => {
+    expect(unscheduledLabel("idle", null)).toBe("not scheduled");
+    expect(unscheduledLabel("failing", null)).toBe("not scheduled");
+  });
+  it("stays quiet when there is a time, or the state already says why", () => {
+    expect(unscheduledLabel("idle", "2026-11-05T10:02:00Z")).toBeNull();
+    expect(unscheduledLabel("paused", null)).toBeNull();
+    expect(unscheduledLabel("invalid", null)).toBeNull();
+  });
+});
 
 describe("sensorRow", () => {
   it("reports a healthy sensor without problems", () => {

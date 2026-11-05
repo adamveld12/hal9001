@@ -201,17 +201,19 @@ export function TestNodePanel({
         </>
       )}
 
-      <Toggle label="Dry run" checked={dryRun} onChange={setDryRun} />
       {!built.ok && <p className="text-[11px] text-muted">{built.error}</p>}
-      <Button
-        variant="primary"
-        icon="play"
-        disabled={!built.ok || test.isPending}
-        onClick={run}
-        title="Runs the node as currently edited, without saving"
-      >
-        {test.isPending ? "Running…" : "Run node"}
-      </Button>
+      <div className="flex items-center justify-between gap-3">
+        <Toggle label="Dry run" checked={dryRun} onChange={setDryRun} />
+        <Button
+          variant="primary"
+          icon="play"
+          disabled={!built.ok || test.isPending}
+          onClick={run}
+          title="Runs the node as currently edited, without saving"
+        >
+          {test.isPending ? "Running…" : "Run node"}
+        </Button>
+      </div>
 
       {err && (
         <p role="alert" className="text-[11px] text-bad">

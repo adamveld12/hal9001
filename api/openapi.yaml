@@ -54,9 +54,12 @@ paths:
       summary: Web UI shell (index.html)
       description: |
         Serves the embedded single-page app. Any other GET path that does not start with `/api/` and is not an
-        embedded asset also serves this document, so client-side routes work on reload. All of these are guarded by
-        the `ui` service.
+        embedded asset also serves this document, so client-side routes work on reload. The shell and its assets
+        are public: they hold no data, and the login page is part of them, so a stack that does not admit the
+        request (for example password only) must still be able to load it. Every `/api/` call stays guarded.
       x-hal-service: ui
+      x-hal-public: true
+      security: []
       responses:
         '200':
           description: HTML document.
@@ -71,7 +74,10 @@ paths:
       operationId: getUIAsset
       tags: [meta]
       summary: Embedded web UI asset
+      description: Public, like the shell (see `getUIShell`).
       x-hal-service: ui
+      x-hal-public: true
+      security: []
       parameters:
         - name: path
           in: path
@@ -2537,7 +2543,9 @@ components:
           description: '`failing` when the last poll failed; `paused` while the kill switch is engaged; `invalid` when the file has errors.'
         last_run: {oneOf: [{$ref: '#/components/schemas/SensorRun'}, {type: 'null'}]}
         last_success_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        next_poll_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        next_poll_at:
+          $ref: '#/components/schemas/NullableTimestamp'
+          description: 'When the scheduler polls next. `null` while paused, when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works).'
         new_items_24h: {type: integer, minimum: 0}
     SensorSummary:
       type: object
