@@ -1,6 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { qk } from "../api/keys";
+import { useBlobText } from "../api/blobs";
 import { formatBytes } from "../lib/format";
 import { Button } from "./ui";
 
@@ -10,12 +9,6 @@ export interface TextBlobLike {
   size: number;
   truncated: boolean;
   blob: string | null;
-}
-
-async function fetchBlobText(hash: string): Promise<string> {
-  const res = await fetch(`/api/blobs/${hash}`);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.text();
 }
 
 /**
@@ -33,12 +26,7 @@ export function BlobView({
 }) {
   const [loadFull, setLoadFull] = useState(false);
   const hash = blob?.blob ?? null;
-  const full = useQuery({
-    queryKey: qk("blob", hash),
-    queryFn: () => fetchBlobText(hash as string),
-    enabled: loadFull && hash !== null,
-    staleTime: Infinity,
-  });
+  const full = useBlobText(hash, loadFull);
   if (!blob || blob.size === 0)
     return <div className="text-xs text-muted">{empty}</div>;
   const text = full.data ?? blob.text;

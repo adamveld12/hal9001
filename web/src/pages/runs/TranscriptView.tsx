@@ -39,7 +39,7 @@ function hasValue(v: unknown): boolean {
   return v !== undefined && v !== null && v !== "";
 }
 
-function ToolContentView({ item }: { item: ToolContent }) {
+export function ToolContentView({ item }: { item: ToolContent }) {
   switch (item.type) {
     case "text":
       return (

@@ -36,7 +36,9 @@ function Context({ a }: { a: Approval }) {
       )}
       {a.node_id && <span>node {a.node_id}</span>}
       {a.assist_session_id && (
-        <span>assist session {shortId(a.assist_session_id)}</span>
+        <Link to={`/sensors?assist=${a.assist_session_id}`} className={cls}>
+          assist session {shortId(a.assist_session_id)}
+        </Link>
       )}
       <span>runtime {a.runtime}</span>
       {a.flow_run_id && (

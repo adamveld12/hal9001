@@ -37,6 +37,9 @@ export const QUERY_ROOTS = [
   "passkeys",
   "tailscale",
   "blob",
+  "assist-sessions",
+  "assist-session",
+  "assist-test",
 ] as const;
 
 export type QueryRoot = (typeof QUERY_ROOTS)[number];
