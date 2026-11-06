@@ -56,7 +56,11 @@ func TestToolsCRUDAndTest(t *testing.T) {
 		Items []toolViewJSON `json:"items"`
 	}
 	d.Get("/api/tools").Want(200).JSON(&list)
-	if len(list.Items) != 1 || list.Items[0].ID != "greet" {
+	ids := map[string]bool{}
+	for _, it := range list.Items {
+		ids[it.ID] = true
+	}
+	if !ids["greet"] || !ids["now"] || !ids["http_get_json"] { // the starter tools are seeded
 		t.Fatalf("list: %+v", list)
 	}
 
@@ -146,4 +150,60 @@ func TestToolsCLI(t *testing.T) {
 	if out, _, code = d.CLI("id: x\ndescription: d\nlang: bash\n", "tools", "validate", "-"); code == 0 {
 		t.Errorf("an invalid tool validated: %s", out)
 	}
+}
+
+type toolAssistSession struct {
+	ID     string `json:"id"`
+	Target struct {
+		Kind string  `json:"kind"`
+		ID   *string `json:"id"`
+	} `json:"target"`
+	Draft struct {
+		YAML        string           `json:"yaml"`
+		Hash        string           `json:"hash"`
+		ToolID      *string          `json:"tool_id"`
+		Diagnostics []map[string]any `json:"diagnostics"`
+	} `json:"draft"`
+}
+
+// A tool assist session: the draft is a tool file, the user's test calls it with args, the agent's test of changed
+// code needs approval, and saving through POST /api/tools turns the session into a session on the saved tool.
+func TestToolAssistSessionDraftTestAndSave(t *testing.T) {
+	d := newAssistDaemon(t, func(d *Daemon) { d.assistRuntime(false) })
+
+	var s toolAssistSession
+	d.Post("/api/assist/sessions", map[string]any{"target": map[string]any{"kind": "tool"}, "runtime": "fake"}).Want(201).JSON(&s)
+	if s.Target.Kind != "tool" || s.Target.ID != nil || s.Draft.ToolID == nil || *s.Draft.ToolID != "new-tool" {
+		t.Fatalf("new session: %+v", s)
+	}
+	if _, err := os.Stat(d.Path("data/assist/" + s.ID + "/tool.yaml")); err != nil {
+		t.Fatalf("draft file: %v", err)
+	}
+
+	const draft = "id: shout\ndescription: Upper-case a word\nparams:\n  word: {type: string, required: true}\nlang: bash\nscript: |\n  echo \"$ARG_WORD\" | tr a-z A-Z\napprove: never\n"
+	d.Put("/api/assist/sessions/"+s.ID+"/draft", map[string]any{"yaml": draft, "expected_hash": s.Draft.Hash}).Want(200)
+
+	var res toolTestJSON
+	d.Post("/api/assist/sessions/"+s.ID+"/test", map[string]any{"args": map[string]any{"word": "hal"}}).Want(200).JSON(&res)
+	if !res.OK || res.Stdout != "HAL" {
+		t.Fatalf("user test: %+v", res)
+	}
+	d.Post("/api/assist/sessions/"+s.ID+"/test", map[string]any{"args": map[string]any{}}).Want(422)
+
+	agent := func(path string, body any) Resp {
+		return d.Do("POST", path, body, withHeader("X-Hal9001-Assist-Agent", "1"))
+	}
+	agent("/api/assist/sessions/"+s.ID+"/test", map[string]any{"args": map[string]any{"word": "ok"}}).Want(200)
+	d.Put("/api/assist/sessions/"+s.ID+"/draft", map[string]any{"yaml": strings.Replace(draft, "tr a-z A-Z", "tr a-z A-Z; echo changed", 1)}).Want(200)
+	if r := agent("/api/assist/sessions/"+s.ID+"/test", map[string]any{"args": map[string]any{"word": "x"}}).Want(409); r.Problem() != "invalid-state" {
+		t.Errorf("agent test of changed code: %s", r)
+	}
+
+	d.Post("/api/tools", map[string]any{"yaml": draft}).Want(201)
+	var after toolAssistSession
+	d.Get("/api/assist/sessions/" + s.ID).Want(200).JSON(&after)
+	if after.Target.ID == nil || *after.Target.ID != "shout" {
+		t.Errorf("session did not attach to the saved tool: %+v", after.Target)
+	}
+	d.Post("/api/assist/sessions", map[string]any{"target": map[string]any{"kind": "tool", "id": "nope"}, "runtime": "fake"}).Want(404)
 }

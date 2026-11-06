@@ -24,10 +24,12 @@ type snapshot struct {
 	// sensorEnv maps a sensor id to its own env values (env.d/sensors); they
 	// overlay env for that sensor's polls only.
 	sensorEnv map[string]map[string]string
-	red       *runner.Redactor
-	sensors   map[string]*spec.Sensor
-	flows     map[string]*flowDef
-	prompts   map[string]*spec.Prompt
+	// toolEnv maps a custom tool id to its own env values (env.d/tools).
+	toolEnv map[string]map[string]string
+	red     *runner.Redactor
+	sensors map[string]*spec.Sensor
+	flows   map[string]*flowDef
+	prompts map[string]*spec.Prompt
 	// subs maps a sensor id to the enabled flows subscribed to it, sorted.
 	subs map[string][]string
 }
@@ -45,6 +47,7 @@ func newSnapshot(ws *spec.Workspace) *snapshot {
 		ws:        ws,
 		env:       map[string]string{},
 		sensorEnv: map[string]map[string]string{},
+		toolEnv:   map[string]map[string]string{},
 		sensors:   map[string]*spec.Sensor{},
 		flows:     map[string]*flowDef{},
 		prompts:   map[string]*spec.Prompt{},
@@ -69,6 +72,13 @@ func newSnapshot(ws *spec.Workspace) *snapshot {
 		}
 		s.sensorEnv[f.Name] = maps.Clone(f.Value.Vars)
 		// A per-sensor secret is a secret everywhere the global env is.
+		secrets = append(secrets, f.Value.SecretVars())
+	}
+	for _, f := range ws.ToolEnv {
+		if f.Value == nil {
+			continue
+		}
+		s.toolEnv[f.Name] = maps.Clone(f.Value.Vars)
 		secrets = append(secrets, f.Value.SecretVars())
 	}
 	s.red = runner.NewRedactor(secrets...)

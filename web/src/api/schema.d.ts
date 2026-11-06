@@ -1597,7 +1597,7 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Run the draft once (a poll for a sensor, one input for a flow)
+     * Run the draft once (a poll for a sensor, one input for a flow, one call for a tool)
      * @description Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
      *     with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
      *     in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
@@ -1620,6 +1620,12 @@ export interface paths {
      *     `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
      *     the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
      *     (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
+     *
+     *     Tool sessions: calls the draft tool once with `args` (defaults filled in; 422 when they do not fit its
+     *     parameters) with the global env file overlaid by the target tool's `env.d/tools` file, and returns the `tool`
+     *     variant. Nothing is recorded and no approval of the call itself is asked. The same approval rule as for
+     *     sensors applies to the agent: the hash covers `lang`, `script`, `command` and the env names the code
+     *     references.
      */
     post: operations["testAssistDraft"];
     delete?: never;
@@ -3920,7 +3926,7 @@ export interface components {
       allowed_logins: string[];
     };
     /** @enum {string} */
-    AssistTargetKind: "sensor" | "flow";
+    AssistTargetKind: "sensor" | "flow" | "tool";
     /**
      * @description `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
      *     approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
@@ -3935,7 +3941,7 @@ export interface components {
     AssistDraftAuthor: "agent" | "user";
     AssistTarget: {
       kind: components["schemas"]["AssistTargetKind"];
-      /** @description Sensor or flow id; null when the session authors a new sensor or flow. */
+      /** @description Sensor, flow or tool id; null when the session authors a new one. */
       id: components["schemas"]["Slug"] | null;
     };
     AssistTargetRequest: {
@@ -3951,17 +3957,19 @@ export interface components {
       exists: boolean;
     };
     /**
-     * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+     * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml`, `flow.yaml` or `tool.yaml`). Only the
      *     user's Save writes a real file.
      */
     AssistDraft: {
       kind: components["schemas"]["AssistTargetKind"];
       yaml: string;
       hash: components["schemas"]["Hash"];
-      /** @description Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows. */
+      /** @description Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows and tools. */
       sensor_id: components["schemas"]["Slug"] | null;
-      /** @description Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors. */
+      /** @description Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and tools. */
       flow_id: components["schemas"]["Slug"] | null;
+      /** @description Tool sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and flows. */
+      tool_id: components["schemas"]["Slug"] | null;
       /** @description Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`. */
       prompts: components["schemas"]["AssistDraftPrompt"][];
       /** @description Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts. */
@@ -4126,19 +4134,52 @@ export interface components {
       nodes: components["schemas"]["AssistFlowTestNode"][];
       edges_taken: components["schemas"]["AssistFlowTestEdge"][];
     };
-    /** @description The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`. */
+    /**
+     * @description Outcome of calling the draft tool once (tool sessions). Same fields as `ToolTestResult` plus `kind`. A failing
+     *     tool is still a result (`ok: false`, `error` carries the stderr tail).
+     */
+    AssistToolTestResult: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "tool";
+      ok: boolean;
+      args: {
+        [key: string]: unknown;
+      };
+      stdout: string;
+      structured:
+        | {
+            [key: string]: unknown;
+          }
+        | unknown[]
+        | null;
+      stderr: string;
+      exit_code: number;
+      duration_ms: number;
+      timed_out: boolean;
+      error: string | null;
+    };
+    /** @description The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`, tool sessions `tool`. */
     AssistTestResult:
       | components["schemas"]["AssistSensorTestResult"]
-      | components["schemas"]["AssistFlowTestResult"];
+      | components["schemas"]["AssistFlowTestResult"]
+      | components["schemas"]["AssistToolTestResult"];
     /**
-     * @description Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
-     *     none, the first sample is used (422 when there is none).
+     * @description Flow sessions: the input to run the draft flow on. At most one of `sample_index`, `event_id` and `input`; with
+     *     none, the first sample is used (422 when there is none). Tool sessions: `args`, the arguments object of the
+     *     call (default `{}`). Ignored for sensors.
      */
     AssistTestRequest: {
       /** @description Index into `GET /api/assist/sessions/{id}/samples`. */
       sample_index?: number;
       event_id?: components["schemas"]["Ulid"];
       input?: components["schemas"]["JsonValue"];
+      /** @description Tool sessions only. */
+      args?: {
+        [key: string]: unknown;
+      } | null;
     };
     AssistSample: {
       index: number;
@@ -7027,7 +7068,7 @@ export interface operations {
     parameters: {
       query?: {
         target_kind?: components["schemas"]["AssistTargetKind"];
-        /** @description Sensor or flow id. Only sessions that edit that target. */
+        /** @description Sensor, flow or tool id. Only sessions that edit that target. */
         target_id?: components["schemas"]["Slug"];
       };
       header?: never;

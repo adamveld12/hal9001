@@ -77,6 +77,11 @@ func (h assistHost) Env(sensorID string) (global, sensor map[string]string, red 
 	return maps.Clone(snap.env), maps.Clone(snap.sensorEnv[sensorID]), snap.red
 }
 
+func (h assistHost) ToolEnv(toolID string) (global, tool map[string]string, red *runner.Redactor) {
+	snap := h.e.snapshot()
+	return maps.Clone(snap.env), maps.Clone(snap.toolEnv[toolID]), snap.red
+}
+
 func (h assistHost) BasePATH() string { return h.e.opt.BasePATH }
 
 func (h assistHost) Recorder(assistSessionID, model string) agent.Recorder {

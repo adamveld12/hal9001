@@ -44,6 +44,13 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool,
 		}
 		return core.AssistTestOutcome{Flow: &res}, nil
 	}
+	if s.isTool() {
+		res, err := m.testTool(ctx, s, byAgent, req)
+		if err != nil {
+			return core.AssistTestOutcome{}, err
+		}
+		return core.AssistTestOutcome{Tool: &res}, nil
+	}
 	res, err := m.testSensor(ctx, s, byAgent)
 	if err != nil {
 		return core.AssistTestOutcome{}, err

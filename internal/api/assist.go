@@ -32,6 +32,7 @@ type assistDraftView struct {
 	Hash        string          `json:"hash"`
 	SensorID    *string         `json:"sensor_id"`
 	FlowID      *string         `json:"flow_id"`
+	ToolID      *string         `json:"tool_id"`
 	Prompts     json.RawMessage `json:"prompts"`
 	Diagnostics json.RawMessage `json:"diagnostics"`
 	UpdatedAt   time.Time       `json:"updated_at"`
@@ -77,9 +78,12 @@ func assistDraft(a store.AssistSession) assistDraftView {
 		Kind: a.TargetKind, YAML: a.DraftYAML, Hash: a.DraftHash, Prompts: rawArray(a.DraftPrompts), Diagnostics: rawArray(a.DraftDiagnostics),
 		UpdatedAt: utc(a.DraftUpdatedAt), UpdatedBy: a.DraftUpdatedBy,
 	}
-	if a.TargetKind == store.AssistTargetFlow {
+	switch a.TargetKind {
+	case store.AssistTargetFlow:
 		v.FlowID = nonEmpty(a.DraftID)
-	} else {
+	case store.AssistTargetTool:
+		v.ToolID = nonEmpty(a.DraftID)
+	default:
 		v.SensorID = nonEmpty(a.DraftID)
 	}
 	return v
@@ -119,7 +123,7 @@ func (s *Server) assist(w http.ResponseWriter) (core.Assist, bool) {
 
 func (s *Server) listAssistSessions(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	kind := q.enum("target_kind", store.AssistTargetSensor, store.AssistTargetFlow)
+	kind := q.enum("target_kind", store.AssistTargetSensor, store.AssistTargetFlow, store.AssistTargetTool)
 	targetID := q.slug("target_id")
 	if !q.ok(w) {
 		return
@@ -154,11 +158,11 @@ func (s *Server) createAssistSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case req.Target.Kind != store.AssistTargetSensor && req.Target.Kind != store.AssistTargetFlow:
-		fieldProblem(w, "target.kind", "target.kind must be sensor or flow")
+	case req.Target.Kind != store.AssistTargetSensor && req.Target.Kind != store.AssistTargetFlow && req.Target.Kind != store.AssistTargetTool:
+		fieldProblem(w, "target.kind", "target.kind must be sensor, flow or tool")
 		return
 	case req.Target.ID != "" && !spec.ValidID(req.Target.ID):
-		fieldProblem(w, "target.id", "target.id must be a sensor or flow id")
+		fieldProblem(w, "target.id", "target.id must be a sensor, flow or tool id")
 		return
 	case !spec.ValidID(req.Runtime):
 		fieldProblem(w, "runtime", "runtime must be the name of a configured runtime")
@@ -168,6 +172,10 @@ func (s *Server) createAssistSession(w http.ResponseWriter, r *http.Request) {
 		ws := s.opts.Workspace()
 		if req.Target.Kind == store.AssistTargetFlow && ws.Flow(req.Target.ID) == nil {
 			notFound(w, "no flow %q", req.Target.ID)
+			return
+		}
+		if req.Target.Kind == store.AssistTargetTool && ws.Tool(req.Target.ID) == nil {
+			notFound(w, "no tool %q", req.Target.ID)
 			return
 		}
 		if req.Target.Kind == store.AssistTargetSensor && ws.Sensor(req.Target.ID) == nil {
@@ -277,6 +285,7 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		SampleIndex *int            `json:"sample_index"`
 		EventID     string          `json:"event_id"`
 		Input       json.RawMessage `json:"input"`
+		Args        json.RawMessage `json:"args"`
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return
@@ -292,12 +301,15 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	if string(req.Input) == "null" {
 		req.Input = nil
 	}
+	if string(req.Args) == "null" {
+		req.Args = nil
+	}
 	svc, ok := s.assist(w)
 	if !ok {
 		return
 	}
 	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "",
-		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input})
+		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args})
 	if err != nil {
 		s.writeError(w, r, err)
 		return

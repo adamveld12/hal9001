@@ -58,6 +58,9 @@ type Host interface {
 	// Env returns copies of the global env file values and of the sensor's own values (sensorID may be empty),
 	// and a redactor that masks every secret of the workspace.
 	Env(sensorID string) (global, sensor map[string]string, red *runner.Redactor)
+	// ToolEnv is Env for a custom tool: the global env file values, the tool's own values (toolID may be empty)
+	// and the workspace redactor.
+	ToolEnv(toolID string) (global, tool map[string]string, red *runner.Redactor)
 	// BasePATH is the PATH nodes and agents start with.
 	BasePATH() string
 	// Recorder returns the recorder that persists the agent runs of an assist session.
@@ -203,8 +206,10 @@ func (m *Manager) session(ctx context.Context, id string) (*session, error) {
 
 // CreateSession starts a session: its draft directory and draft, no agent process yet.
 func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
-	if req.TargetKind != store.AssistTargetSensor && req.TargetKind != store.AssistTargetFlow {
-		return nil, invalid("target.kind", "target.kind must be sensor or flow")
+	switch req.TargetKind {
+	case store.AssistTargetSensor, store.AssistTargetFlow, store.AssistTargetTool:
+	default:
+		return nil, invalid("target.kind", "target.kind must be sensor, flow or tool")
 	}
 	if _, ok := m.host.Runtime(req.Runtime); !ok {
 		return nil, &core.ValidationError{Diagnostics: []spec.Diagnostic{{
@@ -217,8 +222,11 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 		yaml = *req.YAML
 	case req.TargetID != "":
 		kind := spec.KindSensor
-		if req.TargetKind == store.AssistTargetFlow {
+		switch req.TargetKind {
+		case store.AssistTargetFlow:
 			kind = spec.KindFlow
+		case store.AssistTargetTool:
+			kind = spec.KindTool
 		}
 		raw, _, err := spec.ReadFile(m.opt.Home, kind, req.TargetID)
 		if err != nil {
@@ -230,6 +238,8 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 		yaml = string(raw)
 	case req.TargetKind == store.AssistTargetFlow:
 		yaml = flowSkeleton
+	case req.TargetKind == store.AssistTargetTool:
+		yaml = toolSkeleton
 	default:
 		yaml = skeleton
 	}
@@ -391,8 +401,11 @@ func (m *Manager) agentEnv(sessionID string) []string {
 func (s *session) allowRules() agent.AllowRules {
 	m, sessionID, dir := s.m, s.id, s.dir
 	testArgs, validateCmd := "", "sensors validate"
-	if s.isFlow() {
+	switch {
+	case s.isFlow():
 		testArgs, validateCmd = `(?: --sample [0-9]+| --event [0-9A-HJKMNP-TV-Z]{26})?`, "flows validate"
+	case s.isTool():
+		testArgs, validateCmd = `(?: --args '[^']*')?`, "tools validate"
 	}
 	bin := `(?:hal9001|` + regexp.QuoteMeta(m.opt.Executable) + `)`
 	home := m.home

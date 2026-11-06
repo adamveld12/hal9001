@@ -2031,7 +2031,7 @@ paths:
       x-hal-service: api
       parameters:
         - {name: target_kind, in: query, schema: {$ref: '#/components/schemas/AssistTargetKind'}}
-        - {name: target_id, in: query, description: 'Sensor or flow id. Only sessions that edit that target.', schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: target_id, in: query, description: 'Sensor, flow or tool id. Only sessions that edit that target.', schema: {$ref: '#/components/schemas/Slug'}}
       responses:
         '200':
           description: Sessions, newest first.
@@ -2176,7 +2176,7 @@ paths:
     post:
       operationId: testAssistDraft
       tags: [assist]
-      summary: Run the draft once (a poll for a sensor, one input for a flow)
+      summary: Run the draft once (a poll for a sensor, one input for a flow, one call for a tool)
       description: |
         Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
         with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
@@ -2200,6 +2200,12 @@ paths:
         `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
         the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
         (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
+
+        Tool sessions: calls the draft tool once with `args` (defaults filled in; 422 when they do not fit its
+        parameters) with the global env file overlaid by the target tool's `env.d/tools` file, and returns the `tool`
+        variant. Nothing is recorded and no approval of the call itself is asked. The same approval rule as for
+        sensors applies to the agent: the hash covers `lang`, `script`, `command` and the env names the code
+        references.
       x-hal-service: admin
       x-hal-paused: reject
       parameters:
@@ -4863,7 +4869,7 @@ components:
         host_allowed: {type: boolean, description: '`hostname` is in `allowed_hosts`.'}
         allowed_logins: {type: array, items: {type: string}}
     # ---------------------------------------------------------------- assist (AI-assisted sensor authoring)
-    AssistTargetKind: {type: string, enum: [sensor, flow]}
+    AssistTargetKind: {type: string, enum: [sensor, flow, tool]}
     AssistStatus:
       type: string
       description: |
@@ -4878,7 +4884,7 @@ components:
       required: [kind, id]
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
-        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: Sensor or flow id; null when the session authors a new sensor or flow.}
+        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor, flow or tool id; null when the session authors a new one.'}
     AssistTargetRequest:
       type: object
       additionalProperties: false
@@ -4897,15 +4903,16 @@ components:
     AssistDraft:
       type: object
       description: |
-        The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+        The YAML the session works on, stored in the session's draft directory (`sensor.yaml`, `flow.yaml` or `tool.yaml`). Only the
         user's Save writes a real file.
-      required: [kind, yaml, hash, sensor_id, flow_id, prompts, diagnostics, updated_at, updated_by]
+      required: [kind, yaml, hash, sensor_id, flow_id, tool_id, prompts, diagnostics, updated_at, updated_by]
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
         yaml: {type: string}
         hash: {$ref: '#/components/schemas/Hash'}
-        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows.'}
-        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors.'}
+        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows and tools.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and tools.'}
+        tool_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Tool sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and flows.'}
         prompts: {type: array, items: {$ref: '#/components/schemas/AssistDraftPrompt'}, description: 'Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`.'}
         diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts.'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
@@ -5070,26 +5077,47 @@ components:
         input: {$ref: '#/components/schemas/JsonValue'}
         nodes: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestNode'}}
         edges_taken: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestEdge'}}
+    AssistToolTestResult:
+      type: object
+      description: |
+        Outcome of calling the draft tool once (tool sessions). Same fields as `ToolTestResult` plus `kind`. A failing
+        tool is still a result (`ok: false`, `error` carries the stderr tail).
+      required: [kind, ok, args, stdout, structured, stderr, exit_code, duration_ms, timed_out, error]
+      properties:
+        kind: {type: string, enum: [tool]}
+        ok: {type: boolean}
+        args: {type: object, additionalProperties: true}
+        stdout: {type: string}
+        structured: {oneOf: [{type: object, additionalProperties: true}, {type: array, items: {}}, {type: 'null'}]}
+        stderr: {type: string}
+        exit_code: {type: integer}
+        duration_ms: {type: integer}
+        timed_out: {type: boolean}
+        error: {type: [string, 'null']}
     AssistTestResult:
-      description: 'The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`.'
+      description: 'The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`, tool sessions `tool`.'
       oneOf:
         - {$ref: '#/components/schemas/AssistSensorTestResult'}
         - {$ref: '#/components/schemas/AssistFlowTestResult'}
+        - {$ref: '#/components/schemas/AssistToolTestResult'}
       discriminator:
         propertyName: kind
         mapping:
           sensor: '#/components/schemas/AssistSensorTestResult'
           flow: '#/components/schemas/AssistFlowTestResult'
+          tool: '#/components/schemas/AssistToolTestResult'
     AssistTestRequest:
       type: object
       additionalProperties: false
       description: |
-        Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
-        none, the first sample is used (422 when there is none).
+        Flow sessions: the input to run the draft flow on. At most one of `sample_index`, `event_id` and `input`; with
+        none, the first sample is used (422 when there is none). Tool sessions: `args`, the arguments object of the
+        call (default `{}`). Ignored for sensors.
       properties:
         sample_index: {type: integer, minimum: 0, description: 'Index into `GET /api/assist/sessions/{id}/samples`.'}
         event_id: {$ref: '#/components/schemas/Ulid'}
         input: {$ref: '#/components/schemas/JsonValue'}
+        args: {type: [object, 'null'], additionalProperties: true, description: Tool sessions only.}
     AssistSample:
       type: object
       required: [index, sensor_id, payload]

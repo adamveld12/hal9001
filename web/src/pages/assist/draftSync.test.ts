@@ -23,6 +23,7 @@ function draft(
     hash,
     sensor_id: null,
     flow_id: null,
+    tool_id: null,
     prompts: [],
     diagnostics: [],
     updated_at: "2026-11-05T10:00:00Z",

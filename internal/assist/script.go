@@ -28,6 +28,8 @@ type scriptID struct {
 	// Flow marks the identity of a flow draft: Nodes are its command nodes (the other fields stay empty).
 	Flow  bool         `json:"flow,omitempty"`
 	Nodes []nodeScript `json:"nodes,omitempty"`
+	// Tool marks the identity of a custom tool draft (Lang, Script, Command and Env are set).
+	Tool bool `json:"tool,omitempty"`
 }
 
 // nodeScript is what one command node of a flow executes. ID names the node in the text shown to the user; it is
@@ -161,6 +163,9 @@ func (p *pendingTest) content() []json.RawMessage {
 	cred := "none of the credentials available to this sensor"
 	env := p.id.Env
 	subject, path := "the draft's script", "sensor script ("+p.id.Lang+")"
+	if p.id.Tool {
+		cred, path = "none of the credentials available to this tool", "tool script ("+p.id.Lang+")"
+	}
 	if p.id.Flow {
 		subject, path = "the draft flow's command nodes", "flow command nodes"
 		cred = "none of the credentials available to command nodes"

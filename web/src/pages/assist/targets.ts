@@ -83,9 +83,33 @@ const FLOW: AssistTargetConfig = {
   draftPath: (sessionId) => `/flows?assist=${sessionId}`,
 };
 
+const TOOL: AssistTargetConfig = {
+  kind: "tool",
+  noun: "tool",
+  newTitle: "Create a tool with AI",
+  existingTitle: (id) => `Ask AI about ${id}`,
+  sessionTitle: (id) => (id === null ? "New tool" : `Tool ${id}`),
+  intro:
+    "The agent edits a draft of the tool. Nothing is saved until you press Save. It never sees your secrets; it tests the draft through the daemon.",
+  composerPlaceholder: {
+    new: "Describe the tool you want…",
+    existing: "What should change?",
+  },
+  starterPrompts: {
+    new: [
+      "A tool that fetches a URL and returns JSON",
+      "A tool that runs a git command",
+    ],
+    existing: ["Explain what this tool does", "Add a parameter"],
+  },
+  editorPath: (id, sessionId) => `/tools/${id}?assist=${sessionId}`,
+  draftPath: (sessionId) => `/tools?assist=${sessionId}`,
+};
+
 const TARGETS: Record<AssistTargetKind, AssistTargetConfig> = {
   sensor: SENSOR,
   flow: FLOW,
+  tool: TOOL,
 };
 
 export function targetConfig(kind: AssistTargetKind): AssistTargetConfig {

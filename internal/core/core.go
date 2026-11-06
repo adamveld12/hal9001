@@ -185,7 +185,7 @@ type Notifier interface {
 
 // AssistCreateRequest is POST /api/assist/sessions.
 type AssistCreateRequest struct {
-	TargetKind string // "sensor" | "flow"
+	TargetKind string // "sensor" | "flow" | "tool"
 	// TargetID is the sensor or flow to edit; empty authors a new one.
 	TargetID string
 	Runtime  string
@@ -224,12 +224,14 @@ type AssistTestResult struct {
 	Stderr     AssistText       `json:"stderr"`
 }
 
-// AssistTestRequest is the optional body of POST /api/assist/sessions/{id}/test (flow sessions).
-// At most one field is set.
+// AssistTestRequest is the optional body of POST /api/assist/sessions/{id}/test: the input of a flow session
+// (at most one of SampleIndex, EventID, Input) or the arguments of a tool session.
 type AssistTestRequest struct {
 	SampleIndex *int
 	EventID     string
 	Input       json.RawMessage
+	// Args are the arguments of a tool session's test call (a JSON object; nil means {}).
+	Args json.RawMessage
 }
 
 // AssistSample is one sample input of a flow session.
@@ -239,16 +241,35 @@ type AssistSample struct {
 	Payload  json.RawMessage `json:"payload"`
 }
 
-// AssistTestOutcome is the result of a draft test: exactly one of Sensor and Flow is set.
+// AssistToolTestResult is the tool variant of the outcome of POST /api/assist/sessions/{id}/test: one call of
+// the draft tool. A failing tool is still a result (OK false).
+type AssistToolTestResult struct {
+	Kind       string          `json:"kind"`
+	OK         bool            `json:"ok"`
+	Args       json.RawMessage `json:"args"`
+	Stdout     string          `json:"stdout"`
+	Structured json.RawMessage `json:"structured"`
+	Stderr     string          `json:"stderr"`
+	ExitCode   int             `json:"exit_code"`
+	DurationMS int64           `json:"duration_ms"`
+	TimedOut   bool            `json:"timed_out"`
+	Error      *string         `json:"error"`
+}
+
+// AssistTestOutcome is the result of a draft test: exactly one of Sensor, Flow and Tool is set.
 type AssistTestOutcome struct {
 	Sensor *AssistTestResult
 	Flow   *AssistFlowTestResult
+	Tool   *AssistToolTestResult
 }
 
 // MarshalJSON writes the variant that is set.
 func (o AssistTestOutcome) MarshalJSON() ([]byte, error) {
 	if o.Flow != nil {
 		return json.Marshal(o.Flow)
+	}
+	if o.Tool != nil {
+		return json.Marshal(o.Tool)
 	}
 	return json.Marshal(o.Sensor)
 }
