@@ -294,8 +294,9 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 - All tools run through mise: `mise exec -- <tool>` or `mise run <task>`. First time in a clone or worktree:
   `mise run setup`.
 - Commit early, one logical change per commit. Never bypass hooks. Pre-commit runs gitleaks, gofmt/goimports,
-  `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, tsc, vitest. Pre-push adds
-  `go test -race ./...` and the full web check. When a hook fails, assume your code is wrong first.
+  `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, tsc, vitest. Pre-commit also regenerates
+  `web/src/api/schema.d.ts` when `api/openapi.yaml` or the schema changes and fails if it differs. Pre-push runs
+  `mise run race`, `RACE=1 mise run e2e` and the full web check. When a hook fails, assume your code is wrong first.
 - Parallel work uses one git worktree and branch per agent; the coordinator merges. Do not commit to `main` directly
   or touch another worktree.
 - API first: `api/openapi.yaml` is the contract and changes in the same commit as the handler. After editing it run
@@ -304,18 +305,20 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 | Task | Command |
 |---|---|
 | Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
-| Everything the hooks run, on the whole tree | `mise run check` (gitleaks, format, `go mod tidy -diff`, golangci-lint, `go test -race ./...`, `pnpm --dir web check`) |
+| Everything the hooks run, on the whole tree | `mise run check` (static checks, `race`, sharded `e2e` and the web check, in parallel) |
+| Race detector on all packages but e2e | `mise run race` |
+| Throwaway daemon with a fake agent runtime (free port, temp home) | `mise run sandbox -- [--port N] [--script file.json] [--web-dir dir] [--keep]` |
 | UI dev server (proxies `/api` to `127.0.0.1:9001`) | `mise exec -- pnpm --dir web dev` |
 | Web checks only | `mise exec -- pnpm --dir web check` |
 
 ## Testing
 
 - **Unit and API tests:** `mise exec -- go test -short ./...` (fast; this is what pre-commit runs) and
-  `mise exec -- go test -race ./...` (pre-push). Tests assert behavior a user or API client would notice, through the
+  `mise run race` (pre-push). Tests assert behavior a user or API client would notice, through the
   real router (`httptest`) or the CLI, not through the UI. Slow suites skip under `-short`.
 - **Agent behavior** is tested against the scripted fake ACP agent ([`cmd/fake-acp-agent`](cmd/fake-acp-agent/README.md)),
   never a real model, so modes, policy, approvals, resume, timeouts and cancellation are deterministic.
-- **End to end:** `mise run e2e` (`go test -race ./e2e/...`) starts the real daemon in-process and drives the scenarios of
+- **End to end:** `mise run e2e` (`E2E_SHARDS=4` parallel shards of one test binary; `RACE=1` adds `-race`, as pre-push does) starts the real daemon in-process and drives the scenarios of
   [REQUIREMENTS.md §12](REQUIREMENTS.md) through the REST API and CLI only, with the fake agent. Each can be reproduced by
   hand with `curl` or the CLI ([docs/api.md](docs/api.md) has a walkthrough). The suite skips under `-short`.
 - **Live:** `HAL9001_LIVE=1 mise exec -- go test -count=1 ./e2e/live/` runs the real claude/codex/omp runtimes and the real

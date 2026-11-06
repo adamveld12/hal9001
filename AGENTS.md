@@ -15,7 +15,7 @@ Read `REQUIREMENTS.md` before changing anything. These rules apply to every huma
 - When a hook fails, triage before doing anything else:
   1. **Assume the code is wrong first.** Read the failure, fix the code, commit again.
   2. If the failure is clearly the tooling (a crash in the tool itself, a false positive that can't be fixed in code, a broken environment, a hook that can't run in a worktree), **stop and report it** to the coordinator/user with the exact command, output, and your diagnosis. Do not change `lefthook.yml`, `.golangci.yml`, `mise.toml`, or lint configs to work around it.
-- Pre-commit runs: gitleaks, gofmt/goimports, `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, `tsc`, vitest. Pre-push runs the race detector and the e2e suite (see `mise.toml`) and the full web check. Agents do not push; the coordinator runs `mise run check` once on the merged tree.
+- Pre-commit runs: gitleaks, gofmt/goimports, `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, `tsc`, vitest. Pre-commit also regenerates `web/src/api/schema.d.ts` from `api/openapi.yaml` and fails if it differs (run `mise exec -- pnpm --dir web gen:api` and stage it). Pre-push runs `mise run race`, `RACE=1 mise run e2e` and the full web check. Agents do not push; the coordinator runs `mise run check` once on the merged tree.
 
 ## Verification ladder (agents)
 
@@ -32,6 +32,13 @@ Run the cheapest check that can fail for what you changed, and stop when it pass
 
 - Each parallel agent works in its own git worktree on its own branch and commits there. Never commit to another agent's worktree or to `main` directly; the coordinator merges.
 - Stay inside your slice's files. If you need a change to a shared contract (`internal/spec`, store interfaces, `api/openapi.yaml`), message the coordinator instead of editing it.
+- `schema.d.ts` is generated and has a keep-ours merge rule (`.gitattributes`; the driver is set by `mise run setup`). After merging, run `mise exec -- pnpm --dir web gen:api` and commit the result.
+
+## Browser verification
+
+- Use the sandbox, never the daemon on port 9001: `mise run sandbox` (seeded temp home, a `fake` runtime from `--script`, a free port; prints the URL and home path, Ctrl-C stops it and deletes the home unless `--keep`).
+- Prefer `tab.text()`, `waitForSelector` and DOM assertions. Take screenshots only of the viewport, only as final evidence; never full-page captures (they stall).
+- A virtual WebAuthn authenticator needs a headed tab.
 
 ## API-first
 
