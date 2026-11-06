@@ -113,3 +113,37 @@ func TestToolsCRUDAndTest(t *testing.T) {
 		t.Errorf("tool env survived the tool: %v", err)
 	}
 }
+
+// The CLI is a thin client of the tools endpoints.
+func TestToolsCLI(t *testing.T) {
+	d := newDaemon(t)
+	d.Write("tools/now.yaml", "id: now\ndescription: Say hi\nparams:\n  who: {type: string, default: world}\nlang: bash\nscript: |\n  echo \"hi $ARG_WHO $NOW_TOKEN\"\napprove: never\n")
+	d.Start()
+
+	out, errOut, code := d.CLI("", "tools", "list")
+	if code != 0 || !strings.Contains(out, "now") {
+		t.Fatalf("tools list: exit %d: %s %s", code, out, errOut)
+	}
+	if out, _, code = d.CLI("", "tools", "get", "now"); code != 0 || !strings.Contains(out, `"who"`) {
+		t.Fatalf("tools get: exit %d: %s", code, out)
+	}
+	if _, errOut, code = d.CLI("tool-token-value-1234\n", "tools", "env", "set", "now", "NOW_TOKEN", "--stdin"); code != 0 {
+		t.Fatalf("tools env set: exit %d: %s", code, errOut)
+	}
+	if out, _, code = d.CLI("", "tools", "env", "list", "now"); code != 0 || !strings.Contains(out, "NOW_TOKEN") || strings.Contains(out, "tool-token-value") {
+		t.Fatalf("tools env list: exit %d: %s", code, out)
+	}
+	out, errOut, code = d.CLI("", "tools", "test", "now", "--args", `{"who":"ada"}`)
+	if code != 0 || !strings.Contains(out, "hi ada «NOW_TOKEN»") {
+		t.Fatalf("tools test: exit %d: %s %s", code, out, errOut)
+	}
+	if _, _, code = d.CLI("", "tools", "test", "now", "--args", `{"nope":1}`); code == 0 {
+		t.Errorf("tools test with an unknown argument succeeded")
+	}
+	if _, errOut, code = d.CLI("", "tools", "env", "unset", "now", "NOW_TOKEN"); code != 0 {
+		t.Fatalf("tools env unset: exit %d: %s", code, errOut)
+	}
+	if out, _, code = d.CLI("id: x\ndescription: d\nlang: bash\n", "tools", "validate", "-"); code == 0 {
+		t.Errorf("an invalid tool validated: %s", out)
+	}
+}

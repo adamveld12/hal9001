@@ -242,3 +242,79 @@ func sensorValidateLeaf() *leaf {
 		},
 	}
 }
+
+func toolValidateLeaf() *leaf {
+	return &leaf{
+		usage: "[file.yaml|-]", maxArgs: 1,
+		run: func(ctx context.Context, c *call) error {
+			file := ""
+			if len(c.args) > 0 {
+				file = c.args[0]
+			}
+			yamlText, err := c.readInput(file)
+			if err != nil {
+				return err
+			}
+			body, _ := jsonBody(map[string]string{"yaml": string(yamlText)})
+			resp, err := c.client().do(ctx, http.MethodPost, "/api/tools/validate", nil, body)
+			if err != nil {
+				return err
+			}
+			if err := c.emit(resp, "severity", "code", "message"); err != nil {
+				return err
+			}
+			var res struct {
+				Valid bool `json:"valid"`
+			}
+			if json.Unmarshal(resp.Body, &res) == nil && !res.Valid {
+				return &silentError{}
+			}
+			return nil
+		},
+	}
+}
+
+func toolTestLeaf() *leaf {
+	var args, argsFile string
+	return &leaf{
+		usage: "<id> [--args '{\"name\": \"value\"}' | --args-file file.json|-]", minArgs: 1, maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&args, "args", "", "the arguments as a JSON object (default: {})")
+			fs.StringVar(&argsFile, "args-file", "", "read the arguments JSON object from a file, or - for stdin")
+		},
+		run: func(ctx context.Context, c *call) error {
+			if args != "" && argsFile != "" {
+				return usagef("tools test: give --args or --args-file, not both")
+			}
+			raw := []byte(args)
+			if argsFile != "" {
+				data, err := c.readInput(argsFile)
+				if err != nil {
+					return err
+				}
+				raw = data
+			}
+			var obj map[string]any
+			if len(strings.TrimSpace(string(raw))) > 0 {
+				if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+					return usagef("tools test: the arguments must be a JSON object")
+				}
+			}
+			body, _ := jsonBody(map[string]any{"args": obj})
+			resp, err := c.client().do(ctx, http.MethodPost, "/api/tools/"+esc(c.args[0])+"/test", nil, body)
+			if err != nil {
+				return err
+			}
+			if err := c.emit(resp); err != nil {
+				return err
+			}
+			var res struct {
+				OK bool `json:"ok"`
+			}
+			if json.Unmarshal(resp.Body, &res) == nil && !res.OK {
+				return &silentError{}
+			}
+			return nil
+		},
+	}
+}
