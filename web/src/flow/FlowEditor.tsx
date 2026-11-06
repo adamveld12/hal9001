@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { Icon } from "../components/icons";
-import { Badge, Button, Field, Kbd, TextInput, Toggle } from "../components/ui";
+import { Badge, Button, Kbd, TextInput, Toggle } from "../components/ui";
 import { cx } from "../lib/cx";
 import {
   canConnect,
@@ -205,6 +205,42 @@ export function FlowEditor(props: FlowEditorProps) {
             }
           />
         </div>
+        <div
+          className="flex min-w-0 items-center gap-1.5 text-xs text-muted"
+          aria-label="Subscribed sensors"
+        >
+          Sensors
+          {flow.subscribe.length === 0 ? (
+            <span title="Drag a sensor from the palette">none</span>
+          ) : (
+            flow.subscribe.map((s) => (
+              <Badge key={s} tone={knownSensors.has(s) ? "ok" : "bad"}>
+                {s}
+              </Badge>
+            ))
+          )}
+        </div>
+        {diagIndex.flow.length > 0 && (
+          <span
+            className={cx(
+              "text-xs",
+              diagIndex.flow.some((d) => d.severity === "error")
+                ? "text-bad"
+                : "text-warn",
+            )}
+            title={diagIndex.flow.map((d) => d.message).join("\n")}
+          >
+            {diagIndex.flow[0].message}
+            {diagIndex.flow.length > 1 && ` (+${diagIndex.flow.length - 1})`}
+          </span>
+        )}
+        <span
+          className="cursor-help rounded-full border border-line px-1.5 text-xs text-muted"
+          aria-label="Editor help"
+          title="Select a node to edit it. Drag from a node's output port to another node to connect. Backspace deletes the selection."
+        >
+          ?
+        </span>
         <div className="ml-auto flex items-center gap-2">
           {dirty && !saveHidden && <Badge tone="warn">unsaved</Badge>}
           {props.saveError && (
@@ -336,84 +372,47 @@ export function FlowEditor(props: FlowEditorProps) {
           )}
         </div>
 
-        <aside
-          className={cx(
-            "shrink-0 overflow-y-auto border-l border-line bg-panel",
-            selected?.type === "transform" ? "w-[30rem]" : "w-96",
-          )}
-          aria-label="Node settings"
-        >
-          {selected ? (
-            <>
-              <Inspector
-                key={selected.id}
-                node={selected}
-                diagnostics={diagIndex.byNode.get(selected.id) ?? []}
-                prompts={props.prompts}
-                runtimes={props.runtimes}
-                idTaken={(id) => state.nodes.some((n) => n.id === id)}
-                flowId={flow.id}
-                onChange={(patch, coalesce) =>
-                  dispatch({
-                    type: "updateNode",
-                    id: selected.id,
-                    patch,
-                    coalesce,
-                  })
-                }
-                onRename={(to) =>
-                  dispatch({ type: "renameNode", id: selected.id, to })
-                }
-                onDelete={() =>
-                  dispatch({
-                    type: "nodeChanges",
-                    changes: [{ type: "remove", id: selected.id }],
-                  })
-                }
-              />
-              {props.nodeActions && (
-                <div className="border-t border-line p-3">
-                  {props.nodeActions(selected, flow)}
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="space-y-3 p-3 text-xs text-muted">
-              <div className="text-sm font-medium text-fg">{flow.id}</div>
-              <Field label="Subscribed sensors">
-                <div className="flex flex-wrap gap-1">
-                  {flow.subscribe.length === 0 && (
-                    <span>None yet. Drag a sensor from the palette.</span>
-                  )}
-                  {flow.subscribe.map((s) => (
-                    <Badge key={s} tone={knownSensors.has(s) ? "ok" : "bad"}>
-                      {s}
-                    </Badge>
-                  ))}
-                </div>
-              </Field>
-              {diagIndex.flow.length > 0 && (
-                <ul className="space-y-1">
-                  {diagIndex.flow.map((d) => (
-                    <li
-                      key={d.message}
-                      className={
-                        d.severity === "error" ? "text-bad" : "text-warn"
-                      }
-                    >
-                      {d.message}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p>
-                Select a node to edit it. Drag from a node's output port to
-                another node to connect. Press <Kbd>Backspace</Kbd> to delete
-                the selection.
-              </p>
-            </div>
-          )}
-        </aside>
+        {selected && (
+          <aside
+            className={cx(
+              "shrink-0 overflow-y-auto border-l border-line bg-panel",
+              selected.type === "transform" ? "w-[30rem]" : "w-96",
+            )}
+            aria-label="Node settings"
+          >
+            <Inspector
+              key={selected.id}
+              node={selected}
+              diagnostics={diagIndex.byNode.get(selected.id) ?? []}
+              prompts={props.prompts}
+              runtimes={props.runtimes}
+              idTaken={(id) => state.nodes.some((n) => n.id === id)}
+              flowId={flow.id}
+              onChange={(patch, coalesce) =>
+                dispatch({
+                  type: "updateNode",
+                  id: selected.id,
+                  patch,
+                  coalesce,
+                })
+              }
+              onRename={(to) =>
+                dispatch({ type: "renameNode", id: selected.id, to })
+              }
+              onDelete={() =>
+                dispatch({
+                  type: "nodeChanges",
+                  changes: [{ type: "remove", id: selected.id }],
+                })
+              }
+            />
+            {props.nodeActions && (
+              <div className="border-t border-line p-3">
+                {props.nodeActions(selected, flow)}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
     </div>
   );
