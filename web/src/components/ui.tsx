@@ -321,8 +321,8 @@ export function Toggle({
       >
         <span
           className={cx(
-            "absolute top-0.5 size-2.5 rounded-full bg-panel transition-all",
-            checked ? "left-3.5" : "left-0.5 bg-muted",
+            "absolute top-0.5 size-2.5 rounded-full transition-all",
+            checked ? "left-3.5 bg-panel" : "left-0.5 bg-muted",
           )}
         />
       </span>

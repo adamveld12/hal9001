@@ -5,6 +5,7 @@ import {
   describeCell,
   filterRows,
   flattenItem,
+  itemCountLabel,
   keyRank,
   parseSensorStdout,
   toRows,
@@ -180,5 +181,17 @@ describe("filterRows", () => {
 
   it("returns every row for a blank query", () => {
     expect(filterRows(rows, "  ")).toHaveLength(3);
+  });
+});
+
+describe("itemCountLabel", () => {
+  it("counts all items without a filter, with singular for one", () => {
+    expect(itemCountLabel(3, 3, false)).toBe("3 items");
+    expect(itemCountLabel(1, 1, false)).toBe("1 item");
+  });
+
+  it("says how many items match while filtering", () => {
+    expect(itemCountLabel(3, 1, true)).toBe("1 of 3 items");
+    expect(itemCountLabel(3, 0, true)).toBe("0 of 3 items");
   });
 });

@@ -230,7 +230,8 @@ export interface paths {
     /**
      * Create a sensor
      * @description Writes `sensors/<id>.yaml`. Send either `yaml` (raw file text) or `sensor` (JSON form). Rejected with 422 when
-     *     validation reports errors and 409 `already-exists` when the id is taken.
+     *     validation reports errors and 409 `already-exists` when the id is taken. Open assist sessions that were authoring
+     *     a new sensor with this id become sessions on it (`target.id` is set).
      */
     post: operations["createSensor"];
     delete?: never;
