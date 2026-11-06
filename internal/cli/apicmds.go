@@ -727,9 +727,10 @@ func inboxCmds() []*command {
 	return []*command{
 		cmd("list", "list inbox items", list),
 		cmd("get", "show an inbox item", idGet("/api/inbox/%s")),
-		cmd("read", "mark an item read", inboxFlag("read", "unread", "mark unread instead")),
+		cmd("read", "mark an item, several items (--ids) or everything matching a filter read", inboxBulkLeaf("read", "mark_read", "mark_unread", "read", "unread", "mark unread instead")),
 		cmd("star", "star an item", inboxFlag("starred", "off", "remove the star instead")),
-		cmd("archive", "archive an item", inboxFlag("archived", "undo", "unarchive instead")),
+		cmd("archive", "archive an item, several items (--ids) or everything matching a filter (starred items are kept)", inboxBulkLeaf("archive", "archive", "unarchive", "archived", "undo", "unarchive instead")),
+		cmd("delete", "permanently delete archived items (--ids, --all or a filter; starred items are kept)", inboxBulkLeaf("delete", "delete", "", "", "", "")),
 	}
 }
 

@@ -136,6 +136,25 @@ ID=$(curl -sS "$API/inbox?read=false" | jq -r '.items[0].id')
 curl -sS -X PATCH -H "$H" "$API/inbox/$ID" -d '{"read": true, "starred": true}' | jq '{read, starred}'
 ```
 
+Clearing the inbox in bulk (`admin`; see `POST /api/inbox/bulk` in `api/openapi.yaml`):
+
+```sh
+# Count first (changes nothing), then archive everything read and older than 7 days.
+F='{"read": true, "older_than": "7d"}'
+curl -sS -X POST -H "$H" "$API/inbox/bulk" -d "{\"action\":\"archive\",\"dry_run\":true,\"filter\":$F}" | jq '{matched, changed, skipped_starred}'
+curl -sS -X POST -H "$H" "$API/inbox/bulk" -d "{\"action\":\"archive\",\"filter\":$F}" > cleared.json
+# Undo: unarchive exactly the items that changed.
+curl -sS -X POST -H "$H" "$API/inbox/bulk" -d "{\"action\":\"unarchive\",\"ids\":$(jq .changed_ids cleared.json)}"
+```
+
+- `action` is `archive` (reversible: items stay linked to their runs), `unarchive`, `mark_read`, `mark_unread` or `delete`. Send exactly one of `ids` (1 to 1000; unknown ids are ignored) or `filter`.
+- `filter` takes the fields of `GET /api/inbox` (`read`, `starred`, `archived`, `priority`, `dry_run`, `flow_id`, `q`) as JSON, plus `max_priority` (`priority` is a minimum, so `"max_priority": "low"` selects only low items) and `older_than` (a duration such as `7d`, or an RFC 3339 time). The server evaluates it inside one transaction, so it covers every match, not just the rows a client has loaded. `filter.dry_run` means items of dry-run flows; the top-level `dry_run: true` previews the action.
+- `filter.archived` defaults to unarchived items, except for `unarchive` and `delete`, which default to archived items.
+- Starred items are never archived or deleted unless `include_starred: true`. `mark_read`, `mark_unread` and `unarchive` ignore stars.
+- `delete` is permanent and only removes archived items. Other targets are skipped, not rejected: they are counted in `skipped_not_archived`.
+- The result is `{matched, changed, skipped_starred, skipped_not_archived, changed_ids}`. `matched` includes skipped items; `changed` counts items actually modified (or that a preview would modify).
+- Each changed item emits `inbox.updated`; a delete emits `stream.resync` (reason `pruned`). `status.changed` carries the new `unread_inbox`.
+
 Other everyday calls:
 
 ```sh

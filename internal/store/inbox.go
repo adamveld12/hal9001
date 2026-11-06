@@ -200,20 +200,7 @@ const inboxRank = `(CASE priority WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN '
 // ListInbox lists items, newest first, or by priority then newest first with
 // ByPriority (Oldest is ignored in that mode).
 func (s *Store) ListInbox(ctx context.Context, f InboxFilter) (Page[InboxItem], error) {
-	var w where
-	w.boolPtr("is_read", f.Read)
-	w.boolPtr("starred", f.Starred)
-	w.boolPtr("archived", f.Archived)
-	w.boolPtr("dry_run", f.DryRun)
-	w.in("priority", strs(f.Priorities))
-	w.eq("flow_run_id", f.FlowRunID)
-	if f.FlowID != "" {
-		w.add("flow_run_id IN (SELECT id FROM flow_runs WHERE flow_id = ?)", f.FlowID)
-	}
-	w.timeRange("created_at", f.Time)
-	if f.Search != "" {
-		w.add("(instr(lower(title), lower(?)) > 0 OR instr(lower(summary_md), lower(?)) > 0)", f.Search, f.Search)
-	}
+	w := f.whereClause()
 	if !f.ByPriority {
 		return listPage(ctx, s.rdb, "SELECT "+inboxCols+" FROM inbox_items", &w, f.ListOpts, "id",
 			scanInbox, func(i InboxItem) string { return i.ID })
@@ -246,4 +233,159 @@ func (s *Store) ListInbox(ctx context.Context, f InboxFilter) (Page[InboxItem], 
 		page.NextCursor = page.Items[limit-1].ID
 	}
 	return page, nil
+}
+
+// Inbox bulk actions.
+const (
+	InboxArchive    = "archive"
+	InboxUnarchive  = "unarchive"
+	InboxMarkRead   = "mark_read"
+	InboxMarkUnread = "mark_unread"
+	InboxDelete     = "delete"
+)
+
+// MaxBulkInboxIDs bounds InboxBulk.IDs.
+const MaxBulkInboxIDs = 1000
+
+// InboxBulk is one bulk action on inbox items. Exactly one of IDs and Filter
+// selects the targets (Filter ignores the paging fields). Archive and Delete
+// leave starred items alone unless IncludeStarred; Delete only removes archived
+// items.
+type InboxBulk struct {
+	Action         string
+	IDs            []string
+	Filter         *InboxFilter
+	IncludeStarred bool
+	// DryRun computes the result without changing anything.
+	DryRun bool
+}
+
+// InboxBulkResult counts what an InboxBulk matched and did.
+type InboxBulkResult struct {
+	Matched            int      // targets selected (existing ids, or filter matches), including skipped ones
+	Changed            int      // targets modified (or that a dry run would modify)
+	SkippedStarred     int      // starred targets left alone by archive/delete
+	SkippedNotArchived int      // delete targets that were not archived
+	ChangedIDs         []string // ids of the changed targets
+}
+
+func (f *InboxFilter) whereClause() where {
+	var w where
+	w.boolPtr("is_read", f.Read)
+	w.boolPtr("starred", f.Starred)
+	w.boolPtr("archived", f.Archived)
+	w.boolPtr("dry_run", f.DryRun)
+	w.in("priority", strs(f.Priorities))
+	w.eq("flow_run_id", f.FlowRunID)
+	if f.FlowID != "" {
+		w.add("flow_run_id IN (SELECT id FROM flow_runs WHERE flow_id = ?)", f.FlowID)
+	}
+	w.timeRange("created_at", f.Time)
+	if f.Search != "" {
+		w.add("(instr(lower(title), lower(?)) > 0 OR instr(lower(summary_md), lower(?)) > 0)", f.Search, f.Search)
+	}
+	return w
+}
+
+// BulkInbox applies b in one transaction. The filter is evaluated by the
+// database inside that transaction, so the targets are exactly the rows that
+// match when the change is made. One inbox_item change is recorded per changed
+// item (a single wildcard change for Delete).
+func (s *Store) BulkInbox(ctx context.Context, b InboxBulk) (InboxBulkResult, error) {
+	switch b.Action {
+	case InboxArchive, InboxUnarchive, InboxMarkRead, InboxMarkUnread, InboxDelete:
+	default:
+		return InboxBulkResult{}, fmt.Errorf("%w: unknown inbox action %q", ErrInvalid, b.Action)
+	}
+	if (b.Filter == nil) == (b.IDs == nil) {
+		return InboxBulkResult{}, fmt.Errorf("%w: set exactly one of ids and filter", ErrInvalid)
+	}
+	if b.IDs != nil && (len(b.IDs) == 0 || len(b.IDs) > MaxBulkInboxIDs) {
+		return InboxBulkResult{}, fmt.Errorf("%w: ids must hold 1 to %d items", ErrInvalid, MaxBulkInboxIDs)
+	}
+	res := InboxBulkResult{ChangedIDs: []string{}}
+	err := s.write(ctx, func(t *txn) error {
+		var w where
+		if b.Filter != nil {
+			w = b.Filter.whereClause()
+		} else {
+			w.in("id", b.IDs)
+		}
+		rows, err := t.QueryContext(ctx, sqlJoin("SELECT id, is_read, starred, archived FROM inbox_items", w.clause()), w.args...)
+		if err != nil {
+			return fmt.Errorf("store: bulk inbox select: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id string
+			var read, starred, archived bool
+			if err := rows.Scan(&id, &read, &starred, &archived); err != nil {
+				return fmt.Errorf("store: bulk inbox scan: %w", err)
+			}
+			res.Matched++
+			var change bool
+			switch b.Action {
+			case InboxArchive:
+				if starred && !b.IncludeStarred {
+					res.SkippedStarred++
+					continue
+				}
+				change = !archived
+			case InboxUnarchive:
+				change = archived
+			case InboxMarkRead:
+				change = !read
+			case InboxMarkUnread:
+				change = read
+			case InboxDelete:
+				if !archived {
+					res.SkippedNotArchived++
+					continue
+				}
+				if starred && !b.IncludeStarred {
+					res.SkippedStarred++
+					continue
+				}
+				change = true
+			}
+			if change {
+				res.ChangedIDs = append(res.ChangedIDs, id)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("store: bulk inbox select: %w", err)
+		}
+		_ = rows.Close()
+		res.Changed = len(res.ChangedIDs)
+		if b.DryRun || res.Changed == 0 {
+			return nil
+		}
+		const chunk = 500
+		for i := 0; i < len(res.ChangedIDs); i += chunk {
+			ids := res.ChangedIDs[i:min(i+chunk, len(res.ChangedIDs))]
+			set := map[string]string{
+				InboxArchive: "archived = 1", InboxUnarchive: "archived = 0",
+				InboxMarkRead: "is_read = 1", InboxMarkUnread: "is_read = 0",
+			}[b.Action]
+			q := "UPDATE inbox_items SET " + set + " WHERE id IN (" + placeholders(len(ids)) + ")"
+			if b.Action == InboxDelete {
+				q = "DELETE FROM inbox_items WHERE id IN (" + placeholders(len(ids)) + ")"
+			}
+			if _, err := t.ExecContext(ctx, q, anySlice(ids)...); err != nil {
+				return fmt.Errorf("store: bulk inbox %s: %w", b.Action, err)
+			}
+		}
+		if b.Action == InboxDelete {
+			t.note(ResInboxItem, "*", OpDelete)
+			return nil
+		}
+		for _, id := range res.ChangedIDs {
+			t.note(ResInboxItem, id, OpUpdate)
+		}
+		return nil
+	})
+	if err != nil {
+		return InboxBulkResult{}, err
+	}
+	return res, nil
 }

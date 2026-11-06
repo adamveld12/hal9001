@@ -1560,6 +1560,7 @@ paths:
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
         - {name: priority, in: query, description: Minimum priority., schema: {$ref: '#/components/schemas/Priority'}}
+        - {name: max_priority, in: query, description: Maximum priority. `priority=low&max_priority=low` lists only low items., schema: {$ref: '#/components/schemas/Priority'}}
         - {name: read, in: query, schema: {type: boolean}}
         - {name: starred, in: query, schema: {type: boolean}}
         - name: archived
@@ -1581,6 +1582,46 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/inbox/bulk:
+    post:
+      operationId: bulkInbox
+      tags: [inbox]
+      summary: Archive, unarchive, mark, or delete many inbox items
+      description: |
+        Applies `action` to the items named by `ids` or to every item the `filter` matches (exactly one of the two).
+        The filter is evaluated by the server inside the write transaction, so it covers every match, not only the
+        rows a client has loaded. `filter` takes the query parameters of `GET /api/inbox` (`read`, `starred`,
+        `archived`, `priority`, `max_priority`, `dry_run`, `flow_id`, `q`) as JSON, plus `older_than` (a duration such as
+        `7d`, or an RFC 3339 time: only items created before it). Its `dry_run` selects items of dry-run flows; the
+        top-level `dry_run` previews the action. An unset `filter.archived` means unarchived items, except for
+        `unarchive` and `delete`, which default to archived items. `{}` matches every item the default allows.
+
+        Starred items are never archived or deleted unless `include_starred` is true. `delete` only removes archived
+        items; other targets are skipped and counted in `skipped_not_archived` (the request does not fail). Ids that
+        do not exist are ignored. `unarchive`, `mark_read` and `mark_unread` do not look at the star.
+
+        `matched` counts the selected items including skipped ones; `changed` counts items that were modified (or
+        would be, with the top-level `dry_run: true`, which changes nothing and emits no events). `changed_ids` lists
+        them, e.g. to undo an archive with `unarchive`. Deleting is permanent. Each changed item emits
+        `inbox.updated` (a delete emits `stream.resync`), and `status.changed` carries the new `unread_inbox`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InboxBulkRequest'}
+      responses:
+        '200':
+          description: What the action matched and changed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxBulkResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
   /api/inbox/{id}:
     parameters:
@@ -4204,6 +4245,42 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/InboxItem'}}
         next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    InboxBulkFilter:
+      type: object
+      additionalProperties: false
+      properties:
+        read: {type: boolean}
+        starred: {type: boolean}
+        archived: {type: string, enum: ['true', 'false', any]}
+        priority: {$ref: '#/components/schemas/Priority'}
+        max_priority: {$ref: '#/components/schemas/Priority'}
+        dry_run: {type: boolean, description: Only items of dry-run flows.}
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        older_than: {type: string, description: 'A duration (`7d`, `36h`) or an RFC 3339 time. Matches items created before it.'}
+        q: {type: string, minLength: 1}
+    InboxBulkRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: {type: string, enum: [archive, unarchive, mark_read, mark_unread, delete]}
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: {$ref: '#/components/schemas/Ulid'}
+        filter: {$ref: '#/components/schemas/InboxBulkFilter'}
+        include_starred: {type: boolean, default: false}
+        dry_run: {type: boolean, default: false, description: Count only; change nothing.}
+    InboxBulkResult:
+      type: object
+      required: [matched, changed, skipped_starred, skipped_not_archived, changed_ids]
+      properties:
+        matched: {type: integer, minimum: 0}
+        changed: {type: integer, minimum: 0}
+        skipped_starred: {type: integer, minimum: 0}
+        skipped_not_archived: {type: integer, minimum: 0}
+        changed_ids: {type: array, items: {$ref: '#/components/schemas/Ulid'}}
     InboxPatch:
       type: object
       additionalProperties: false
