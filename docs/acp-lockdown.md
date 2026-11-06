@@ -13,14 +13,16 @@ Tested: `claude-agent-acp` 0.100.0 (bundles Claude Code 2.1.316), `codex-acp` 2.
 
 | Runtime | Lockable | What the model can call after lockdown (from a captured request) | Not closed by configuration |
 |---|---|---|---|
-| Claude | **Yes** | only the injected MCP tools (`mcp__<server>__<tool>`) | Admin-managed plugin hooks still run. With `settingSources: ["project"]`, a repo's `.claude/settings.json` can run commands, so the config uses `[]` and loses `CLAUDE.md` (it can be re-added with `_meta.systemPrompt.append`). |
-| Codex | **Yes, with one gap** | the injected MCP tools plus four MCP-only helpers Codex always adds: `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `tool_search` | A repo's `<cwd>/.codex/config.toml` MCP server still starts and is callable: the adapter marks every cwd as trusted. |
-| omp | **Yes, with one gap** | only the injected MCP tools (`mcp__<server>_<tool>`) | A prompt whose text starts with `/` is run by omp as a slash command before the model. In the locked config `/mcp add n -- <cmd>` followed by `/mcp test n` ran a command, and `/export <path>` wrote a file. |
+| Claude | **Yes** | only the injected MCP tools (`mcp__<server>__<tool>`) | Admin-managed plugin hooks still run (the model cannot reach them). With `settingSources: ["project"]`, a repo's `.claude/settings.json` can run commands, so the config uses `[]` and loses `CLAUDE.md` (it can be re-added with `_meta.systemPrompt.append`). |
+| Codex | **Partial** | the injected MCP tools plus four MCP-only helpers Codex always adds: `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `tool_search` | **The model can reach it:** a repo's `<cwd>/.codex/config.toml` MCP server still starts and its tools are callable, because the adapter marks every cwd as trusted. |
+| omp | **Yes**, with a prompt rule | only the injected MCP tools (`mcp__<server>_<tool>`) | A prompt whose text starts with `/` is run by omp as a slash command before the model (the model cannot issue one). In the locked config `/mcp add n -- <cmd>` followed by `/mcp test n` ran a command, and `/export <path>` wrote a file. |
 
-No runtime needs a CLI-exec fallback, and none is closed by configuration alone: each leaves one item for hal9001 to
-handle (Claude: admin-managed hooks, which are outside the agent's reach; Codex: refuse a cwd that contains `.codex/`;
-omp: never start a prompt with `/`). The configs also differ a lot: Claude needs only `session_meta`; Codex needs env
-vars plus a `CODEX_HOME` that hal9001 generates; omp needs spawn flags, an overlay file and an env var.
+No runtime needs a CLI-exec fallback, and none is closed by configuration alone. Only Codex has a gap the model itself can
+use (a repo-defined MCP server). The others are reachable only through settings outside the agent (Claude's admin hooks)
+or through prompt text that hal9001 writes (omp, and the same rule for the other two): hal9001 closes those by refusing a
+Codex cwd that contains `.codex/` and by never starting a prompt with `/`. The configs also differ a lot: Claude needs only
+`session_meta`; Codex needs env vars plus a `CODEX_HOME` that hal9001 generates; omp needs spawn flags, an overlay file and
+an env var.
 
 Rules for hal9001 that hold for every runtime:
 
@@ -179,8 +181,9 @@ run the prompt when it contains anything that is not one of its own `mcp__<name>
 
 ## Codex
 
-**Lockable: yes, with one gap.** Three parts are needed: env vars, a `CODEX_CONFIG` JSON, and a `CODEX_HOME` that
-hal9001 generates. Some settings only work in one place:
+**Lockable: partial.** Everything Codex ships can be removed except four MCP-only helpers, but a repo's own
+`.codex/config.toml` can still add MCP servers the model can call. Three parts are needed: env vars, a `CODEX_CONFIG` JSON,
+and a `CODEX_HOME` that hal9001 generates. Some settings only work in one place:
 
 - Per-server settings (`default_tools_approval_mode`, `tool_timeout_sec`) and `model_catalog_json` must live in the
   user-level `$CODEX_HOME/config.toml`. The adapter replaces the whole `mcp_servers` key of `CODEX_CONFIG` whenever ACP
@@ -292,7 +295,7 @@ blocked); `agent-full-access` run C3b also wrote `written-by-agent.txt` and, thr
 
 ## omp
 
-**Lockable: yes, with one gap.** Config is spawn flags, an overlay file and one env var. Flags alone are not enough:
+**Lockable: yes, with a prompt rule.** Config is spawn flags, an overlay file and one env var. Flags alone are not enough:
 `--no-tools` leaves extension, custom and memory tools, `learn` and `manage_skill` in place, and it does not touch the memory
 prompt block (runs 15, 16, 24, 25). The overlay's `disabledProviders` removes extensions, hooks, custom tools, skills and
 rules.
