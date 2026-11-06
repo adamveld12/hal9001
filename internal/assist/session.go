@@ -264,6 +264,26 @@ func (s *session) updateDraft(yaml, expected string) (*store.AssistSession, erro
 	return s.copyRowLocked(), nil
 }
 
+// adopt makes the session edit the existing sensor or flow id instead of a new one. The draft is validated again
+// (an id that differs from the target is now flagged) and the instructions list the target's env keys.
+func (s *session) adopt(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.row.Status == store.AssistClosed || s.row.TargetID != "" || s.row.DraftID != id {
+		return nil
+	}
+	s.row.TargetID = id
+	if s.isFlow() {
+		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = s.m.evaluateFlow(s.row.DraftYAML, id, s.dir)
+	} else {
+		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id)
+	}
+	if err := s.saveLocked(); err != nil {
+		return err
+	}
+	return s.writeInstructions()
+}
+
 func (s *session) usableLocked() error {
 	if s.closed || s.row.Status == store.AssistClosed {
 		return fmt.Errorf("%w: the session is closed", core.ErrInvalidState)

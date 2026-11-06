@@ -17,6 +17,7 @@ import {
   type InboxNode,
   type Lang,
 } from "./model";
+import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
 
 export interface InspectorProps {
@@ -26,7 +27,10 @@ export interface InspectorProps {
   runtimes: string[];
   /** Whether another node already uses this id. */
   idTaken: (id: string) => boolean;
-  onChange: (patch: (n: FlowNode) => FlowNode) => void;
+  /** Id of the flow being edited (samples are looked up per flow and node). */
+  flowId: string;
+  /** `coalesce` merges consecutive edits of one field into one undo step. */
+  onChange: (patch: (n: FlowNode) => FlowNode, coalesce?: string) => void;
   onRename: (id: string) => void;
   onDelete: () => void;
 }
@@ -643,6 +647,14 @@ export function Inspector(props: InspectorProps) {
           onChange={(p) =>
             props.onChange((n) => (n.type === "inbox" ? p(n) : n))
           }
+        />
+      )}
+      {node.type === "transform" && (
+        <TransformForm
+          node={node}
+          flowId={props.flowId}
+          diags={diagnostics}
+          onChange={props.onChange}
         />
       )}
     </div>

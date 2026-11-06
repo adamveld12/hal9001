@@ -348,6 +348,10 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 	if saved.Enabled {
 		t.Error("the saved flow is enabled")
 	}
+	// Saving the new flow makes the session an edit session on it.
+	if got := d.assistFlowGet(s.ID); got.Target.ID == nil || *got.Target.ID != "urgent-to-inbox" {
+		t.Errorf("target after Save = %+v", got.Target)
+	}
 	// The saved prompt now exists: the draft marks it so and flags the name clash.
 	d.Put("/api/assist/sessions/"+s.ID+"/draft", map[string]any{"yaml": f.Draft.YAML, "expected_hash": f.Draft.Hash}).Want(200)
 	f = d.assistFlowGet(s.ID)

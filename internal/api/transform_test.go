@@ -214,12 +214,15 @@ func TestFlowNodeSamples(t *testing.T) {
 		t.Errorf("other samples: %+v", other.Items)
 	}
 
-	// Nothing to sample: a node that is not in the saved flow, or no runs yet.
-	var none samplesReply
-	e.get("/api/flows/tflow/samples?node_id=not-saved-yet").want(200).decode(&none)
-	if none.Items == nil || len(none.Items) != 0 {
-		t.Errorf("unknown node: %+v", none)
+	// A node that is not saved yet has no incoming edges in the saved flow, so it gets the entry samples.
+	var unsaved samplesReply
+	e.get("/api/flows/tflow/samples?node_id=not-saved-yet").want(200).decode(&unsaved)
+	if len(unsaved.Items) != 2 || unsaved.Items[0].Source != "event" {
+		t.Errorf("unsaved node: %+v", unsaved.Items)
 	}
+
+	// Nothing to sample yet: no runs.
+	var none samplesReply
 	e.writeFlow("quiet", strings.Replace(samplesFlow, "id: tflow", "id: quiet", 1))
 	e.get("/api/flows/quiet/samples?node_id=after-urgent").want(200).decode(&none)
 	if len(none.Items) != 0 {

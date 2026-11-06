@@ -308,6 +308,40 @@ func (m *Manager) Close(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// SensorCreated makes the open sessions that were authoring a new sensor with this id sessions on it, so their
+// tests and instructions use the sensor's own env keys and its saved script.
+func (m *Manager) SensorCreated(ctx context.Context, sensorID string) error {
+	return m.attachNew(ctx, store.AssistTargetSensor, sensorID)
+}
+
+// FlowCreated does the same for flow sessions that were authoring a new flow with this id: the saved flow's code
+// becomes the base of the approval diff and the instructions say the session edits it.
+func (m *Manager) FlowCreated(ctx context.Context, flowID string) error {
+	return m.attachNew(ctx, store.AssistTargetFlow, flowID)
+}
+
+func (m *Manager) attachNew(ctx context.Context, kind, id string) error {
+	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{TargetKind: kind, ListOpts: store.ListOpts{Limit: 500}})
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range page.Items {
+		if row.TargetID != "" || row.DraftID != id {
+			continue
+		}
+		s, err := m.session(ctx, row.ID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := s.adopt(id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // ToolApprovalPending links a gated tool call to its approval and marks the session as waiting for it.
 func (m *Manager) ToolApprovalPending(runID, toolCallID, approvalID string) {
 	if s := m.sessionOfRun(runID); s != nil {

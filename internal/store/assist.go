@@ -198,7 +198,7 @@ func rawJSONArray(m json.RawMessage) (string, error) {
 	return string(m), nil
 }
 
-// UpdateAssistSession writes every mutable column (status, error, the draft,
+// UpdateAssistSession writes every mutable column (target_id, status, error, the draft,
 // the approved script, last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
 func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error {
 	if err := a.validate(); err != nil {
@@ -214,10 +214,10 @@ func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error
 	}
 	a.UpdatedAt = s.Now()
 	return s.write(ctx, func(t *txn) error {
-		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?,
+		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET target_id=?, model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?,
 			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=?,
 			approved_script=?, approved_script_hash=? WHERE id=?`,
-			a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts,
+			a.TargetID, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts,
 			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.ID)
 		if err != nil {
 			return fmt.Errorf("store: update assist_session: %w", err)

@@ -4,6 +4,7 @@ import {
   defaultVisible,
   describeCell,
   filterRows,
+  itemCountLabel,
   toRows,
   type ItemRow,
   type RawItem,
@@ -164,9 +165,11 @@ export function SensorItemsTable({
       <div className="flex flex-wrap items-center gap-2">
         <Segmented view={view} onChange={setView} raw={rawView !== undefined} />
         <span className="text-xs text-muted">
-          {query.trim() === ""
-            ? `${rows.length} item${rows.length === 1 ? "" : "s"}`
-            : `${filtered.length} of ${rows.length} items`}
+          {itemCountLabel(
+            rows.length,
+            filtered.length,
+            view === "table" && query.trim() !== "",
+          )}
         </span>
         {view === "table" && rows.length > 0 && (
           <div className="ml-auto flex items-center gap-2">

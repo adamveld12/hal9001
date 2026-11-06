@@ -1187,3 +1187,41 @@ func TestAssistExistingSensorsSavedScriptNeedsNoApproval(t *testing.T) {
 	d.Post("/api/approvals/"+ap["id"].(string)+"/approve", map[string]any{}).Want(200)
 	d.assistWait(s.ID, "idle", "failed")
 }
+
+// Saving a new sensor that a session authored makes the session a session on that sensor: it is listed under it, its
+// instructions name the sensor's own env keys and its tests use their values. A session whose draft has another id,
+// and one that was already on a sensor, are left alone.
+func TestAssistSessionOfANewSensorBecomesTheSensorsSessionOnceItIsCreated(t *testing.T) {
+	const other = "id: elsewhere\ninterval: 1h\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\n"
+	d := newAssistDaemon(t, func(d *Daemon) {
+		d.assistRuntime(false, turn{When: when("write it$"), Steps: []step{assistEdit(emitTwoYAML), say("written")}})
+	})
+	authored := d.assistCreate("")
+	unrelated := d.assistCreate("")
+	d.Put("/api/assist/sessions/"+unrelated.ID+"/draft", map[string]any{"yaml": other}).Want(200)
+	d.assistTurn(authored.ID, "write it")
+
+	d.Post("/api/sensors", map[string]any{"yaml": emitTwoYAML}).Want(201)
+
+	if got := d.assistGet(authored.ID); got.Target.ID == nil || *got.Target.ID != "emit-two" {
+		t.Fatalf("target after the sensor was created = %+v", got.Target)
+	}
+	if got := d.assistGet(unrelated.ID); got.Target.ID != nil {
+		t.Errorf("a session with another draft id was attached to %q", *got.Target.ID)
+	}
+	var list struct {
+		Items []assistDetail `json:"items"`
+	}
+	d.Get("/api/assist/sessions?target_kind=sensor&target_id=emit-two").Want(200).JSON(&list)
+	if len(list.Items) != 1 || list.Items[0].ID != authored.ID {
+		t.Errorf("sessions of emit-two = %+v", list.Items)
+	}
+
+	// The sensor's own env keys now apply to the session.
+	d.Put("/api/sensors/emit-two/env/EMIT_TOKEN", map[string]any{"value": secretSensorValue}).Want(204)
+	d.assistTurn(authored.ID, "write it") // rewrites the instructions
+	instr := d.Read("data/assist/" + authored.ID + "/AGENTS.md")
+	if !strings.Contains(instr, "`EMIT_TOKEN`") {
+		t.Errorf("the instructions do not list the sensor's env key:\n%s", instr)
+	}
+}

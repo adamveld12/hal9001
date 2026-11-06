@@ -312,3 +312,17 @@ export function filterRows(rows: readonly ItemRow[], query: string): ItemRow[] {
     return false;
   });
 }
+
+/**
+ * The count line above the items. The filter only applies to the table view, so
+ * the other views (which list every item) say how many items there are, not
+ * how many the hidden filter would keep.
+ */
+export function itemCountLabel(
+  total: number,
+  matched: number,
+  filtering: boolean,
+): string {
+  if (!filtering) return `${total} item${total === 1 ? "" : "s"}`;
+  return `${matched} of ${total} items`;
+}

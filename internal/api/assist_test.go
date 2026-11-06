@@ -12,12 +12,13 @@ import (
 
 // assistDouble stands in for core.Assist. Tests script the call they exercise.
 type assistDouble struct {
-	create func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
-	send   func(ctx context.Context, id, text string, yaml *string) (*store.AssistSession, error)
-	draft  func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
-	test   func(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error)
-	cancel func(ctx context.Context, id string) (*store.AssistSession, error)
-	closeS func(ctx context.Context, id string) error
+	create  func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
+	send    func(ctx context.Context, id, text string, yaml *string) (*store.AssistSession, error)
+	draft   func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
+	test    func(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error)
+	cancel  func(ctx context.Context, id string) (*store.AssistSession, error)
+	closeS  func(ctx context.Context, id string) error
+	created func(ctx context.Context, sensorID string) error
 }
 
 func (d *assistDouble) CreateSession(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
@@ -64,6 +65,13 @@ func (d *assistDouble) Close(ctx context.Context, id string) error {
 		return errUnscripted
 	}
 	return d.closeS(ctx, id)
+}
+
+func (d *assistDouble) SensorCreated(ctx context.Context, sensorID string) error {
+	if d.created == nil {
+		return nil
+	}
+	return d.created(ctx, sensorID)
 }
 
 const hash64 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
@@ -308,3 +316,5 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 	}
 	c.quiet(150 * time.Millisecond) // nothing from the other session
 }
+
+func (d *assistDouble) FlowCreated(context.Context, string) error { return nil }

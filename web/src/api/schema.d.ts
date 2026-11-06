@@ -230,7 +230,8 @@ export interface paths {
     /**
      * Create a sensor
      * @description Writes `sensors/<id>.yaml`. Send either `yaml` (raw file text) or `sensor` (JSON form). Rejected with 422 when
-     *     validation reports errors and 409 `already-exists` when the id is taken.
+     *     validation reports errors and 409 `already-exists` when the id is taken. Open assist sessions that were authoring
+     *     a new sensor with this id become sessions on it (`target.id` is set).
      */
     post: operations["createSensor"];
     delete?: never;
@@ -659,7 +660,9 @@ export interface paths {
      *     (no incoming edge) these are the payloads of recent events from the sensors the flow subscribes to. For a
      *     downstream node they are the payloads upstream nodes recently emitted into it, taken from this flow's stored
      *     node runs (stdout parsed as JSON or JSONL, routed by `_port` along the edges that lead to the node). Each
-     *     sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled.
+     *     sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled. A `node_id`
+     *     that is not in the saved flow (a node still being drawn) has no incoming edges there, so it is sampled like an
+     *     entry node.
      */
     get: operations["listFlowNodeSamples"];
     put?: never;
@@ -6099,6 +6102,7 @@ export interface operations {
           "application/json": components["schemas"]["AssistTestResult"];
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];

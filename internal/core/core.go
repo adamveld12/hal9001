@@ -271,6 +271,11 @@ type Assist interface {
 	Cancel(ctx context.Context, sessionID string) (*store.AssistSession, error)
 	// Close ends the session: stops the agent, removes the draft directory, marks it closed.
 	Close(ctx context.Context, sessionID string) error
+	// SensorCreated tells the service that sensor sensorID now exists. Open sessions that were authoring a new
+	// sensor with that id become sessions on it (their target id is set), so they use its env keys and saved script.
+	SensorCreated(ctx context.Context, sensorID string) error
+	// FlowCreated is SensorCreated for flow sessions authoring a new flow.
+	FlowCreated(ctx context.Context, flowID string) error
 }
 
 // DraftConflictError is UpdateDraft's hash mismatch (409 conflict).

@@ -9,6 +9,8 @@ import { langForCommand } from "../../lib/codeLang";
 import { shortId } from "../../lib/format";
 import { VISUAL_LABEL, VISUAL_TONE } from "../../flow/overlay";
 import { runVisual } from "../../flow/runOverlay";
+import { summarizeStep } from "../../flow/transform/steps";
+import type { TransformNode } from "../../flow/transform/types";
 import { Meta, Mono, SectionTitle, TextLink } from "./Meta";
 import {
   commandSnapshot,
@@ -76,7 +78,47 @@ function RunList({
   );
 }
 
+/** A transform node run: its steps in plain language, then the jq that ran. */
+function TransformSnapshot({
+  node,
+  script,
+}: {
+  node: TransformNode;
+  script: string | undefined;
+}) {
+  const steps = node.steps ?? [];
+  return (
+    <section className="space-y-2">
+      <SectionTitle>Steps</SectionTitle>
+      {steps.length === 0 ? (
+        <p className="m-0 text-muted">No steps.</p>
+      ) : (
+        <ol className="m-0 space-y-0.5 pl-5">
+          {steps.map((s, i) => (
+            <li key={i}>{summarizeStep(s)}</li>
+          ))}
+        </ol>
+      )}
+      <SectionTitle>Compiled jq</SectionTitle>
+      {script ? (
+        <CodeEditor
+          readOnly
+          value={script}
+          lang={langForCommand("jq")}
+          minHeight="3rem"
+          maxHeight="16rem"
+        />
+      ) : (
+        <p className="m-0 text-muted">The node did not run a program.</p>
+      )}
+    </section>
+  );
+}
+
 function Snapshot({ run }: { run: NodeRun }) {
+  if (run.node.type === "transform") {
+    return <TransformSnapshot node={run.node} script={run.script} />;
+  }
   const snap = commandSnapshot(run.node);
   return (
     <section>
@@ -143,7 +185,7 @@ export function NodeRunPanel({
       <div className="flex items-center gap-2">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{nodeId}</div>
-          {run && <div className="text-muted">{run.node_type} node</div>}
+          {run && <div className="text-muted">{run.node.type} node</div>}
         </div>
         <Button className="ml-auto" variant="ghost" onClick={onClose}>
           Close

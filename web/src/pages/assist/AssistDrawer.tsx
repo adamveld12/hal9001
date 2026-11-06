@@ -350,7 +350,12 @@ function ResumeRow({
   );
 }
 
-/** Messages, scrolled to the end unless the user has scrolled up. */
+/**
+ * Messages, scrolled to the end unless the user has scrolled up. The content
+ * also grows without a new message (a pending approval loads its prompt after
+ * the tool call appeared) and the box shrinks when the test panel opens, so
+ * the end is followed by observing both sizes.
+ */
 function MessageList({
   messages,
   runtime,
@@ -359,32 +364,44 @@ function MessageList({
   runtime: string;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   useEffect(() => {
     const el = box.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    const inner = content.current;
+    if (!el || !inner) return;
+    const follow = () => {
+      if (atBottom.current) el.scrollTop = el.scrollHeight;
+    };
+    const ro = new ResizeObserver(follow);
+    ro.observe(inner);
+    ro.observe(el); // the panel under the list can shrink it
+    follow();
+    return () => ro.disconnect();
+  }, []);
   const traces = traceLinks(messages);
   return (
     <div
       ref={box}
       role="log"
       aria-label="Conversation"
-      className="min-h-0 flex-1 space-y-3 overflow-auto p-3"
+      className="min-h-0 flex-1 overflow-auto p-3"
       onScroll={(e) => {
         const el = e.currentTarget;
         atBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
     >
-      {messages.map((m) => (
-        <MessageView
-          key={m.id}
-          message={m}
-          runtime={runtime}
-          traceRunId={traces.get(m.id)}
-        />
-      ))}
+      <div ref={content} className="space-y-3">
+        {messages.map((m) => (
+          <MessageView
+            key={m.id}
+            message={m}
+            runtime={runtime}
+            traceRunId={traces.get(m.id)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

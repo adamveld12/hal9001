@@ -10,20 +10,24 @@ import {
   isImplicitPort,
   type Diagnostic,
   type FlowNode,
+  type TransformNode,
 } from "./model";
 import { VISUAL_LABEL, VISUAL_TONE } from "./overlay";
+import { summarizeStep } from "./transform/steps";
 import { worstSeverity } from "./validate";
 
 const TYPE_ICON: Record<FlowNode["type"], IconName> = {
   command: "command",
   agent: "agent",
   inbox: "note",
+  transform: "transform",
 };
 
 const TYPE_ACCENT: Record<FlowNode["type"], string> = {
   command: "text-info",
   agent: "text-run",
   inbox: "text-warn",
+  transform: "text-ok",
 };
 
 function summary(node: FlowNode): string {
@@ -47,6 +51,10 @@ function summary(node: FlowNode): string {
         .join(" · ");
     case "inbox":
       return node.title;
+    case "transform": {
+      const n = node.steps?.length ?? 0;
+      return `${n} step${n === 1 ? "" : "s"}`;
+    }
   }
 }
 
@@ -222,6 +230,28 @@ function InHandle() {
     />
   );
 }
+const SUMMARY_STEPS = 3;
+
+/** The first few steps in plain language, under the node title. */
+function StepSummaries({ node }: { node: TransformNode }) {
+  const steps = node.steps ?? [];
+  if (steps.length === 0) {
+    return <div className="px-2 pb-1 text-[11px] text-muted">No steps yet</div>;
+  }
+  return (
+    <ol className="m-0 list-none space-y-0.5 px-2 pb-1 text-[11px]">
+      {steps.slice(0, SUMMARY_STEPS).map((s, i) => (
+        <li key={i} className="truncate" title={summarizeStep(s)}>
+          <span className="mr-1 text-muted">{i + 1}.</span>
+          {summarizeStep(s)}
+        </li>
+      ))}
+      {steps.length > SUMMARY_STEPS && (
+        <li className="text-muted">+{steps.length - SUMMARY_STEPS} more</li>
+      )}
+    </ol>
+  );
+}
 
 export function FlowNodeView({ id, data, selected }: NodeProps<FlowGraphNode>) {
   const node = data.node;
@@ -235,6 +265,7 @@ export function FlowNodeView({ id, data, selected }: NodeProps<FlowGraphNode>) {
       subtitle={summary(node)}
       left={<InHandle />}
     >
+      {node.type === "transform" && <StepSummaries node={node} />}
       <PortRows node={node} />
     </Card>
   );
