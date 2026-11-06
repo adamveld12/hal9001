@@ -194,6 +194,31 @@ func TestInitCreatesTreeAndSeedsWithoutOverwriting(t *testing.T) {
 		t.Errorf(".gitignore = %q", b)
 	}
 
+	// A deleted starter is not restored on an existing home; SeedStarters restores it by name.
+	if err := os.Remove(filepath.Join(home, "flows", "demo.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if created, err = Init(home, seed); err != nil || len(created) != 0 {
+		t.Fatalf("Init on existing home created %v, err %v", created, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "flows", "demo.yaml")); err == nil {
+		t.Fatal("deleted starter was restored by Init")
+	}
+	mine := "id: s\ninterval: 2m\nlang: bash\nscript: echo\nkey: k\n"
+	put(t, home, "sensors/s.yaml", mine)
+	if created, err = SeedStarters(home, seed, []string{"demo"}); err != nil || strings.Join(created, ",") != "flows/demo.yaml" {
+		t.Fatalf("SeedStarters = %v, %v", created, err)
+	}
+	if created, err = SeedStarters(home, seed, nil); err != nil || len(created) != 0 {
+		t.Fatalf("SeedStarters all created %v, err %v", created, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(home, "sensors", "s.yaml")); string(b) != mine {
+		t.Errorf("SeedStarters overwrote: %q", b)
+	}
+	if _, err := SeedStarters(home, seed, []string{"nope"}); err == nil {
+		t.Error("unknown starter should error")
+	}
+
 	// The user edits a seeded file; a second Init must keep it and create nothing.
 	put(t, home, "config.yaml", "max_agent_runs: 9\n")
 	created, err = Init(home, seed)

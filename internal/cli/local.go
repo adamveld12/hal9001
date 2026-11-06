@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
+	"hal9001/content"
 	"hal9001/internal/auth"
 	"hal9001/internal/daemon"
 	"hal9001/internal/spec"
@@ -227,4 +229,52 @@ func stty(tty *os.File, args ...string) (string, error) {
 	cmd.Stdin = tty
 	out, err := cmd.Output()
 	return string(out), err
+}
+
+// startersLeaves builds the `starters list` and `starters add` leaves.
+func startersGroup() *command {
+	list := &leaf{
+		local: true, maxArgs: 0,
+		run: func(_ context.Context, c *call) error {
+			home, err := c.homeDir()
+			if err != nil {
+				return err
+			}
+			all, err := spec.Starters(content.FS)
+			if err != nil {
+				return err
+			}
+			for _, p := range all {
+				state := "missing"
+				if _, err := os.Stat(filepath.Join(home, filepath.FromSlash(p))); err == nil {
+					state = "present"
+				}
+				_, _ = fmt.Fprintf(c.stdout(), "%-8s %s\n", state, p)
+			}
+			return nil
+		},
+	}
+	add := &leaf{
+		local: true, usage: "[name...]", maxArgs: -1,
+		run: func(_ context.Context, c *call) error {
+			home, err := c.homeDir()
+			if err != nil {
+				return err
+			}
+			created, err := spec.SeedStarters(home, content.FS, c.args)
+			if err != nil {
+				return err
+			}
+			for _, p := range created {
+				_, _ = fmt.Fprintln(c.stdout(), "added", p)
+			}
+			if len(created) == 0 {
+				_, _ = fmt.Fprintln(c.stdout(), "nothing to add (existing files are never overwritten)")
+			}
+			return nil
+		},
+	}
+	return group("starters", "list and add starter content",
+		cmd("list", "show starter files and whether each exists in the home", list),
+		cmd("add", "copy the named starters (or all missing ones) into the home; never overwrites", add))
 }

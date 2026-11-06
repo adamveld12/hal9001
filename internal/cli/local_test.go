@@ -567,3 +567,26 @@ func TestSetPasswordSetsEveryPasswordEntryAcrossStacks(t *testing.T) {
 		t.Errorf("config.yaml:\n%s", got)
 	}
 }
+
+func TestStartersAddRestoresNamedWithoutOverwriting(t *testing.T) {
+	home := seededHome(t)
+	flow := filepath.Join(home, "flows", "demo.yaml")
+	if err := os.Remove(flow); err != nil {
+		t.Fatal(err)
+	}
+	if res := run(t, runOpts{}, "starters", "list", "--home", home); res.code != 0 || !strings.Contains(res.stdout, "missing  flows/demo.yaml") {
+		t.Fatalf("list: %d %s %s", res.code, res.stdout, res.stderr)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res := run(t, runOpts{}, "starters", "add", "demo", "config.yaml", "--home", home); res.code != 0 {
+		t.Fatalf("add: %d %s %s", res.code, res.stdout, res.stderr)
+	}
+	if _, err := os.Stat(flow); err != nil {
+		t.Errorf("demo not restored: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(home, "config.yaml")); string(b) != "mine\n" {
+		t.Errorf("config overwritten: %q", b)
+	}
+}

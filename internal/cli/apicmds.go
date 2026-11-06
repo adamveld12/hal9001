@@ -101,6 +101,7 @@ func (a *app) tree() *command {
 		cmd("uninstall", "stop and remove the launchd LaunchAgent", uninstallLeaf()),
 		cmd("open", "open the web UI in the browser", openLeaf()),
 		cmd("validate", "check sensors, flows, prompts and config offline", validateLeaf()),
+		startersGroup(),
 		cmd("version", "print the version", versionLeaf()),
 		cmd("mcp", "run hal's stdio MCP server for one agent run (spawned by the agent)", mcpLeaf()),
 		group("auth", "authentication helpers",

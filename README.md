@@ -114,7 +114,8 @@ instantly (Vite HMR); Go, `api/` or `content/` edits rebuild and restart the dae
 normal `~/.hal9001` home; stop any other `hal9001 serve` first). Ctrl-C stops both.
 
 `serve` listens on `127.0.0.1:9001` (fixed; not configurable) and on first run seeds `~/.hal9001` from the starter
-content (use `--home <dir>` or `HAL9001_HOME` for another directory). Open the UI with `bin/hal9001 open`, or go to
+content, only when the home is new (no `config.yaml`); deleted starters stay deleted, and `hal9001 starters list` /
+`hal9001 starters add [name...]` show or restore them without overwriting (use `--home <dir>` or `HAL9001_HOME` for another directory). Open the UI with `bin/hal9001 open`, or go to
 <http://localhost:9001>.
 
 To run it permanently as a launchd LaunchAgent (starts at login, restarts on exit):

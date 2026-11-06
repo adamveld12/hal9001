@@ -18,49 +18,106 @@ const gitignoreContent = "# hal9001 runtime data and secrets\ndata/\nenv\nenv.d/
 var ignoredLines = []string{"data/", "env", "env.d/"}
 
 // Init creates the home dir layout of REQUIREMENTS §3 (sensors/, flows/,
-// prompts/, data/blobs, data/state, data/worktrees) and copies files from seed
-// into it. Existing files are never overwritten, so Init is safe to run on
-// every start. seed mirrors the home layout at its root (config.yaml,
-// sensors/..., prompts/...); it may be nil. Files under data/ in the seed are
-// ignored. A .gitignore excluding data/, env and env.d/ is added if absent; an
-// existing one gets any of those lines it lacks appended.
+// prompts/, data/blobs, data/state, data/worktrees) and, only when the home is
+// new (config.yaml does not exist yet), copies the starter files from seed into
+// it. For an existing home Init never copies starters, so deleted ones stay
+// deleted; use SeedStarters to add them explicitly. seed mirrors the home
+// layout at its root (config.yaml, sensors/..., prompts/...); it may be nil.
+// Files under data/ in the seed are ignored. A .gitignore excluding data/, env
+// and env.d/ is added if absent; an existing one gets any of those lines it
+// lacks appended.
 //
 // Init returns the home-relative paths of the files it created.
 func Init(home string, seed fs.FS) ([]string, error) {
+	_, statErr := os.Stat(filepath.Join(home, FileConfig))
+	fresh := errors.Is(statErr, fs.ErrNotExist)
 	for _, d := range []string{"", DirSensors, DirTools, DirFlows, DirPrompts, DirBlobs, DirState, DirWorktrees} {
 		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(d)), 0o750); err != nil {
 			return nil, fmt.Errorf("init %s: %w", home, err)
 		}
 	}
 	var created []string
-	if seed != nil {
-		err := fs.WalkDir(seed, ".", func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if p == DirData {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if d.Name() == ".DS_Store" || !d.Type().IsRegular() {
-				return nil
-			}
-			data, err := fs.ReadFile(seed, p)
-			if err != nil {
-				return err
-			}
-			made, err := createIfMissing(home, p, data)
-			if made {
-				created = append(created, p)
-			}
-			return err
-		})
+	if fresh {
+		var err error
+		created, err = SeedStarters(home, seed, nil)
 		if err != nil {
-			return created, fmt.Errorf("init %s: %w", home, err)
+			return created, err
 		}
 	}
+	return initRest(home, created)
+}
+
+// Starters lists the home-relative, slash-separated paths of the starter files
+// in seed, sorted. Files under data/ and .DS_Store are not starters.
+func Starters(seed fs.FS) ([]string, error) {
+	var out []string
+	if seed == nil {
+		return nil, nil
+	}
+	err := fs.WalkDir(seed, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p == DirData {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.Name() == ".DS_Store" || !d.Type().IsRegular() {
+			return nil
+		}
+		out = append(out, p)
+		return nil
+	})
+	sort.Strings(out)
+	return out, err
+}
+
+// SeedStarters copies starters from seed into home without overwriting
+// existing files. names selects starters by home-relative path or by base name
+// without extension (e.g. "demo" or "flows/demo.yaml"); empty names means all.
+// It returns the paths it created and errors on a name matching no starter.
+func SeedStarters(home string, seed fs.FS, names []string) ([]string, error) {
+	all, err := Starters(seed)
+	if err != nil {
+		return nil, fmt.Errorf("seed %s: %w", home, err)
+	}
+	sel := all
+	if len(names) > 0 {
+		sel = nil
+		for _, n := range names {
+			var match []string
+			for _, p := range all {
+				base := filepath.Base(p)
+				if p == n || base == n || strings.TrimSuffix(base, filepath.Ext(base)) == n {
+					match = append(match, p)
+				}
+			}
+			if len(match) == 0 {
+				return nil, fmt.Errorf("no starter named %q", n)
+			}
+			sel = append(sel, match...)
+		}
+	}
+	var created []string
+	for _, p := range sel {
+		data, err := fs.ReadFile(seed, p)
+		if err != nil {
+			return created, fmt.Errorf("seed %s: %w", home, err)
+		}
+		made, err := createIfMissing(home, p, data)
+		if made {
+			created = append(created, p)
+		}
+		if err != nil {
+			return created, fmt.Errorf("seed %s: %w", home, err)
+		}
+	}
+	return created, nil
+}
+
+func initRest(home string, created []string) ([]string, error) {
 	if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(DirSensorEnv)), 0o700); err != nil {
 		return nil, fmt.Errorf("init %s: %w", home, err)
 	}

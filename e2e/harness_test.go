@@ -122,7 +122,7 @@ func skipShort(t *testing.T) {
 }
 
 // newDaemon creates (but does not start) a daemon on a fresh temp home seeded
-// from content/ with the starter sensors and flows neutralized, and a bin dir with
+// from content/ with the starter sensors and flows removed, and a bin dir with
 // a recording fake terminal-notifier first on PATH.
 func newDaemon(t *testing.T, opts ...Option) *Daemon {
 	t.Helper()
@@ -134,15 +134,11 @@ func newDaemon(t *testing.T, opts ...Option) *Daemon {
 	if _, err := spec.Init(d.Home, content.FS); err != nil {
 		t.Fatal(err)
 	}
-	// daemon.Run re-seeds starter files that are missing, so they cannot be
-	// deleted. They need credentials and the network, so each one is replaced
-	// by an inert file of the same name (a sensor that emits nothing, a
-	// disabled flow). withDemo keeps the credential-free demo pair.
-	for _, kind := range []struct{ dir, inert string }{
-		{spec.DirSensors, "id: %s\ninterval: 24h\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\nfirst_run: baseline\n"},
-		{spec.DirFlows, "id: %s\nenabled: false\nnodes:\n  - {id: n, type: inbox, title: inert}\n"},
-	} {
-		entries, err := os.ReadDir(filepath.Join(d.Home, kind.dir))
+	// The starter sensors and flows need credentials and the network, so they
+	// are removed (withDemo keeps the credential-free demo pair). Init does not
+	// re-seed an existing home, so they stay gone when the daemon starts.
+	for _, dir := range []string{spec.DirSensors, spec.DirFlows} {
+		entries, err := os.ReadDir(filepath.Join(d.Home, dir))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,7 +147,7 @@ func newDaemon(t *testing.T, opts ...Option) *Daemon {
 			if d.demo && (id == "demo-ticker" || id == "demo") {
 				continue
 			}
-			if err := os.WriteFile(filepath.Join(d.Home, kind.dir, e.Name()), []byte(fmt.Sprintf(kind.inert, id)), 0o600); err != nil {
+			if err := os.Remove(filepath.Join(d.Home, dir, e.Name())); err != nil {
 				t.Fatal(err)
 			}
 		}
