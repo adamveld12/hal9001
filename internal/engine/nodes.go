@@ -403,8 +403,12 @@ func priorityRank(p string) int {
 	return slices.Index(spec.Priorities, p)
 }
 
-// finishNode records a node run's outcome, routes its outputs downstream
-// (after they are persisted) and updates the flow run.
+// finishNode records a node run's outcome together with the node runs its
+// outputs start (one transaction, store.FinishNodeRun) and then updates the
+// flow run. Recording the two separately would let another node of the run
+// finish in between, see every node finished, and end the flow run before
+// the follow-ups are queued; they would then be skipped as belonging to a
+// finished run.
 func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 	nr, fr := ne.nr, ne.fr
 	at := e.assistTestOf(fr.ID)
@@ -415,6 +419,14 @@ func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 		})
 		out.status = store.NodeDone
 		out.outputs = []runner.Output{{Port: spec.PortError, Payload: payload}}
+	}
+	var next []*store.NodeRun
+	if out.status == store.NodeDone && routes(fr, at) && len(out.outputs) > 0 {
+		var err error
+		if next, err = e.successors(nr, ne.flow, out.outputs); err != nil {
+			e.log.Error("engine: route node outputs", "node_run", nr.ID, "err", err)
+			out.status, out.decision, out.class, out.reason = store.NodeFailed, store.DecisionError, errConfig, "route outputs: "+err.Error()
+		}
 	}
 	now := time.Now().UTC()
 	nr.Status, nr.Decision, nr.Reason, nr.Error = out.status, out.decision, out.reason, out.class
@@ -434,12 +446,10 @@ func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 		d := now.Sub(*nr.StartedAt).Milliseconds()
 		nr.DurationMS = &d
 	}
-	if err := e.st.UpdateNodeRun(e.dbCtx, nr); err != nil {
+	if err := e.st.FinishNodeRun(e.dbCtx, nr, next); err != nil {
 		e.log.Error("engine: record node run", "node_run", nr.ID, "err", err)
-	}
-	if out.status == store.NodeDone && routes(fr, at) && len(out.outputs) > 0 {
-		if err := e.route(nr, ne.flow, out.outputs); err != nil {
-			e.log.Error("engine: route node outputs", "node_run", nr.ID, "err", err)
+		if len(next) > 0 {
+			// Neither the node nor its follow-ups were stored.
 			e.failNodeRun(nr, "route outputs: "+err.Error())
 		}
 	}

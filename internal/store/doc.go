@@ -43,6 +43,10 @@
 //     number of concurrent callers exactly one sees a key as new.
 //   - A flow run references a stored flow version (foreign key); pass
 //     FlowRun.FlowYAML to store the version in the same transaction.
+//   - A node run is finished together with the node runs it feeds (FinishNodeRun),
+//     and node runs that start together are queued together (CreateNodeRuns): a
+//     reader never sees a finished node run without its follow-ups, so a flow
+//     run whose node runs are all finished has nothing left to queue.
 //   - Payloads above SpillThreshold (64 KiB) are written to the blob store and the
 //     row keeps only the ref (see Content). Blobs are content-addressed, so
 //     several rows may share one; a blob is deleted only when no row references it.

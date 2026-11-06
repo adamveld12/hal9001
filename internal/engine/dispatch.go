@@ -253,10 +253,13 @@ func (e *Engine) nodeRuns(flowRunID string) ([]store.NodeRun, error) {
 	}
 }
 
-// route queues a node run for every edge leaving node on each output's port,
-// carrying that output's payload. A port without edges ends the branch.
-func (e *Engine) route(nr *store.NodeRun, flow *spec.Flow, outs []runner.Output) error {
+// successors returns the node runs to queue for every edge leaving nr's node
+// on each output's port, carrying that output's payload. A port without edges
+// ends the branch. finishNode stores them in the transaction that records nr
+// as finished.
+func (e *Engine) successors(nr *store.NodeRun, flow *spec.Flow, outs []runner.Output) ([]*store.NodeRun, error) {
 	at := e.assistTestOf(nr.FlowRunID)
+	var next []*store.NodeRun
 	for _, out := range outs {
 		for _, edge := range flow.Edges {
 			if edge.From != nr.NodeID || edge.Port != out.Port {
@@ -264,21 +267,18 @@ func (e *Engine) route(nr *store.NodeRun, flow *spec.Flow, outs []runner.Output)
 			}
 			target := flow.NodeByID(edge.To)
 			if target == nil {
-				return fmt.Errorf("edge to unknown node %q", edge.To)
+				return nil, fmt.Errorf("edge to unknown node %q", edge.To)
 			}
 			if at != nil {
 				at.recordEdge(edge.From, edge.To, edge.Port)
 			}
-			child := &store.NodeRun{
+			next = append(next, &store.NodeRun{
 				FlowRunID: nr.FlowRunID, NodeID: target.ID, NodeType: nodeRunType(target),
 				ParentNodeRunID: nr.ID, Stdin: store.Inline(string(out.Payload)),
-			}
-			if err := e.st.CreateNodeRun(e.dbCtx, child); err != nil {
-				return fmt.Errorf("queue node %s: %w", target.ID, err)
-			}
+			})
 		}
 	}
-	return nil
+	return next, nil
 }
 
 // hasEdge reports whether any edge leaves node on port.

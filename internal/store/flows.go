@@ -350,6 +350,72 @@ func scanNodeRun(r rowScanner) (NodeRun, error) {
 // CreateNodeRun inserts n, assigning ID, Status (queued) and QueuedAt (now)
 // when unset. Large stdin/stdout/stderr spill to blobs.
 func (s *Store) CreateNodeRun(ctx context.Context, n *NodeRun) error {
+	if err := s.defaultNodeRun(n); err != nil {
+		return err
+	}
+	return s.write(ctx, func(t *txn) error { return t.insertNodeRun(ctx, n) })
+}
+
+// CreateNodeRuns inserts every node run in one transaction, each as
+// CreateNodeRun does: all of them exist afterwards or none does. Node runs
+// that become runnable together (the entry nodes of a flow run) are queued
+// this way, so a reader never sees the first without the others.
+func (s *Store) CreateNodeRuns(ctx context.Context, ns []*NodeRun) error {
+	for _, n := range ns {
+		if err := s.defaultNodeRun(n); err != nil {
+			return err
+		}
+	}
+	return s.write(ctx, func(t *txn) error {
+		for _, n := range ns {
+			if err := t.insertNodeRun(ctx, n); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// UpdateNodeRun writes every column except id, flow_run_id, node_id,
+// node_type, parent_node_run_id and queued_at. A NodeRun read from the store
+// (even a slim one) can be modified and written back without losing content.
+func (s *Store) UpdateNodeRun(ctx context.Context, n *NodeRun) error {
+	if err := checkNodeRunState(n); err != nil {
+		return err
+	}
+	return s.write(ctx, func(t *txn) error { return t.updateNodeRun(ctx, n) })
+}
+
+// FinishNodeRun is UpdateNodeRun for a node run that has finished, together
+// with CreateNodeRuns(next) for the node runs that follow it, in one
+// transaction. A reader therefore never sees a finished node run without the
+// work it hands on: a flow run whose node runs are all finished has nothing
+// still to queue. If any of next is rejected, n is left as it was.
+func (s *Store) FinishNodeRun(ctx context.Context, n *NodeRun, next []*NodeRun) error {
+	if err := checkNodeRunState(n); err != nil {
+		return err
+	}
+	for _, c := range next {
+		if err := s.defaultNodeRun(c); err != nil {
+			return err
+		}
+	}
+	return s.write(ctx, func(t *txn) error {
+		if err := t.updateNodeRun(ctx, n); err != nil {
+			return err
+		}
+		for _, c := range next {
+			if err := t.insertNodeRun(ctx, c); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// defaultNodeRun validates n for insertion and assigns the ID, Status (queued)
+// and QueuedAt (now) that are unset.
+func (s *Store) defaultNodeRun(n *NodeRun) error {
 	if n.FlowRunID == "" || n.NodeID == "" {
 		return fmt.Errorf("%w: flow_run_id and node_id required", ErrInvalid)
 	}
@@ -365,52 +431,53 @@ func (s *Store) CreateNodeRun(ctx context.Context, n *NodeRun) error {
 	if n.QueuedAt.IsZero() {
 		n.QueuedAt = s.Now()
 	}
-	return s.write(ctx, func(t *txn) error {
-		if err := t.prep(ctx, "node_runs", "", contentField{"stdin", &n.Stdin}, contentField{"stdout", &n.Stdout}, contentField{"stderr", &n.Stderr}); err != nil {
-			return err
-		}
-		_, err := t.ExecContext(ctx, `INSERT INTO node_runs (id, flow_run_id, node_id, node_type, parent_node_run_id, status, decision, reason, ports, output_count,
-			lang, script, argv, env_keys, stdin_text, stdin_ref, stdin_size, stdout_text, stdout_ref, stdout_size, stderr_text, stderr_ref, stderr_size,
-			exit_code, error, queued_at, started_at, ended_at, duration_ms)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			n.ID, n.FlowRunID, n.NodeID, n.NodeType, nullStr(n.ParentNodeRunID), n.Status, nullStr(string(n.Decision)), n.Reason,
-			stringsText(n.Ports), n.OutputCount, n.Lang, n.Script, stringsText(n.Argv), stringsText(n.EnvKeys),
-			n.Stdin.Text, n.Stdin.Ref, n.Stdin.Size, n.Stdout.Text, n.Stdout.Ref, n.Stdout.Size, n.Stderr.Text, n.Stderr.Ref, n.Stderr.Size,
-			nullInt(n.ExitCode), n.Error, ts(n.QueuedAt), tsOrNil(n.StartedAt), tsOrNil(n.EndedAt), nullInt64(n.DurationMS))
-		if err != nil {
-			return fmt.Errorf("store: insert node_run: %w", err)
-		}
-		t.note(ResNodeRun, n.ID, OpCreate)
-		return nil
-	})
+	return nil
 }
 
-// UpdateNodeRun writes every column except id, flow_run_id, node_id,
-// node_type, parent_node_run_id and queued_at. A NodeRun read from the store
-// (even a slim one) can be modified and written back without losing content.
-func (s *Store) UpdateNodeRun(ctx context.Context, n *NodeRun) error {
+func checkNodeRunState(n *NodeRun) error {
 	if !n.Status.valid() || !n.Decision.valid() {
 		return fmt.Errorf("%w: node run status %q / decision %q", ErrInvalid, n.Status, n.Decision)
 	}
-	return s.write(ctx, func(t *txn) error {
-		if err := t.prep(ctx, "node_runs", n.ID, contentField{"stdin", &n.Stdin}, contentField{"stdout", &n.Stdout}, contentField{"stderr", &n.Stderr}); err != nil {
-			return err
-		}
-		res, err := t.ExecContext(ctx, `UPDATE node_runs SET status=?, decision=?, reason=?, ports=?, output_count=?, lang=?, script=?, argv=?, env_keys=?,
-			stdin_text=?, stdin_ref=?, stdin_size=?, stdout_text=?, stdout_ref=?, stdout_size=?, stderr_text=?, stderr_ref=?, stderr_size=?,
-			exit_code=?, error=?, started_at=?, ended_at=?, duration_ms=? WHERE id=?`,
-			n.Status, nullStr(string(n.Decision)), n.Reason, stringsText(n.Ports), n.OutputCount, n.Lang, n.Script, stringsText(n.Argv), stringsText(n.EnvKeys),
-			n.Stdin.Text, n.Stdin.Ref, n.Stdin.Size, n.Stdout.Text, n.Stdout.Ref, n.Stdout.Size, n.Stderr.Text, n.Stderr.Ref, n.Stderr.Size,
-			nullInt(n.ExitCode), n.Error, tsOrNil(n.StartedAt), tsOrNil(n.EndedAt), nullInt64(n.DurationMS), n.ID)
-		if err != nil {
-			return fmt.Errorf("store: update node_run: %w", err)
-		}
-		if c, _ := res.RowsAffected(); c == 0 {
-			return ErrNotFound
-		}
-		t.note(ResNodeRun, n.ID, OpUpdate)
-		return nil
-	})
+	return nil
+}
+
+func (t *txn) insertNodeRun(ctx context.Context, n *NodeRun) error {
+	if err := t.prep(ctx, "node_runs", "", contentField{"stdin", &n.Stdin}, contentField{"stdout", &n.Stdout}, contentField{"stderr", &n.Stderr}); err != nil {
+		return err
+	}
+	_, err := t.ExecContext(ctx, `INSERT INTO node_runs (id, flow_run_id, node_id, node_type, parent_node_run_id, status, decision, reason, ports, output_count,
+		lang, script, argv, env_keys, stdin_text, stdin_ref, stdin_size, stdout_text, stdout_ref, stdout_size, stderr_text, stderr_ref, stderr_size,
+		exit_code, error, queued_at, started_at, ended_at, duration_ms)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		n.ID, n.FlowRunID, n.NodeID, n.NodeType, nullStr(n.ParentNodeRunID), n.Status, nullStr(string(n.Decision)), n.Reason,
+		stringsText(n.Ports), n.OutputCount, n.Lang, n.Script, stringsText(n.Argv), stringsText(n.EnvKeys),
+		n.Stdin.Text, n.Stdin.Ref, n.Stdin.Size, n.Stdout.Text, n.Stdout.Ref, n.Stdout.Size, n.Stderr.Text, n.Stderr.Ref, n.Stderr.Size,
+		nullInt(n.ExitCode), n.Error, ts(n.QueuedAt), tsOrNil(n.StartedAt), tsOrNil(n.EndedAt), nullInt64(n.DurationMS))
+	if err != nil {
+		return fmt.Errorf("store: insert node_run: %w", err)
+	}
+	t.note(ResNodeRun, n.ID, OpCreate)
+	return nil
+}
+
+func (t *txn) updateNodeRun(ctx context.Context, n *NodeRun) error {
+	if err := t.prep(ctx, "node_runs", n.ID, contentField{"stdin", &n.Stdin}, contentField{"stdout", &n.Stdout}, contentField{"stderr", &n.Stderr}); err != nil {
+		return err
+	}
+	res, err := t.ExecContext(ctx, `UPDATE node_runs SET status=?, decision=?, reason=?, ports=?, output_count=?, lang=?, script=?, argv=?, env_keys=?,
+		stdin_text=?, stdin_ref=?, stdin_size=?, stdout_text=?, stdout_ref=?, stdout_size=?, stderr_text=?, stderr_ref=?, stderr_size=?,
+		exit_code=?, error=?, started_at=?, ended_at=?, duration_ms=? WHERE id=?`,
+		n.Status, nullStr(string(n.Decision)), n.Reason, stringsText(n.Ports), n.OutputCount, n.Lang, n.Script, stringsText(n.Argv), stringsText(n.EnvKeys),
+		n.Stdin.Text, n.Stdin.Ref, n.Stdin.Size, n.Stdout.Text, n.Stdout.Ref, n.Stdout.Size, n.Stderr.Text, n.Stderr.Ref, n.Stderr.Size,
+		nullInt(n.ExitCode), n.Error, tsOrNil(n.StartedAt), tsOrNil(n.EndedAt), nullInt64(n.DurationMS), n.ID)
+	if err != nil {
+		return fmt.Errorf("store: update node_run: %w", err)
+	}
+	if c, _ := res.RowsAffected(); c == 0 {
+		return ErrNotFound
+	}
+	t.note(ResNodeRun, n.ID, OpUpdate)
+	return nil
 }
 
 // GetNodeRun returns one node run with full inline content.

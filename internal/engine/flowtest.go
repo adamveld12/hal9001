@@ -127,13 +127,16 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 	entries := flow.EntryNodes()
 	if len(entries) == 0 {
 		e.endFlowRun(fr, store.FlowRunSucceeded, "")
-	}
-	for _, id := range entries {
-		n := flow.NodeByID(id)
-		nr := &store.NodeRun{FlowRunID: fr.ID, NodeID: id, NodeType: nodeRunType(n), Stdin: store.Inline(string(input))}
-		if err := e.st.CreateNodeRun(ctx, nr); err != nil {
-			e.endFlowRun(fr, store.FlowRunFailed, fmt.Sprintf("queue node %s: %v", id, err))
-			break
+	} else {
+		// One transaction: the dispatcher may already run the first entry node
+		// while the next is being queued, and a run whose queued nodes have all
+		// finished is over.
+		first := make([]*store.NodeRun, len(entries))
+		for i, id := range entries {
+			first[i] = &store.NodeRun{FlowRunID: fr.ID, NodeID: id, NodeType: nodeRunType(flow.NodeByID(id)), Stdin: store.Inline(string(input))}
+		}
+		if err := e.st.CreateNodeRuns(ctx, first); err != nil {
+			e.endFlowRun(fr, store.FlowRunFailed, fmt.Sprintf("queue entry nodes: %v", err))
 		}
 	}
 	e.wake()

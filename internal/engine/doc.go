@@ -20,14 +20,18 @@
 // queued node run per entry node, with the event as input. Queued node runs are
 // claimed under the pool caps (store.ClaimNextNodeRun: max_command_runs commands,
 // max_agent_runs agent nodes, inbox unlimited). A node's outputs are written to
-// its node run before the node runs of the edges leaving it are queued, so a
-// restart never loses an emitted payload. Flow runs follow the flow version
-// stored with them (flow_versions), not the current file.
+// its node run in the same transaction (store.FinishNodeRun) that queues the
+// node runs of the edges leaving it, so a restart never loses an emitted
+// payload and no reader sees a finished node without its follow-ups. Flow runs
+// follow the flow version stored with them (flow_versions), not the current
+// file.
 //
 // A flow run is running while any node is queued or running, awaiting_approval
 // while only approvals are outstanding, and then terminal: killed, else
 // interrupted, else failed (some node failed without an error route), else
-// succeeded.
+// succeeded. A node's inbox item or agent note is stored before the node is
+// recorded as finished, and the node runs it feeds with that record, so a
+// terminal flow run never has results still to come.
 //
 // # Node results
 //

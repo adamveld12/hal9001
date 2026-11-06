@@ -283,7 +283,8 @@ func (d *Daemon) GetRun(id string, wait time.Duration) FlowRunDetail {
 
 // WaitRun long-polls (the `?wait=` contract) until the flow run has one of the
 // wanted statuses. A different terminal status fails the test; a run parked in
-// awaiting_approval is polled until it moves on.
+// awaiting_approval is polled until it moves on. A finished run must not still
+// have work queued or running.
 func (d *Daemon) WaitRun(id string, want ...string) FlowRunDetail {
 	d.t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
@@ -291,6 +292,7 @@ func (d *Daemon) WaitRun(id string, want ...string) FlowRunDetail {
 		det := d.GetRun(id, 10*time.Second)
 		for _, w := range want {
 			if det.FlowRun.Status == w {
+				d.requireSettled(det)
 				return det
 			}
 		}
@@ -304,6 +306,23 @@ func (d *Daemon) WaitRun(id string, want ...string) FlowRunDetail {
 		}
 		if time.Now().After(deadline) {
 			d.t.Fatalf("flow run %s still %s after 60s, want %v\n%s", id, det.FlowRun.Status, want, describeRun(det))
+		}
+	}
+}
+
+// requireSettled fails the test when a finished flow run has a node run that
+// is still queued or running: the API must not report a run as finished before
+// its results exist.
+func (d *Daemon) requireSettled(det FlowRunDetail) {
+	d.t.Helper()
+	switch det.FlowRun.Status {
+	case "succeeded", "failed", "killed", "interrupted", "cancelled":
+	default:
+		return
+	}
+	for _, n := range det.NodeRuns {
+		if n.Status == "queued" || n.Status == "running" {
+			d.t.Fatalf("flow run %s is %s but node %s is still %s\n%s", det.FlowRun.ID, det.FlowRun.Status, n.NodeID, n.Status, describeRun(det))
 		}
 	}
 }
