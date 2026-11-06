@@ -39,6 +39,7 @@ tags:
   - {name: events, description: 'Events, injection, replay'}
   - {name: flows, description: 'Flow definitions, versions, validation, node test runs'}
   - {name: runs, description: Flow runs and node runs}
+  - {name: queue, description: 'Runs waiting for a slot: list, remove, clear'}
   - {name: agents, description: 'Agent runs, transcripts, permission requests'}
   - {name: approvals, description: Approval queue}
   - {name: inbox, description: Inbox items}
@@ -294,6 +295,81 @@ paths:
               schema: {$ref: '#/components/schemas/KillSwitch'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/queue:
+    get:
+      operationId: getQueue
+      tags: [queue]
+      summary: List the queue
+      description: |
+        Flow runs waiting for a slot, in the order the engine will claim them (oldest wait first): `queued` runs
+        waiting for a flow slot (`flow_slot`), and `running` runs whose only unfinished node runs are `queued`,
+        waiting for an agent or command slot (`agent_slot`, `command_slot`). While the kill switch is engaged every
+        item waits for `kill_switch`. Runs awaiting approval are not in the queue (see approvals); test runs are
+        excluded. `flow_id` limits the list to one flow. Changes arrive as `flow_run.updated` stream events.
+      x-hal-service: api
+      parameters:
+        - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+      responses:
+        '200':
+          description: The queue with totals and the current limits.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Queue'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/queue/clear:
+    post:
+      operationId: clearQueue
+      tags: [queue]
+      summary: Remove every queued run
+      description: |
+        Cancels every run in the queue (of one flow with `flow_id`). Cancelled runs stay in history with status
+        `cancelled`. A run that started a node while the request ran is left alone. Idempotent: an empty queue
+        returns `cancelled: 0`.
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClearQueueRequest'}
+      responses:
+        '200':
+          description: What was cancelled.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClearQueueResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/queue/{flow_run_id}:
+    parameters:
+      - {name: flow_run_id, in: path, required: true, schema: {$ref: '#/components/schemas/Ulid'}}
+    delete:
+      operationId: removeFromQueue
+      tags: [queue]
+      summary: Remove one run from the queue
+      description: |
+        Ends the run as `cancelled` (reason `removed from queue`, recording who and when) and cancels its queued
+        node runs. History is kept. 409 `invalid-state` when the run is not in the queue, including when it is
+        already running a node: use the kill switch or wait for it to finish.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: The cancelled run.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowRun'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
   /api/sensors:
@@ -1191,7 +1267,7 @@ paths:
       summary: Get a flow run with its node runs
       description: |
         With `wait`, long-polls until the run reaches a terminal status (`succeeded`, `failed`, `killed`,
-        `interrupted`) or `awaiting_approval`, or until the wait elapses. The current state is returned either way, so
+        `interrupted`, `cancelled`) or `awaiting_approval`, or until the wait elapses. The current state is returned either way, so
         callers check `status` rather than relying on the HTTP status. Returns immediately when the run is already
         there.
       x-hal-service: api
@@ -2616,9 +2692,9 @@ components:
         truncated: {type: boolean}
         blob: {$ref: '#/components/schemas/NullableHash'}
     # ---------------------------------------------------------------- enums
-    FlowRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, killed, interrupted]}
+    FlowRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, killed, interrupted, cancelled]}
     FlowRunKind: {type: string, enum: [live, replay, test]}
-    NodeRunStatus: {type: string, enum: [queued, running, awaiting_approval, done, failed, killed, interrupted, skipped]}
+    NodeRunStatus: {type: string, enum: [queued, running, awaiting_approval, done, failed, killed, interrupted, skipped, cancelled]}
     NodeRunDecision: {type: string, enum: [emitted, dropped, error, skipped]}
     NodeType: {type: string, enum: [command, agent, inbox]}
     AgentRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, denied, killed, interrupted, timeout]}
@@ -3359,7 +3435,7 @@ components:
       properties:
         window_hours: {type: integer, examples: [168]}
         runs: {type: integer, minimum: 0}
-        failed: {type: integer, minimum: 0, description: 'Runs that ended `failed`, `killed`, or `interrupted`.'}
+        failed: {type: integer, minimum: 0, description: 'Runs that ended `failed`, `killed`, or `interrupted`. `cancelled` runs count as finished, not failed.'}
         error_rate: {type: number, minimum: 0, maximum: 1, description: '`failed / finished runs`; 0 when none finished.'}
         running: {type: integer, minimum: 0}
         queued: {type: integer, minimum: 0}
@@ -3845,7 +3921,7 @@ components:
         dry_run: {type: boolean, description: 'Overrides the flow''s `dry_run` for this run; absent keeps the flow''s setting.'}
     FlowRun:
       type: object
-      required: [id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, created_at, started_at, ended_at]
+      required: [id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, cancelled_by, created_at, started_at, ended_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         flow_id: {$ref: '#/components/schemas/Slug'}
@@ -3856,9 +3932,61 @@ components:
         dry_run: {type: boolean}
         status: {$ref: '#/components/schemas/FlowRunStatus'}
         error: {type: [string, 'null']}
+        cancelled_by: {type: [string, 'null'], description: 'Principal that removed the run from the queue; null unless `status` is `cancelled`.'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         started_at: {$ref: '#/components/schemas/NullableTimestamp'}
         ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    Queue:
+      type: object
+      required: [items, total, waiting_for_flow_slot, waiting_for_agent_slot, waiting_for_command_slot, limits]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/QueueItem'}}
+        total: {type: integer, minimum: 0}
+        waiting_for_flow_slot: {type: integer, minimum: 0}
+        waiting_for_agent_slot: {type: integer, minimum: 0}
+        waiting_for_command_slot: {type: integer, minimum: 0}
+        limits: {$ref: '#/components/schemas/QueueLimits'}
+    QueueItem:
+      type: object
+      required: [flow_run, position, waiting_for, queued_at, waiting_node_ids]
+      properties:
+        flow_run: {$ref: '#/components/schemas/FlowRun'}
+        position: {type: integer, minimum: 1, description: 'Place in the list, 1 first.'}
+        waiting_for:
+          type: string
+          enum: [flow_slot, agent_slot, command_slot, kill_switch]
+          description: 'What the run waits for. `kill_switch` while the daemon is paused.'
+        queued_at: {$ref: '#/components/schemas/Timestamp'}
+        waiting_node_ids: {type: array, items: {type: string}, description: 'Nodes waiting for an agent or command slot; empty for a run that has not started.'}
+    QueueLimits:
+      type: object
+      required: [max_agent_runs, max_command_runs, agent_runs_in_use, command_runs_in_use, flows]
+      properties:
+        max_agent_runs: {type: integer, minimum: 0}
+        max_command_runs: {type: integer, minimum: 0}
+        agent_runs_in_use: {type: integer, minimum: 0}
+        command_runs_in_use: {type: integer, minimum: 0}
+        flows:
+          type: array
+          description: 'Per-flow `max_concurrent` and running count, for the flows that have queued runs.'
+          items:
+            type: object
+            required: [flow_id, max_concurrent, running]
+            properties:
+              flow_id: {$ref: '#/components/schemas/Slug'}
+              max_concurrent: {type: integer, minimum: 0}
+              running: {type: integer, minimum: 0}
+    ClearQueueRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        flow_id: {$ref: '#/components/schemas/Slug'}
+    ClearQueueResult:
+      type: object
+      required: [cancelled, flow_run_ids]
+      properties:
+        cancelled: {type: integer, minimum: 0}
+        flow_run_ids: {type: array, items: {$ref: '#/components/schemas/Ulid'}}
     FlowRunList:
       type: object
       required: [items, next_cursor]

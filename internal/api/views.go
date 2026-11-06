@@ -391,24 +391,25 @@ func (s *Server) eventSummary(ev store.Event, runs []store.FlowRun) eventSummary
 // ---- flow runs and node runs ----
 
 type flowRunView struct {
-	ID        string     `json:"id"`
-	FlowID    string     `json:"flow_id"`
-	FlowHash  string     `json:"flow_hash"`
-	EventID   *string    `json:"event_id"`
-	Kind      string     `json:"kind"`
-	ReplayOf  *string    `json:"replay_of"`
-	DryRun    bool       `json:"dry_run"`
-	Status    string     `json:"status"`
-	Error     *string    `json:"error"`
-	CreatedAt time.Time  `json:"created_at"`
-	StartedAt *time.Time `json:"started_at"`
-	EndedAt   *time.Time `json:"ended_at"`
+	ID          string     `json:"id"`
+	FlowID      string     `json:"flow_id"`
+	FlowHash    string     `json:"flow_hash"`
+	EventID     *string    `json:"event_id"`
+	Kind        string     `json:"kind"`
+	ReplayOf    *string    `json:"replay_of"`
+	DryRun      bool       `json:"dry_run"`
+	Status      string     `json:"status"`
+	Error       *string    `json:"error"`
+	CancelledBy *string    `json:"cancelled_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at"`
+	EndedAt     *time.Time `json:"ended_at"`
 }
 
 func flowRunFull(fr store.FlowRun) flowRunView {
 	return flowRunView{
 		ID: fr.ID, FlowID: fr.FlowID, FlowHash: fr.FlowHash, EventID: nonEmpty(fr.EventID), Kind: string(fr.Kind),
-		ReplayOf: nonEmpty(fr.ReplayOf), DryRun: fr.DryRun, Status: string(fr.Status), Error: nonEmpty(fr.Error),
+		ReplayOf: nonEmpty(fr.ReplayOf), DryRun: fr.DryRun, Status: string(fr.Status), Error: nonEmpty(fr.Error), CancelledBy: nonEmpty(fr.CancelledBy),
 		CreatedAt: utc(fr.CreatedAt), StartedAt: utcPtr(fr.StartedAt), EndedAt: utcPtr(fr.EndedAt),
 	}
 }

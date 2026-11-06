@@ -8,6 +8,7 @@ import {
   useFlows,
   type FlowRunNowResult,
 } from "../../api/flows";
+import { useQueue } from "../../api/queue";
 import { Tabs } from "../../components/Tabs";
 import { RunNowPanel } from "../../components/RunNowPanel";
 import { Time } from "../../components/Time";
@@ -31,6 +32,7 @@ import { AssistDrawer } from "../assist/AssistDrawer";
 import { AssistPageContext, useAssistPage } from "../assist/context";
 import { targetConfig } from "../assist/targets";
 import { useBoundSession } from "../assist/useDraftSync";
+import { FlowQueue } from "../queue/FlowQueue";
 import { FlowRunsList } from "../runs/FlowRunsList";
 import {
   filtersToParams,
@@ -128,21 +130,25 @@ function FlowsPageBody() {
   const navigate = useNavigate();
   const drafting = assist.param !== null;
   const [params, setParams] = useSearchParams();
-  const view: "flows" | "runs" =
-    params.get("view") === "runs" ? "runs" : "flows";
+  const view: "flows" | "runs" | "queue" =
+    params.get("view") === "runs"
+      ? "runs"
+      : params.get("view") === "queue"
+        ? "queue"
+        : "flows";
   const runFilters = flowRunFiltersFromParams(params);
-  const setView = (v: "flows" | "runs") => {
+  const queue = useQueue();
+  const setView = (v: "flows" | "runs" | "queue") => {
     const next = new URLSearchParams(params);
-    if (v === "runs") next.set("view", "runs");
-    else {
-      next.delete("view");
-      for (const k of ["flow", "status", "kind"]) next.delete(k);
-    }
+    next.delete("view");
+    for (const k of ["flow", "status", "kind"]) next.delete(k);
+    if (v !== "flows") next.set("view", v);
     setParams(next, { replace: true });
   };
   const setRunFilters = (f: FlowRunFilters) =>
     setParams(filtersToParams(f, params), { replace: true });
   const showRuns = !drafting && view === "runs";
+  const showQueue = !drafting && view === "queue";
   const showFlows = !drafting && view === "flows";
 
   // A link to a session (an agent run, an approval) names no page: go to the one for its target.
@@ -195,6 +201,7 @@ function FlowsPageBody() {
             tabs={[
               { key: "flows", label: "Flows" },
               { key: "runs", label: "Runs" },
+              { key: "queue", label: "Queue", count: queue.data?.total },
             ]}
             active={view}
             onChange={setView}
@@ -203,6 +210,17 @@ function FlowsPageBody() {
         {drafting && <DraftPane />}
         {showRuns && (
           <FlowRunsList filters={runFilters} onChange={setRunFilters} />
+        )}
+        {showQueue && (
+          <FlowQueue
+            flow={params.get("flow") ?? ""}
+            onFlowChange={(flow) => {
+              const next = new URLSearchParams(params);
+              if (flow) next.set("flow", flow);
+              else next.delete("flow");
+              setParams(next, { replace: true });
+            }}
+          />
         )}
         {showFlows && flows.isPending && <LoadingState />}
         {showFlows && flows.isError && (

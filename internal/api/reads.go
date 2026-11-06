@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	flowRunStatuses = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "killed", "interrupted"}
+	flowRunStatuses = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "killed", "interrupted", "cancelled"}
 	flowRunKinds    = []string{"live", "replay", "test"}
 	nodeDecisions   = []string{"emitted", "dropped", "error", "skipped"}
 	agentStatuses   = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "denied", "killed", "interrupted", "timeout"}
