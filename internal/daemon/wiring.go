@@ -43,6 +43,7 @@ type apiParams struct {
 	Auth      *auth.Manager
 	Workspace func() *spec.Workspace
 	Reload    func()
+	BasePATH  string
 	Version   string
 	UI        http.Handler
 	Log       *slog.Logger

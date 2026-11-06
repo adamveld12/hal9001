@@ -56,7 +56,7 @@ type Tool struct {
 	Command []string       `yaml:"command,omitempty" json:"command,omitempty"`
 	// Approve is never, always or {when: conditions over the arguments}. Unset
 	// means always.
-	Approve       ToolApprove `yaml:"approve,omitempty" json:"approve,omitempty"`
+	Approve       ToolApprove `yaml:"approve,omitempty" json:"approve,omitzero"`
 	Timeout       Duration    `yaml:"timeout,omitempty" json:"timeout"`
 	RunsInSandbox bool        `yaml:"runs_in_sandbox,omitempty" json:"runs_in_sandbox,omitempty"`
 }

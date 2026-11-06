@@ -320,6 +320,11 @@ func (m *Manager) FlowCreated(ctx context.Context, flowID string) error {
 	return m.attachNew(ctx, store.AssistTargetFlow, flowID)
 }
 
+// ToolCreated does the same for tool sessions that were authoring a new custom tool with this id.
+func (m *Manager) ToolCreated(ctx context.Context, toolID string) error {
+	return m.attachNew(ctx, store.AssistTargetTool, toolID)
+}
+
 func (m *Manager) attachNew(ctx context.Context, kind, id string) error {
 	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{TargetKind: kind, ListOpts: store.ListOpts{Limit: 500}})
 	if err != nil {

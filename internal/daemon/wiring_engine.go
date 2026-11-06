@@ -28,6 +28,7 @@ func newAPI(p apiParams) http.Handler {
 		Auth:      p.Auth,
 		Workspace: p.Workspace,
 		Reload:    p.Reload,
+		BasePATH:  p.BasePATH,
 		Version:   p.Version,
 		UI:        p.UI,
 		Log:       p.Log,

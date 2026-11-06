@@ -346,6 +346,8 @@ type Assist interface {
 	SensorCreated(ctx context.Context, sensorID string) error
 	// FlowCreated is SensorCreated for flow sessions authoring a new flow.
 	FlowCreated(ctx context.Context, flowID string) error
+	// ToolCreated is SensorCreated for tool sessions authoring a new custom tool.
+	ToolCreated(ctx context.Context, toolID string) error
 }
 
 // DraftConflictError is UpdateDraft's hash mismatch (409 conflict).

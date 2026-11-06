@@ -32,6 +32,7 @@ func (s AssistStatus) valid() bool {
 const (
 	AssistTargetSensor = "sensor"
 	AssistTargetFlow   = "flow"
+	AssistTargetTool   = "tool"
 )
 
 // Who last wrote an assist draft.

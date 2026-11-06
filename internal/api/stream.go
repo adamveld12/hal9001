@@ -522,7 +522,7 @@ func (s *Server) PublishConfigChange(paths []string) {
 		if _, hash, err := spec.ReadFile(s.opts.Home, k, id); err == nil {
 			// A hash of a secrets file would let a stream reader test guesses
 			// against it, so per-sensor env files announce no hash.
-			if k != spec.KindSensorEnv {
+			if k != spec.KindSensorEnv && k != spec.KindToolEnv {
 				v.Hash = &hash
 			}
 		} else {
