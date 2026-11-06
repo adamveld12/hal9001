@@ -112,7 +112,9 @@ func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID s
 	refs := ws.Refs()
 	files = readDraftPrompts(dir)
 	for i := range files {
-		files[i].Exists = ws.Prompt(files[i].Name) != nil
+		saved := ws.Prompt(files[i].Name)
+		files[i].Exists = saved != nil
+		clash := saved != nil && string(saved.Raw) != files[i].YAML // a prompt Save just created is not a clash
 		refs.Prompts[files[i].Name] = true
 		path := PromptsDir + "/" + files[i].Name + ".md"
 		if !spec.ValidID(files[i].Name) {
@@ -122,7 +124,7 @@ func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID s
 		}
 		_, pds := spec.CheckPrompt(files[i].Name, []byte(files[i].YAML))
 		ds = append(ds, pds...)
-		if files[i].Exists {
+		if clash {
 			ds = append(ds, spec.Diagnostic{File: path, Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
 				Message: fmt.Sprintf("a prompt named %q is already saved and Save will not overwrite it: use a new name", files[i].Name)})
 		}

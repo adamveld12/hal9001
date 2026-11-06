@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -358,6 +359,11 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 	if len(f.Draft.Prompts) != 1 || !f.Draft.Prompts[0].Exists {
 		t.Errorf("after Save the draft prompt must show exists: %+v", f.Draft.Prompts)
 	}
+	for _, dg := range f.Draft.Diagnostics {
+		if dg["severity"] != nil && strings.Contains(fmt.Sprint(dg["message"]), "already saved") {
+			t.Errorf("the prompt Save just created must not be flagged as a clash: %v", dg)
+		}
+	}
 	d.assertNoSecret(s.ID, secretGlobalValue)
 }
 
@@ -494,7 +500,11 @@ func TestAssistFlowOnAnExistingFlowAndInvalidDrafts(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
 		srcSensor(d)
 		d.Flow("mine", existing)
-		d.assistRuntime(false, turn{When: when("tweak$"), Steps: []step{assistWrite("f1", "flow.yaml", edited), say("Done.")}})
+		d.Prompt("taken", "none", "Saved body.")
+		d.assistRuntime(false, turn{When: when("tweak$"), Steps: []step{
+			assistWrite("p1", "prompts/taken.md", "---\nname: taken\ndescription: x\n---\nDifferent body.\n"),
+			assistWrite("f1", "flow.yaml", edited), say("Done."),
+		}})
 	})
 	var before struct {
 		Hash string `json:"hash"`
@@ -508,8 +518,17 @@ func TestAssistFlowOnAnExistingFlowAndInvalidDrafts(t *testing.T) {
 	if d.Read("flows/mine.yaml") != existing {
 		t.Error("the flow file changed before Save")
 	}
-	if got := d.assistFlowGet(s.ID); got.Draft.YAML != edited {
+	got := d.assistFlowGet(s.ID)
+	if got.Draft.YAML != edited {
 		t.Errorf("draft = %q", got.Draft.YAML)
+	}
+	// A draft prompt that reuses the name of a saved one with other content is flagged: Save never overwrites it.
+	clash := false
+	for _, dg := range got.Draft.Diagnostics {
+		clash = clash || strings.Contains(fmt.Sprint(dg["message"]), `"taken" is already saved`)
+	}
+	if len(got.Draft.Prompts) != 1 || !got.Draft.Prompts[0].Exists || !clash {
+		t.Errorf("prompts %+v diagnostics %v", got.Draft.Prompts, got.Draft.Diagnostics)
 	}
 
 	// A draft that does not validate: 422 with diagnostics, nothing runs.
