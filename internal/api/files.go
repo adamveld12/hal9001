@@ -557,6 +557,12 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	if !s.saveFile(w, r, spec.KindFlow, id, raw, "", ds) {
 		return
 	}
+	if s.opts.Assist != nil {
+		// The file is saved either way; a failure here only leaves a session on the "new flow" target.
+		if err := s.opts.Assist.FlowCreated(r.Context(), id); err != nil {
+			s.log().Error("api: attach assist sessions to the new flow", "flow", id, "err", err)
+		}
+	}
 	v, err := s.flowDetail(id)
 	if err != nil {
 		s.writeError(w, r, err)

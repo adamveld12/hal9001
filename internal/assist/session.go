@@ -66,14 +66,25 @@ func newSession(m *Manager, row store.AssistSession) *session {
 	}
 }
 
-func (s *session) draftPath() string { return filepath.Join(s.dir, DraftFile) }
+// draftFile is the draft's file name in the draft directory.
+func (s *session) draftFile() string { return draftFileOf(s.row.TargetKind) }
 
-// applyDraft sets the draft fields of row from yaml: hash, parsed id and the validator's diagnostics.
-func applyDraft(row *store.AssistSession, yaml, by string, now time.Time) {
+func (s *session) draftPath() string { return filepath.Join(s.dir, s.draftFile()) }
+
+func (s *session) isFlow() bool { return s.row.TargetKind == store.AssistTargetFlow }
+
+// applyDraft sets the draft fields of the row from yaml: hash, parsed id, the validator's diagnostics and, for a
+// flow, the prompt files in the draft directory.
+func (s *session) applyDraft(yaml, by string) {
+	row := &s.row
 	row.DraftYAML = yaml
 	row.DraftHash = spec.Hash([]byte(yaml))
-	row.DraftSensorID, row.DraftDiagnostics = evaluate(yaml, row.TargetID)
-	row.DraftUpdatedAt, row.DraftUpdatedBy = now, by
+	if s.isFlow() {
+		row.DraftID, row.DraftDiagnostics, row.DraftPrompts = s.m.evaluateFlow(yaml, row.TargetID, s.dir)
+	} else {
+		row.DraftID, row.DraftDiagnostics = evaluate(yaml, row.TargetID)
+	}
+	row.DraftUpdatedAt, row.DraftUpdatedBy = s.m.st.Now(), by
 }
 
 // evaluate validates a draft like a sensor file. For a new sensor the id need not exist yet. When editing an
@@ -81,7 +92,7 @@ func applyDraft(row *store.AssistSession, yaml, by string, now time.Time) {
 func evaluate(yaml, target string) (sensorID string, diagnostics json.RawMessage) {
 	sensor, ds := spec.CheckSensor("", []byte(yaml))
 	for i := range ds {
-		ds[i].File = DraftFile
+		ds[i].File = SensorDraftFile
 	}
 	if sensor != nil {
 		if spec.ValidID(sensor.ID) {
@@ -89,11 +100,15 @@ func evaluate(yaml, target string) (sensorID string, diagnostics json.RawMessage
 		}
 		if target != "" && sensor.ID != target {
 			ds = append(ds, spec.Diagnostic{
-				File: DraftFile, Path: "id", Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
+				File: SensorDraftFile, Path: "id", Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
 				Message: fmt.Sprintf("id %q differs from the sensor being edited (%q): saving would create a different sensor", sensor.ID, target),
 			})
 		}
 	}
+	return sensorID, marshalDiagnostics(ds)
+}
+
+func marshalDiagnostics(ds []spec.Diagnostic) json.RawMessage {
 	if ds == nil {
 		ds = []spec.Diagnostic{}
 	}
@@ -101,13 +116,18 @@ func evaluate(yaml, target string) (sensorID string, diagnostics json.RawMessage
 	if err != nil {
 		b = []byte("[]")
 	}
-	return sensorID, b
+	return b
 }
 
-// initDir creates the draft directory with the draft and the instructions.
+// initDir creates the draft directory with the draft, the instructions and, for a flow, its reference material.
 func (s *session) initDir() error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("assist: create draft directory: %w", err)
+	}
+	if s.isFlow() {
+		if err := os.MkdirAll(filepath.Join(s.dir, PromptsDir), 0o700); err != nil {
+			return fmt.Errorf("assist: create prompts directory: %w", err)
+		}
 	}
 	if err := writeAtomic(s.draftPath(), []byte(s.row.DraftYAML)); err != nil {
 		return err
@@ -115,10 +135,20 @@ func (s *session) initDir() error {
 	return s.writeInstructions()
 }
 
-// writeInstructions (re)writes AGENTS.md and CLAUDE.md with the current env variable names.
+// writeInstructions (re)writes AGENTS.md and CLAUDE.md with the current env variable names, and for a flow
+// refreshes the reference material (sensors, prompts, runtimes, samples).
 func (s *session) writeInstructions() error {
-	global, sensor := s.m.envNames(s.row.TargetID)
-	text := []byte(instructions(s.id, s.row.TargetID, global, sensor))
+	var text []byte
+	if s.isFlow() {
+		if err := s.m.writeReference(s.dir); err != nil {
+			return err
+		}
+		global, _ := s.m.envNames("")
+		text = []byte(flowInstructions(s.id, s.row.TargetID, global))
+	} else {
+		global, sensor := s.m.envNames(s.row.TargetID)
+		text = []byte(instructions(s.id, s.row.TargetID, global, sensor))
+	}
 	for _, name := range []string{instructionFile, instructionFile2} {
 		if err := writeAtomic(filepath.Join(s.dir, name), text); err != nil {
 			return err
@@ -169,7 +199,7 @@ func (s *session) setDraftLocked(yaml, by string) error {
 	if err := writeAtomic(s.draftPath(), []byte(yaml)); err != nil {
 		return err
 	}
-	applyDraft(&s.row, yaml, by, s.m.st.Now())
+	s.applyDraft(yaml, by)
 	return s.saveLocked()
 }
 
@@ -183,13 +213,13 @@ func (s *session) syncFromDiskLocked() error {
 	if err != nil {
 		return fmt.Errorf("assist: read the draft: %w", err)
 	}
-	if spec.Hash(b) == s.row.DraftHash {
+	if spec.Hash(b) == s.row.DraftHash && (!s.isFlow() || !s.m.promptsChanged(s.dir, s.row.DraftPrompts)) {
 		return nil
 	}
 	if len(b) > maxDraftBytes {
 		b = b[:maxDraftBytes] // an agent that wrote far more than a sensor: keep what fits
 	}
-	applyDraft(&s.row, string(b), store.DraftByAgent, s.m.st.Now())
+	s.applyDraft(string(b), store.DraftByAgent)
 	return s.saveLocked()
 }
 
@@ -221,20 +251,33 @@ func (s *session) updateDraft(yaml, expected string) (*store.AssistSession, erro
 		if err := s.setDraftLocked(yaml, store.DraftByUser); err != nil {
 			return nil, err
 		}
+	} else if s.isFlow() {
+		// An unchanged push still refreshes what depends on the workspace: a prompt saved since, a new sensor.
+		id, diags, prompts := s.m.evaluateFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
+		if id != s.row.DraftID || string(diags) != string(s.row.DraftDiagnostics) || string(prompts) != string(s.row.DraftPrompts) {
+			s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = id, diags, prompts
+			if err := s.saveLocked(); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return s.copyRowLocked(), nil
 }
 
-// adopt makes the session edit the existing sensor sensorID instead of a new one. The draft is validated again
-// (an id that differs from the sensor is now flagged) and the instructions list the sensor's env keys.
-func (s *session) adopt(sensorID string) error {
+// adopt makes the session edit the existing sensor or flow id instead of a new one. The draft is validated again
+// (an id that differs from the target is now flagged) and the instructions list the target's env keys.
+func (s *session) adopt(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.row.Status == store.AssistClosed || s.row.TargetID != "" || s.row.DraftSensorID != sensorID {
+	if s.closed || s.row.Status == store.AssistClosed || s.row.TargetID != "" || s.row.DraftID != id {
 		return nil
 	}
-	s.row.TargetID = sensorID
-	s.row.DraftSensorID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, sensorID)
+	s.row.TargetID = id
+	if s.isFlow() {
+		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = s.m.evaluateFlow(s.row.DraftYAML, id, s.dir)
+	} else {
+		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id)
+	}
 	if err := s.saveLocked(); err != nil {
 		return err
 	}
@@ -377,6 +420,10 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 	}
 	global, sensor := s.m.envNames(row.TargetID)
 	head := preamble(row.TargetID, global, sensor)
+	if row.TargetKind == store.AssistTargetFlow {
+		global, _ = s.m.envNames("")
+		head = flowPreamble(row.TargetID, global)
+	}
 	// The turn's own user message is the last one; the recap covers what came before it.
 	var before []store.AssistMessage
 	if n := len(msgs); n > 0 {
@@ -386,7 +433,7 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 		RunID:  t.runID,
 		Prompt: head + text,
 		FallbackPrompt: head + "Your previous agent session could not be restored, so this is a new one. " +
-			"Read the current sensor.yaml first. The conversation so far:\n" + recap(before) + "\nThe user now says:\n\n" + text,
+			"Read the current " + draftFileOf(row.TargetKind) + " first. The conversation so far:\n" + recap(before) + "\nThe user now says:\n\n" + text,
 		Allow: s.allowRules(),
 	})
 }
@@ -394,7 +441,7 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 // preamble prefixes every prompt: it names the draft and repeats what changes between turns.
 func preamble(targetID string, global, sensor []string) string {
 	var b strings.Builder
-	b.WriteString("[hal9001 sensor assistant] The draft is `" + DraftFile + "` in the working directory: edit only that file. The sensor format, the output and key rules and how to test are in AGENTS.md.\n")
+	b.WriteString("[hal9001 sensor assistant] The draft is `" + SensorDraftFile + "` in the working directory: edit only that file. The sensor format, the output and key rules and how to test are in AGENTS.md.\n")
 	if targetID != "" {
 		b.WriteString("You are editing the existing sensor `" + targetID + "`; keep its id.\n")
 	} else {
@@ -520,12 +567,15 @@ func (s *session) onRunUpdated(rec agent.RunRecord) {
 // script of the sensor being edited (which already runs with these credentials). It also returns the text a changed
 // script is shown against. s.mu must be held.
 func (s *session) scriptApprovedLocked(id scriptID, available []string) (approved bool, base string) {
+	if id.empty() {
+		return true, "" // nothing runs with credentials
+	}
 	h := id.hash()
 	if s.row.ApprovedScriptHash != "" && s.row.ApprovedScriptHash == h {
 		return true, s.row.ApprovedScript
 	}
 	base = s.row.ApprovedScript
-	if saved, ok := s.m.savedScript(s.row.TargetID, available); ok {
+	if saved, ok := s.m.savedScript(s.row.TargetKind, s.row.TargetID, available); ok {
 		if saved.hash() == h {
 			return true, saved.text()
 		}
@@ -536,10 +586,21 @@ func (s *session) scriptApprovedLocked(id scriptID, available []string) (approve
 	return false, base
 }
 
-// savedScript is the script of the saved sensor file, when the session edits an existing sensor.
-func (m *Manager) savedScript(target string, available []string) (scriptID, bool) {
+// savedScript is the script of the saved sensor or flow file, when the session edits an existing one.
+func (m *Manager) savedScript(kind, target string, available []string) (scriptID, bool) {
 	if target == "" {
 		return scriptID{}, false
+	}
+	if kind == store.AssistTargetFlow {
+		raw, _, err := spec.ReadFile(m.opt.Home, spec.KindFlow, target)
+		if err != nil {
+			return scriptID{}, false
+		}
+		flow, ds := spec.ParseFlow(raw)
+		if flow == nil || spec.HasErrors(ds) {
+			return scriptID{}, false
+		}
+		return scriptOfFlow(flow, available), true
 	}
 	raw, _, err := spec.ReadFile(m.opt.Home, spec.KindSensor, target)
 	if err != nil {
@@ -550,6 +611,25 @@ func (m *Manager) savedScript(target string, available []string) (scriptID, bool
 		return scriptID{}, false
 	}
 	return scriptOf(sensor, available), true
+}
+
+// draftScriptLocked returns the identity of what a test of the current draft runs with credentials, and the
+// credential names available to it. ok is false when the draft does not validate. s.mu must be held.
+func (s *session) draftScriptLocked() (id scriptID, available []string, ok bool) {
+	if s.isFlow() {
+		flow, _, ds, _ := s.m.checkFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
+		if flow == nil || spec.HasErrors(ds) {
+			return scriptID{}, nil, false
+		}
+		available = s.m.availableEnv("")
+		return scriptOfFlow(flow, available), available, true
+	}
+	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
+	if sensor == nil || spec.HasErrors(ds) {
+		return scriptID{}, nil, false
+	}
+	available = s.m.availableEnv(s.row.TargetID)
+	return scriptOf(sensor, available), available, true
 }
 
 // markApprovedLocked records id as the script the user last tested or approved. s.mu must be held.
@@ -571,18 +651,16 @@ func (s *session) vetoTest(req agent.ToolRequest, rule int) string {
 	if err := s.syncFromDiskLocked(); err != nil {
 		return "the draft could not be read, so its script cannot be compared with the approved one"
 	}
-	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
-	if sensor == nil || spec.HasErrors(ds) {
+	id, available, ok := s.draftScriptLocked()
+	if !ok {
 		return "" // a draft that does not validate is not run: the test answers 422
 	}
-	available := s.m.availableEnv(s.row.TargetID)
-	id := scriptOf(sensor, available)
 	approved, base := s.scriptApprovedLocked(id, available)
 	if approved {
 		return ""
 	}
 	s.pendingTests[req.ToolCallID] = &pendingTest{id: id, base: base}
-	return "the draft's script changed since the user last tested or approved it, and a test runs it with real credentials"
+	return "the draft's code changed since the user last tested or approved it, and a test runs it with real credentials"
 }
 
 // approvalPending records a gated tool call: the conversation shows it with its approval, and the session waits.

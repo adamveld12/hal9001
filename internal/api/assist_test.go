@@ -15,7 +15,7 @@ type assistDouble struct {
 	create  func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
 	send    func(ctx context.Context, id, text string, yaml *string) (*store.AssistSession, error)
 	draft   func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
-	test    func(ctx context.Context, id string, byAgent bool) (core.AssistTestResult, error)
+	test    func(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error)
 	cancel  func(ctx context.Context, id string) (*store.AssistSession, error)
 	closeS  func(ctx context.Context, id string) error
 	created func(ctx context.Context, sensorID string) error
@@ -42,11 +42,15 @@ func (d *assistDouble) UpdateDraft(ctx context.Context, id, yaml, expectedHash s
 	return d.draft(ctx, id, yaml, expectedHash)
 }
 
-func (d *assistDouble) TestDraft(ctx context.Context, id string, byAgent bool) (core.AssistTestResult, error) {
+func (d *assistDouble) TestDraft(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error) {
 	if d.test == nil {
-		return core.AssistTestResult{}, errUnscripted
+		return core.AssistTestOutcome{}, errUnscripted
 	}
-	return d.test(ctx, id, byAgent)
+	return d.test(ctx, id, byAgent, req)
+}
+
+func (d *assistDouble) Samples(context.Context, string) ([]core.AssistSample, error) {
+	return []core.AssistSample{}, nil
 }
 
 func (d *assistDouble) Cancel(ctx context.Context, id string) (*store.AssistSession, error) {
@@ -133,7 +137,7 @@ func TestAssistSessionReadsShowDraftAndConversation(t *testing.T) {
 	if ids := e.get("/api/assist/sessions?target_kind=sensor&target_id=github-notifications").want(200).ids(); len(ids) != 1 || ids[0] != a.ID {
 		t.Errorf("sessions of one sensor = %v, want only %s (not %s)", ids, a.ID, other.ID)
 	}
-	e.get("/api/assist/sessions?target_kind=flow").want(400)
+	e.get("/api/assist/sessions?target_kind=bogus").want(400)
 	e.get("/api/assist/sessions/01JC7Z3K9Q8V5T2M4N6P8R0S1T").want(404)
 }
 
@@ -151,7 +155,7 @@ func TestCreateAssistSessionValidatesTargetAndPassesTheRequestOn(t *testing.T) {
 		}}
 	})
 
-	e.do("POST", "/api/assist/sessions", `{"target":{"kind":"flow"},"runtime":"claude"}`).want(422)
+	e.do("POST", "/api/assist/sessions", `{"target":{"kind":"bogus"},"runtime":"claude"}`).want(422)
 	e.do("POST", "/api/assist/sessions", `{"target":{"kind":"sensor","id":"bad id"},"runtime":"claude"}`).want(422)
 	e.do("POST", "/api/assist/sessions", `{"target":{"kind":"sensor"},"runtime":"not a name"}`).want(422)
 	e.do("POST", "/api/assist/sessions", `{"target":{"kind":"sensor"},"runtime":"claude","extra":1}`).want(400)
@@ -212,12 +216,12 @@ func TestAssistMessageAndDraftErrorsMapToProblems(t *testing.T) {
 	}
 
 	var byAgent []bool
-	svc.test = func(_ context.Context, _ string, agent bool) (core.AssistTestResult, error) {
+	svc.test = func(_ context.Context, _ string, agent bool, _ core.AssistTestRequest) (core.AssistTestOutcome, error) {
 		byAgent = append(byAgent, agent)
 		if agent {
-			return core.AssistTestResult{}, core.ErrInvalidState
+			return core.AssistTestOutcome{}, core.ErrInvalidState
 		}
-		return core.AssistTestResult{ExitCode: 0, Stdout: core.AssistText{Text: "[]", Size: 2}}, nil
+		return core.AssistTestOutcome{Sensor: &core.AssistTestResult{Kind: "sensor", ExitCode: 0, Stdout: core.AssistText{Text: "[]", Size: 2}}}, nil
 	}
 	res := e.do("POST", base+"/test", `{}`).want(200).json()
 	if items, ok := res["items"].([]any); !ok || len(items) != 0 || res["item_count"] != float64(0) || res["parse_error"] != nil {
@@ -232,8 +236,8 @@ func TestAssistMessageAndDraftErrorsMapToProblems(t *testing.T) {
 	if len(byAgent) != 2 || byAgent[0] || !byAgent[1] {
 		t.Errorf("byAgent per call = %v, want [false true]", byAgent)
 	}
-	svc.test = func(context.Context, string, bool) (core.AssistTestResult, error) {
-		return core.AssistTestResult{}, core.ErrPaused
+	svc.test = func(context.Context, string, bool, core.AssistTestRequest) (core.AssistTestOutcome, error) {
+		return core.AssistTestOutcome{}, core.ErrPaused
 	}
 	e.do("POST", base+"/test", `{}`).want(423)
 
@@ -312,3 +316,5 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 	}
 	c.quiet(150 * time.Millisecond) // nothing from the other session
 }
+
+func (d *assistDouble) FlowCreated(context.Context, string) error { return nil }

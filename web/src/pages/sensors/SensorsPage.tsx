@@ -22,6 +22,7 @@ import {
   type AssistPage,
   type EditorBridge,
 } from "../assist/context";
+import { targetConfig } from "../assist/targets";
 import { NewSensorForm } from "./NewSensorForm";
 import { SensorDraftPane } from "./SensorDraftPane";
 import { SensorEditorPane } from "./SensorEditor";
@@ -60,9 +61,10 @@ export function SensorsPage() {
   );
   const assist = useMemo<AssistPage>(
     () => ({
+      kind: "sensor",
       param: assistParam,
       sessionId,
-      sensorId: id ?? null,
+      targetId: id ?? null,
       open: () => setAssist(NEW, false),
       close: () => {
         // Closing the new-sensor page would drop its unsaved text; the session itself keeps the draft.
@@ -80,14 +82,23 @@ export function SensorsPage() {
 
   // A link to a session (an agent run, an approval) names no sensor: go to the one it edits.
   const linked = useAssistSession(id === undefined ? sessionId : null);
+  const linkedKind = linked.data?.target.kind;
   const linkedTarget = linked.data?.target.id ?? null;
   useEffect(() => {
-    if (id === undefined && sessionId !== null && linkedTarget !== null) {
+    if (sessionId === null || linkedKind === undefined) return;
+    if (linkedKind === "flow") {
+      void navigate(
+        linkedTarget === null
+          ? targetConfig("flow").draftPath(sessionId)
+          : targetConfig("flow").editorPath(linkedTarget, sessionId),
+        { replace: true },
+      );
+    } else if (id === undefined && linkedTarget !== null) {
       void navigate(`/sensors/${linkedTarget}?assist=${sessionId}`, {
         replace: true,
       });
     }
-  }, [id, sessionId, linkedTarget, navigate]);
+  }, [id, sessionId, linkedKind, linkedTarget, navigate]);
 
   /** Ask before a link drops unsaved edits. */
   const guard = (e: MouseEvent) => {

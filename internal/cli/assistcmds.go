@@ -23,10 +23,10 @@ func (c *call) sessionArg(name string) (string, error) {
 func assistCmds() []*command {
 	var listKind, listID string
 	list := &leaf{
-		usage: "[--target-kind sensor] [--target-id ID]", maxArgs: 0,
+		usage: "[--target-kind sensor|flow] [--target-id ID]", maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
-			fs.StringVar(&listKind, "target-kind", "", "only sessions of this target kind (sensor)")
-			fs.StringVar(&listID, "target-id", "", "only sessions editing this sensor id")
+			fs.StringVar(&listKind, "target-kind", "", "only sessions of this target kind (sensor or flow)")
+			fs.StringVar(&listID, "target-id", "", "only sessions editing this sensor or flow id")
 		},
 		run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodGet, "/api/assist/sessions", query("target_kind", listKind, "target_id", listID), nil,
@@ -34,12 +34,14 @@ func assistCmds() []*command {
 		},
 	}
 
-	var runtime, sensor, model, createYAML string
+	var runtime, sensor, flowID, kind, model, createYAML string
 	create := &leaf{
-		usage: "--runtime NAME [--sensor ID] [--model M] [--yaml FILE|-]", maxArgs: 0,
+		usage: "--runtime NAME [--sensor ID|--flow ID|--kind sensor|flow] [--model M] [--yaml FILE|-]", maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
 			fs.StringVar(&runtime, "runtime", "", "ACP runtime that runs the session (required)")
 			fs.StringVar(&sensor, "sensor", "", "sensor to edit (default: author a new sensor)")
+			fs.StringVar(&flowID, "flow", "", "flow to edit")
+			fs.StringVar(&kind, "kind", "", "what to author when no id is given: sensor (default) or flow")
 			fs.StringVar(&model, "model", "", "model for the runtime")
 			fs.StringVar(&createYAML, "yaml", "", "initial draft from this file, or - for stdin")
 		},
@@ -47,9 +49,17 @@ func assistCmds() []*command {
 			if runtime == "" {
 				return usagef("assist create: --runtime is required")
 			}
+			if sensor != "" && flowID != "" {
+				return usagef("assist create: --sensor and --flow are exclusive")
+			}
 			target := map[string]any{"kind": "sensor"}
-			if sensor != "" {
+			switch {
+			case flowID != "":
+				target = map[string]any{"kind": "flow", "id": flowID}
+			case sensor != "":
 				target["id"] = sensor
+			case kind != "":
+				target["kind"] = kind
 			}
 			req := map[string]any{"target": target, "runtime": runtime}
 			if model != "" {
@@ -117,8 +127,14 @@ func assistCmds() []*command {
 		return c.doEmit(ctx, http.MethodDelete, "/api/assist/sessions/"+esc(c.args[0]), nil, nil)
 	}}
 
+	var testSample int
+	var testEvent string
 	test := &leaf{
-		usage: "[<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		usage: "[--sample N|--event ID] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.IntVar(&testSample, "sample", 0, "flow sessions: run the draft on sample N (see `assist samples`)")
+			fs.StringVar(&testEvent, "event", "", "flow sessions: run the draft on this stored event")
+		},
 		run: func(ctx context.Context, c *call) error {
 			id, err := c.sessionArg("assist test")
 			if err != nil {
@@ -130,13 +146,35 @@ func assistCmds() []*command {
 			if c.env.Getenv(EnvAssistSession) != "" {
 				cl.headers = http.Header{AssistAgentHeader: {"1"}}
 			}
-			resp, err := cl.do(ctx, http.MethodPost, "/api/assist/sessions/"+esc(id)+"/test", nil, []byte("{}"))
+			if c.flagSet("sample") && c.flagSet("event") {
+				return usagef("assist test: --sample and --event are exclusive")
+			}
+			req := map[string]any{}
+			if c.flagSet("sample") {
+				req["sample_index"] = testSample
+			}
+			if testEvent != "" {
+				req["event_id"] = testEvent
+			}
+			body, _ := jsonBody(req)
+			resp, err := cl.do(ctx, http.MethodPost, "/api/assist/sessions/"+esc(id)+"/test", nil, body)
 			if err != nil {
 				return err
 			}
 			// A test script that exits non-zero is still a successful request;
 			// its exit_code is part of the printed result.
 			return c.emit(resp)
+		},
+	}
+
+	samples := &leaf{
+		usage: "[<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		run: func(ctx context.Context, c *call) error {
+			id, err := c.sessionArg("assist samples")
+			if err != nil {
+				return err
+			}
+			return c.doEmit(ctx, http.MethodGet, "/api/assist/sessions/"+esc(id)+"/samples", nil, nil, "index", "sensor_id")
 		},
 	}
 
@@ -163,12 +201,13 @@ func assistCmds() []*command {
 
 	return []*command{
 		cmd("list", "list assist sessions", list),
-		cmd("create", "start an assist session for a new or existing sensor", create),
+		cmd("create", "start an assist session for a new or existing sensor or flow", create),
 		cmd("get", "show a session with its draft and messages", idGet("/api/assist/sessions/%s")),
 		cmd("send", "send a message and start an agent turn", send),
 		cmd("cancel", "cancel the running turn", cancel),
 		cmd("close", "end a session and remove its draft directory", closeSession),
-		cmd("test", "run the session's draft like Poll now and print the result", test),
+		cmd("test", "run the session's draft (a poll for a sensor, one sample for a flow) and print the result", test),
+		cmd("samples", "list the sample inputs of a flow session", samples),
 		cmd("draft", "print the session's current draft (YAML, hash, diagnostics)", draft),
 	}
 }

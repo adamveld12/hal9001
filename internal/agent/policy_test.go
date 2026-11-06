@@ -387,3 +387,33 @@ func TestCommandVetoDowngradesAMatchedAllowRule(t *testing.T) {
 		t.Errorf("veto calls = %v, want %v (once per matched command, never for an unmatched one)", seen, want)
 	}
 }
+
+// edit_deny rejects an edit inside an otherwise editable directory, even under the gated policy that would ask.
+func TestEditDenyRejectsEditsInsideEditUnder(t *testing.T) {
+	dir := t.TempDir()
+	e, err := agent.NewEngine(agent.PolicyGated, agent.AllowRules{
+		EditUnder: []string{dir}, EditDeny: []string{filepath.Join(dir, "reference")}, Base: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		want agent.Action
+	}{
+		{"flow.yaml", agent.ActionAllow},
+		{"prompts/new.md", agent.ActionAllow},
+		{"reference/runtimes.txt", agent.ActionReject},
+		{"prompts/../reference/x", agent.ActionReject},
+		{filepath.Join(dir, "reference", "sensors", "a.yaml"), agent.ActionReject},
+		{"../outside.txt", agent.ActionAsk},
+	} {
+		if got := e.Decide(agent.ToolRequest{Kind: "edit", Paths: []string{tc.path}}); got.Action != tc.want {
+			t.Errorf("edit %s: %s (%s), want %s", tc.path, got.Action, got.Reason, tc.want)
+		}
+	}
+	// Reading the reference stays allowed.
+	if got := e.Decide(agent.ToolRequest{Kind: "read", Paths: []string{"reference/runtimes.txt"}}); got.Action != agent.ActionAllow {
+		t.Errorf("read reference: %s", got.Action)
+	}
+}

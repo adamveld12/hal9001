@@ -1,13 +1,17 @@
-// Decisions for keeping the sensor editor and the assist session's draft in
-// step. The editor text belongs to the user: an agent update replaces it only
-// when the user has not typed since the last sync; otherwise it waits as
-// `pending` for "Take AI version / Keep mine". User edits are pushed to the
-// draft with `syncedHash` as the expected hash. Pure; useDraftSync.ts applies
-// the results.
+// Decisions for keeping an editor and the assist session's draft in step. The
+// editor text belongs to the user: an agent update replaces it only when the
+// user has not typed since the last sync; otherwise it waits as `pending` for
+// "Take AI version / Keep mine". User edits are pushed to the draft with
+// `syncedHash` as the expected hash. Pure; useDraftSync.ts applies the results
+// for text editors, and flowDraftSync.ts for the flow canvas (whose "text" is
+// the normalized flow rather than the YAML).
 
 import type { AssistDraft } from "../../api/assist";
 import type { Checked } from "../files/diagnostics";
 import { lineDiff } from "../approvals/diff";
+
+/** The parts of a draft the sync decides on; `yaml` is the text the editor's text is compared with. */
+export type DraftView = Pick<AssistDraft, "hash" | "yaml" | "updated_by">;
 
 export interface SyncState {
   /** Hash of the server draft the editor was last reconciled with; null before the first draft arrives. */
@@ -15,7 +19,7 @@ export interface SyncState {
   /** Text of that draft. The editor differs from it when edits are waiting to be pushed. Null: the editor held unsynced edits when the session was bound. */
   syncedText: string | null;
   /** An agent update the user has not decided on yet. */
-  pending: AssistDraft | null;
+  pending: DraftView | null;
 }
 
 export interface AiChange {
@@ -39,14 +43,14 @@ export function initSync(editorText: string, editorDirty: boolean): SyncState {
   };
 }
 
-function adopt(draft: AssistDraft): SyncState {
+function adopt(draft: DraftView): SyncState {
   return { syncedHash: draft.hash, syncedText: draft.yaml, pending: null };
 }
 
 /** What to do with a draft that arrived from the server (fetch or stream) while the editor holds `text`. */
 export function reconcileDraft(
   sync: SyncState,
-  draft: AssistDraft,
+  draft: DraftView,
   text: string,
 ): Reconciled {
   const keep = (s: SyncState): Reconciled => ({
@@ -87,7 +91,10 @@ export function shouldPush(sync: SyncState, text: string): boolean {
 }
 
 /** A push succeeded: the server draft is `sentText` with the response's hash. Supersedes an undecided agent update. */
-export function pushed(draft: AssistDraft, sentText: string): SyncState {
+export function pushed(
+  draft: Pick<AssistDraft, "hash">,
+  sentText: string,
+): SyncState {
   return { syncedHash: draft.hash, syncedText: sentText, pending: null };
 }
 

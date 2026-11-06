@@ -1,0 +1,371 @@
+package assist
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"hal9001/docs"
+	"hal9001/internal/core"
+	"hal9001/internal/spec"
+	"hal9001/internal/store"
+)
+
+// Directories of a flow session's draft directory.
+const (
+	// PromptsDir holds the new prompt files the agent drafts (<name>.md). Save creates those that do not exist yet.
+	PromptsDir = "prompts"
+	// ReferenceDir is read-only material for the agent: sensors, existing prompts, runtime names, samples, docs.
+	ReferenceDir = "reference"
+
+	samplesPerSensor = 5
+	maxSampleBytes   = 64 << 10
+	maxPromptBytes   = 64 << 10
+)
+
+// flowSkeleton is the draft of a new flow when the request carries no YAML.
+const flowSkeleton = `# New flow. Describe what it should do and the assistant fills this in.
+id: new-flow
+enabled: false
+dry_run: true
+subscribe: []
+nodes: []
+edges: []
+`
+
+func draftFileOf(kind string) string {
+	if kind == store.AssistTargetFlow {
+		return FlowDraftFile
+	}
+	return SensorDraftFile
+}
+
+// draftPrompt is one prompt file of the draft directory.
+type draftPrompt struct {
+	Name   string `json:"name"`
+	YAML   string `json:"yaml"`
+	Exists bool   `json:"exists"`
+}
+
+// readDraftPrompts lists the prompts/*.md files of a draft directory by name.
+func readDraftPrompts(dir string) []draftPrompt {
+	entries, err := os.ReadDir(filepath.Join(dir, PromptsDir))
+	if err != nil {
+		return nil
+	}
+	var out []draftPrompt
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".md")
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, PromptsDir, e.Name())) //nolint:gosec // inside the session's draft directory
+		if err != nil || len(b) > maxPromptBytes {
+			continue
+		}
+		out = append(out, draftPrompt{Name: name, YAML: string(b)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// promptsChanged reports whether the prompt files on disk differ from the stored list (names and contents).
+func (m *Manager) promptsChanged(dir string, stored json.RawMessage) bool {
+	var old []draftPrompt
+	_ = json.Unmarshal(stored, &old)
+	now := readDraftPrompts(dir)
+	if len(old) != len(now) {
+		return true
+	}
+	for i := range now {
+		if old[i].Name != now[i].Name || old[i].YAML != now[i].YAML {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluateFlow validates a flow draft like a flow file, with the draft's own prompts counting as existing. A
+// changed id of an existing flow is flagged. Prompt files are validated too; a draft prompt named like a saved
+// one is flagged because Save never overwrites it.
+func (m *Manager) evaluateFlow(yaml, target, dir string) (flowID string, diagnostics, prompts json.RawMessage) {
+	_, flowID, ds, files := m.checkFlow(yaml, target, dir)
+	if files == nil {
+		files = []draftPrompt{}
+	}
+	pb, err := json.Marshal(files)
+	if err != nil {
+		pb = []byte("[]")
+	}
+	return flowID, marshalDiagnostics(ds), pb
+}
+
+// checkFlow is evaluateFlow's work: the parsed flow (nil when it does not parse), its id, every diagnostic and the
+// draft prompts.
+func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID string, ds []spec.Diagnostic, files []draftPrompt) {
+	ws := spec.Load(m.home)
+	refs := ws.Refs()
+	files = readDraftPrompts(dir)
+	for i := range files {
+		saved := ws.Prompt(files[i].Name)
+		files[i].Exists = saved != nil
+		clash := saved != nil && string(saved.Raw) != files[i].YAML // a prompt Save just created is not a clash
+		refs.Prompts[files[i].Name] = true
+		path := PromptsDir + "/" + files[i].Name + ".md"
+		if !spec.ValidID(files[i].Name) {
+			ds = append(ds, spec.Diagnostic{File: path, Severity: spec.SeverityError, Code: spec.CodeInvalidID,
+				Message: fmt.Sprintf("prompt name %q is invalid (letters, digits, - and _, at most 64 characters)", files[i].Name)})
+			continue
+		}
+		_, pds := spec.CheckPrompt(files[i].Name, []byte(files[i].YAML))
+		ds = append(ds, pds...)
+		if clash {
+			ds = append(ds, spec.Diagnostic{File: path, Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
+				Message: fmt.Sprintf("a prompt named %q is already saved and Save will not overwrite it: use a new name", files[i].Name)})
+		}
+	}
+	flow, fds := spec.CheckFlow("", []byte(yaml), refs)
+	for i := range fds {
+		fds[i].File = FlowDraftFile
+	}
+	ds = append(fds, ds...)
+	if flow != nil {
+		if spec.ValidID(flow.ID) {
+			flowID = flow.ID
+		}
+		if target != "" && flow.ID != target {
+			ds = append(ds, spec.Diagnostic{
+				File: FlowDraftFile, Path: "id", Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
+				Message: fmt.Sprintf("id %q differs from the flow being edited (%q): saving would create a different flow", flow.ID, target),
+			})
+		}
+	}
+	return flow, flowID, ds, files
+}
+
+// writeReference rebuilds <dir>/reference: sensor definitions, existing prompts, runtime names, the samples and
+// the format documentation. The files are read-only (owner read-only) and the agent's policy rejects edits there.
+func (m *Manager) writeReference(dir string) error {
+	ref := filepath.Join(dir, ReferenceDir)
+	if err := os.RemoveAll(ref); err != nil {
+		return fmt.Errorf("assist: reset reference: %w", err)
+	}
+	for _, sub := range []string{"sensors", "prompts", "samples", "docs"} {
+		if err := os.MkdirAll(filepath.Join(ref, sub), 0o700); err != nil {
+			return fmt.Errorf("assist: create reference: %w", err)
+		}
+	}
+	put := func(rel string, data []byte) error {
+		p := filepath.Join(ref, rel)
+		if err := os.WriteFile(p, data, 0o400); err != nil {
+			return fmt.Errorf("assist: write reference %s: %w", rel, err)
+		}
+		return nil
+	}
+	ws := spec.Load(m.home)
+	var sensors []string
+	for _, s := range ws.Sensors {
+		sensors = append(sensors, s.Name)
+		if err := put("sensors/"+s.Name+".yaml", s.Raw); err != nil {
+			return err
+		}
+	}
+	for _, p := range ws.Prompts {
+		if err := put("prompts/"+p.Name+".md", p.Raw); err != nil {
+			return err
+		}
+	}
+	var runtimes []string
+	if ws.Config.Value != nil {
+		for name := range ws.Config.Value.Runtimes {
+			runtimes = append(runtimes, name)
+		}
+	}
+	sort.Strings(runtimes)
+	if err := put("runtimes.txt", []byte(strings.Join(runtimes, "\n")+"\n")); err != nil {
+		return err
+	}
+	if err := put("docs/flows.md", []byte(docs.Flows)); err != nil {
+		return err
+	}
+	sort.Strings(sensors)
+	var index strings.Builder
+	index.WriteString("# index of the samples: `hal9001 assist test --sample N` runs the draft flow on sample N.\n")
+	n := 0
+	for _, id := range sensors {
+		lines, err := m.recentPayloads(id)
+		if err != nil {
+			return err
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		if err := put("samples/"+id+".jsonl", []byte(strings.Join(lines, "\n")+"\n")); err != nil {
+			return err
+		}
+		for _, l := range lines {
+			fmt.Fprintf(&index, "%d\t%s\t%s\n", n, id, cutUTF8(l, 100))
+			n++
+		}
+	}
+	return put("samples/index.txt", []byte(index.String()))
+}
+
+// recentPayloads returns up to samplesPerSensor recent event payloads of a sensor, redacted, one JSON value per line.
+func (m *Manager) recentPayloads(sensorID string) ([]string, error) {
+	page, err := m.st.ListEvents(m.ctx, store.EventFilter{SensorID: sensorID, ListOpts: store.ListOpts{Limit: samplesPerSensor}})
+	if err != nil {
+		return nil, fmt.Errorf("assist: list events of %s: %w", sensorID, err)
+	}
+	var out []string
+	for _, ev := range page.Items {
+		b, err := m.st.ReadContent(ev.Payload)
+		if err != nil || len(b) > maxSampleBytes {
+			continue
+		}
+		b = m.redactBytes(bytes.TrimSpace(b))
+		var buf bytes.Buffer
+		if json.Compact(&buf, b) != nil {
+			q, _ := json.Marshal(string(b)) // not JSON: keep it as a string
+			buf.Reset()
+			buf.Write(q)
+		}
+		out = append(out, buf.String())
+	}
+	return out, nil
+}
+
+// sampleList reads the samples written by writeReference in index order.
+func sampleList(dir string) []core.AssistSample {
+	files, _ := filepath.Glob(filepath.Join(dir, ReferenceDir, "samples", "*.jsonl"))
+	sort.Strings(files)
+	out := []core.AssistSample{}
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // inside the session's draft directory
+		if err != nil {
+			continue
+		}
+		id := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+		for line := range strings.SplitSeq(string(b), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			out = append(out, core.AssistSample{Index: len(out), SensorID: id, Payload: json.RawMessage(line)})
+		}
+	}
+	return out
+}
+
+// Samples lists the sample inputs of a flow session in the order `--sample N` and sample_index use.
+func (m *Manager) Samples(ctx context.Context, sessionID string) ([]core.AssistSample, error) {
+	s, err := m.session(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.isFlow() {
+		return []core.AssistSample{}, nil
+	}
+	return sampleList(s.dir), nil
+}
+
+// flowPreamble prefixes every prompt of a flow session.
+func flowPreamble(targetID string, globalEnv []string) string {
+	var b strings.Builder
+	b.WriteString("[hal9001 flow assistant] The draft is `" + FlowDraftFile + "` in the working directory; new prompts go in `" + PromptsDir + "/<name>.md`. " +
+		"Edit only those. `" + ReferenceDir + "/` is read-only reference material (sensors, prompts, runtimes, samples, docs). The format, the node types and how to test are in AGENTS.md.\n")
+	if targetID != "" {
+		b.WriteString("You are editing the existing flow `" + targetID + "`; keep its id.\n")
+	} else {
+		b.WriteString("You are creating a new flow. Never enable it: keep `enabled: false`; the user enables it.\n")
+	}
+	b.WriteString("Env variable names command nodes can use: " + nameList(globalEnv) + ".\n")
+	b.WriteString("Run `hal9001 assist test` (optionally `--sample N`) to test the draft; the first test after you change a command node asks the user to approve it.\n\n")
+	return b.String()
+}
+
+// flowInstructions is the text of AGENTS.md / CLAUDE.md for a flow session.
+func flowInstructions(sessionID, targetID string, globalEnv []string) string {
+	var b strings.Builder
+	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
+
+	w("# Flow authoring: instructions for the assistant\n\n")
+	w("You help the user write or change ONE hal9001 flow. hal9001 is a local daemon that polls systems with sensors, ")
+	w("turns what they return into events, and runs flows over those events. A flow is a small graph of nodes: ")
+	w("it subscribes to sensors, reshapes and routes each event, optionally asks an agent, and puts what needs attention in the user's inbox. ")
+	w("This directory is a private draft directory (session %s). Your job is the file `%s`, plus new prompt files under `%s/`.\n\n", sessionID, FlowDraftFile, PromptsDir)
+
+	if targetID != "" {
+		w("You are EDITING the existing flow `%s`. Keep `id: %s` unchanged: the user saves the draft over that flow.\n\n", targetID, targetID)
+	} else {
+		w("You are creating a NEW flow. Pick a short kebab-case `id` (letters, digits, `-` and `_`, at most 64 characters) and keep it stable for the rest of the session: the user may already have the editor open on it.\n\n")
+	}
+
+	w("## Rules\n\n")
+	w("- Edit only `%s` and files under `%s/`. `%s/` is READ-ONLY reference material: edits there are rejected. The user's own flows, sensors, prompts and settings are not editable from here.\n", FlowDraftFile, PromptsDir, ReferenceDir)
+	w("- NEVER enable a flow: keep `enabled: false` (and `dry_run: true` for a new flow). The user enables it after reading it.\n")
+	w("- Never print, echo, log or ask for a secret value, and do not try to read `env` files or `~/.hal9001`. You only ever see variable names.\n")
+	w("- Reading and searching are allowed. Running anything else asks the user for approval each time.\n")
+	w("- Run the helper commands below exactly as written, one per call: no pipes, redirects, `&&`, `;` or `cd`.\n")
+	w("- Test the draft with `hal9001 assist test` before you say it is done, and fix what it reports. Test both a sample that should pass and one that should be dropped when you can.\n")
+	w("- A test runs `command` nodes with the user's real credentials, so the first test after you change a command node (`lang`, `script`, `command`, `cwd`, or the credentials it mentions) asks the user to approve it. ")
+	w("Before you run it, say in a sentence what the command nodes do and which credentials they use. Once the user allowed a version, testing the same code again does not ask. ")
+	w("`transform` nodes are generated code and never ask. If the user denies the test, do not look for another way to run it: explain what you wanted to check and wait.\n")
+	w("- End every turn with a short plain-language summary of what the flow does now, what the test showed and what the user should check or decide. The user sees the draft and its graph update live.\n\n")
+
+	w("## Helper commands\n\n")
+	w("- `hal9001 assist draft` prints the current draft with its validation diagnostics as JSON.\n")
+	w("- `hal9001 assist test` runs the draft flow once on a sample and prints JSON: `flow_run_id`, `input`, `nodes` (per node: `status`, `decision` `emitted`/`dropped`/`error`/`skipped`, `reason`, `ports`, `outputs`, `would_create` for inbox nodes, `stdout`, `stderr`, `exit_code`) and `edges_taken`. ")
+	w("Pick the input with `--sample N` (an index from `%s/samples/index.txt`) or `--event ID`; without either the first sample is used. ", ReferenceDir)
+	w("The test is a dry run: `side_effect` command nodes are skipped, **agent nodes are not run** (they are `skipped` with the reason `assist test: agent nodes are not run`, and their branch ends there) and inbox nodes only report the item they would create. ")
+	w("`transform` and other `command` nodes run for real and follow the edges.\n")
+	w("- `hal9001 flows validate flow.yaml` checks the file against the flow format only.\n\n")
+
+	w("## Reference material (`%s/`, read-only)\n\n", ReferenceDir)
+	w("- `%s/docs/flows.md`: the full format of sensors, flows, nodes, templates and prompts. Read the flow and node sections before you write a flow.\n", ReferenceDir)
+	w("- `%s/sensors/<id>.yaml`: the user's sensors, i.e. what can be subscribed to (the definitions contain no secret values).\n", ReferenceDir)
+	w("- `%s/prompts/<name>.md`: the user's existing prompts, which agent nodes can use.\n", ReferenceDir)
+	w("- `%s/runtimes.txt`: the names of the configured agent runtimes (`runtime:` of an agent node).\n", ReferenceDir)
+	w("- `%s/samples/<sensor>.jsonl` and `%s/samples/index.txt`: up to 5 recent real event payloads per sensor, redacted, one JSON value per line. ", ReferenceDir, ReferenceDir)
+	w("Look at them before you write field names: use the fields that are really there.\n\n")
+
+	w("## The flow file\n\n")
+	w("```yaml\nid: triage-github\nenabled: false\ndry_run: true\nsubscribe: [github-notifications]\nnodes:\n  - id: only-reviews\n    type: transform\n    steps:\n      - type: filter\n        conditions:\n          - {field: reason, op: equals, value: review_requested}\n  - id: note\n    type: inbox\n    title: \"Review requested: {{.input.subject.title}}\"\n    priority: normal\n    summary_md: \"{{.input.repository.full_name}}\"\n    ui: {x: 400, y: 120}\nedges:\n  - {from: only-reviews, to: note}\n```\n\n")
+	w("- `subscribe` lists sensor ids (from `%s/sensors/`); each event of those sensors starts one run of the flow at its entry nodes (nodes with no incoming edge).\n", ReferenceDir)
+	w("- Every `edges` entry is `{from: node, port: out, to: node}`; `port` defaults to `out`. A node can fail onto the `error` port. A port without edges ends the branch.\n")
+	w("- Give every node a `ui: {x, y}` position so the graph reads left to right (about 300 apart horizontally, 140 vertically); nodes without a position are laid out automatically.\n")
+	w("- Templates (`{{.input.field}}`, `{{.event.field}}`) are Go `text/template`; a missing field is an error. The full data model is in `%s/docs/flows.md`.\n\n", ReferenceDir)
+
+	w("## Node types, and which to use\n\n")
+	w("**PREFER `transform` nodes** for everything that filters, routes or reshapes items. They are plain-language steps (`filter`, `route`, `pick`, `set`, `remove`, `split`, `sort`, `limit`, `unique`, `aggregate`, `filter_list`) that the daemon compiles to jq: ")
+	w("they need no code, no credentials and no approval, they explain in words why an item was dropped, and the user can edit them in the editor. ")
+	w("Write a `command` node (bash, python, jq, ...) only when no sequence of steps can do the job (calling an API, running a tool). The exact step formats, conditions, operators and ports are in the transform section of `%s/docs/flows.md`.\n\n", ReferenceDir)
+	w("```yaml\n- id: route\n  type: transform\n  steps:\n    - type: filter\n      conditions:\n        - {field: state, op: equals, value: open}\n    - type: route            # last step only\n      default_port: normal\n      rules:\n        - port: urgent\n          match: any\n          conditions:\n            - {field: 'labels[].name', op: in, value: [p0, p1]}\n```\n\n")
+	w("A `route` step creates the output ports (`urgent` and `normal` here); edges leave the node on those ports.\n\n")
+	w("| Type | Use it for |\n|---|---|\n")
+	w("| `transform` | Filter, route, reshape. First choice. |\n")
+	w("| `command` | Code (`lang`, `script`/`command`, `ports`, `side_effect`). Reads the item on stdin, writes JSON to stdout. Mark anything that changes the outside world `side_effect: true`. Needs the user's approval before its first test. |\n")
+	w("| `agent` | Asks a coding agent to read the item and think (`runtime`, `mode`, `prompt`). Slower and costs money: use it only for judgement a rule cannot make (summarize, triage, draft a reply). |\n")
+	w("| `inbox` | Puts an item in the user's inbox (`title`, `priority`, `summary_md`, `suggested_reply`, `links`; all are templates). What a person should look at ends here. |\n\n")
+
+	w("### Agent nodes\n\n")
+	w("- Default to `mode: readonly`: the agent can read but not act. For inbox triage use a prompt with `output: note` (see the existing prompts in `%s/prompts/`): the agent's note becomes an inbox item on its own, without an `inbox` node after it.\n", ReferenceDir)
+	w("- `runtime` must be one of `%s/runtimes.txt`. Do not invent models.\n", ReferenceDir)
+	w("- Use `mode: approve` or `auto` only if the user asked for the agent to act, and say so in your summary.\n")
+	w("- `prompt` names a file in `prompts/` of the user's home. Reuse an existing prompt from `%s/prompts/` when one fits. If you need a new one, create `%s/<new-name>.md` in the draft directory with a front matter (`name`, `description`, `output: note`) and the prompt text (a template over `{{.input}}`); ", ReferenceDir, PromptsDir)
+	w("the user's Save creates it. Never edit or reuse the name of an existing prompt: Save does not overwrite existing prompts, so choose a new name instead.\n")
+	w("- You cannot run agent nodes in a test: they are skipped. Say in your summary that the agent step was not exercised.\n\n")
+
+	w("### Inbox nodes\n\n")
+	w("- `title` is required and must render non-empty. `priority` is one of `low`, `normal`, `high`, `urgent`. `summary_md` is Markdown for a reader who has not seen the item. Add `links` (`{label, url}`) to the source.\n")
+	w("- A test shows each inbox node's rendered item in `would_create`; check the text reads well on the sample.\n\n")
+
+	w("## Environment\n\n")
+	w("`command` nodes run with the global env file. Credentials available (NAMES only; reference them as `$NAME`, never paste a value): %s.\n", nameList(globalEnv))
+	w("If a command node needs a credential that is not listed, tell the user which variable to add instead of inventing one.\n")
+	return b.String()
+}

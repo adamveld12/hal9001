@@ -1,4 +1,4 @@
-import type { AssistDraft } from "../../api/assist";
+import type { DraftView } from "./draftSync";
 import { Button } from "../../components/ui";
 
 /**
@@ -12,7 +12,7 @@ export function DraftBanners({
   onKeepMine,
   onClearMarks,
 }: {
-  pending: AssistDraft | null;
+  pending: DraftView | null;
   markedLines: readonly number[];
   onTakeAi: () => void;
   onKeepMine: () => void;

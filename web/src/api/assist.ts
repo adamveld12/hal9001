@@ -15,17 +15,26 @@ export type AssistStreamMessage = Schemas["AssistStreamMessage"];
 export type AssistDraft = Schemas["AssistDraft"];
 export type AssistStatus = Schemas["AssistStatus"];
 export type AssistTestResult = Schemas["AssistTestResult"];
+export type AssistSensorTestResult = Schemas["AssistSensorTestResult"];
+export type AssistFlowTestResult = Schemas["AssistFlowTestResult"];
+export type AssistFlowTestNode = Schemas["AssistFlowTestNode"];
+export type AssistTestRequest = Schemas["AssistTestRequest"];
+export type AssistTargetKind = Schemas["AssistTargetKind"];
+export type AssistSample = Schemas["AssistSample"];
 
-/** Sessions that edit one sensor (`targetId` set) or all sensor sessions; closed ones are not listed. */
-export function useAssistSessions(targetId: string | null | undefined) {
+/** Sessions that edit one target of `kind` (`targetId` set) or all sessions of that kind; closed ones are not listed. */
+export function useAssistSessions(
+  kind: AssistTargetKind,
+  targetId: string | null | undefined,
+) {
   return useQuery({
-    queryKey: qk("assist-sessions", targetId ?? null),
+    queryKey: qk("assist-sessions", kind, targetId ?? null),
     queryFn: () =>
       unwrap(
         api.GET("/api/assist/sessions", {
           params: {
             query: {
-              target_kind: "sensor",
+              target_kind: kind,
               target_id: targetId ?? undefined,
             },
           },
@@ -107,17 +116,37 @@ export function usePutAssistDraft(id: string | null) {
 
 const testKey = (id: string) => qk("assist-test", id);
 
-/** Runs the draft like Poll now, without recording a run, events or dedup keys. The result is kept for `useAssistTestResult`. */
+/**
+ * Runs the draft once: a sensor like Poll now, a flow on one input (`body`, see `AssistTestRequest`).
+ * Nothing is recorded as a live run. The result is kept for `useAssistTestResult`.
+ */
 export function useTestAssistDraft(id: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (body?: AssistTestRequest) =>
       unwrap(
         api.POST("/api/assist/sessions/{id}/test", {
           params: { path: { id: id as string } },
+          body,
         }),
       ),
     onSuccess: (result) => qc.setQueryData(testKey(id ?? ""), result),
+  });
+}
+
+/** Sample inputs of a flow session (recent payloads of the known sensors), refreshed by the daemon every turn. */
+export function useAssistSamples(id: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: qk("assist-test", id ?? "", "samples"),
+    enabled: enabled && id !== null,
+    queryFn: async () =>
+      (
+        await unwrap(
+          api.GET("/api/assist/sessions/{id}/samples", {
+            params: { path: { id: id as string } },
+          }),
+        )
+      ).items,
   });
 }
 

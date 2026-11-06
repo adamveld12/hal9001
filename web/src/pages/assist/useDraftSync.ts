@@ -20,32 +20,27 @@ import {
   type Reconciled,
   type SyncState,
 } from "./draftSync";
+import { bindSession } from "./sessions";
 
 /** User edits are pushed to the draft once typing has paused this long. */
 const PUSH_DELAY_MS = 600;
 
 /**
  * The session the open editor belongs to: the one in the URL, provided it edits
- * this sensor (`sensorId`) or a sensor that had no file yet (target id null) and
- * is still open. Anything else leaves the editor on its own.
+ * this target (`targetId`) or one that had no file yet and is still open (see
+ * `bindSession`). Anything else leaves the editor on its own.
  */
-export function useBoundSession(sensorId: string | null): {
+export function useBoundSession(targetId: string | null): {
   session: AssistSessionDetail | undefined;
   sessionId: string | null;
-  /** The URL names a session of another sensor. */
+  /** The URL names a session of another target. */
   otherTarget: string | null;
 } {
   const page = useAssistPage();
   const q = useAssistSession(page.sessionId);
   const session = q.data;
-  if (!session || session.status === "closed") {
-    return { session: undefined, sessionId: null, otherTarget: null };
-  }
-  const t = session.target.id;
-  if (t === null || t === sensorId) {
-    return { session, sessionId: session.id, otherTarget: null };
-  }
-  return { session, sessionId: null, otherTarget: t };
+  const b = bindSession(session, page.kind, targetId);
+  return { session, sessionId: b.sessionId, otherTarget: b.otherTarget };
 }
 
 /**

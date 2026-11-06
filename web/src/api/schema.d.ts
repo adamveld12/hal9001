@@ -1156,7 +1156,7 @@ export interface paths {
     /**
      * List assist sessions
      * @description Recent and active AI-assisted authoring sessions, newest first. `target_kind` and `target_id` narrow the list
-     *     to the sessions of one target (for example the sensor an editor is open on). Closed sessions are not listed.
+     *     to the sessions of one target (for example the sensor or flow an editor is open on). Closed sessions are not listed.
      */
     get: operations["listAssistSessions"];
     put?: never;
@@ -1165,7 +1165,9 @@ export interface paths {
      * @description Creates a session and its draft. With `target.id` the draft starts from that sensor's file (or from `yaml` when
      *     given); without it the draft starts from `yaml` or a commented skeleton. No agent process starts until the
      *     first message. The sensor file is never touched: only the normal sensor create/update endpoints persist a
-     *     sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`.
+     *     sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`. `target.kind: flow` starts a flow
+     *     session in the same way (`flow.yaml`, a skeleton with `enabled: false` and `dry_run: true` for a new flow, read-only
+     *     reference material and `prompts/` for new prompts in the draft directory).
      */
     post: operations["createAssistSession"];
     delete?: never;
@@ -1262,8 +1264,8 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Run the draft like Poll now
-     * @description Runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
+     * Run the draft once (a poll for a sensor, one input for a flow)
+     * @description Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
      *     with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
      *     in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
      *     events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
@@ -1276,8 +1278,42 @@ export interface paths {
      *     meaning `lang`, `script`, `command`, `cwd` and the names of the env variables it references, equals the one the
      *     user last tested or approved, or the saved script of the target sensor; otherwise 409 `invalid-state`. The agent
      *     asks for that approval through its permission request for `hal9001 assist test` (a `tool_call` approval).
+     *
+     *     Flow sessions: the draft flow runs once on one input (`AssistTestRequest`) as a `kind: test` flow run with
+     *     `dry_run` forced, so `side_effect` command nodes are skipped. Transform and command nodes run for real and the
+     *     run follows the edges; agent nodes are not run (`skipped`, their branch ends there); inbox nodes record the item
+     *     they would create and create none. Command nodes run with the global env file like a real run, so an agent's
+     *     test needs the user's approval the same way: the hash covers every command node's `lang`, `script`, `command`,
+     *     `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
+     *     the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
+     *     (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
      */
     post: operations["testAssistDraft"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}/samples": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sample inputs of a flow session
+     * @description Flow sessions: the recent event payloads of the known sensors (up to 5 per sensor, redacted), in the order of
+     *     `reference/samples/` in the draft directory (sensor ids sorted, newest event first). `index` is what
+     *     `sample_index` of the test request and `hal9001 assist test --sample N` refer to. The list is refreshed at the
+     *     start of every turn. Empty for sensor sessions.
+     */
+    get: operations["listAssistSamples"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3250,7 +3286,7 @@ export interface components {
       allowed_logins: string[];
     };
     /** @enum {string} */
-    AssistTargetKind: "sensor";
+    AssistTargetKind: "sensor" | "flow";
     /**
      * @description `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
      *     approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
@@ -3265,23 +3301,36 @@ export interface components {
     AssistDraftAuthor: "agent" | "user";
     AssistTarget: {
       kind: components["schemas"]["AssistTargetKind"];
-      /** @description Sensor id; null when the session authors a new sensor. */
+      /** @description Sensor or flow id; null when the session authors a new sensor or flow. */
       id: components["schemas"]["Slug"] | null;
     };
     AssistTargetRequest: {
       kind: components["schemas"]["AssistTargetKind"];
       id?: components["schemas"]["Slug"];
     };
+    /** @description A prompt file the agent drafted under `prompts/`. Save creates it (`POST /api/prompts`) when `exists` is false. */
+    AssistDraftPrompt: {
+      name: components["schemas"]["Slug"];
+      /** @description The file as written (front matter and body). */
+      yaml: string;
+      /** @description A prompt of that name is already saved. Save never overwrites it. */
+      exists: boolean;
+    };
     /**
-     * @description The sensor YAML the session works on, stored in the session's draft directory (`sensor.yaml`). Only the user's
-     *     Save writes a real sensor file.
+     * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+     *     user's Save writes a real file.
      */
     AssistDraft: {
+      kind: components["schemas"]["AssistTargetKind"];
       yaml: string;
       hash: components["schemas"]["Hash"];
-      /** @description The `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. */
+      /** @description Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows. */
       sensor_id: components["schemas"]["Slug"] | null;
-      /** @description Findings of the sensor validator (the same checks as `POST /api/sensors/validate`). */
+      /** @description Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors. */
+      flow_id: components["schemas"]["Slug"] | null;
+      /** @description Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`. */
+      prompts: components["schemas"]["AssistDraftPrompt"][];
+      /** @description Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts. */
       diagnostics: components["schemas"]["Diagnostic"][];
       updated_at: components["schemas"]["Timestamp"];
       updated_by: components["schemas"]["AssistDraftAuthor"];
@@ -3362,10 +3411,15 @@ export interface components {
       item: components["schemas"]["JsonValue"];
     };
     /**
-     * @description Outcome of one test run of the draft, redacted: values of the global env file and of the target sensor's env
+     * @description Outcome of one test run of a sensor draft, redacted: values of the global env file and of the target sensor's env
      *     file are replaced by `«KEY»`. `items` lists at most the first 200 parsed items; `item_count` is the total.
      */
-    AssistTestResult: {
+    AssistSensorTestResult: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "sensor";
       /** @description -1 when the process was killed by a signal (for example on timeout). */
       exit_code: number;
       duration_ms: number;
@@ -3376,6 +3430,89 @@ export interface components {
       parse_error: string | null;
       stdout: components["schemas"]["TextBlob"];
       stderr: components["schemas"]["TextBlob"];
+    };
+    AssistFlowTestOutput: {
+      port: string;
+      payload: components["schemas"]["JsonValue"];
+    };
+    /**
+     * @description What one node did in a flow test, in the order the nodes ran. A node that did not run (a branch that was not
+     *     taken) is absent. Agent nodes are `skipped` with the reason `assist test: agent nodes are not run`, and
+     *     their branch ends there. An inbox node records the item it would create in `would_create` and creates nothing.
+     */
+    AssistFlowTestNode: {
+      node_id: components["schemas"]["Slug"];
+      node_run_id: components["schemas"]["Ulid"];
+      status: components["schemas"]["NodeRunStatus"];
+      decision: components["schemas"]["NodeRunDecision"] | null;
+      /** @description Why the node decided as it did: for a transform that dropped the item, the step and condition. */
+      reason: string | null;
+      /** @description Error class when the node failed. */
+      error: string | null;
+      /** @description Ports the node emitted on. */
+      ports: string[];
+      outputs: components["schemas"]["AssistFlowTestOutput"][];
+      /** @description Inbox nodes only: the item a real run would create. */
+      would_create: components["schemas"]["AssistInboxPreview"] | null;
+      /** @description Redacted, at most 4 KiB. */
+      stdout: string | null;
+      /** @description Redacted, at most 4 KiB. */
+      stderr: string | null;
+      exit_code: number | null;
+      duration_ms: number | null;
+    };
+    AssistInboxPreview: {
+      title: string;
+      priority: string;
+      summary_md: string;
+      suggested_reply: string;
+      links: {
+        label: string;
+        url: string;
+      }[];
+    };
+    AssistFlowTestEdge: {
+      from: components["schemas"]["Slug"];
+      to: components["schemas"]["Slug"];
+      port: string;
+    };
+    /**
+     * @description Outcome of running the draft flow once on one input as a `kind: test` flow run (hidden from the default
+     *     timelines; `GET /api/flow-runs/{id}` and its node runs show it). The run is forced `dry_run`.
+     */
+    AssistFlowTestResult: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "flow";
+      flow_run_id: components["schemas"]["Ulid"];
+      status: components["schemas"]["FlowRunStatus"];
+      input: components["schemas"]["JsonValue"];
+      nodes: components["schemas"]["AssistFlowTestNode"][];
+      edges_taken: components["schemas"]["AssistFlowTestEdge"][];
+    };
+    /** @description The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`. */
+    AssistTestResult:
+      | components["schemas"]["AssistSensorTestResult"]
+      | components["schemas"]["AssistFlowTestResult"];
+    /**
+     * @description Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
+     *     none, the first sample is used (422 when there is none).
+     */
+    AssistTestRequest: {
+      /** @description Index into `GET /api/assist/sessions/{id}/samples`. */
+      sample_index?: number;
+      event_id?: components["schemas"]["Ulid"];
+      input?: components["schemas"]["JsonValue"];
+    };
+    AssistSample: {
+      index: number;
+      sensor_id: components["schemas"]["Slug"];
+      payload: components["schemas"]["JsonValue"];
+    };
+    AssistSampleList: {
+      items: components["schemas"]["AssistSample"][];
     };
     /**
      * @description Value of the SSE `event:` field and of `StreamEvent.type`.
@@ -5764,7 +5901,7 @@ export interface operations {
     parameters: {
       query?: {
         target_kind?: components["schemas"]["AssistTargetKind"];
-        /** @description Sensor id. Only sessions that edit that sensor. */
+        /** @description Sensor or flow id. Only sessions that edit that target. */
         target_id?: components["schemas"]["Slug"];
       };
       header?: never;
@@ -5950,7 +6087,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["AssistTestRequest"];
+      };
+    };
     responses: {
       /** @description The run finished (a failing script still answers 200; see `exit_code`). */
       200: {
@@ -5961,6 +6102,7 @@ export interface operations {
           "application/json": components["schemas"]["AssistTestResult"];
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
@@ -5968,6 +6110,32 @@ export interface operations {
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listAssistSamples: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Samples. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSampleList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       default: components["responses"]["Error"];
     };
   };
