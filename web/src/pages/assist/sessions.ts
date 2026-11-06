@@ -27,7 +27,7 @@ export function bindSession(
   }
   const t = session.target.id;
   const bound: SessionBinding = { sessionId: session.id, otherTarget: null };
-  if (kind === "sensor") {
+  if (kind === "sensor" || kind === "tool") {
     return t === null || t === targetId
       ? bound
       : { sessionId: null, otherTarget: t };
