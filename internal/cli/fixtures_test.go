@@ -12,7 +12,7 @@ func killSwitch(paused bool) map[string]any {
 
 func statusBody() map[string]any {
 	return map[string]any{
-		"kill_switch": killSwitch(false), "running_flow_runs": 1, "queued_flow_runs": 2,
+		"kill_switch": killSwitch(false), "running_flow_runs": 1, "queued_flow_runs": 2, "queue_total": 2,
 		"running_agent_runs": 0, "queued_agent_runs": 0, "pending_approvals": 3, "unread_inbox": 4,
 	}
 }
@@ -27,7 +27,7 @@ func page(items ...any) map[string]any {
 func flowRun(id, status string) map[string]any {
 	return map[string]any{
 		"id": id, "flow_id": "triage-github", "flow_hash": hash, "event_id": id2, "kind": "live", "replay_of": nil,
-		"dry_run": false, "status": status, "error": nil, "created_at": ts, "started_at": ts, "ended_at": nil,
+		"dry_run": false, "status": status, "error": nil, "cancelled_by": nil, "created_at": ts, "started_at": ts, "ended_at": nil,
 	}
 }
 

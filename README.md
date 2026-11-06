@@ -209,6 +209,7 @@ usage: hal9001 <command> [flags]
   agent-runs  list and inspect agent runs and transcripts
   approvals   list, approve and deny approvals
   inbox       list items; mark read, starred, archived
+  queue       list the run queue; remove runs from it
   killswitch  pause and resume the daemon
   runtimes    list and probe ACP runtimes
   settings    show settings
@@ -238,6 +239,9 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | Command | Arguments and flags |
 |---|---|
 | `status` | Daemon counters and kill switch state. |
+| `queue list` | Runs waiting for a slot, in claim order, with what each waits for (`flow_slot`, `agent_slot`, `command_slot`, `kill_switch`). |
+| `queue remove <run-id>` | Remove one run from the queue: it ends `cancelled` and stays in history. 409 when the run already runs a node. |
+| `queue clear` | Remove every queued run. `--flow <id>` limits it to one flow, `--yes` skips the confirmation asked on a terminal. |
 | `tailscale status` | Tailscale CLI reachability, this Mac's tailnet hostname and owner, whether serve is configured, whether the hostname is in `allowed_hosts`. |
 | `sensors list` / `sensors get <id>` | |
 | `sensors poll <id>` | Run now: poll the sensor at once (rejected while the kill switch is engaged; works on a paused or manual-only sensor, and never baselines). `--rerun-seen` also replays items already seen into each target flow, `--flow <id>` (repeatable) limits new events and re-runs to those flows, `--wait`/`--timeout 10m` wait for the created flow runs and print their final status as `flow_runs`. Prints the sensor run with `new_events`, `rerun_events`, `flow_run_ids`. |

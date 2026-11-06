@@ -9,6 +9,7 @@ export const RUN_STATUSES = [
   "failed",
   "killed",
   "interrupted",
+  "cancelled",
 ] as const satisfies readonly Schemas["FlowRunStatus"][];
 
 export const DECISIONS = [

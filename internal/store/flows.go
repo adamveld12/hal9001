@@ -76,14 +76,14 @@ func (s *Store) ListFlowVersions(ctx context.Context, flowID string) ([]FlowVers
 
 // ---- flow runs ----
 
-const flowRunCols = `id, flow_id, flow_hash, COALESCE(event_id, ''), kind, COALESCE(replay_of, ''), dry_run, status, error, created_at, started_at, ended_at`
+const flowRunCols = `id, flow_id, flow_hash, COALESCE(event_id, ''), kind, COALESCE(replay_of, ''), dry_run, status, error, created_at, started_at, ended_at, cancelled_by`
 
 func scanFlowRun(r rowScanner) (FlowRun, error) {
 	var fr FlowRun
 	var kind, status, created string
 	var dry int
 	var started, ended sql.NullString
-	if err := r.Scan(&fr.ID, &fr.FlowID, &fr.FlowHash, &fr.EventID, &kind, &fr.ReplayOf, &dry, &status, &fr.Error, &created, &started, &ended); err != nil {
+	if err := r.Scan(&fr.ID, &fr.FlowID, &fr.FlowHash, &fr.EventID, &kind, &fr.ReplayOf, &dry, &status, &fr.Error, &created, &started, &ended, &fr.CancelledBy); err != nil {
 		return FlowRun{}, scanErr(err)
 	}
 	fr.Kind, fr.Status, fr.DryRun = FlowRunKind(kind), FlowRunStatus(status), dry != 0

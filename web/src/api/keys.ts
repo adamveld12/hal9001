@@ -14,6 +14,7 @@ export const QUERY_ROOTS = [
   "flow-versions",
   "flow-version",
   "flow-runs",
+  "queue",
   "flow-run",
   "node-run",
   "events",

@@ -214,6 +214,76 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/queue": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List the queue
+     * @description Flow runs waiting for a slot, in the order the engine will claim them (oldest wait first): `queued` runs
+     *     waiting for a flow slot (`flow_slot`), and `running` runs whose only unfinished node runs are `queued`,
+     *     waiting for an agent or command slot (`agent_slot`, `command_slot`). While the kill switch is engaged every
+     *     item waits for `kill_switch`. Runs awaiting approval are not in the queue (see approvals); test runs are
+     *     excluded. `flow_id` limits the list to one flow. Changes arrive as `flow_run.updated` stream events.
+     */
+    get: operations["getQueue"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/queue/clear": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Remove every queued run
+     * @description Cancels every run in the queue (of one flow with `flow_id`). Cancelled runs stay in history with status
+     *     `cancelled`. A run that started a node while the request ran is left alone. Idempotent: an empty queue
+     *     returns `cancelled: 0`.
+     */
+    post: operations["clearQueue"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/queue/{flow_run_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        flow_run_id: components["schemas"]["Ulid"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Remove one run from the queue
+     * @description Ends the run as `cancelled` (reason `removed from queue`, recording who and when) and cancels its queued
+     *     node runs. History is kept. 409 `invalid-state` when the run is not in the queue, including when it is
+     *     already running a node: use the kill switch or wait for it to finish.
+     */
+    delete: operations["removeFromQueue"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/sensors": {
     parameters: {
       query?: never;
@@ -872,7 +942,7 @@ export interface paths {
     /**
      * Get a flow run with its node runs
      * @description With `wait`, long-polls until the run reaches a terminal status (`succeeded`, `failed`, `killed`,
-     *     `interrupted`) or `awaiting_approval`, or until the wait elapses. The current state is returned either way, so
+     *     `interrupted`, `cancelled`) or `awaiting_approval`, or until the wait elapses. The current state is returned either way, so
      *     callers check `status` rather than relying on the HTTP status. Returns immediately when the run is already
      *     there.
      */
@@ -1862,7 +1932,8 @@ export interface components {
       | "succeeded"
       | "failed"
       | "killed"
-      | "interrupted";
+      | "interrupted"
+      | "cancelled";
     /** @enum {string} */
     FlowRunKind: "live" | "replay" | "test";
     /** @enum {string} */
@@ -1874,7 +1945,8 @@ export interface components {
       | "failed"
       | "killed"
       | "interrupted"
-      | "skipped";
+      | "skipped"
+      | "cancelled";
     /** @enum {string} */
     NodeRunDecision: "emitted" | "dropped" | "error" | "skipped";
     /** @enum {string} */
@@ -2552,6 +2624,8 @@ export interface components {
       kill_switch: components["schemas"]["KillSwitch"];
       running_flow_runs: number;
       queued_flow_runs: number;
+      /** @description Runs in the queue; equals `total` of `GET /api/queue`. */
+      queue_total: number;
       running_agent_runs: number;
       queued_agent_runs: number;
       pending_approvals: number;
@@ -2626,7 +2700,7 @@ export interface components {
       /** @example 168 */
       window_hours: number;
       runs: number;
-      /** @description Runs that ended `failed`, `killed`, or `interrupted`. */
+      /** @description Runs that ended `failed`, `killed`, or `interrupted`. `cancelled` runs count as finished, not failed. */
       failed: number;
       /** @description `failed / finished runs`; 0 when none finished. */
       error_rate: number;
@@ -3025,9 +3099,51 @@ export interface components {
       dry_run: boolean;
       status: components["schemas"]["FlowRunStatus"];
       error: string | null;
+      /** @description Principal that removed the run from the queue; null unless `status` is `cancelled`. */
+      cancelled_by: string | null;
       created_at: components["schemas"]["Timestamp"];
       started_at: components["schemas"]["NullableTimestamp"];
       ended_at: components["schemas"]["NullableTimestamp"];
+    };
+    Queue: {
+      items: components["schemas"]["QueueItem"][];
+      total: number;
+      waiting_for_flow_slot: number;
+      waiting_for_agent_slot: number;
+      waiting_for_command_slot: number;
+      limits: components["schemas"]["QueueLimits"];
+    };
+    QueueItem: {
+      flow_run: components["schemas"]["FlowRun"];
+      /** @description Place in the list, 1 first. */
+      position: number;
+      /**
+       * @description What the run waits for. `kill_switch` while the daemon is paused.
+       * @enum {string}
+       */
+      waiting_for: "flow_slot" | "agent_slot" | "command_slot" | "kill_switch";
+      queued_at: components["schemas"]["Timestamp"];
+      /** @description Nodes waiting for an agent or command slot; empty for a run that has not started. */
+      waiting_node_ids: string[];
+    };
+    QueueLimits: {
+      max_agent_runs: number;
+      max_command_runs: number;
+      agent_runs_in_use: number;
+      command_runs_in_use: number;
+      /** @description Per-flow `max_concurrent` and running count, for the flows that have queued runs. */
+      flows: {
+        flow_id: components["schemas"]["Slug"];
+        max_concurrent: number;
+        running: number;
+      }[];
+    };
+    ClearQueueRequest: {
+      flow_id?: components["schemas"]["Slug"];
+    };
+    ClearQueueResult: {
+      cancelled: number;
+      flow_run_ids: components["schemas"]["Ulid"][];
     };
     FlowRunList: {
       items: components["schemas"]["FlowRun"][];
@@ -4464,6 +4580,90 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getQueue: {
+    parameters: {
+      query?: {
+        flow_id?: components["schemas"]["Slug"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The queue with totals and the current limits. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Queue"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  clearQueue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ClearQueueRequest"];
+      };
+    };
+    responses: {
+      /** @description What was cancelled. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ClearQueueResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  removeFromQueue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        flow_run_id: components["schemas"]["Ulid"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The cancelled run. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FlowRun"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       default: components["responses"]["Error"];
     };

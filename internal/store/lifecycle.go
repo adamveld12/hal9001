@@ -396,7 +396,7 @@ func (t *txn) stagePrune(ctx context.Context, cutoff string) error {
 		{`CREATE TEMP TABLE prune_sensor_runs (id TEXT PRIMARY KEY) WITHOUT ROWID`, nil},
 		{`CREATE TEMP TABLE prune_assist (id TEXT PRIMARY KEY) WITHOUT ROWID`, nil},
 		{`INSERT INTO prune_runs SELECT fr.id FROM flow_runs fr
-			WHERE fr.created_at < ? AND fr.status IN ('succeeded','failed','killed','interrupted')
+			WHERE fr.created_at < ? AND fr.status IN ('succeeded','failed','killed','interrupted','cancelled')
 			  AND NOT EXISTS (SELECT 1 FROM inbox_items i WHERE i.starred = 1 AND i.flow_run_id = fr.id)
 			  AND NOT EXISTS (SELECT 1 FROM approvals a
 			        JOIN agent_runs ar ON ar.id = a.agent_run_id
