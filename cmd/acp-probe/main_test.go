@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/acp-go-sdk"
 )
@@ -315,7 +316,7 @@ func TestMCPEchoServesToolAndLogsCalls(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"nope"}`,
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	if err := runMCPEcho(logPath, strings.NewReader(in), &out); err != nil {
+	if err := runMCPEcho(logPath, 0, strings.NewReader(in), &out); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -330,5 +331,25 @@ func TestMCPEchoServesToolAndLogsCalls(t *testing.T) {
 	b, err := os.ReadFile(logPath)
 	if err != nil || !strings.Contains(string(b), `echo "hi"`) {
 		t.Errorf("call log = %q, err %v; want the executed call recorded", b, err)
+	}
+}
+
+func TestMCPEchoDelayHoldsReplyAndLogsIt(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"text":"slow"}}}` + "\n"
+	var out bytes.Buffer
+	start := time.Now()
+	if err := runMCPEcho(logPath, 40*time.Millisecond, strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took < 40*time.Millisecond {
+		t.Errorf("reply came after %s, want it held back at least 40ms", took)
+	}
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), `echo "slow" replied after 40ms`) {
+		t.Errorf("call log = %q, want the delayed reply recorded", b)
+	}
+	if got := mcpEchoArgs("x.log", 2*time.Second); strings.Join(got, " ") != "mcp-echo x.log 2s" {
+		t.Errorf("mcpEchoArgs = %v, want the delay passed as the third argument", got)
 	}
 }

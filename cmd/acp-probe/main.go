@@ -7,7 +7,7 @@
 // Usage:
 //
 //	acp-probe [flags] -- <agent command> [args...]
-//	acp-probe mcp-echo [logfile]      (internal: stdio MCP server used by --mcp-echo)
+//	acp-probe mcp-echo [logfile [delay]]   (internal: stdio MCP server used by --mcp-echo)
 package main
 
 import (
@@ -46,6 +46,7 @@ type options struct {
 	prompts     multiFlag
 	promptFile  string
 	mcpEcho     bool
+	mcpDelay    time.Duration
 	canary      bool
 	env         multiFlag
 	loadID      string
@@ -75,7 +76,16 @@ func main() {
 		if len(os.Args) > 2 {
 			logPath = os.Args[2]
 		}
-		if err := runMCPEcho(logPath, os.Stdin, os.Stdout); err != nil {
+		var delay time.Duration
+		if len(os.Args) > 3 {
+			d, err := time.ParseDuration(os.Args[3])
+			if err != nil {
+				pln(os.Stderr, "mcp-echo: bad delay:", err)
+				os.Exit(2)
+			}
+			delay = d
+		}
+		if err := runMCPEcho(logPath, delay, os.Stdin, os.Stdout); err != nil {
 			pln(os.Stderr, "mcp-echo:", err)
 			os.Exit(1)
 		}
@@ -102,6 +112,7 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 	fs.Var(&o.prompts, "prompt", "prompt text to send, in order (repeatable; default: scripted read/write/exec[/mcp] prompt)")
 	fs.StringVar(&o.promptFile, "prompt-file", "", "read one prompt from this file")
 	fs.BoolVar(&o.mcpEcho, "mcp-echo", false, "pass a local stdio MCP server exposing an 'echo' tool in session/new")
+	fs.DurationVar(&o.mcpDelay, "mcp-echo-delay", 0, "with --mcp-echo: the echo tool holds its reply back this long (tests tool-call timeouts)")
 	fs.BoolVar(&o.canary, "canary", false, "write AGENTS.md and CLAUDE.md with canary tokens into the working directory")
 	fs.Var(&o.env, "env", "KEY=VALUE added to the agent process environment (repeatable)")
 	fs.StringVar(&o.loadID, "load", "", "call session/load with this session id instead of session/new")
@@ -416,7 +427,7 @@ func (p *prober) mcpServers() []acp.McpServer {
 		servers = append(servers, acp.McpServer{Stdio: &acp.McpServerStdio{
 			Name:    "probe_echo",
 			Command: self,
-			Args:    []string{"mcp-echo", p.mcpLog},
+			Args:    mcpEchoArgs(p.mcpLog, p.opts.mcpDelay),
 			Env:     []acp.EnvVariable{},
 		}})
 	}
