@@ -5,6 +5,8 @@ import {
   isFailedRun,
   pauseErrorMessage,
   pollErrorMessage,
+  resetErrorMessage,
+  runFlowErrorMessage,
   scheduleLabel,
   sensorRow,
   sensorStateTone,
@@ -49,6 +51,9 @@ function summary(over: Partial<SensorSummary>): SensorSummary {
       last_success_at: "2026-11-05T10:00:02Z",
       next_poll_at: "2026-11-05T10:02:00Z",
       new_items_24h: 7,
+      manual: false,
+      reset_at: null,
+      reset_by: null,
     },
     ...over,
   };
@@ -71,6 +76,7 @@ describe("sensorRow", () => {
     expect(sensorRow(summary({}))).toMatchObject({
       state: "idle",
       schedule: "every 2m",
+      manual: false,
       newItems24h: 7,
       lastPollAt: "2026-11-05T10:00:00Z",
       problems: [],
@@ -94,6 +100,9 @@ describe("sensorRow", () => {
           last_success_at: null,
           next_poll_at: null,
           new_items_24h: 0,
+          manual: false,
+          reset_at: null,
+          reset_by: null,
         },
       }),
     );
@@ -113,6 +122,9 @@ describe("sensorRow", () => {
           last_success_at: null,
           next_poll_at: null,
           new_items_24h: 0,
+          manual: false,
+          reset_at: null,
+          reset_by: null,
         },
       }),
     );
@@ -133,14 +145,17 @@ describe("paused sensors", () => {
       last_success_at: "2026-11-05T10:00:02Z",
       next_poll_at: null,
       new_items_24h: 0,
+      manual: false,
+      reset_at: null,
+      reset_by: null,
     },
   });
 
-  it("marks a sensor paused on its own and says who paused it and that Poll now still works", () => {
+  it("marks a sensor paused on its own and says who paused it and that Run now still works", () => {
     const row = sensorRow(paused);
     expect(row.paused).toBe(true);
     expect(row.pausedTitle).toMatch(/Paused by adam on /);
-    expect(row.pausedTitle).toMatch(/Poll now still works/);
+    expect(row.pausedTitle).toMatch(/Run now still works/);
   });
 
   it("does not call a sensor held by the kill switch paused (resume would do nothing)", () => {
@@ -174,6 +189,15 @@ describe("scheduleLabel", () => {
   it("shows cron when there is no interval", () => {
     expect(scheduleLabel({ id: "s", lang: "bash", cron: "0 * * * *" })).toBe(
       "cron 0 * * * *",
+    );
+  });
+});
+
+describe("manual sensors", () => {
+  it("labels a sensor with neither interval nor cron as manual", () => {
+    expect(scheduleLabel({ id: "s", lang: "bash" })).toBe("manual");
+    expect(scheduleLabel({ id: "s", lang: "bash", interval: "2m" })).toBe(
+      "every 2m",
     );
   });
 });
@@ -219,5 +243,16 @@ describe("pollErrorMessage", () => {
     expect(
       pollErrorMessage(problem(500, "internal", { detail: "disk full" })),
     ).toBe("disk full");
+  });
+
+  it("explains a flow without sensors and a reset during a poll", () => {
+    expect(runFlowErrorMessage(problem(422, "validation-failed"))).toMatch(
+      /subscribes to no sensors/,
+    );
+    expect(runFlowErrorMessage(problem(423, "paused"))).toMatch(/kill switch/);
+    expect(resetErrorMessage(problem(409, "invalid-state"))).toMatch(
+      /poll of this sensor is running/,
+    );
+    expect(resetErrorMessage(problem(423, "paused"))).toMatch(/kill switch/);
   });
 });

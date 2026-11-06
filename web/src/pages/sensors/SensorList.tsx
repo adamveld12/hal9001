@@ -74,7 +74,9 @@ export function SensorTable({
               </Td>
               <Td className="tabular-nums">{r.newItems24h}</Td>
               <Td>
-                {unscheduledLabel(r.state, r.nextPollAt) ? (
+                {r.manual ? (
+                  <span className="text-muted">manual</span>
+                ) : unscheduledLabel(r.state, r.nextPollAt) ? (
                   <span className="text-muted" title={UNSCHEDULED_TITLE}>
                     not scheduled
                   </span>

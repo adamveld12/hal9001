@@ -32,17 +32,17 @@ export function isFailedRun(run: Pick<SensorRun, "status">): boolean {
   }
 }
 
-/** "every 2m", "cron <expression>", or "–" when the file does not parse. */
+/** "every 2m", "cron <expression>", "manual" (neither), or "–" when the file does not parse. */
 export function scheduleLabel(sensor: SensorSummary["sensor"]): string {
   if (!sensor) return "–";
   if (sensor.interval) return `every ${sensor.interval}`;
   if (sensor.cron) return `cron ${sensor.cron}`;
-  return "–";
+  return "manual";
 }
 
 /**
  * Why a sensor has no next poll ("not scheduled": no enabled flow subscribes
- * to it, so only "Poll now" runs it). Text for a sensor with no next poll that is not paused or invalid: the engine
+ * to it, so only "Run now" runs it). Text for a sensor with no next poll that is not paused or invalid: the engine
  * only schedules sensors an enabled flow subscribes to. Null when a time (or
  * the state itself) already explains the empty cell.
  */
@@ -55,7 +55,7 @@ export function unscheduledLabel(
 }
 
 export const UNSCHEDULED_TITLE =
-  "No enabled flow subscribes to this sensor, so it is not polled on a schedule. Poll now still works.";
+  "No enabled flow subscribes to this sensor, so it is not polled on a schedule. Run now still works.";
 
 /**
  * Who paused the sensor and when, for a tooltip. Null when the sensor is not
@@ -67,7 +67,7 @@ export function pausedTitle(status: SensorSummary["status"]): string | null {
   const at = status.paused_at
     ? ` on ${new Date(status.paused_at).toLocaleString()}`
     : "";
-  return `Paused${by}${at}. Scheduled polls are off; Poll now still works.`;
+  return `Paused${by}${at}. Scheduled polls are off; Run now still works.`;
 }
 
 export interface SensorRow {
@@ -77,6 +77,8 @@ export interface SensorRow {
   paused: boolean;
   pausedTitle: string | null;
   schedule: string;
+  /** Neither interval nor cron: never scheduled, only Run now polls it. */
+  manual: boolean;
   lastPollAt: string | null;
   newItems24h: number;
   nextPollAt: string | null;
@@ -97,7 +99,8 @@ export function sensorRow(s: SensorSummary): SensorRow {
     state: s.status.state,
     paused: s.status.paused,
     pausedTitle: pausedTitle(s.status),
-    schedule: scheduleLabel(s.sensor),
+    schedule: s.status.manual ? "manual" : scheduleLabel(s.sensor),
+    manual: s.status.manual,
     lastPollAt: last?.started_at ?? null,
     newItems24h: s.status.new_items_24h,
     nextPollAt: s.status.next_poll_at,
@@ -110,7 +113,7 @@ export function pauseErrorMessage(e: unknown, resuming: boolean): string {
   return `Could not ${resuming ? "resume" : "pause"} the sensor: ${errorMessage(e)}`;
 }
 
-/** Message for a failed "Poll now" request. */
+/** Message for a failed "Run now" or reset request on a sensor. */
 export function pollErrorMessage(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.status === 423) {
@@ -124,4 +127,20 @@ export function pollErrorMessage(e: unknown): string {
     }
   }
   return errorMessage(e);
+}
+
+/** Message for a failed flow "Run now" request. */
+export function runFlowErrorMessage(e: unknown): string {
+  if (e instanceof ApiError && e.status === 422) {
+    return "This flow subscribes to no sensors.";
+  }
+  return pollErrorMessage(e);
+}
+
+/** Message for a failed reset request. */
+export function resetErrorMessage(e: unknown): string {
+  if (e instanceof ApiError && e.status === 409) {
+    return "A poll of this sensor is running. Try again when it has finished.";
+  }
+  return pollErrorMessage(e);
 }

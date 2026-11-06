@@ -100,6 +100,7 @@ export function NewSensorForm({
                 >
                   <option value="interval">Interval</option>
                   <option value="cron">Cron</option>
+                  <option value="manual">Manual (run now only)</option>
                 </Select>
               </Field>
               {form.schedule === "interval" ? (
@@ -110,6 +111,12 @@ export function NewSensorForm({
                     invalid={show("interval") !== undefined}
                     onChange={(e) => set("interval", e.target.value)}
                   />
+                </Field>
+              ) : form.schedule === "manual" ? (
+                <Field label="Every">
+                  <span className="text-xs text-muted">
+                    Never scheduled; runs only on Run now.
+                  </span>
                 </Field>
               ) : (
                 <Field label="Cron expression" error={fieldErrors("cron")}>

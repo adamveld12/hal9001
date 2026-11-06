@@ -301,13 +301,59 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Poll now
-     * @description Starts a poll outside the schedule and returns the new SensorRun immediately. Follow it with
+     * Run now (poll a sensor)
+     * @description Polls the sensor outside its schedule, waits for the poll to finish and returns the recorded SensorRun
+     *     together with what it started. If the client gives up first the poll keeps running; follow it with
      *     `GET /api/sensor-runs/{id}?wait=30s`. 409 `invalid-state` when a poll of this sensor is already running;
      *     423 `paused` while the kill switch is engaged. A sensor that was paused individually
-     *     (`POST /api/sensors/{id}/pause`) can still be polled this way: only the scheduler honours that pause.
+     *     (`POST /api/sensors/{id}/pause`) can still be polled this way: only the scheduler honours that pause. A sensor
+     *     without `interval` and `cron` (manual-only) is run this way only.
+     *
+     *     The body is optional; an empty body is the plain poll. Items whose dedup key is new become events and fan out
+     *     as live runs to the enabled flows subscribed to the sensor (`new_events`). With `rerun_seen: true`, each item
+     *     whose key was already seen is also replayed (`kind: replay` runs on the current flow versions) into those
+     *     flows (`rerun_events`); the replayed event is the most recent stored event of that key, and when it has been
+     *     pruned the item is stored as a new event of this manual run. The dedup state does not change. `flows`
+     *     restricts both to the listed flows, each of which must subscribe to the sensor and may be disabled.
+     *
+     *     A manual poll never applies `first_run: baseline`: on the sensor's very first poll its items become events
+     *     normally. Only the scheduler's first poll baselines.
      */
     post: operations["pollSensor"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sensors/{id}/reset": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reset a sensor's dedup state
+     * @description Makes the sensor forget what it has seen: its dedup keys are cleared and so is its incremental state
+     *     (`last_success_at`, so `HAL_LAST_SUCCESS_AT` is unset on the next poll). Who did it and when is stored
+     *     (`status.reset_at`, `status.reset_by`). Events, sensor runs, flow runs and inbox items are kept as history;
+     *     the script's own files in `$HAL_STATE_DIR` are not touched.
+     *
+     *     Afterwards the sensor behaves like a brand-new one: every item it returns next time is new and triggers its
+     *     flows again, and the next scheduled poll applies `first_run` (`baseline` marks everything seen without
+     *     firing, `fire` emits everything). With `run: true` the reset is followed at once by a manual poll (which never
+     *     baselines; `rerun_flows` restricts it to those flows, as `flows` does for the poll endpoint) and `run` has the
+     *     shape of the poll response.
+     *
+     *     Works while the sensor is paused. 409 `invalid-state` while a poll of the sensor is running (nothing is
+     *     changed). 423 `paused` under the kill switch only with `run: true` (nothing is changed).
+     */
+    post: operations["resetSensor"];
     delete?: never;
     options?: never;
     head?: never;
@@ -639,6 +685,37 @@ export interface paths {
      *     running (poll `GET /api/node-runs/{id}`). 423 `paused` while the kill switch is engaged.
      */
     post: operations["testFlowNode"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/flows/{id}/run": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run a flow now
+     * @description Polls every sensor the flow subscribes to, in parallel, each as a normal manual sensor run, with this flow as
+     *     the only target: new items become events with a live run of this flow only, and with `rerun_seen: true` items
+     *     already seen are replayed into it (`kind: replay`). Other flows subscribed to those sensors get nothing. The
+     *     saved version of the flow runs. Blocks until the polls have finished; the flow runs it created are returned
+     *     and can be followed with `GET /api/flow-runs/{id}?wait=30s`.
+     *
+     *     A flow with `enabled: false` can be run this way: running it is an explicit user action. 422 when the flow
+     *     subscribes to no sensor. 409 `invalid-state` when the flow file has errors. A sensor that cannot be polled
+     *     (missing, invalid, or already being polled) is reported in its entry with `error`; the others still run. 423
+     *     `paused` while the kill switch is engaged.
+     */
+    post: operations["runFlow"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1894,8 +1971,8 @@ export interface components {
       line?: number;
     };
     /**
-     * @description Sensor definition (§5). Exactly one of `interval` and `cron`. `exec` takes `command`; every other `lang`
-     *     takes `script`.
+     * @description Sensor definition (§5). At most one of `interval` and `cron`; with neither the sensor is manual-only: the
+     *     scheduler never polls it and only "Run now" does. `exec` takes `command`; every other `lang` takes `script`.
      */
     Sensor: {
       id: components["schemas"]["Slug"];
@@ -2187,8 +2264,14 @@ export interface components {
       state: "idle" | "running" | "failing" | "paused" | "invalid";
       last_run: components["schemas"]["SensorRun"] | null;
       last_success_at: components["schemas"]["NullableTimestamp"];
-      /** @description When the scheduler polls next. `null` while paused (kill switch or this sensor), when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works). */
+      /** @description When the scheduler polls next. `null` while paused (kill switch or this sensor), when the file is invalid, when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Run now" still works) and for a manual-only sensor (`manual`). */
       next_poll_at: components["schemas"]["NullableTimestamp"];
+      /** @description The sensor has neither `interval` nor `cron`: the scheduler never polls it, only "Run now" (`POST /api/sensors/{id}/poll`) does. */
+      manual: boolean;
+      /** @description When the sensor's dedup state was last reset (`POST /api/sensors/{id}/reset`); null if never. */
+      reset_at: components["schemas"]["NullableTimestamp"];
+      /** @description Principal that last reset the sensor; null if never reset. */
+      reset_by: string | null;
       new_items_24h: number;
     };
     SensorSummary: {
@@ -2558,6 +2641,67 @@ export interface components {
       deduplicated: boolean;
       dedup_key: string;
       flow_runs: components["schemas"]["FlowRunBrief"][];
+    };
+    PollRequest: {
+      /**
+       * @description Also replay items whose dedup key was already seen into each target flow. The dedup state is not changed.
+       * @default false
+       */
+      rerun_seen?: boolean;
+      /** @description Send new events and re-runs only to these flows. Each must subscribe to the sensor and may be disabled. Default: every enabled flow subscribed to the sensor. */
+      flows?: components["schemas"]["Slug"][];
+    };
+    /** @description The SensorRun of the poll plus what the poll started. */
+    PollResult: components["schemas"]["SensorRun"] & {
+      /** @description Items that became events (and live runs). */
+      new_events: number;
+      /** @description Already-seen items replayed into at least one flow (`rerun_seen`). */
+      rerun_events: number;
+      /** @description Every flow run the poll created: live runs of new events, then replay runs. */
+      flow_run_ids: components["schemas"]["Ulid"][];
+    };
+    SensorResetRequest: {
+      /**
+       * @description Run the sensor now right after the reset (a manual poll: it never baselines).
+       * @default false
+       */
+      run?: boolean;
+      /** @description With `run`: send the run's events only to these flows (as `flows` of the poll endpoint). */
+      rerun_flows?: components["schemas"]["Slug"][];
+    };
+    SensorResetResult: {
+      sensor_id: components["schemas"]["Slug"];
+      reset_at: components["schemas"]["Timestamp"];
+      /** @description Principal that reset the sensor. */
+      reset_by: string;
+      /** @description Number of dedup keys that were forgotten. */
+      keys_cleared: number;
+      /** @description The poll started by `run: true`; null otherwise. */
+      run: components["schemas"]["PollResult"] | null;
+    };
+    FlowRunNowRequest: {
+      /**
+       * @description Also replay items whose dedup key was already seen into the flow.
+       * @default false
+       */
+      rerun_seen?: boolean;
+    };
+    FlowRunNowSensorResult: {
+      sensor_id: components["schemas"]["Slug"];
+      /** @description The sensor run; null when the poll could not be started. */
+      run: components["schemas"]["SensorRun"] | null;
+      new_events: number;
+      rerun_events: number;
+      flow_run_ids: components["schemas"]["Ulid"][];
+      /** @description Why the poll could not be started (sensor missing or invalid, or a poll of it already running). */
+      error: string | null;
+    };
+    FlowRunNowResult: {
+      flow_id: components["schemas"]["Slug"];
+      /** @description One per subscribed sensor, in the flow's subscribe order. */
+      sensors: components["schemas"]["FlowRunNowSensorResult"][];
+      /** @description Every flow run created, in sensor order. */
+      flow_run_ids: components["schemas"]["Ulid"][];
     };
     ReplayRequest: {
       flow: components["schemas"]["Slug"];
@@ -4097,23 +4241,64 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["PollRequest"];
+      };
+    };
     responses: {
-      /** @description Poll started. */
+      /** @description Poll finished (or still running if the request was cancelled). */
       202: {
         headers: {
           Location: components["headers"]["Location"];
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["SensorRun"];
+          "application/json": components["schemas"]["PollResult"];
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  resetSensor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["SensorResetRequest"];
+      };
+    };
+    responses: {
+      /** @description The sensor was reset. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SensorResetResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       423: components["responses"]["Paused"];
       default: components["responses"]["Error"];
     };
@@ -4684,6 +4869,41 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  runFlow: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["FlowRunNowRequest"];
+      };
+    };
+    responses: {
+      /** @description The polls finished; flow runs were created. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FlowRunNowResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       423: components["responses"]["Paused"];

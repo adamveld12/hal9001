@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment } from "react";
 import { useSensorRun, useSensorRuns, type SensorRun } from "../../api/sensors";
 import { BlobView } from "../../components/BlobView";
 import { SensorStdout } from "../../components/SensorStdout";
@@ -18,17 +18,12 @@ import { cx } from "../../lib/cx";
 import { durationBetween, formatTime } from "../../lib/format";
 import { isFailedRun } from "./view";
 
-function RunDetails({ run, reveal }: { run: SensorRun; reveal: boolean }) {
-  const root = useRef<HTMLDivElement>(null);
-  // The result of Poll now scrolls into view when it appears.
-  useEffect(() => {
-    if (reveal) root.current?.scrollIntoView({ block: "start" });
-  }, [reveal]);
+function RunDetails({ run }: { run: SensorRun }) {
   // List responses cut output to 4 KiB; the single-run response has up to 64 KiB.
   const full = useSensorRun(run.id, true);
   const r = full.data ?? run;
   return (
-    <div ref={root} className="w-0 min-w-full space-y-3 p-3">
+    <div className="w-0 min-w-full space-y-3 p-3">
       <dl className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-x-4 gap-y-2 text-xs">
         <Fact label="Started" value={formatTime(r.started_at)} />
         <Fact label="Ended" value={r.ended_at ? formatTime(r.ended_at) : "–"} />
@@ -79,13 +74,10 @@ function Fact({
 export function SensorRuns({
   sensorId,
   expandedId,
-  revealId = null,
   onToggle,
 }: {
   sensorId: string;
   expandedId: string | null;
-  /** A run to scroll to once its details are shown. */
-  revealId?: string | null;
   onToggle: (runId: string) => void;
 }) {
   const runs = useSensorRuns(sensorId);
@@ -100,7 +92,7 @@ export function SensorRuns({
     return (
       <EmptyState
         title="No polls yet"
-        hint="Polls appear here after the first scheduled poll or Poll now."
+        hint="Polls appear here after the first scheduled poll or Run now."
       />
     );
   }
@@ -160,7 +152,7 @@ export function SensorRuns({
                 {open && (
                   <tr>
                     <td colSpan={7} className="border-b border-line bg-panel">
-                      <RunDetails run={r} reveal={revealId === r.id} />
+                      <RunDetails run={r} />
                     </td>
                   </tr>
                 )}

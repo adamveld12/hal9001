@@ -142,17 +142,62 @@ export function useValidateSensor() {
   });
 }
 
-/** Starts a poll outside the schedule; resolves with the new (running) SensorRun. */
+export type PollResult = Schemas["PollResult"];
+export type SensorResetResult = Schemas["SensorResetResult"];
+
+/** A manual poll started or finished: sensors, runs, events and flow runs may all change. */
+export function invalidateRunNow(qc: QueryClient) {
+  const roots = [
+    "sensors",
+    "sensor",
+    "sensor-runs",
+    "flows",
+    "flow",
+    "flow-runs",
+    "flow-run",
+    "events",
+    "event",
+  ] as const;
+  return Promise.all(
+    roots.map((r) => qc.invalidateQueries({ queryKey: qk(r) })),
+  );
+}
+
+/**
+ * Runs the sensor outside its schedule and resolves when the poll has
+ * finished, with its run and what it started. `rerunSeen` also replays items
+ * already seen; `flows` limits the target flows.
+ */
 export function usePollSensor() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      unwrap(api.POST("/api/sensors/{id}/poll", { params: { path: { id } } })),
-    onSettled: () => void invalidateSensorFiles(qc),
+    mutationFn: (v: { id: string; rerunSeen?: boolean; flows?: string[] }) =>
+      unwrap(
+        api.POST("/api/sensors/{id}/poll", {
+          params: { path: { id: v.id } },
+          body: { rerun_seen: v.rerunSeen ?? false, flows: v.flows },
+        }),
+      ),
+    onSettled: () => void invalidateRunNow(qc),
   });
 }
 
-/** Pauses the scheduled polls of one sensor. "Poll now" and event injection keep working. Idempotent. */
+/** Forgets the sensor's dedup keys and incremental state; with `run` polls right after. History is kept. */
+export function useResetSensor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; run: boolean; rerunFlows?: string[] }) =>
+      unwrap(
+        api.POST("/api/sensors/{id}/reset", {
+          params: { path: { id: v.id } },
+          body: { run: v.run, rerun_flows: v.rerunFlows },
+        }),
+      ),
+    onSettled: () => void invalidateRunNow(qc),
+  });
+}
+
+/** Pauses the scheduled polls of one sensor. "Run now" and event injection keep working. Idempotent. */
 export function usePauseSensor() {
   const qc = useQueryClient();
   return useMutation({

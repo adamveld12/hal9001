@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ApiError, errorMessage } from "../../api/client";
-import { useCreateFlow, useDeleteFlow, useFlows } from "../../api/flows";
+import {
+  useCreateFlow,
+  useDeleteFlow,
+  useFlows,
+  type FlowRunNowResult,
+} from "../../api/flows";
+import { RunNowPanel } from "../../components/RunNowPanel";
 import { Time } from "../../components/Time";
 import {
   Badge,
@@ -19,6 +25,7 @@ import {
 } from "../../components/ui";
 import { emptyFlow } from "../../flow/model";
 import { flowToApi } from "../../flow/apiAdapter";
+import { FlowRunNow } from "./FlowRunNow";
 
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
@@ -81,6 +88,10 @@ function NewFlow({ existing }: { existing: string[] }) {
 export function FlowsPage() {
   const flows = useFlows();
   const del = useDeleteFlow();
+  const [runNow, setRunNow] = useState<{
+    result: FlowRunNowResult;
+    note?: string;
+  } | null>(null);
 
   return (
     <div className="flex h-full flex-col">
@@ -91,6 +102,13 @@ export function FlowsPage() {
           flows.data && <NewFlow existing={flows.data.map((f) => f.id)} />
         }
       />
+      {runNow && (
+        <RunNowPanel
+          result={runNow.result}
+          note={runNow.note}
+          onClose={() => setRunNow(null)}
+        />
+      )}
       {flows.isPending && <LoadingState />}
       {flows.isError && (
         <ErrorState error={flows.error} onRetry={() => void flows.refetch()} />
@@ -202,21 +220,33 @@ export function FlowsPage() {
                       )}
                     </Td>
                     <Td className="text-right">
-                      <Button
-                        variant="ghost"
-                        icon="trash"
-                        aria-label={`Delete ${f.id}`}
-                        disabled={del.isPending}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Delete flows/${f.id}.yaml? Past runs keep their snapshots.`,
-                            )
-                          ) {
-                            del.mutate({ id: f.id, expectedHash: f.hash });
+                      <span className="inline-flex items-start gap-1">
+                        <FlowRunNow
+                          flowId={f.id}
+                          enabled={f.enabled === true}
+                          subscribeCount={
+                            f.enabled === null ? 0 : f.subscribe.length
                           }
-                        }}
-                      />
+                          onResult={(result, note) =>
+                            setRunNow({ result, note })
+                          }
+                        />
+                        <Button
+                          variant="ghost"
+                          icon="trash"
+                          aria-label={`Delete ${f.id}`}
+                          disabled={del.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Delete flows/${f.id}.yaml? Past runs keep their snapshots.`,
+                              )
+                            ) {
+                              del.mutate({ id: f.id, expectedHash: f.hash });
+                            }
+                          }}
+                        />
+                      </span>
                     </Td>
                   </tr>
                 );

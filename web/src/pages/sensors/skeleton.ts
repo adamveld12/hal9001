@@ -7,7 +7,8 @@ export const LANGS: readonly Lang[] = ["bash", "python", "node", "jq", "exec"];
 
 export interface SensorForm {
   id: string;
-  schedule: "interval" | "cron";
+  /** `manual`: neither interval nor cron; the sensor only runs on Run now. */
+  schedule: "interval" | "cron" | "manual";
   interval: string;
   cron: string;
   lang: Lang;
@@ -61,7 +62,7 @@ export function validateSensorForm(
   if (f.schedule === "interval") {
     if (f.interval === "") e.interval = "Required.";
     else if (!DURATION.test(f.interval)) e.interval = "Use a duration like 2m.";
-  } else if (f.cron.trim() === "") {
+  } else if (f.schedule === "cron" && f.cron.trim() === "") {
     e.cron = "Required.";
   }
 
@@ -82,11 +83,11 @@ export function validateSensorForm(
 /** Sensor file text (§5) for the form. Optional fields that are empty are left out. */
 export function buildSensorYaml(f: SensorForm): string {
   const lines = [`id: ${yamlScalar(f.id)}`];
-  lines.push(
-    f.schedule === "interval"
-      ? `interval: ${yamlScalar(f.interval)}`
-      : `cron: ${yamlScalar(f.cron.trim())}`,
-  );
+  if (f.schedule === "interval") {
+    lines.push(`interval: ${yamlScalar(f.interval)}`);
+  } else if (f.schedule === "cron") {
+    lines.push(`cron: ${yamlScalar(f.cron.trim())}`);
+  }
   lines.push(`lang: ${f.lang}`);
   if (f.lang === "exec")
     lines.push(...yamlList("command", commandArgs(f.command)));

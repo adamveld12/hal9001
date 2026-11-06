@@ -6,6 +6,7 @@ import {
   useUpdateFlow,
   useValidateFlow,
   type FlowDetail,
+  type FlowRunNowResult,
 } from "../../api/flows";
 import { usePromptNames } from "../../api/prompts";
 import { useSensorIds } from "../../api/sensors";
@@ -21,6 +22,8 @@ import { Tabs } from "../../components/Tabs";
 import { flowFromApi, flowToApi } from "../../flow/apiAdapter";
 import { FlowEditor } from "../../flow/FlowEditor";
 import type { Diagnostic, Flow } from "../../flow/model";
+import { RunNowPanel } from "../../components/RunNowPanel";
+import { FlowRunNow } from "./FlowRunNow";
 import { TestNodePanel } from "./TestNodePanel";
 
 type View = "visual" | "yaml";
@@ -75,6 +78,10 @@ function Loaded({
   );
   const [current, setCurrent] = useState<Flow | undefined>();
   const [previewYaml, setPreviewYaml] = useState<string | undefined>();
+  const [runNow, setRunNow] = useState<{
+    result: FlowRunNowResult;
+    note?: string;
+  } | null>(null);
 
   const update = useUpdateFlow(loaded.id);
   const validate = useValidateFlow();
@@ -166,6 +173,13 @@ function Loaded({
         subtitle={loaded.path}
         actions={
           <>
+            <FlowRunNow
+              flowId={loaded.id}
+              enabled={loaded.flow?.enabled ?? false}
+              subscribeCount={loaded.flow?.subscribe?.length ?? 0}
+              dirty={dirty || yamlText !== loaded.yaml}
+              onResult={(result, note) => setRunNow({ result, note })}
+            />
             <Link
               to={`/timeline?flow=${loaded.id}`}
               className="text-xs text-accent underline"
@@ -184,6 +198,13 @@ function Loaded({
           </>
         }
       />
+      {runNow && (
+        <RunNowPanel
+          result={runNow.result}
+          note={runNow.note}
+          onClose={() => setRunNow(null)}
+        />
+      )}
       {changedOnDisk && dirty && (
         <div
           role="alert"

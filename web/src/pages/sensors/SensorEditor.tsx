@@ -9,6 +9,11 @@ import {
   type SensorDetail,
 } from "../../api/sensors";
 import { CodeEditor } from "../../components/CodeEditor";
+import {
+  MenuItem,
+  OverflowMenu,
+  RunNowButton,
+} from "../../components/RunNowButton";
 import { Time } from "../../components/Time";
 import {
   Badge,
@@ -38,6 +43,7 @@ import { useEditState } from "../files/useEditState";
 import { PauseToggle } from "./PauseToggle";
 import { SensorEnvSection } from "./SensorEnvSection";
 import { SensorRuns } from "./SensorRuns";
+import { ResetDialog, RunNowResult, type RunNowOutcome } from "./SensorRunNow";
 import {
   UNSCHEDULED_TITLE,
   pausedTitle,
@@ -69,7 +75,8 @@ function Editor({
   const [checked, setChecked] = useState<Checked | null>(null);
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [revealRun, setRevealRun] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<RunNowOutcome | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
 
   // AI assistant: while a session for this sensor is open the editor shows and feeds its draft.
   const assist = useAssistPage();
@@ -168,20 +175,32 @@ function Editor({
             paused={status.paused}
             disabled={status.state === "invalid"}
           />
-          <Button
-            icon="play"
-            disabled={poll.isPending || status.state === "invalid"}
-            onClick={() =>
-              poll.mutate(id, {
-                onSuccess: (run) => {
-                  setExpandedRun(run.id);
-                  setRevealRun(run.id);
-                },
-              })
-            }
-          >
-            {poll.isPending ? "Starting…" : "Poll now"}
-          </Button>
+          <RunNowButton
+            storageKey={id}
+            pending={poll.isPending}
+            disabled={status.state === "invalid"}
+            title="Run this sensor once now and send new items to its flows"
+            onRun={(rerunSeen) => {
+              setOutcome(null);
+              poll.mutate(
+                { id, rerunSeen },
+                { onSuccess: (run) => setOutcome({ run }) },
+              );
+            }}
+          />
+          <OverflowMenu>
+            {(close) => (
+              <MenuItem
+                danger
+                onClick={() => {
+                  close();
+                  setResetOpen(true);
+                }}
+              >
+                Reset dedup state…
+              </MenuItem>
+            )}
+          </OverflowMenu>
           <ConfirmButton
             label="Delete"
             confirmLabel="Delete sensor"
@@ -192,24 +211,40 @@ function Editor({
       </div>
 
       <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
-        <Meta label="Schedule" value={scheduleLabel(detail.sensor)} />
+        <Meta
+          label="Schedule"
+          value={status.manual ? "manual" : scheduleLabel(detail.sensor)}
+        />
         <Meta
           label="Last success"
           value={<Time ts={status.last_success_at} />}
         />
-        <Meta
-          label="Next poll"
-          value={
-            unscheduledLabel(status.state, status.next_poll_at) ? (
-              <span className="text-muted" title={UNSCHEDULED_TITLE}>
-                not scheduled
-              </span>
-            ) : (
-              <Time ts={status.next_poll_at} />
-            )
-          }
-        />
+        {!status.manual && (
+          <Meta
+            label="Next poll"
+            value={
+              unscheduledLabel(status.state, status.next_poll_at) ? (
+                <span className="text-muted" title={UNSCHEDULED_TITLE}>
+                  not scheduled
+                </span>
+              ) : (
+                <Time ts={status.next_poll_at} />
+              )
+            }
+          />
+        )}
         <Meta label="New items (24h)" value={status.new_items_24h} />
+        {status.reset_at && (
+          <Meta
+            label="Reset"
+            value={
+              <>
+                <Time ts={status.reset_at} />
+                {status.reset_by ? ` by ${status.reset_by}` : ""}
+              </>
+            }
+          />
+        )}
       </dl>
 
       {status.paused && (
@@ -225,8 +260,8 @@ function Editor({
               <Time ts={status.paused_at} />
             </>
           ) : null}
-          . The scheduler does not poll this sensor; Poll now and event
-          injection still work.
+          . The scheduler does not poll this sensor; Run now and event injection
+          still work.
         </div>
       )}
 
@@ -234,6 +269,18 @@ function Editor({
         <div role="alert" className="text-xs text-bad">
           {pollErrorMessage(poll.error)}
         </div>
+      )}
+
+      {outcome && (
+        <RunNowResult outcome={outcome} onClose={() => setOutcome(null)} />
+      )}
+
+      {resetOpen && (
+        <ResetDialog
+          sensorId={id}
+          onClose={() => setResetOpen(false)}
+          onDone={setOutcome}
+        />
       )}
 
       {state.conflict && (
@@ -361,7 +408,6 @@ function Editor({
           <SensorRuns
             sensorId={id}
             expandedId={expandedRun}
-            revealId={revealRun}
             onToggle={(r) => setExpandedRun((cur) => (cur === r ? null : r))}
           />
         </div>

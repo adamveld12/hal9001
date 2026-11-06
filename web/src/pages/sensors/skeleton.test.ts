@@ -42,6 +42,13 @@ describe("buildSensorYaml", () => {
     expect(yaml).not.toContain("interval:");
   });
 
+  it("writes neither interval nor cron for a manual sensor", () => {
+    const yaml = buildSensorYaml(form({ schedule: "manual", cron: "ignored" }));
+    expect(yaml).not.toContain("interval:");
+    expect(yaml).not.toContain("cron:");
+    expect(yaml).toContain("lang: bash");
+  });
+
   it("writes exec sensors with an argv list and no script", () => {
     const yaml = buildSensorYaml(
       form({ lang: "exec", command: "gog\n gmail \nsearch\n\n" }),
@@ -91,6 +98,11 @@ describe("validateSensorForm", () => {
     const cron = validateSensorForm(form({ schedule: "cron", interval: "" }));
     expect(cron.cron).toBe("Required.");
     expect(cron.interval).toBeUndefined();
+    const manual = validateSensorForm(
+      form({ schedule: "manual", interval: "", cron: "" }),
+    );
+    expect(manual.interval).toBeUndefined();
+    expect(manual.cron).toBeUndefined();
   });
 
   it("requires a script, or a command for exec", () => {

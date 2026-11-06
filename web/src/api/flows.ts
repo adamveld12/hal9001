@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, unwrapVoid, type Schemas } from "./client";
 import { qk } from "./keys";
+import { invalidateRunNow } from "./sensors";
 
 export type FlowSummary = Schemas["FlowSummary"];
 export type FlowDetail = Schemas["FlowDetail"];
@@ -8,6 +9,7 @@ export type FlowValidation = Schemas["FlowValidation"];
 export type TestNodeResult = Schemas["TestNodeResult"];
 export type TestNodeRequest = Schemas["TestNodeRequest"];
 export type ApiFlow = Schemas["Flow"];
+export type FlowRunNowResult = Schemas["FlowRunNowResult"];
 
 export function useFlows() {
   return useQuery({
@@ -141,5 +143,20 @@ export function useFlowRuns(flowId: string, enabled: boolean) {
           }),
         )
       ).items,
+  });
+}
+
+/** Runs the saved version of a flow once: polls each subscribed sensor and resolves when all polls finished. */
+export function useRunFlow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; rerunSeen?: boolean }) =>
+      unwrap(
+        api.POST("/api/flows/{id}/run", {
+          params: { path: { id: v.id } },
+          body: { rerun_seen: v.rerunSeen ?? false },
+        }),
+      ),
+    onSettled: () => void invalidateRunNow(qc),
   });
 }
