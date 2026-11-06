@@ -109,6 +109,10 @@ mise run build          # builds the web UI, then bin/hal9001 with the UI embedd
 bin/hal9001 serve       # run in the foreground; Ctrl-C stops it
 ```
 
+While developing, use the hot-reload loop instead: `mise run dev`, then open http://localhost:5173. UI edits apply
+instantly (Vite HMR); Go, `api/` or `content/` edits rebuild and restart the daemon on 127.0.0.1:9001 (it uses your
+normal `~/.hal9001` home; stop any other `hal9001 serve` first). Ctrl-C stops both.
+
 `serve` listens on `127.0.0.1:9001` (fixed; not configurable) and on first run seeds `~/.hal9001` from the starter
 content (use `--home <dir>` or `HAL9001_HOME` for another directory). Open the UI with `bin/hal9001 open`, or go to
 <http://localhost:9001>.
@@ -311,6 +315,7 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 | Task | Command |
 |---|---|
 | Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
+| Hot-reload dev loop (UI on :5173, daemon restarts on Go changes) | `mise run dev` |
 | Everything the hooks run, on the whole tree | `mise run check` (static checks, `race`, sharded `e2e` and the web check, in parallel) |
 | Race detector on all packages but e2e | `mise run race` |
 | Throwaway daemon with a fake agent runtime (free port, temp home) | `mise run sandbox -- [--port N] [--script file.json] [--web-dir dir] [--keep]` |
