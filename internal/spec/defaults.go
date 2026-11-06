@@ -212,6 +212,7 @@ func (n Node) clone() Node {
 	n.Command = slices.Clone(n.Command)
 	n.Links = slices.Clone(n.Links)
 	n.MCPServers = slices.Clone(n.MCPServers)
+	n.Tools = slices.Clone(n.Tools)
 	if n.Cwd != nil {
 		c := *n.Cwd
 		n.Cwd = &c

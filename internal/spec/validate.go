@@ -303,7 +303,7 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 
 var nodeFieldsAllowed = map[string][]string{
 	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
 }
@@ -323,6 +323,7 @@ func (n *Node) setFields() []string {
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
 		{"side_effect", n.SideEffect}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
+		{"sandbox", n.Sandbox != ""}, {"image", n.Image != ""}, {"repo", n.Repo != ""}, {"ref", n.Ref != ""}, {"tools", len(n.Tools) > 0},
 	} {
 		if f.set {
 			s = append(s, f.name)

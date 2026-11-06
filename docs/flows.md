@@ -446,7 +446,17 @@ opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|ar
   mcp_servers:
     - {name: docs, type: http, url: "https://example.com/mcp", headers: {Authorization: "Bearer ..."}}
     - {name: local, command: my-mcp, args: [--stdio], env: {TOKEN: abc}}
+  sandbox: my-sandbox      # optional: sandbox backend id; adds fs/shell tools run there
+  image: ubuntu:24.04      # optional sandbox options
+  repo: "~/code/app"
+  ref: main
+  tools: [lookup-customer] # optional: custom tool ids exposed through hal's MCP server
 ```
+
+Every agent session also gets hal's own MCP server (`hal`): `gh_api`, `pr_view`, `pr_diff`, `pr_list`, `issue_view`,
+`search`, `now`, `run_context`, `node_input`, `event`. Reads run without a prompt; a call that writes (for example a
+`gh_api` POST) becomes a tool-call Approval and the agent waits up to `approval_timeout`. The first prompt of the run starts
+with a context block (ids, time, trigger, node input, available tools). See `docs/design/agent-access.md`.
 
 ### Modes
 

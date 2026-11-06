@@ -82,6 +82,13 @@ export interface AgentNode {
   cwd?: AgentCwd;
   allow?: AllowRules;
   mcp_servers?: McpServer[];
+  /** Sandbox backend id (adds fs and shell tools). */
+  sandbox?: string;
+  image?: string;
+  repo?: string;
+  ref?: string;
+  /** Custom tool ids. */
+  tools?: string[];
   timeout?: string;
   approval_timeout?: string;
   ui?: UIPos;

@@ -2294,6 +2294,16 @@ export interface components {
       approval_timeout?: components["schemas"]["Duration"];
       allow?: components["schemas"]["AgentAllow"];
       mcp_servers?: components["schemas"]["McpServer"][];
+      /** @description Sandbox backend id; adds fs and shell tools executed there. Validated where sandboxes are defined. */
+      sandbox?: string;
+      /** @description Sandbox image (sandbox option). */
+      image?: string;
+      /** @description Repository to check out in the sandbox (sandbox option). */
+      repo?: string;
+      /** @description Git ref of `repo` (sandbox option). */
+      ref?: string;
+      /** @description Custom tool ids made available to the agent through hal MCP. */
+      tools?: string[];
       ui?: components["schemas"]["NodeUI"];
     };
     /** @description Writes an inbox item. Fields are Go templates over `{.event, .input, .flow, .run}`. Port `out` only. */

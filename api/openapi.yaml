@@ -3029,6 +3029,11 @@ components:
         approval_timeout: {$ref: '#/components/schemas/Duration'}
         allow: {$ref: '#/components/schemas/AgentAllow'}
         mcp_servers: {type: array, items: {$ref: '#/components/schemas/McpServer'}}
+        sandbox: {type: string, description: 'Sandbox backend id; adds fs and shell tools executed there. Validated where sandboxes are defined.'}
+        image: {type: string, description: 'Sandbox image (sandbox option).'}
+        repo: {type: string, description: 'Repository to check out in the sandbox (sandbox option).'}
+        ref: {type: string, description: 'Git ref of `repo` (sandbox option).'}
+        tools: {type: array, items: {type: string}, description: 'Custom tool ids made available to the agent through hal MCP.'}
         ui: {$ref: '#/components/schemas/NodeUI'}
     InboxNode:
       type: object

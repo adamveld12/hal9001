@@ -198,7 +198,7 @@ type Flow struct {
 //
 //	command: lang, script|command, ports, cwd (dir only), timeout, side_effect
 //	agent:   runtime, mode, approve, prompt|instructions, output, extra_prompt, model, cwd, timeout,
-//	         approval_timeout, allow, mcp_servers
+//	         approval_timeout, allow, mcp_servers, sandbox, image, repo, ref, tools
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
 type Node struct {
@@ -241,6 +241,15 @@ type Node struct {
 
 	Allow      *Allow      `yaml:"allow,omitempty" json:"allow,omitempty"`
 	MCPServers []MCPServer `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+
+	// agent, hal-provided tools (docs/design/agent-access.md). Sandbox names a sandbox backend (adds fs and shell
+	// tools executed there); Image, Repo and Ref are sandbox options; Tools are custom tool ids. The engine passes them
+	// to internal/tools; validation against the configured sandboxes and tools happens where those are defined.
+	Sandbox string   `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	Image   string   `yaml:"image,omitempty" json:"image,omitempty"`
+	Repo    string   `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Ref     string   `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
 
 	UI UI `yaml:"ui,omitempty" json:"ui"`
 }
