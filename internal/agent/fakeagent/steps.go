@@ -208,7 +208,7 @@ func (t *turnState) exec(st Step) (bool, error) {
 	case OpMCPCall:
 		return t.permission(Step{
 			Op: OpPermission, ID: st.ID, Kind: "other", Title: "mcp__" + firstNonEmpty(st.Name, "hal") + "__" + st.Tool, RawInput: st.Args,
-			OnAllow:  []Step{{Op: OpMCPInvoke, ID: st.ID, Name: st.Name, Tool: st.Tool, Args: st.Args}},
+			OnAllow:  []Step{{Op: OpMCPInvoke, ID: st.ID, Name: st.Name, Tool: st.Tool, Args: st.Args, Path: st.Path}},
 			OnReject: []Step{{Op: OpMessage, Text: "mcp[" + st.ID + "] rejected by the client"}},
 		})
 	case OpMCPInvoke:
@@ -410,6 +410,12 @@ func (t *turnState) mcpInvoke(st Step) error {
 	for _, c := range res.Content {
 		if tc, ok := c.(*mcp.TextContent); ok {
 			text.WriteString(tc.Text)
+		}
+	}
+	if st.Path != "" && !res.IsError {
+		p := t.abs(st.Path)
+		if err := os.WriteFile(p, []byte(text.String()), 0o600); err != nil {
+			return err
 		}
 	}
 	return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=%t %s", st.ID, res.IsError, text.String())))

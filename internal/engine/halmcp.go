@@ -50,7 +50,7 @@ func (h halToolHost) permission(runID, tool string, args json.RawMessage, extra 
 	raw, _ := json.Marshal(map[string]any{"tool": tool, "arguments": args, "note": extra})
 	id := h.e.st.NewID()
 	return &store.PermissionRequest{
-		ID: id, AgentRunID: runID, ToolCallID: "hal-" + id, ToolKind: "other", Title: "hal tool: " + tool,
+		ID: id, AgentRunID: runID, ToolCallID: "hal:" + tool + ":" + id, ToolKind: "other", Title: "hal tool: " + tool,
 		RawInput: store.Inline(red.String(string(raw))),
 	}
 }
@@ -87,7 +87,7 @@ var errHalApprovalTimeout = errors.New("tool approval timeout")
 func (h halToolHost) Approve(ctx context.Context, req tools.ApprovalRequest) (tools.Decision, error) {
 	e := h.e
 	p := h.permission(req.RunID, req.Tool, req.Args, req.Reason)
-	p.Reason = req.Reason
+	p.Reason, p.MatchedRule = req.Reason, "hal:approval"
 	if err := e.st.CreatePermissionRequest(e.dbCtx, p); err != nil {
 		return tools.Decision{}, err
 	}
@@ -135,7 +135,16 @@ func (h halToolHost) Approve(ctx context.Context, req tools.ApprovalRequest) (to
 		return tools.Decision{}, err
 	}
 	// DecideApproval already wrote the decision to the permission request.
-	return tools.Decision{Allowed: dec.Verdict == agent.VerdictAllow, Comment: dec.Comment, RecordID: p.ID}, nil
+	d := tools.Decision{Allowed: dec.Verdict == agent.VerdictAllow, Comment: dec.Comment, RecordID: p.ID}
+	if dec.Verdict == agent.VerdictDenyCancel {
+		d.Cancelled = true
+		key := req.NodeRunID
+		if key == "" {
+			key = "assist:" + req.RunID
+		}
+		e.cancelOne(key, agent.ErrDeniedCancel)
+	}
+	return d, nil
 }
 
 // halTools is a run's hal MCP session and the server entry that hands it to the agent.

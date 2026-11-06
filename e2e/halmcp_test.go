@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"hal9001/internal/agent/fakeagent"
 )
@@ -23,9 +24,9 @@ func halToolScript() script {
 	}}}}
 }
 
-func halToolDaemon(t *testing.T) (*Daemon, string) {
+func halToolDaemon(t *testing.T, extra string, opts ...Option) (*Daemon, string) {
 	t.Helper()
-	d := newDaemon(t)
+	d := newDaemon(t, opts...)
 	ghLog := filepath.Join(d.Bin, "gh.log")
 	d.Script("gh", `printf '%s\n' "$*" >> `+shq(ghLog)+`
 case "$*" in *--input*) cat >> `+shq(ghLog)+`; echo >> `+shq(ghLog)+` ;; esac
@@ -33,7 +34,7 @@ echo '{"gh":"ok"}'`)
 	d.IdleSensor("src")
 	d.Prompt("p", "none", "go {{.input.id}}")
 	d.Runtime("fake", halToolScript())
-	d.Flow("f", approvalFlow("per_tool", ""))
+	d.Flow("f", approvalFlow("per_tool", extra))
 	d.Start()
 	return d, ghLog
 }
@@ -52,7 +53,7 @@ var tokenRE = regexp.MustCompile(`"--token","(hal_mcp_[A-Za-z0-9_-]+)"`)
 // The agent session gets hal's MCP server; gh_api GET runs without a prompt, a POST waits for an approval and runs
 // on allow, the preamble leads the prompt, and the token stops working when the run ends.
 func TestHalMCPToolsAllow(t *testing.T) {
-	d, ghLog := halToolDaemon(t)
+	d, ghLog := halToolDaemon(t, "")
 	runID := d.InjectRun("src", map[string]any{"id": "7"})
 	ap := d.WaitApproval("tool_call")
 	if ap.PermissionRequest == nil || ap.PermissionRequest.Title != "hal tool: gh_api" ||
@@ -126,7 +127,7 @@ func TestHalMCPToolsAllow(t *testing.T) {
 
 // Denying the POST returns a tool error to the agent and gh is not called.
 func TestHalMCPToolsDeny(t *testing.T) {
-	d, ghLog := halToolDaemon(t)
+	d, ghLog := halToolDaemon(t, "")
 	runID := d.InjectRun("src", map[string]any{"id": "8"})
 	ap := d.WaitApproval("tool_call")
 	d.Decide(ap.ID, false, map[string]any{"comment": "nope"})
@@ -141,4 +142,86 @@ func TestHalMCPToolsDeny(t *testing.T) {
 	if log := readLog(t, ghLog); strings.Contains(log, "POST") {
 		t.Errorf("denied POST ran: %q", log)
 	}
+}
+
+// A call that waits past approval_timeout fails as a tool error, the approval and its record expire, and the agent
+// carries on.
+func TestHalMCPApprovalTimeout(t *testing.T) {
+	d, ghLog := halToolDaemon(t, "    timeout: 1h\n    approval_timeout: 1s\n", withClock())
+	runID := d.InjectRun("src", map[string]any{"id": "9"})
+	ap := d.WaitApproval("tool_call")
+	// Pending: the src sensor's schedule (1h), the run timeout and the approval timeout.
+	if !d.Clock.WaitTimers(3, 30*time.Second) {
+		t.Fatal("the schedule, run and approval timers were not registered")
+	}
+	d.Clock.Advance(2 * time.Second)
+	done := d.WaitRun(runID, "succeeded")
+
+	run := d.AgentRuns(d.Node(done, "work").ID)[0]
+	var got Approval
+	d.Get("/api/approvals/" + ap.ID).Want(200).JSON(&got)
+	var perm PermissionRequest
+	for _, p := range d.Permissions(run.ID) {
+		if p.ID == got.PermissionRequest.ID {
+			perm = p
+		}
+	}
+	if got.Status != "expired" || perm.Decision != "expired" || perm.DecidedBy != "timeout" {
+		t.Errorf("approval %+v permission %+v", got, perm)
+	}
+	if tr := d.Transcript(run.ID); !strings.Contains(tr, "mcp[c2] is_error=true") || !strings.Contains(tr, "approval timeout") || !strings.Contains(tr, "mcp[c3] is_error=false") {
+		t.Errorf("transcript:\n%s", tr)
+	}
+	if strings.Contains(readLog(t, ghLog), "POST") {
+		t.Error("the expired POST ran")
+	}
+	if r := d.Post("/api/approvals/"+ap.ID+"/approve", nil).Want(409); r.Problem() != "invalid-state" {
+		t.Errorf("approving an expired approval: %s", r)
+	}
+}
+
+// A runtime of a known kind is locked down on every session start: Claude's options travel on session/new and on the
+// session/load that resumes an approved proposal, and the user's own session_meta keys survive next to them.
+func TestRuntimeLockdownIsSentOnNewAndLoad(t *testing.T) {
+	d := newDaemon(t)
+	d.IdleSensor("src")
+	d.Prompt("p", "none", "/review {{.input.id}}") // a prompt that would be a slash command
+	d.Runtime("fake", script{LoadSession: true, Turns: []turn{
+		{When: when("Approved"), Steps: []step{say("executed")}},
+		{Steps: []step{say(proposalPlan)}},
+	}})
+	d.RuntimeKind("fake", "claude")
+	d.Flow("f", approvalFlow("proposal", ""))
+	d.Start()
+
+	runID := d.InjectRun("src", map[string]any{"id": "5"})
+	d.WaitRun(runID, "awaiting_approval")
+	d.Decide(d.WaitApproval("proposal").ID, true, nil)
+	d.WaitRun(runID, "succeeded")
+
+	var metas []string
+	for _, c := range d.AgentCalls("fake") {
+		if m := fmt.Sprint(c["method"]); m == "session/new" || m == "session/load" {
+			b, _ := json.Marshal(c["meta"])
+			metas = append(metas, m+" "+string(b))
+		}
+	}
+	if len(metas) != 2 {
+		t.Fatalf("session calls: %v", metas)
+	}
+	for _, m := range metas {
+		for _, want := range []string{`"tools":[]`, `"strictMcpConfig":true`, `"settingSources":[]`, `"allowedTools":["mcp__hal"]`} {
+			if !strings.Contains(m, want) {
+				t.Errorf("%s lacks %s", m, want)
+			}
+		}
+	}
+	for _, c := range d.AgentCalls("fake") {
+		if c["method"] == "session/prompt" {
+			if text := fmt.Sprint(c["text"]); strings.HasPrefix(strings.TrimLeft(text, " \n"), "/") {
+				t.Errorf("a prompt starts with a slash: %q", text)
+			}
+		}
+	}
+
 }

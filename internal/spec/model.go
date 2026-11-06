@@ -121,6 +121,9 @@ const DataPlaceholder = "{{data}}"
 // beyond Command and Modes are what the ACP gate (docs/acp-gate.md) found
 // necessary to run a runtime restrictively.
 type Runtime struct {
+	// Kind names the runtime family (claude, codex, omp) so hal can lock it down to hal's MCP tools
+	// (docs/acp-lockdown.md). Empty: detected from the command; an unknown runtime runs without lockdown.
+	Kind    string            `yaml:"kind,omitempty" json:"kind,omitempty"`
 	Command []string          `yaml:"command" json:"command"`
 	Modes   RuntimeModes      `yaml:"modes,omitempty" json:"modes"`
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
@@ -264,11 +267,11 @@ type Cwd struct {
 	Ref  string `yaml:"ref,omitempty" json:"ref,omitempty"`
 }
 
-// Allow extends the read-only permission policy of an agent node (§7.2). Each
-// entry is a regular expression.
+// Allow names tools beyond hal's own that an agent node may call: each entry is a
+// regular expression over the tool title or name (tools of the node's mcp_servers).
+// Agents have no shell or file tools, so nothing else is matched.
 type Allow struct {
-	Tools    []string `yaml:"tools,omitempty" json:"tools,omitempty"`
-	Commands []string `yaml:"commands,omitempty" json:"commands,omitempty"`
+	Tools []string `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
 
 // Link is an inbox link; both fields are templates on inbox nodes.

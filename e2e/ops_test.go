@@ -101,7 +101,7 @@ func TestScenario08AutoAgentWorktree(t *testing.T) {
 			say("created hello.txt"),
 		},
 	}}})
-	d.Flow("wt", opsAutoFlow("wt", "src", "    cwd: {mode: worktree, repo: "+strconv.Quote(repo)+", ref: HEAD}\n"))
+	d.Flow("wt", opsAutoFlow("wt", "src", "    cwd: {mode: worktree, repo: "+strconv.Quote(repo)+", ref: HEAD}\n    allow:\n      tools: ['^Write hello']\n"))
 	d.Start()
 
 	run := d.RunOf("src", map[string]any{"id": "1"})

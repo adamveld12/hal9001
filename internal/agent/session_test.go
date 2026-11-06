@@ -20,22 +20,6 @@ func forPrompt(text string, steps ...fakeagent.Step) fakeagent.Turn {
 	return fakeagent.Turn{When: &fakeagent.When{PromptMatches: text}, Steps: steps}
 }
 
-// gatedCall is a permission-gated tool call whose outcome the agent reports.
-func gatedCall(id, kind, title string, raw map[string]any, locations ...string) fakeagent.Step {
-	return fakeagent.Step{
-		Op: fakeagent.OpPermission, ID: id, Kind: kind, Title: title, RawInput: raw, Locations: locations,
-		OnAllow:  []fakeagent.Step{msg("allowed " + id)},
-		OnReject: []fakeagent.Step{msg("rejected " + id)},
-	}
-}
-
-// gatedEdit is editStep whose rejection is reported.
-func gatedEdit(id, file, content string) fakeagent.Step {
-	s := editStep(id, file, content)
-	s.OnReject = []fakeagent.Step{msg("rejected " + id)}
-	return s
-}
-
 func (e *env) newSession(mod ...func(*agent.SessionRequest)) *agent.Session {
 	e.t.Helper()
 	req := agent.SessionRequest{Runtime: "fake", Config: e.cfg, Cwd: e.work}
@@ -221,122 +205,6 @@ func TestSessionTurnsShareOneProcess(t *testing.T) {
 	}
 	if got := rawMethods(e, r2.ID); !slices.Equal(got, []string{"session/prompt"}) {
 		t.Errorf("turn 2 sent %v", got)
-	}
-}
-
-func TestSessionGatedPolicyPerTurn(t *testing.T) {
-	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{
-		forPrompt("read", gatedCall("r1", "read", "Read src/a.go", map[string]any{"path": "src/a.go"})),
-		forPrompt("edit-in", gatedEdit("e1", "draft/a.txt", "A")),
-		forPrompt("edit-out", gatedEdit("e2", "other/b.txt", "B")),
-		forPrompt("cmd-ok", gatedCall("c1", "execute", "Run git", map[string]any{"command": "git log -1"})),
-		forPrompt("cmd-bad", gatedCall("c2", "execute", "Run rm", map[string]any{"command": "rm -rf build"})),
-	}})
-	s := e.newSession()
-	allow := agent.AllowRules{EditUnder: []string{filepath.Join(e.work, "draft")}, Commands: []string{`^git (log|diff)\b`}}
-
-	noApproval := func(rec agent.RunRecord, toolCallID, rule string) {
-		t.Helper()
-		e.wantSucceeded(rec)
-		p := e.perm(rec, toolCallID)
-		if p.Decision != agent.DecisionAllow || p.DecidedBy != agent.DecidedByPolicy || !strings.Contains(p.MatchedRule, rule) {
-			t.Errorf("%s: decision=%s by=%s rule=%q", toolCallID, p.Decision, p.DecidedBy, p.MatchedRule)
-		}
-		if len(e.broker.Pending()) != 0 {
-			t.Errorf("%s reached the approval queue", toolCallID)
-		}
-	}
-
-	noApproval(e.turn(s, "read", withAllow(allow)), "r1", "kind:read")
-
-	rec := e.turn(s, "edit-in", withAllow(allow))
-	noApproval(rec, "e1", "allow.edit_under[0]")
-	if got, ok := e.file("draft/a.txt"); !ok || got != "A" {
-		t.Errorf("edit under edit_under was not applied: %q, %v", got, ok)
-	}
-
-	noApproval(e.turn(s, "cmd-ok", withAllow(allow)), "c1", "allow.commands[0]")
-
-	// An edit outside edit_under goes to the broker; deny rejects the call
-	// and the agent carries on.
-	ch, _ := e.startTurn(s, "edit-out", withAllow(allow))
-	a, ok := e.broker.Next(10 * time.Second)
-	if !ok {
-		t.Fatal("edit outside edit_under was not queued for approval")
-	}
-	if a.ToolKind != "edit" || !strings.Contains(a.Title, "other/b.txt") {
-		t.Errorf("approval = %+v", a)
-	}
-	e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictDeny, Comment: "not that file"})
-	rec = e.waitTurn(ch)
-	e.wantSucceeded(rec)
-	if !strings.Contains(rec.FullMessage, "rejected e2") {
-		t.Errorf("agent was not told the edit was rejected: %q", rec.FullMessage)
-	}
-	if p := e.perm(rec, "e2"); p.Decision != agent.DecisionReject || p.DecidedBy != agent.DecidedByUser {
-		t.Errorf("denied edit: %+v", p)
-	}
-	if _, ok := e.file("other/b.txt"); ok {
-		t.Error("denied edit was applied")
-	}
-
-	// The same edit allowed by the user is executed.
-	ch, _ = e.startTurn(s, "edit-out", withAllow(allow))
-	a, ok = e.broker.Next(10 * time.Second)
-	if !ok {
-		t.Fatal("second edit not queued")
-	}
-	e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictAllow})
-	rec = e.waitTurn(ch)
-	e.wantSucceeded(rec)
-	if got, ok := e.file("other/b.txt"); !ok || got != "B" {
-		t.Errorf("allowed edit was not applied: %q, %v", got, ok)
-	}
-
-	// A command that matches no allow.commands rule is asked about.
-	ch, _ = e.startTurn(s, "cmd-bad", withAllow(allow))
-	a, ok = e.broker.Next(10 * time.Second)
-	if !ok || a.ToolKind != "execute" {
-		t.Fatalf("command was not queued: %+v, %v", a, ok)
-	}
-	e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictDeny})
-	rec = e.waitTurn(ch)
-	if !strings.Contains(rec.FullMessage, "rejected c2") {
-		t.Errorf("rejected command: %q", rec.FullMessage)
-	}
-	if n := len(e.callsOf("initialize")); n != 1 {
-		t.Errorf("%d processes for one session", n)
-	}
-}
-
-func TestSessionProtectedPathsNeedApproval(t *testing.T) {
-	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{
-		forPrompt("secret", gatedCall("s1", "read", "Read key", map[string]any{"file_path": "secrets/key.txt"})),
-		forPrompt("located", gatedCall("s2", "read", "Read", nil, "secrets/nested/token")),
-		forPrompt("plain", gatedCall("s3", "read", "Read notes", map[string]any{"path": "notes/a.md"})),
-	}})
-	s := e.newSession()
-	allow := agent.AllowRules{Protected: []string{"secrets"}}
-
-	for _, tc := range []struct{ prompt, id string }{{"secret", "s1"}, {"located", "s2"}} {
-		ch, _ := e.startTurn(s, tc.prompt, withAllow(allow))
-		a, ok := e.broker.Next(10 * time.Second)
-		if !ok {
-			t.Fatalf("%s: read of a protected path was not queued for approval", tc.id)
-		}
-		e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictAllow})
-		rec := e.waitTurn(ch)
-		e.wantSucceeded(rec)
-		p := e.perm(rec, tc.id)
-		if p.DecidedBy != agent.DecidedByUser || !strings.Contains(p.MatchedRule, "protected:"+filepath.Join(e.work, "secrets")) {
-			t.Errorf("%s: permission = %+v", tc.id, p)
-		}
-	}
-
-	rec := e.turn(s, "plain", withAllow(allow))
-	e.wantSucceeded(rec)
-	if p := e.perm(rec, "s3"); p.Decision != agent.DecisionAllow || p.DecidedBy != agent.DecidedByPolicy {
-		t.Errorf("unprotected read: %+v", p)
 	}
 }
 
@@ -724,7 +592,7 @@ func TestNewSessionAndPromptValidation(t *testing.T) {
 	if _, err := s.Prompt(t.Context(), turnReq("  ")); err == nil {
 		t.Error("empty prompt accepted")
 	}
-	if _, err := s.Prompt(context.Background(), turnReq("go", withAllow(agent.AllowRules{Commands: []string{"("}}))); err == nil {
+	if _, err := s.Prompt(context.Background(), turnReq("go", withAllow(agent.AllowRules{Tools: []string{"("}}))); err == nil {
 		t.Error("invalid allow rule accepted")
 	}
 	if s.Alive() {

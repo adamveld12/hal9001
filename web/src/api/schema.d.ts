@@ -2274,12 +2274,10 @@ export interface components {
       label: string;
       url: string;
     };
-    /** @description Extends the read-only policy (§7.2). Entries are regular expressions. */
+    /** @description Tools of the node's `mcp_servers` the agent may call (hal's own tools are always allowed). Entries are regular expressions over the tool title or name. Agents have no shell or file tools. */
     AgentAllow: {
       /** @description Regexes over tool title or name. */
       tools?: string[];
-      /** @description Regexes over the command of execute-kind tool calls. */
-      commands?: string[];
     };
     /** @description MCP server passed through to `session/new`. */
     McpServer: {
@@ -2645,7 +2643,12 @@ export interface components {
       ask?: components["schemas"]["RuntimeSpawn"];
       /** @description Extra argv/env for permissive (auto, approved proposal) runs. */
       full?: components["schemas"]["RuntimeSpawn"];
-      /** @description Sent as `_meta` on session/new and session/load (e.g. claude settingSources isolation). */
+      /**
+       * @description Runtime family, used to lock the agent down to hal's MCP tools. Detected from `command` when absent; an unknown runtime runs without lockdown.
+       * @enum {string}
+       */
+      kind?: "claude" | "codex" | "omp";
+      /** @description Sent as `_meta` on session/new and session/load (e.g. claude settingSources isolation). Lockdown keys win over these. */
       session_meta?: {
         [key: string]: unknown;
       };
@@ -3401,7 +3404,7 @@ export interface components {
       /** @description Null while pending. */
       decision: components["schemas"]["PermissionDecision"] | null;
       decided_by: components["schemas"]["DecidedBy"] | null;
-      /** @description The policy rule that decided, for example `kind:read` or `allow.commands[0]`. */
+      /** @description The policy rule that decided, for example `hal:mcp`, `allow.tools[0]: ...` or `lockdown`. */
       matched_rule: string | null;
       reason: string | null;
       approval_id: components["schemas"]["NullableUlid"];

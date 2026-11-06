@@ -1,11 +1,12 @@
 // Package assist runs AI-assisted sensor authoring: a chat session with a coding agent (an ACP runtime from
-// config.yaml) that edits a draft sensor file.
+// config.yaml) that edits a draft sensor or flow.
 //
-// The agent never writes a real sensor file. It works in a private draft directory,
-// <home>/data/assist/<session>/, in a file named sensor.yaml; only the user's Save, through the normal sensor
+// The agent has no file or shell access (docs/acp-lockdown.md). It reads and changes the draft through hal's MCP
+// tools draft_read, draft_write, draft_test and validate (tools.go); the draft lives in a private directory,
+// <home>/data/assist/<session>/, that only the daemon touches. Only the user's Save, through the normal sensor
 // endpoints, persists a sensor. The agent never receives secrets: its environment holds no env-file values, and
-// it runs the draft through the daemon (TestDraft), which overlays the global env file and the target sensor's
-// own env values, redacts the output, and records nothing.
+// draft_test runs the draft through the daemon (TestDraft), which overlays the global env file and the target
+// sensor's own env values, redacts the output, and records nothing.
 //
 // Every turn of the conversation is an agent run (agent_runs, agent_events, permission_requests, approvals),
 // linked to the session, so it shows on the Agent run page like any other. The agent process stays alive
@@ -81,8 +82,7 @@ type Options struct {
 	Log  *slog.Logger
 	// URL is the base URL the agent's CLI reaches this daemon at, e.g. http://127.0.0.1:9001.
 	URL string
-	// Executable is the hal9001 binary; its directory is put first on the agent's PATH so `hal9001 assist test`
-	// works from the agent. Default: this process's executable.
+	// Executable is the hal9001 binary agents run as their `hal9001 mcp` server. Default: this process's executable.
 	Executable string
 	// IdleTimeout suspends an idle agent process (default 15m).
 	IdleTimeout time.Duration
@@ -130,12 +130,14 @@ func New(opt Options) (*Manager, error) {
 			return nil, fmt.Errorf("assist: locate the hal9001 binary: %w", err)
 		}
 	}
-	return &Manager{
+	m := &Manager{
 		opt: opt, st: opt.Store, host: opt.Host, log: opt.Log, ctx: context.WithoutCancel(opt.Host.Context()),
 		home:     home,
 		dir:      filepath.Join(home, "data", "assist"),
 		sessions: map[string]*session{}, byRun: map[string]*session{},
-	}, nil
+	}
+	m.registerTools()
+	return m, nil
 }
 
 // Start removes draft directories that no live session owns (left by a crash or a pruned session).
@@ -366,57 +368,15 @@ func (m *Manager) sessionOfRun(runID string) *session {
 	return m.byRun[runID]
 }
 
-// agentEnv is the whole base environment of an agent process: the node base environment without any env file
-// value, the daemon's URL and the session, and a PATH that finds this hal9001 binary first.
-func (m *Manager) agentEnv(sessionID string) []string {
+// agentEnv is the whole base environment of an agent process: the node base environment without any env file value.
+func (m *Manager) agentEnv() []string {
 	env := runner.DefaultBaseEnv(m.host.BasePATH())
-	if dir := filepath.Dir(m.opt.Executable); dir != "" && dir != "." {
-		env["PATH"] = dir + string(os.PathListSeparator) + env["PATH"]
-	}
-	env["HAL9001_URL"] = m.opt.URL
-	env["HAL9001_ASSIST_SESSION"] = sessionID
 	out := make([]string, 0, len(env))
 	for k, v := range env {
 		out = append(out, k+"="+v)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// allowRules are the per-turn permissions of the agent (REQUIREMENTS §7.2 gated policy plus these): edits inside
-// the session's draft directory and the helper commands are allowed (a test only for a script the user has
-// approved), files holding secrets are protected, and everything else goes to the approval queue.
-func (s *session) allowRules() agent.AllowRules {
-	m, sessionID, dir := s.m, s.id, s.dir
-	testArgs, validateCmd := "", "sensors validate"
-	if s.isFlow() {
-		testArgs, validateCmd = `(?: --sample [0-9]+| --event [0-9A-HJKMNP-TV-Z]{26})?`, "flows validate"
-	}
-	bin := `(?:hal9001|` + regexp.QuoteMeta(m.opt.Executable) + `)`
-	home := m.home
-	data := filepath.Join(home, "data")
-	rules := agent.AllowRules{
-		Tools: tools.AgentAllowTools,
-		// Rule 0 runs the draft with the user's credentials: it is vetoed unless the code is what the user has
-		// tested or approved (see vetoTest).
-		Commands: []string{
-			`^` + bin + ` assist test(?: ` + sessionID + `)?` + testArgs + `$`,
-			`^` + bin + ` assist draft(?: ` + sessionID + `)?$`,
-			`^` + bin + ` ` + validateCmd + ` (?:\./)?` + regexp.QuoteMeta(s.draftFile()) + `$`,
-		},
-		CommandVeto: s.vetoTest,
-		EditUnder:   []string{dir},
-		Base:        dir,
-		Protected: []string{
-			filepath.Join(home, "env"), filepath.Join(home, "env.d"), filepath.Join(home, "config.yaml"),
-			filepath.Join(data, "hal.db"), filepath.Join(data, "hal.db-wal"), filepath.Join(data, "hal.db-shm"),
-			filepath.Join(data, "blobs"), filepath.Join(data, "runtimes"),
-		},
-	}
-	if s.isFlow() {
-		rules.EditDeny = []string{filepath.Join(dir, ReferenceDir)}
-	}
-	return rules
 }
 
 // redactBytes masks every workspace secret in b.

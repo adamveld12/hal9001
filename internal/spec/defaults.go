@@ -218,7 +218,7 @@ func (n Node) clone() Node {
 		n.Cwd = &c
 	}
 	if n.Allow != nil {
-		a := Allow{Tools: slices.Clone(n.Allow.Tools), Commands: slices.Clone(n.Allow.Commands)}
+		a := Allow{Tools: slices.Clone(n.Allow.Tools)}
 		n.Allow = &a
 	}
 	return n

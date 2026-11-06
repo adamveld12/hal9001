@@ -46,6 +46,8 @@ type Decision struct {
 	Expired bool
 	// Comment is the approver's comment, if any.
 	Comment string
+	// Cancelled reports that the approver also stopped the run (the host has cancelled it).
+	Cancelled bool
 	// RecordID identifies the trace record the host made for the call; it is passed back to Host.Finish.
 	RecordID string
 }
@@ -269,13 +271,16 @@ func (s *Session) release() {
 
 // DeniedError is the error of a call a user denied or let expire.
 type DeniedError struct {
-	Tool    string
-	Expired bool
-	Comment string
+	Tool      string
+	Expired   bool
+	Cancelled bool
+	Comment   string
 }
 
 func (e *DeniedError) Error() string {
 	switch {
+	case e.Cancelled:
+		return fmt.Sprintf("tool %s was denied by the user and the run was stopped", e.Tool)
 	case e.Expired:
 		return fmt.Sprintf("tool %s was not run: nobody approved it before the approval timeout", e.Tool)
 	case e.Comment != "":
@@ -312,7 +317,7 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 		recordID = d.RecordID
 		if !d.Allowed {
 			s.finish(recordID, "not run: denied")
-			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Comment: d.Comment}
+			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
 		}
 	} else if info.AgentRunID != "" {
 		id, err := s.h.opt.Host.Record(ctx, CallRecord{RunID: info.AgentRunID, NodeRunID: info.NodeRunID, Tool: name, Args: args, Reason: "hal tool allowed without approval"})
@@ -343,11 +348,6 @@ func approval(t Tool, args json.RawMessage) (bool, string) {
 	}
 	return t.Approval(args)
 }
-
-// AgentAllowTools are allow.tools patterns that make the agent runtime's own permission layer let hal's MCP tools
-// through: hal decides at execution time (approval, read-only, dry-run), so the agent layer must not ask a second time.
-// Runtimes name MCP tools differently (claude: mcp__hal__gh_api); each pattern covers one convention.
-var AgentAllowTools = []string{`^mcp__hal__`, `^hal[._:/ -]`, `^hal \(MCP\)`}
 
 // ServerName is the name of hal's MCP server in the agent's session.
 const ServerName = "hal"

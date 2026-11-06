@@ -227,7 +227,7 @@ nodes:
       echo "$!" >> `+pids+`
       wait
 `)
-	h.flow("f", approveFlow("proposal", ""))
+	h.flow("f", approveFlow())
 	h.start()
 
 	res := h.inject(`{"id":"1"}`)
@@ -236,7 +236,7 @@ nodes:
 		byFlow[h.run(id).FlowID] = id
 	}
 	h.waitRun(byFlow["f"], store.FlowRunAwaitingApproval)
-	ap := h.waitApproval(store.ApprovalProposal)
+	ap := h.waitProposal()
 	h.eventually("sleeper running", func() bool { return countLines(pids) == 1 })
 
 	// A crash leaves rows behind that Stop never saw; the next start sorts them out.
@@ -290,30 +290,6 @@ nodes:
 	}
 	if _, err := os.Stat(h.stateFile("work", "hello.txt")); err != nil {
 		t.Errorf("approved plan did not execute after the restart: %v", err)
-	}
-}
-
-// A per-tool approval dies with its agent process: after a restart it is
-// expired and the run interrupted.
-func TestPerToolApprovalExpiresOnRestart(t *testing.T) {
-	h := newHarness(t)
-	h.idleSensor()
-	h.prompt("go")
-	h.runtime("fake", perToolScript())
-	h.flow("f", approveFlow("per_tool", ""))
-	h.start()
-	runID := h.injectRun(`{"id":"1"}`)
-	ap := h.waitApproval(store.ApprovalToolCall)
-	h.restart()
-	got, _ := h.st.GetApproval(t.Context(), ap.ID)
-	if got.Status != store.ApprovalExpired {
-		t.Errorf("approval after restart: %+v", got)
-	}
-	if st := h.run(runID).Status; st != store.FlowRunInterrupted {
-		t.Errorf("run is %s, want interrupted\n%s", st, h.dumpRun(runID))
-	}
-	if _, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: true}); !errors.Is(err, core.ErrInvalidState) {
-		t.Errorf("deciding an expired approval: %v", err)
 	}
 }
 

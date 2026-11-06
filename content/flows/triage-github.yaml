@@ -46,9 +46,6 @@ nodes:
     runtime: claude
     mode: readonly
     prompt: pr-review
-    cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
-    allow:
-      commands: ['^gh (pr|issue) (view|diff|list|checks)\b', '^git (log|diff|show)\b']
     timeout: 20m
     ui: {x: 700, y: 60}
 

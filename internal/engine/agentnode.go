@@ -97,10 +97,8 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
 		ExpectNote:      expectNote,
 	}
-	req.Allow.Tools = append(req.Allow.Tools, tools.AgentAllowTools...)
 	if node.Allow != nil {
-		req.Allow.Tools = append(req.Allow.Tools, node.Allow.Tools...)
-		req.Allow.Commands = node.Allow.Commands
+		req.Allow.Tools = node.Allow.Tools
 	}
 	rec := &runRecorder{e: e, red: ne.snap.red, model: node.Model, worktree: e.worktreePath(wtKey)}
 	ex := &agent.Executor{

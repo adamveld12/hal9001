@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"hal9001/internal/agent"
-	"hal9001/internal/agent/agenttest"
 	"hal9001/internal/agent/fakeagent"
 	"hal9001/internal/core"
 	"hal9001/internal/store"
@@ -26,20 +25,8 @@ func whenMode(m string) *fakeagent.When { return &fakeagent.When{Mode: m} }
 
 func say(text string) step { return step{Op: fakeagent.OpMessage, Text: text} }
 
-// editPermission is a gated edit of file that writes it when allowed.
-func editPermission(id, file, data string, onReject ...step) step {
-	old := ""
-	return step{
-		Op: fakeagent.OpPermission, ID: id, Kind: "edit", Title: "Write " + file,
-		RawInput: map[string]any{"path": file, "content": data},
-		Content:  []fakeagent.Content{{Type: "diff", Path: file, OldText: &old, NewText: data}},
-		OnAllow:  []step{{Op: fakeagent.OpWriteFile, Path: file, Data: data}},
-		OnReject: onReject,
-	}
-}
-
-// approveFlow is an approve-mode agent node with done / refused follow-ups.
-func approveFlow(style string, extra string) string {
+// approveFlow is an approve-mode (proposal) agent node with done / refused follow-ups.
+func approveFlow() string {
 	return `id: f
 enabled: true
 subscribe: [src]
@@ -48,9 +35,8 @@ nodes:
     type: agent
     runtime: fake
     mode: approve
-    approve: ` + style + `
+    approve: proposal
     prompt: p
-` + extra + `
   - {id: done, type: inbox, title: "done {{.input.input.id}}"}
   - {id: refused, type: inbox, title: "refused {{.input.input.id}}", summary_md: "{{.input.agent.comment}}"}
 edges:
@@ -89,12 +75,12 @@ func TestScenario7ProposalApproveResumesSameSession(t *testing.T) {
 	h.idleSensor()
 	h.prompt("Review {{.input.id}}")
 	h.runtime("fake", proposalScript(true))
-	h.flow("f", approveFlow("proposal", ""))
+	h.flow("f", approveFlow())
 	h.start()
 
 	runID := h.injectRun(`{"id":"42"}`)
 	h.waitRun(runID, store.FlowRunAwaitingApproval)
-	ap := h.waitApproval(store.ApprovalProposal)
+	ap := h.waitProposal()
 	if !strings.Contains(h.text(ap.Proposal), "Plan: create hello.txt") {
 		t.Errorf("proposal text: %q", h.text(ap.Proposal))
 	}
@@ -158,11 +144,11 @@ func TestProposalResumeFallsBackToNewSession(t *testing.T) {
 	h.idleSensor()
 	h.prompt("Review {{.input.id}}")
 	h.runtime("fake", proposalScript(false))
-	h.flow("f", approveFlow("proposal", ""))
+	h.flow("f", approveFlow())
 	h.start()
 	runID := h.injectRun(`{"id":"7"}`)
 	h.waitRun(runID, store.FlowRunAwaitingApproval)
-	ap := h.waitApproval(store.ApprovalProposal)
+	ap := h.waitProposal()
 	if _, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: true, Comment: "mind the tests"}); err != nil {
 		t.Fatal(err)
 	}
@@ -189,11 +175,11 @@ func TestScenario7ProposalDenyRoutesToDenied(t *testing.T) {
 	h.idleSensor()
 	h.prompt("Review {{.input.id}}")
 	h.runtime("fake", proposalScript(true))
-	h.flow("f", approveFlow("proposal", ""))
+	h.flow("f", approveFlow())
 	h.start()
 	runID := h.injectRun(`{"id":"43"}`)
 	h.waitRun(runID, store.FlowRunAwaitingApproval)
-	ap := h.waitApproval(store.ApprovalProposal)
+	ap := h.waitProposal()
 
 	decided, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: false, Comment: "too risky", Principal: "me"})
 	if err != nil || decided.Status != store.ApprovalDenied {
@@ -214,158 +200,6 @@ func TestScenario7ProposalDenyRoutesToDenied(t *testing.T) {
 	}
 	if _, err := os.Stat(h.stateFile("work", "hello.txt")); err == nil {
 		t.Error("a denied plan was executed")
-	}
-}
-
-func perToolScript() script {
-	return script{Turns: []turn{{When: whenMode("default"), Steps: []step{
-		{Op: fakeagent.OpPermission, ID: "r1", Kind: "read", Title: "Read README", RawInput: map[string]any{"path": "README.md"}},
-		editPermission("e1", "note.txt", "edited\n", say("edit-was-rejected")),
-		say("finished"),
-	}}}}
-}
-
-// Scenario 7a: a read is allowed by policy without asking; an edit appears in
-// the approval queue with its diff, and Allow applies it.
-func TestScenario7aPerToolAllow(t *testing.T) {
-	h := newHarness(t)
-	h.idleSensor()
-	h.prompt("go")
-	h.runtime("fake", perToolScript())
-	h.flow("f", approveFlow("per_tool", ""))
-	h.start()
-	runID := h.injectRun(`{"id":"1"}`)
-
-	ap := h.waitApproval(store.ApprovalToolCall)
-	h.waitRun(runID, store.FlowRunAwaitingApproval)
-	work := h.node(runID, "work")
-	runs := h.agentRuns(work.ID)
-	if work.Status != store.NodeAwaitingApproval || len(runs) != 1 || runs[0].Status != store.AgentAwaitingApproval || runs[0].Policy != store.PolicyGated || runs[0].ApproveStyle != store.StylePerTool {
-		t.Fatalf("waiting state: node %+v runs %+v", work, runs)
-	}
-	perms, err := h.st.ListPermissionRequests(t.Context(), store.PermissionRequestFilter{AgentRunID: runs[0].ID, ListOpts: store.ListOpts{Oldest: true}})
-	if err != nil || len(perms.Items) != 2 {
-		t.Fatalf("permission requests: %+v %v", perms.Items, err)
-	}
-	read, edit := perms.Items[0], perms.Items[1]
-	if read.ToolKind != "read" || read.Decision != store.PermAllow || read.DecidedBy != store.DecidedByPolicy {
-		t.Errorf("read request: %+v", read)
-	}
-	if edit.ToolKind != "edit" || edit.Decision != "" || ap.PermissionRequestID != edit.ID || !strings.Contains(h.text(edit.RawInput), "note.txt") {
-		t.Errorf("edit request %+v / approval %+v", edit, ap)
-	}
-	if ap.ExpiresAt == nil {
-		t.Error("tool approval has no expiry")
-	}
-	h.eventually("the approval notification", func() bool { return len(h.notes.kind("approval")) == 1 })
-	if notes := h.notes.kind("approval"); notes[0].URL != uiBase+"/inbox/approval/"+ap.ID {
-		t.Errorf("notifications: %+v", notes)
-	}
-	if _, err := os.Stat(h.stateFile("work", "note.txt")); err == nil {
-		t.Fatal("edit applied before approval")
-	}
-
-	if _, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: true, Principal: "me"}); err != nil {
-		t.Fatal(err)
-	}
-	h.waitRun(runID, store.FlowRunSucceeded)
-	if b, err := os.ReadFile(h.stateFile("work", "note.txt")); err != nil || string(b) != "edited\n" {
-		t.Errorf("allowed edit: %q %v", b, err)
-	}
-	got, _ := h.st.GetPermissionRequest(t.Context(), edit.ID)
-	if got.Decision != store.PermAllow || got.DecidedBy != store.DecidedByUser {
-		t.Errorf("edit request after decision: %+v", got)
-	}
-	if _, ok := inboxTitles(h.inboxItems())["done 1"]; !ok {
-		t.Error("downstream did not run")
-	}
-}
-
-// Deny rejects the call and the agent continues; deny + cancel ends the run on port denied.
-func TestScenario7aPerToolDeny(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		cancel bool
-	}{{"agent continues", false}, {"cancel the run", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t)
-			h.idleSensor()
-			h.prompt("go")
-			h.runtime("fake", perToolScript())
-			h.flow("f", approveFlow("per_tool", ""))
-			h.start()
-			runID := h.injectRun(`{"id":"2"}`)
-			ap := h.waitApproval(store.ApprovalToolCall)
-			if _, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: false, CancelRun: tc.cancel, Comment: "no thanks"}); err != nil {
-				t.Fatal(err)
-			}
-			h.waitRun(runID, store.FlowRunSucceeded)
-			if _, err := os.Stat(h.stateFile("work", "note.txt")); err == nil {
-				t.Error("denied edit was applied")
-			}
-			work := h.node(runID, "work")
-			run := h.agentRuns(work.ID)[0]
-			perm, _ := h.st.GetPermissionRequest(t.Context(), ap.PermissionRequestID)
-			titles := inboxTitles(h.inboxItems())
-			if tc.cancel {
-				if run.Status != store.AgentDenied || len(work.Ports) != 1 || work.Ports[0] != "denied" || perm.Decision != store.PermCancelled {
-					t.Errorf("cancelled: run %+v node %+v perm %+v", run, work, perm)
-				}
-				if _, ok := titles["refused 2"]; !ok {
-					t.Errorf("denied branch missing: %v", titles)
-				}
-				return
-			}
-			if run.Status != store.AgentSucceeded || perm.Decision != store.PermReject || perm.DecidedBy != store.DecidedByUser || !strings.Contains(perm.Reason, "no thanks") {
-				t.Errorf("rejected call: run %+v perm %+v", run, perm)
-			}
-			if _, ok := titles["done 2"]; !ok {
-				t.Errorf("out branch missing: %v", titles)
-			}
-			var said bool
-			evs, _ := h.st.ListAgentEvents(t.Context(), store.AgentEventFilter{AgentRunID: run.ID})
-			for _, ev := range evs {
-				said = said || strings.Contains(h.text(ev.Payload), "edit-was-rejected")
-			}
-			if !said {
-				t.Error("the agent did not continue after the rejection")
-			}
-		})
-	}
-}
-
-// Scenario 7a: an approval left undecided past approval_timeout fails the run
-// with approval_timeout, expires the approval, and nothing is applied.
-func TestScenario7aApprovalTimeout(t *testing.T) {
-	clock := agenttest.NewManualClock()
-	h := newHarness(t, withClock(clock))
-	h.idleSensor()
-	h.prompt("go")
-	h.runtime("fake", perToolScript())
-	h.flow("f", approveFlow("per_tool", "    timeout: 24h\n    approval_timeout: 1m\n"))
-	h.start()
-	runID := h.injectRun(`{"id":"3"}`)
-	ap := h.waitApproval(store.ApprovalToolCall)
-	if !clock.WaitTimers(2, 10*time.Second) {
-		t.Fatal("run and approval timers were not registered")
-	}
-	clock.Advance(2 * time.Minute)
-	h.waitRun(runID, store.FlowRunFailed)
-
-	n := h.node(runID, "work")
-	if n.Status != store.NodeFailed || n.Error != "approval_timeout" {
-		t.Errorf("node run: %+v", n)
-	}
-	got, _ := h.st.GetApproval(t.Context(), ap.ID)
-	perm, _ := h.st.GetPermissionRequest(t.Context(), ap.PermissionRequestID)
-	if got.Status != store.ApprovalExpired || perm.Decision != store.PermExpired || perm.DecidedBy != store.DecidedByTimeout {
-		t.Errorf("approval %+v permission %+v", got, perm)
-	}
-	if _, err := os.Stat(h.stateFile("work", "note.txt")); err == nil {
-		t.Error("edit applied after the timeout")
-	}
-	if _, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: true}); !errors.Is(err, core.ErrInvalidState) {
-		t.Errorf("deciding an expired approval: %v, want ErrInvalidState", err)
 	}
 }
 
@@ -429,7 +263,7 @@ nodes:
 		}
 	}
 	perms, _ := h.st.ListPermissionRequests(t.Context(), store.PermissionRequestFilter{AgentRunID: run.ID})
-	if len(perms.Items) != 1 || perms.Items[0].Decision != store.PermAllow {
+	if len(perms.Items) != 1 || perms.Items[0].Decision != store.PermReject || perms.Items[0].MatchedRule != "lockdown" {
 		t.Errorf("permission requests: %+v", perms.Items)
 	}
 }

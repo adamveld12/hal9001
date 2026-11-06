@@ -80,6 +80,7 @@ type Daemon struct {
 	mu       sync.Mutex
 	config   string
 	runtimes map[string]fakeagent.Script
+	kinds    map[string]string // runtime name -> `kind:` (the lockdown family)
 	demo     bool
 
 	addr   net.Addr
@@ -126,7 +127,7 @@ func skipShort(t *testing.T) {
 func newDaemon(t *testing.T, opts ...Option) *Daemon {
 	t.Helper()
 	skipShort(t)
-	d := &Daemon{t: t, Home: t.TempDir(), Bin: t.TempDir(), runtimes: map[string]fakeagent.Script{}}
+	d := &Daemon{t: t, Home: t.TempDir(), Bin: t.TempDir(), runtimes: map[string]fakeagent.Script{}, kinds: map[string]string{}}
 	for _, o := range opts {
 		o(d)
 	}
@@ -214,6 +215,14 @@ func (d *Daemon) Runtime(name string, s fakeagent.Script) {
 	d.runtimes[name] = s
 }
 
+// RuntimeKind declares the lockdown family (`kind:`) of a fake runtime, so the daemon locks it down like that real one.
+func (d *Daemon) RuntimeKind(name, kind string) {
+	d.t.Helper()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.kinds[name] = kind
+}
+
 // Write writes a home-relative file.
 func (d *Daemon) Write(rel, data string) {
 	d.t.Helper()
@@ -286,6 +295,9 @@ func (d *Daemon) writeConfig() {
 			d.t.Fatal(err)
 		}
 		fmt.Fprintf(&b, "  %s:\n    command: [%q, --script, %q]\n    modes: {ask: default, full: bypass}\n", n, fakeAgentBin, script)
+		if k := d.kinds[n]; k != "" {
+			fmt.Fprintf(&b, "    kind: %s\n", k)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(d.Home, "config.yaml"), []byte(b.String()), 0o600); err != nil {
 		d.t.Fatal(err)

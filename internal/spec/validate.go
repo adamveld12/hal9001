@@ -197,6 +197,7 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 		case rt.Command[0] == "":
 			c.errorf(CodeInvalidValue, p+".command[0]", "runtime %q: command[0] (the program) must not be empty", name)
 		}
+		c.enum(p+".kind", rt.Kind, []string{"claude", "codex", "omp"}, false)
 		validateEnvNames(c, p+".env", rt.Env)
 		validateEnvNames(c, p+".ask.env", rt.Ask.Env)
 		validateEnvNames(c, p+".full.env", rt.Full.Env)
@@ -484,7 +485,6 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 	c.positiveDuration(p+".approval_timeout", n.ApprovalTimeout, "approval_timeout")
 	if n.Allow != nil {
 		c.regexps(p+".allow.tools", n.Allow.Tools)
-		c.regexps(p+".allow.commands", n.Allow.Commands)
 	}
 	seen := map[string]bool{}
 	for i, m := range n.MCPServers {

@@ -48,7 +48,6 @@ export interface McpServer {
 
 export interface AllowRules {
   tools?: string[];
-  commands?: string[];
 }
 
 export interface CommandNode {

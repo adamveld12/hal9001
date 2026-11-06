@@ -244,6 +244,16 @@ func (e *Engine) track(id string, cancel context.CancelCauseFunc) (untrack func(
 	}
 }
 
+// cancelOne cancels one tracked unit (a node run, or "assist:<run id>").
+func (e *Engine) cancelOne(id string, cause error) {
+	e.ctl.Lock()
+	cancel := e.active[id]
+	e.ctl.Unlock()
+	if cancel != nil {
+		cancel(cause)
+	}
+}
+
 func (e *Engine) cancelActive(cause error) {
 	e.ctl.Lock()
 	fns := make([]context.CancelCauseFunc, 0, len(e.active))

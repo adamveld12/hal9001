@@ -18,11 +18,6 @@ import (
 	"hal9001/internal/tools"
 )
 
-// draftPollInterval is how often the draft file is compared with the stored draft while a turn runs. Agents
-// write the file when a tool call completes, which also triggers a check; polling covers agents that write
-// without reporting it.
-const draftPollInterval = 400 * time.Millisecond
-
 // session is the live state of one assist session. The row in the store is the source of truth for
 // everything the API serves; this struct adds the draft directory, the agent process and the running turn.
 type session struct {
@@ -35,7 +30,9 @@ type session struct {
 	ag  *agent.Session
 	// halTools is the hal MCP session of the agent process (token valid while ag lives); runID is the running turn's
 	// agent run id, "" between turns.
-	halTools  *tools.Session
+	halTools *tools.Session
+	// toolTest is the draft_test call that was just queued for approval, until approvalPending links it to its approval.
+	toolTest  *pendingTest
 	runID     atomic.Pointer[string]
 	turn      *turn
 	idle      *time.Timer
@@ -135,32 +132,12 @@ func (s *session) initDir() error {
 			return fmt.Errorf("assist: create prompts directory: %w", err)
 		}
 	}
-	if err := writeAtomic(s.draftPath(), []byte(s.row.DraftYAML)); err != nil {
-		return err
-	}
-	return s.writeInstructions()
-}
-
-// writeInstructions (re)writes AGENTS.md and CLAUDE.md with the current env variable names, and for a flow
-// refreshes the reference material (sensors, prompts, runtimes, samples).
-func (s *session) writeInstructions() error {
-	var text []byte
 	if s.isFlow() {
 		if err := s.m.writeReference(s.dir); err != nil {
 			return err
 		}
-		global, _ := s.m.envNames("")
-		text = []byte(flowInstructions(s.id, s.row.TargetID, global))
-	} else {
-		global, sensor := s.m.envNames(s.row.TargetID)
-		text = []byte(instructions(s.id, s.row.TargetID, global, sensor))
 	}
-	for _, name := range []string{instructionFile, instructionFile2} {
-		if err := writeAtomic(filepath.Join(s.dir, name), text); err != nil {
-			return err
-		}
-	}
-	return nil
+	return writeAtomic(s.draftPath(), []byte(s.row.DraftYAML))
 }
 
 // writeAtomic replaces path in one step, so a reader never sees half a file.
@@ -209,45 +186,11 @@ func (s *session) setDraftLocked(yaml, by string) error {
 	return s.saveLocked()
 }
 
-// syncFromDiskLocked adopts the draft file when the agent changed it. A missing file is restored from the
-// stored draft. s.mu must be held.
-func (s *session) syncFromDiskLocked() error {
-	b, err := os.ReadFile(s.draftPath())
-	if os.IsNotExist(err) {
-		return writeAtomic(s.draftPath(), []byte(s.row.DraftYAML))
-	}
-	if err != nil {
-		return fmt.Errorf("assist: read the draft: %w", err)
-	}
-	if spec.Hash(b) == s.row.DraftHash && (!s.isFlow() || !s.m.promptsChanged(s.dir, s.row.DraftPrompts)) {
-		return nil
-	}
-	if len(b) > maxDraftBytes {
-		b = b[:maxDraftBytes] // an agent that wrote far more than a sensor: keep what fits
-	}
-	s.applyDraft(string(b), store.DraftByAgent)
-	return s.saveLocked()
-}
-
-func (s *session) syncFromDisk() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	if err := s.syncFromDiskLocked(); err != nil {
-		s.m.log.Warn("assist: sync draft", "session", s.id, "err", err)
-	}
-}
-
 // updateDraft is the editor's PUT: the agent's unsynced edits are adopted first, so the hash check sees them.
 func (s *session) updateDraft(yaml, expected string) (*store.AssistSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usableLocked(); err != nil {
-		return nil, err
-	}
-	if err := s.syncFromDiskLocked(); err != nil {
 		return nil, err
 	}
 	if expected != "" && expected != s.row.DraftHash {
@@ -284,10 +227,7 @@ func (s *session) adopt(id string) error {
 	} else {
 		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id)
 	}
-	if err := s.saveLocked(); err != nil {
-		return err
-	}
-	return s.writeInstructions()
+	return s.saveLocked()
 }
 
 func (s *session) usableLocked() error {
@@ -306,9 +246,6 @@ func (s *session) send(text string, yaml *string) (*store.AssistSession, error) 
 	}
 	if s.turn != nil {
 		return nil, fmt.Errorf("%w: a turn is already running in this session", core.ErrInvalidState)
-	}
-	if err := s.syncFromDiskLocked(); err != nil {
-		return nil, err
 	}
 	if yaml != nil && *yaml != s.row.DraftYAML {
 		if err := s.setDraftLocked(*yaml, store.DraftByUser); err != nil {
@@ -383,7 +320,7 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 		Broker:        s.m.host.Broker(),
 		Clock:         s.m.host.Clock(),
 		Log:           s.m.log,
-		Environ:       s.m.agentEnv(s.id),
+		Environ:       s.m.agentEnv(),
 		ClientVersion: "hal9001",
 	}
 	ag, err := ex.NewSession(agent.SessionRequest{
@@ -402,27 +339,7 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 
 // runTurn drives one agent turn and records its outcome.
 func (s *session) runTurn(ctx context.Context, t *turn, text string) {
-	stopPoll := make(chan struct{})
-	var polled sync.WaitGroup
-	polled.Add(1)
-	go func() {
-		defer polled.Done()
-		tick := time.NewTicker(draftPollInterval)
-		defer tick.Stop()
-		for {
-			select {
-			case <-stopPoll:
-				return
-			case <-tick.C:
-				s.syncFromDisk()
-			}
-		}
-	}()
-
 	rec, perr := s.prompt(ctx, t, text)
-
-	close(stopPoll)
-	polled.Wait()
 	s.finishTurn(t, rec, perr)
 }
 
@@ -430,10 +347,10 @@ func (s *session) runTurn(ctx context.Context, t *turn, text string) {
 func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRecord, error) {
 	s.mu.Lock()
 	ag, err := s.agentSessionLocked()
-	if err == nil {
-		err = s.writeInstructions()
+	if err == nil && s.isFlow() {
+		err = s.m.writeReference(s.dir) // samples and saved prompts change between turns
 	}
-	row := s.row
+	row, ht := s.row, s.halTools
 	s.mu.Unlock()
 	if err != nil {
 		return agent.RunRecord{}, err
@@ -448,6 +365,9 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 		global, _ = s.m.envNames("")
 		head = flowPreamble(row.TargetID, global)
 	}
+	head = tools.Preamble(tools.PreambleData{
+		Info: tools.RunInfo{AgentRunID: t.runID, AssistSessionID: s.id}, Now: s.m.host.Clock().Now(), Tools: ht.Tools(),
+	}) + head
 	// The turn's own user message is the last one; the recap covers what came before it.
 	var before []store.AssistMessage
 	if n := len(msgs); n > 0 {
@@ -458,21 +378,21 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 		Prompt: head + text,
 		FallbackPrompt: head + "Your previous agent session could not be restored, so this is a new one. " +
 			"Read the current " + draftFileOf(row.TargetKind) + " first. The conversation so far:\n" + recap(before) + "\nThe user now says:\n\n" + text,
-		Allow: s.allowRules(),
 	})
 }
 
 // preamble prefixes every prompt: it names the draft and repeats what changes between turns.
 func preamble(targetID string, global, sensor []string) string {
 	var b strings.Builder
-	b.WriteString("[hal9001 sensor assistant] The draft is `" + SensorDraftFile + "` in the working directory: edit only that file. The sensor format, the output and key rules and how to test are in AGENTS.md.\n")
+	b.WriteString("[hal9001 sensor assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
+		"Call draft_read with path `instructions` first: it holds the sensor format, the output and key rules and how to test.\n")
 	if targetID != "" {
 		b.WriteString("You are editing the existing sensor `" + targetID + "`; keep its id.\n")
 	} else {
 		b.WriteString("You are creating a new sensor.\n")
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), sensor...)) + ".\n")
-	b.WriteString("Run `hal9001 assist test` to test the draft; the first test after you change the script asks the user to approve it.\n\n")
+	b.WriteString("Test the draft with draft_test; the first test after you change the script asks the user to approve it.\n\n")
 	return b.String()
 }
 
@@ -480,9 +400,6 @@ func preamble(targetID string, global, sensor []string) string {
 func (s *session) finishTurn(t *turn, rec agent.RunRecord, runErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.syncFromDiskLocked(); err != nil {
-		s.m.log.Warn("assist: final draft sync", "session", s.id, "err", err)
-	}
 	s.flushTextLocked(t)
 	s.pending = map[string]struct{}{}
 
@@ -663,31 +580,6 @@ func (s *session) markApprovedLocked(id scriptID) {
 	_ = s.saveLocked()
 }
 
-// vetoTest is the CommandVeto of `hal9001 assist test`: the test executes the draft's script with the user's
-// credentials, so it is allowed without asking only while that script is one the user has tested or approved. The
-// draft file is read now, so an edit the agent just made counts. A changed script is asked about: the veto's reason
-// goes to the permission request and the script and its diff to the conversation.
-func (s *session) vetoTest(req agent.ToolRequest, rule int) string {
-	if rule != 0 {
-		return ""
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.syncFromDiskLocked(); err != nil {
-		return "the draft could not be read, so its script cannot be compared with the approved one"
-	}
-	id, available, ok := s.draftScriptLocked()
-	if !ok {
-		return "" // a draft that does not validate is not run: the test answers 422
-	}
-	approved, base := s.scriptApprovedLocked(id, available)
-	if approved {
-		return ""
-	}
-	s.pendingTests[req.ToolCallID] = &pendingTest{id: id, base: base}
-	return "the draft's code changed since the user last tested or approved it, and a test runs it with real credentials"
-}
-
 // approvalPending records a gated tool call: the conversation shows it with its approval, and the session waits.
 func (s *session) approvalPending(runID, toolCallID, approvalID string) {
 	s.mu.Lock()
@@ -695,6 +587,16 @@ func (s *session) approvalPending(runID, toolCallID, approvalID string) {
 	t := s.turn
 	if t == nil || t.runID != runID {
 		return
+	}
+	if tool, ok := halToolOf(toolCallID); ok {
+		// A hal tool call: the agent's own tool call has another id, so find it by tool name.
+		if tm := s.unlinkedToolMsg(t, tool); tm != nil {
+			toolCallID = tm.call.ToolCallID
+		}
+		if tool == "draft_test" && s.toolTest != nil {
+			s.pendingTests[toolCallID] = s.toolTest
+			s.toolTest = nil
+		}
 	}
 	if pt := s.pendingTests[toolCallID]; pt != nil {
 		s.testApprovals[approvalID] = pt
@@ -792,4 +694,29 @@ func (s *session) shutdown() {
 		ag.Close()
 		ht.Close()
 	}
+}
+
+// halToolOf parses the tool call id hal gives its own tool calls ("hal:<tool>:<id>").
+func halToolOf(toolCallID string) (string, bool) {
+	rest, ok := strings.CutPrefix(toolCallID, "hal:")
+	if !ok {
+		return "", false
+	}
+	tool, _, _ := strings.Cut(rest, ":")
+	return tool, tool != ""
+}
+
+// unlinkedToolMsg is the newest unfinished tool message of the turn for hal tool `tool` that has no approval yet
+// (runtimes title an MCP tool call mcp__hal__<tool> or similar). s.mu must be held.
+func (s *session) unlinkedToolMsg(t *turn, tool string) *toolMsg {
+	var found *toolMsg
+	for _, tm := range t.tools {
+		if tm.msg.ApprovalID != "" || tm.call.Status == "completed" || tm.call.Status == "failed" || !strings.HasSuffix(tm.call.Title, tool) {
+			continue
+		}
+		if found == nil || tm.msg.CreatedAt.After(found.msg.CreatedAt) {
+			found = tm
+		}
+	}
+	return found
 }

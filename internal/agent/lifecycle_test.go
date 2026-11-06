@@ -53,43 +53,6 @@ func TestTimeoutCancelsAndKillsProcessGroup(t *testing.T) {
 	waitFor(t, "child process to die", func() bool { return !pidAlive(childPID) })
 }
 
-// An agent that honours session/cancel answers stopReason cancelled; a pending
-// per-tool approval is answered `cancelled` and its wait released.
-func TestTimeoutAnswersPendingApprovalCancelled(t *testing.T) {
-	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{
-		editStep("e1", "a.txt", "a"),
-		msg("must not be reached"),
-	}}}})
-	req := e.req(agent.ModeApprove, agent.ApprovePerTool)
-	req.Timeout = 10 * time.Minute
-	ch, _ := e.start(req)
-	if _, ok := e.broker.Next(10 * time.Second); !ok {
-		t.Fatal("approval not queued")
-	}
-	if !e.clock.WaitTimers(2, 5*time.Second) {
-		t.Fatal("timers not registered")
-	}
-	e.clock.Advance(11 * time.Minute) // fires the run timeout, not the 1h approval timeout
-	rec := e.wait(ch)
-
-	if rec.Status != agent.StatusTimeout {
-		t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
-	}
-	p := e.perm(rec, "e1")
-	if p.Decision != agent.DecisionCancelled || p.DecidedBy != agent.DecidedByPolicy {
-		t.Errorf("pending request: %+v", p)
-	}
-	if len(e.broker.Expired()) != 1 {
-		t.Error("the broker's wait was not released")
-	}
-	if _, ok := e.file("a.txt"); ok {
-		t.Error("cancelled edit was applied")
-	}
-	if strings.Contains(rec.FullMessage, "must not be reached") {
-		t.Error("agent continued after cancel")
-	}
-}
-
 func TestKillSwitchCauseMapsToKilledAndInterrupted(t *testing.T) {
 	for _, tc := range []struct {
 		cause  error
@@ -400,63 +363,6 @@ func TestStructuredNoteFromFinalMessage(t *testing.T) {
 	})
 }
 
-// omp asks for non-execute tools through elicitation/create: the same policy
-// and approval queue apply, and it is advertised only when configured.
-func TestElicitationPermissions(t *testing.T) {
-	script := func() fakeagent.Script {
-		return fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{
-			{Op: fakeagent.OpToolCall, ID: "w1", Kind: "edit", Title: "Write note.txt", RawInput: map[string]any{"path": "note.txt", "content": "probe"}},
-			{Op: fakeagent.OpPermission, ID: "w1", Kind: "edit", Title: "Write note.txt", NoToolCall: true, Via: "elicitation", Name: "write", Text: "note.txt",
-				OnAllow: []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "note.txt", Data: "probe"}}},
-			msg("done"),
-		}}}}
-	}
-
-	t.Run("gated: queued, allowed, applied", func(t *testing.T) {
-		e := newEnv(t, script())
-		e.cfg.Elicitation = true
-		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		a, ok := e.broker.Next(10 * time.Second)
-		if !ok {
-			t.Fatal("elicitation was not queued for approval")
-		}
-		if a.ToolKind != "edit" || a.ToolCallID != "w1" || !strings.Contains(a.Title, "note.txt") {
-			t.Errorf("approval = %+v", a)
-		}
-		e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictAllow})
-		rec := e.wait(ch)
-		if got, _ := e.file("note.txt"); got != "probe" || rec.Status != agent.StatusSucceeded {
-			t.Errorf("file=%q status=%s err=%q", got, rec.Status, rec.Error)
-		}
-		if p := e.perm(rec, "w1"); p.Decision != agent.DecisionAllow || p.DecidedBy != agent.DecidedByUser {
-			t.Errorf("permission: %+v", p)
-		}
-	})
-
-	t.Run("readonly: declined by policy", func(t *testing.T) {
-		e := newEnv(t, script())
-		e.cfg.Elicitation = true
-		rec := e.run(e.req(agent.ModeReadonly, ""))
-		if _, ok := e.file("note.txt"); ok {
-			t.Error("read-only agent wrote a file through elicitation")
-		}
-		if p := e.perm(rec, "w1"); p.Decision != agent.DecisionReject || p.MatchedRule != "policy:readonly" {
-			t.Errorf("permission: %+v", p)
-		}
-	})
-
-	t.Run("not advertised: the agent refuses by itself", func(t *testing.T) {
-		e := newEnv(t, script())
-		rec := e.run(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		if _, ok := e.file("note.txt"); ok {
-			t.Error("file written although elicitation was not advertised")
-		}
-		if len(e.rec.Permissions(rec.ID)) != 0 {
-			t.Error("no permission request should reach the harness")
-		}
-	})
-}
-
 func TestInvalidRequestsAreRejectedBeforeSpawning(t *testing.T) {
 	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{msg("ok")}}}})
 	good := e.req(agent.ModeAuto, "")
@@ -467,7 +373,6 @@ func TestInvalidRequestsAreRejectedBeforeSpawning(t *testing.T) {
 		"no cwd":       func(r *agent.RunRequest) { r.Cwd = "" },
 		"missing cwd":  func(r *agent.RunRequest) { r.Cwd = filepath.Join(r.Cwd, "nope") },
 		"empty prompt": func(r *agent.RunRequest) { r.Prompt = " " },
-		"bad allow re": func(r *agent.RunRequest) { r.Allow.Commands = []string{"("} },
 		"bad tools re": func(r *agent.RunRequest) { r.Allow.Tools = []string{"[a"} },
 	} {
 		req := good
@@ -501,23 +406,6 @@ func TestRejectThatEndsTheTurnIsClassified(t *testing.T) {
 		return turn(n, step, msg("never reached"))
 	}
 
-	t.Run("user deny", func(t *testing.T) {
-		e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{cancelling(0)}})
-		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		a, ok := e.broker.Next(10 * time.Second)
-		if !ok {
-			t.Fatal("approval not queued")
-		}
-		e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictDeny})
-		rec := e.wait(ch)
-		if rec.Status != agent.StatusDenied || rec.FailureReason != agent.ReasonDenied {
-			t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
-		}
-		if n := len(e.callsOf("session/prompt")); n != 1 {
-			t.Errorf("a user's deny was followed by %d prompts, want just the original", n)
-		}
-	})
-
 	t.Run("policy rejection is continued in the same session", func(t *testing.T) {
 		e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{cancelling(0), turn(1, msg("plan: create a.txt"))}})
 		rec := e.run(e.req(agent.ModeReadonly, ""))
@@ -549,38 +437,6 @@ func TestRejectThatEndsTheTurnIsClassified(t *testing.T) {
 			t.Errorf("prompts = %d, want the original plus 2 follow-ups", n)
 		}
 	})
-}
-
-// Agents that offer persistent allow options (codex execpolicy amendment,
-// claude allow_always) must only ever get a one-shot allow.
-func TestAllowNeverSelectsPersistentOption(t *testing.T) {
-	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{
-		{Op: fakeagent.OpPermission, ID: "x1", Kind: "execute", Title: "touch f", RawInput: map[string]any{"command": "touch f"},
-			Options: []fakeagent.Option{
-				{ID: "amend", Kind: "allow_always"},
-				{ID: "once", Kind: "allow_once"},
-				{ID: "cancel", Kind: "reject_once"},
-			},
-			OnAllow: []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "f", Data: "x"}}},
-		{Op: fakeagent.OpPermission, ID: "x2", Kind: "execute", Title: "touch g", RawInput: map[string]any{"command": "touch g"},
-			Options: []fakeagent.Option{{ID: "amend", Kind: "allow_always"}, {ID: "cancel", Kind: "reject_once"}},
-			OnAllow: []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "g", Data: "x"}}},
-		msg("done"),
-	}}}})
-	rec := e.run(e.req(agent.ModeAuto, ""))
-	if _, ok := e.file("f"); !ok {
-		t.Error("one-shot allow was not chosen")
-	}
-	if _, ok := e.file("g"); ok {
-		t.Error("persistent allow option was chosen when no one-shot existed")
-	}
-	if p := e.perm(rec, "x2"); p.Decision != agent.DecisionCancelled || !strings.Contains(p.Reason, "no allow option") {
-		t.Errorf("x2: %+v", p)
-	}
-	outs := e.callsOf("permission_outcome")
-	if len(outs) < 1 || outs[0]["option_id"] != "once" {
-		t.Errorf("outcomes = %v", outs)
-	}
 }
 
 // An agent that dies before the handshake says why on stderr; the run error

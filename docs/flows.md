@@ -439,10 +439,9 @@ opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|ar
   model: sonnet            # optional; set through the agent's `model` config option
   cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
   timeout: 20m             # default 30m
-  approval_timeout: 30m    # per_tool only; default config.yaml approval_timeout (1h)
+  approval_timeout: 30m    # how long a call that needs approval waits; default config.yaml approval_timeout (1h)
   allow:
-    tools: ['^mcp__linear__']
-    commands: ['^gh (pr|issue) (view|diff|list)\b', '^git (log|diff|show)\b']
+    tools: ['^mcp__linear__']   # tools of the node's mcp_servers the agent may call (hal's own are always allowed)
   mcp_servers:
     - {name: docs, type: http, url: "https://example.com/mcp", headers: {Authorization: "Bearer ..."}}
     - {name: local, command: my-mcp, args: [--stdio], env: {TOKEN: abc}}
@@ -460,36 +459,33 @@ with a context block (ids, time, trigger, node input, available tools). See `doc
 
 ### Modes
 
+Agents have no tools of their own (see [runtimes.md](runtimes.md#lockdown)): they act through hal's MCP tools, and hal
+decides each call inside its server. The modes differ in what a write may do.
+
 | Mode | Behavior | Output |
 |---|---|---|
-| `readonly` | Read-only policy. Produces a structured note. | Inbox item and notification; port `out`. |
-| `auto` | The agent's most permissive mode; every permission request is allowed (and recorded). | Port `out`; an inbox item only if the prompt has `output: note`. |
-| `approve` + `proposal` | Phase 1 runs read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) under the auto policy with "Approved. Execute the plan." plus your comment. Denying routes to port `denied`. | Port `out` after phase 2. |
-| `approve` + `per_tool` | One session under a gated policy: read-class tool calls are allowed automatically, every other permission request becomes an Approval showing the tool and its input or diff. Allow continues the call; deny rejects it and the agent continues; deny with `--cancel-run` ends the run (`denied`). After `approval_timeout` the request is rejected and the run fails with `approval_timeout`. | Port `out`. |
+| `readonly` | Calls that would change something (for example a `gh_api` POST) fail without asking. Produces a structured note. | Inbox item and notification; port `out`. |
+| `auto` | Calls that need approval still ask: hal's approval rules are not bypassed by the mode. | Port `out`; an inbox item only if the prompt has `output: note`. |
+| `approve` + `proposal` | Phase 1 is read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) with "Approved. Execute the plan." plus your comment. Denying routes to port `denied`. | Port `out` after phase 2. |
+| `approve` + `per_tool` | One session; every call that needs approval becomes a tool-call Approval showing the tool and its arguments. Allow runs the call; deny returns a tool error and the agent continues. After `approval_timeout` the call fails with a tool error. | Port `out`. |
 
 A flow run waiting on an approval has status `awaiting_approval`; downstream nodes run after the agent finishes.
-Proposal approvals never expire and survive daemon restarts. Per-tool approvals die with the agent process: a restart
+Proposal approvals never expire and survive daemon restarts. Tool-call approvals die with the agent process: a restart
 marks them `expired` and the run `interrupted`. Decide with `hal9001 approvals approve|deny <id> [--comment ...]` or in
 the UI.
 
 ### Permission policy and `allow` rules
 
-| Policy | Allowed automatically | Everything else |
-|---|---|---|
-| read-only (`readonly`, proposal phase 1, dry-run) | ACP tool kinds `read`, `search`, `fetch`, `think`, plus `allow` matches | Rejected, with the reason recorded |
-| gated (`per_tool`) | Same as read-only | Sent to the approval queue |
-| auto | Everything | n/a |
+hal hands the agent its own MCP server (`hal`); everything else the agent asks permission for is rejected and recorded.
 
-`allow` extends the read-only set; each entry is a regular expression.
+| Request | Decision |
+|---|---|
+| A `hal` tool (`mcp__hal__...` and each runtime's spelling) | Allowed at the agent layer; hal approves inside its server (reads run, writes need approval, read-only runs refuse writes). |
+| A tool matching `allow.tools` | Allowed. Use it for the tools of MCP servers you declared in `mcp_servers`. |
+| Anything else (a built-in the lockdown missed, an undeclared MCP server) | Rejected, with the reason `lockdown`. |
 
-- `allow.commands` is matched against the command of `execute`-kind tool calls. A command that chains or redirects with
-  shell operators is **not** matched (so `gh pr view 1 && rm x` cannot ride on `^gh pr view`).
-- `allow.tools` is matched against the tool title or name of other requests. MCP tools (kind `other`) are rejected
-  unless listed here.
-
-The agent's own session must actually ask for permission for any of this to apply: tools an agent auto-approves from its
-own settings never reach hal9001. That is why the shipped runtimes isolate user settings; see
-[runtimes.md](runtimes.md).
+`allow.tools` entries are regular expressions matched against the tool title or name. There is no `allow.commands`: the
+agents have no shell.
 
 ### Working directory
 

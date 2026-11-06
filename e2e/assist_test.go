@@ -200,15 +200,28 @@ func ruleOf(p permJSON) string {
 	return *p.MatchedRule
 }
 
-// assistEdit is an agent edit of the draft file: an edit tool call whose target is inside the draft directory.
+// mcpStep is the agent calling a tool of hal's MCP server like a real runtime: it asks its own permission (hal's tools
+// are allowed at that layer), then the call runs inside hal, which approves, runs and records it. save is a file in the
+// agent's working directory that receives the result text when the call succeeded.
+func mcpStep(id, tool string, args any, save string) step {
+	return step{Op: fakeagent.OpMCPCall, ID: id, Tool: tool, Args: args, Path: save}
+}
+
+// assistEdit is the agent replacing the sensor draft (draft_write).
 func assistEdit(yaml string) step {
-	old := ""
-	return step{
-		Op: fakeagent.OpPermission, ID: "edit-draft", Kind: "edit", Title: "Edit sensor.yaml",
-		RawInput: map[string]any{"file_path": "sensor.yaml", "new_string": yaml},
-		Content:  []fakeagent.Content{{Type: "diff", Path: "sensor.yaml", OldText: &old, NewText: yaml}},
-		OnAllow:  []step{{Op: fakeagent.OpWriteFile, Path: "sensor.yaml", Data: yaml}},
+	return mcpStep("edit-draft", "draft_write", map[string]any{"content": yaml}, "")
+}
+
+// halPerms are the hal-side records of the run's tool calls (the agent layer's own requests are the others).
+func (d *Daemon) halPerms(runID, tool string) []permJSON {
+	d.t.Helper()
+	var out []permJSON
+	for _, p := range d.permissions(runID) {
+		if p.Title == "hal tool: "+tool {
+			out = append(out, p)
+		}
 	}
+	return out
 }
 
 // shellStep runs a shell command in the agent's working directory with the agent's own environment.
@@ -261,7 +274,7 @@ func (d *Daemon) assertNoSecret(sessionID string, secrets ...string) {
 
 // ---- tests ----
 
-// The agent edits sensor.yaml inside its draft directory: the edit is allowed without asking, the draft shows up in
+// The agent replaces the draft with draft_write: the call is allowed without asking, the draft shows up in
 // the session with the validator's diagnostics, the conversation records it, and the turn is an agent run linked to
 // the session.
 func TestAssistAgentEditsTheDraftOfANewSensor(t *testing.T) {
@@ -285,9 +298,8 @@ func TestAssistAgentEditsTheDraftOfANewSensor(t *testing.T) {
 		t.Fatalf("draft file: %v", err)
 	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-		b, err := os.ReadFile(filepath.Join(d.assistDir(s.ID), name))
-		if err != nil || !strings.Contains(string(b), "hal9001 assist test") || !strings.Contains(string(b), s.ID) {
-			t.Errorf("%s = %q, %v", name, b, err)
+		if fileExists(filepath.Join(d.assistDir(s.ID), name)) {
+			t.Errorf("%s was written: the agent has no file access, it reads the instructions with draft_read", name)
 		}
 	}
 
@@ -302,19 +314,19 @@ func TestAssistAgentEditsTheDraftOfANewSensor(t *testing.T) {
 		t.Errorf("draft id %v diagnostics %v", got.Draft.SensorID, got.Draft.Diagnostics)
 	}
 
-	// Conversation: user, assistant text, the tool call (updated in place, completed), assistant text.
+	// Conversation: user, assistant text, the tool call (updated in place, completed), the tool result, assistant text.
 	var roles []string
 	for _, m := range got.Messages {
 		roles = append(roles, m.Role)
 	}
-	if strings.Join(roles, ",") != "user,assistant,tool,assistant" {
+	if strings.Join(roles, ",") != "user,assistant,tool,assistant,assistant" { // the fake agent reports the tool result as a message
 		t.Fatalf("roles = %v, messages %+v", roles, got.Messages)
 	}
-	if tool := got.Messages[2]; tool.ToolCall == nil || tool.ToolCall.Kind != "edit" || tool.ToolCall.Status != "completed" || tool.ApprovalID != nil || tool.AgentRunID == nil {
+	if tool := got.Messages[2]; tool.ToolCall == nil || tool.ToolCall.Kind != "other" || tool.ToolCall.Status != "completed" || tool.ApprovalID != nil || tool.AgentRunID == nil {
 		t.Errorf("tool message = %+v %+v", tool, tool.ToolCall)
 	}
-	if got.Messages[0].text() != "make it emit two items" || got.Messages[1].text() != "I will write the sensor." || got.Messages[3].text() != "Done: it emits two items." {
-		t.Errorf("texts = %q %q %q", got.Messages[0].text(), got.Messages[1].text(), got.Messages[3].text())
+	if got.Messages[0].text() != "make it emit two items" || got.Messages[1].text() != "I will write the sensor." || got.Messages[4].text() != "Done: it emits two items." {
+		t.Errorf("texts = %q %q %q", got.Messages[0].text(), got.Messages[1].text(), got.Messages[4].text())
 	}
 
 	// Traceability: one agent run per turn, gated, linked to the session, edit allowed by the draft-directory rule.
@@ -327,8 +339,23 @@ func TestAssistAgentEditsTheDraftOfANewSensor(t *testing.T) {
 		t.Errorf("run = %+v", r)
 	}
 	perms := d.permissions(r.ID)
-	if len(perms) != 1 || decisionOf(perms[0]) != "allow" || !strings.HasPrefix(ruleOf(perms[0]), "allow.edit_under") {
+	if len(perms) != 2 || decisionOf(perms[0]) != "allow" || ruleOf(perms[0]) != "hal:mcp" || perms[1].Title != "hal tool: draft_write" || decisionOf(perms[1]) != "allow" || *perms[1].DecidedBy != "policy" {
 		t.Errorf("permissions = %+v", perms)
+	}
+	for _, want := range []string{"<hal_context>", "assist_session: " + s.ID, "- draft_write:", "- draft_test:", "[hal9001 sensor assistant]", "make it emit two items"} {
+		if !strings.Contains(r.RenderedPrompt, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, r.RenderedPrompt)
+		}
+	}
+	var hasHal bool
+	for _, c := range d.AgentCalls("fake") {
+		if c["method"] == "session/new" {
+			b, _ := json.Marshal(c["mcp_servers"])
+			hasHal = strings.Contains(string(b), `"name":"hal"`) && strings.Contains(string(b), "hal_mcp_")
+		}
+	}
+	if !hasHal {
+		t.Error("session/new carried no hal MCP server")
 	}
 	if n := len(d.pendingApprovals()); n != 0 {
 		t.Errorf("%d approvals pending", n)
@@ -346,7 +373,7 @@ func TestAssistAgentEditsTheDraftOfANewSensor(t *testing.T) {
 	}
 }
 
-// The agent runs `hal9001 assist test` (allowed without asking): the daemon runs the draft with the global env
+// The agent calls draft_test (asks first because it changed the script): the daemon runs the draft with the global env
 // overlaid by the target sensor's own values and returns the redacted result. The agent's environment holds no
 // secret, no API response shows one, the sensor file stays as it was until the user saves, and nothing is recorded.
 func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
@@ -362,8 +389,9 @@ func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
 		d.assistRuntime(false, turn{When: when("test it$"), Steps: []step{
 			assistEdit(draft),
 			shellStep("env > agent-env.txt"),
-			execPermission("t1", "hal9001 assist test", []step{shellStep("hal9001 assist test > test-result.json")}),
-			execPermission("t2", "hal9001 assist draft", []step{shellStep("hal9001 assist draft > draft.json")}),
+			mcpStep("t1", "draft_test", map[string]any{}, "test-result.json"),
+			mcpStep("t2", "draft_read", map[string]any{}, "draft.json"),
+			mcpStep("t3", "draft_read", map[string]any{"path": "instructions"}, "instructions.txt"),
 			say("Tested."),
 		}})
 	})
@@ -402,18 +430,13 @@ func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
 
 	// The test of the changed script was decided by the user, the draft print by policy.
 	run := d.assistRuns(s.ID)[0]
-	var exec []permJSON
-	for _, p := range d.permissions(run.ID) {
-		if p.ToolKind == "execute" {
-			exec = append(exec, p)
-		}
-	}
-	if len(exec) != 2 || decisionOf(exec[0]) != "allow" || *exec[0].DecidedBy != "user" || ruleOf(exec[0]) != "policy:gated" ||
-		decisionOf(exec[1]) != "allow" || *exec[1].DecidedBy != "policy" || !strings.HasPrefix(ruleOf(exec[1]), "allow.commands[1]") {
-		t.Errorf("execute permissions = %+v", exec)
+	test, read1 := d.halPerms(run.ID, "draft_test"), d.halPerms(run.ID, "draft_read")
+	if len(test) != 1 || decisionOf(test[0]) != "allow" || *test[0].DecidedBy != "user" || ruleOf(test[0]) != "hal:approval" ||
+		len(read1) != 2 || decisionOf(read1[0]) != "allow" || *read1[0].DecidedBy != "policy" {
+		t.Errorf("hal permissions: test %+v draft_read %+v", test, read1)
 	}
 
-	// What the agent's CLI printed: the real result, redacted.
+	// What the agent's tool calls returned: the real result, redacted.
 	read := func(name string) []byte {
 		b, err := os.ReadFile(filepath.Join(d.assistDir(s.ID), name))
 		if err != nil {
@@ -458,27 +481,22 @@ func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
 		t.Errorf("assist draft printed %s (%v)", read("draft.json"), err)
 	}
 
-	// The agent's own environment: no secret value, but the daemon URL and a PATH that finds hal9001.
+	// The agent's own environment: no secret value, and no way back to the daemon's CLI.
 	agentEnv := string(read("agent-env.txt"))
 	for _, secret := range []string{secretSensorValue, secretGlobalValue, "other-secret-value-6666"} {
 		if strings.Contains(agentEnv, secret) {
 			t.Errorf("the agent environment holds a secret value")
 		}
 	}
-	for _, want := range []string{"HAL9001_URL=" + d.URL(), "HAL9001_ASSIST_SESSION=" + s.ID} {
-		if !strings.Contains(agentEnv, want) {
-			t.Errorf("agent environment lacks %q:\n%s", want, agentEnv)
-		}
-	}
-	for _, name := range []string{"SENSOR_TOKEN=", "GLOBAL_TOKEN=", "OTHER_TOKEN="} {
+	for _, name := range []string{"SENSOR_TOKEN=", "GLOBAL_TOKEN=", "OTHER_TOKEN=", "HAL9001_ASSIST_SESSION="} {
 		if strings.Contains(agentEnv, name) {
 			t.Errorf("agent environment has %s", name)
 		}
 	}
 	// The instructions name the variables, never the values.
-	instr := string(read("AGENTS.md"))
-	if !strings.Contains(instr, "`GLOBAL_TOKEN`") || !strings.Contains(instr, "`SENSOR_TOKEN`") || strings.Contains(instr, "OTHER_TOKEN") {
-		t.Errorf("AGENTS.md lists the wrong variable names:\n%s", instr)
+	instr := string(read("instructions.txt"))
+	if !strings.Contains(instr, "`GLOBAL_TOKEN`") || !strings.Contains(instr, "`SENSOR_TOKEN`") || strings.Contains(instr, "OTHER_TOKEN") || !strings.Contains(instr, "draft_test") {
+		t.Errorf("the instructions list the wrong variable names:\n%s", instr)
 	}
 
 	// The endpoint behind the CLI: same result, nothing recorded.
@@ -568,28 +586,31 @@ func TestAssistTestReportsKeyErrorsExitCodesAndInvalidDrafts(t *testing.T) {
 	}
 }
 
-// Anything outside the draft directory and the helper commands goes to the approval queue, inline in the session:
-// the tool call carries its approval, the session waits, a denied call is rejected and the agent continues, an
-// allowed one runs.
+// Everything the agent asks permission for besides hal's tools is rejected by the policy; a hal tool that needs the
+// user (a test of a changed script) goes to the approval queue inline in the session: the tool call carries its approval,
+// the session waits, a denied call is a tool error and the agent continues, an allowed one runs.
 func TestAssistGatedCallsNeedApprovalAndDenyRejects(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
 		d.assistRuntime(false, turn{When: when("risky$"), Steps: []step{
 			say("Trying things."),
 			editPermission("o1", "../outside.txt", "x\n", say("The edit outside was refused.")),
 			execPermission("c1", "curl http://127.0.0.1:1/ping", []step{{Op: fakeagent.OpWriteFile, Path: "curl-ran.txt", Data: "yes"}}, say("curl refused")),
+			assistEdit(scriptYAML(1, "5m")),
+			mcpStep("t1", "draft_test", map[string]any{}, "r1.json"),
+			mcpStep("t2", "draft_test", map[string]any{}, "r2.json"),
 			say("All done."),
 		}})
 	})
 	s := d.assistCreate("")
 	d.assistSend(s.ID, "risky", nil)
 
-	// 1. the edit outside the draft directory
+	// 1. the first test of the new script
 	ap := d.waitPendingApproval()
 	if ap["type"] != "tool_call" || ap["assist_session_id"] != s.ID || ap["flow_id"] != nil {
 		t.Fatalf("approval = %v", ap)
 	}
 	pr := ap["permission_request"].(map[string]any)
-	if pr["tool_kind"] != "edit" || pr["matched_rule"] != "policy:gated" {
+	if pr["tool_kind"] != "other" || pr["title"] != "hal tool: draft_test" || pr["matched_rule"] != "hal:approval" {
 		t.Errorf("permission request = %v", pr)
 	}
 	waiting := d.assistWait(s.ID, "awaiting_approval")
@@ -599,14 +620,14 @@ func TestAssistGatedCallsNeedApprovalAndDenyRejects(t *testing.T) {
 			linked = &waiting.Messages[i]
 		}
 	}
-	if linked == nil || *linked.ApprovalID != ap["id"] || linked.Role != "tool" || linked.ToolCall.Kind != "edit" {
+	if linked == nil || *linked.ApprovalID != ap["id"] || linked.Role != "tool" || !strings.HasSuffix(linked.ToolCall.Title, "draft_test") {
 		t.Fatalf("no tool message carries approval %v: %+v", ap["id"], waiting.Messages)
 	}
-	d.Post("/api/approvals/"+ap["id"].(string)+"/deny", map[string]any{"comment": "not there"}).Want(200)
+	d.Post("/api/approvals/"+ap["id"].(string)+"/deny", map[string]any{"comment": "not yet"}).Want(200)
 
-	// 2. the shell command
+	// 2. the same test again: asked again, allowed this time
 	ap2 := d.waitPendingApproval()
-	if ap2["id"] == ap["id"] || ap2["permission_request"].(map[string]any)["tool_kind"] != "execute" {
+	if ap2["id"] == ap["id"] {
 		t.Fatalf("second approval = %v", ap2)
 	}
 	d.assistWait(s.ID, "awaiting_approval")
@@ -616,15 +637,33 @@ func TestAssistGatedCallsNeedApprovalAndDenyRejects(t *testing.T) {
 	if got.Status != "idle" {
 		t.Fatalf("status %q error %v", got.Status, got.Error)
 	}
-	if _, err := os.Stat(d.Path("data/assist/outside.txt")); err == nil {
-		t.Error("the denied edit outside the draft directory was written")
+	for _, f := range []string{"../outside.txt", "curl-ran.txt", "r1.json"} {
+		if fileExists(filepath.Join(d.assistDir(s.ID), f)) {
+			t.Errorf("%s exists: a rejected or denied call ran", f)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(d.assistDir(s.ID), "curl-ran.txt")); err != nil {
-		t.Errorf("the approved command did not run: %v", err)
+	if !fileExists(filepath.Join(d.assistDir(s.ID), "r2.json")) {
+		t.Error("the approved test did not run")
 	}
-	perms := d.permissions(d.assistRuns(s.ID)[0].ID)
-	if len(perms) != 2 || decisionOf(perms[0]) != "reject" || *perms[0].DecidedBy != "user" || decisionOf(perms[1]) != "allow" || *perms[1].DecidedBy != "user" {
-		t.Errorf("permissions = %+v", perms)
+	run := d.assistRuns(s.ID)[0]
+	agentLayer := map[string]permJSON{}
+	for _, p := range d.permissions(run.ID) {
+		if !strings.HasPrefix(p.Title, "hal tool: ") {
+			agentLayer[p.Title] = p
+		}
+	}
+	if p := agentLayer["Write ../outside.txt"]; decisionOf(p) != "reject" || ruleOf(p) != "lockdown" {
+		t.Errorf("native edit = %+v", p)
+	}
+	if p := agentLayer["curl http://127.0.0.1:1/ping"]; decisionOf(p) != "reject" || ruleOf(p) != "lockdown" {
+		t.Errorf("native command = %+v", p)
+	}
+	tests := d.halPerms(run.ID, "draft_test")
+	if len(tests) != 2 || decisionOf(tests[0]) != "reject" || *tests[0].DecidedBy != "user" || decisionOf(tests[1]) != "allow" || *tests[1].DecidedBy != "user" {
+		t.Errorf("draft_test records = %+v", tests)
+	}
+	if tr := d.Transcript(run.ID); !strings.Contains(tr, "mcp[t1] is_error=true") || !strings.Contains(tr, "denied by the user: not yet") || !strings.Contains(tr, "mcp[t2] is_error=false") {
+		t.Errorf("transcript lacks the tool error of the denial and the result of the allowed test:\n%s", tr)
 	}
 	last := got.Messages[len(got.Messages)-1]
 	if last.text() != "All done." {
@@ -636,7 +675,7 @@ func TestAssistGatedCallsNeedApprovalAndDenyRejects(t *testing.T) {
 func TestAssistDenyAndStopEndsTheTurn(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
 		d.assistRuntime(false,
-			turn{When: when("risky$"), Steps: []step{execPermission("c1", "curl http://127.0.0.1:1/", nil), say("unreachable")}},
+			turn{When: when("risky$"), Steps: []step{assistEdit(scriptYAML(1, "5m")), mcpStep("c1", "draft_test", map[string]any{}, ""), say("unreachable")}},
 			turn{When: when("calm$"), Steps: []step{say("fine")}},
 		)
 	})
@@ -764,7 +803,7 @@ func TestAssistResumeFallsBackToANewSessionWithARecap(t *testing.T) {
 // draft before the agent looks at the file.
 func TestAssistUserEditsReachTheAgent(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
-		d.assistRuntime(false, turn{Steps: []step{shellStep("cp sensor.yaml seen.yaml"), say("read it")}})
+		d.assistRuntime(false, turn{Steps: []step{mcpStep("r", "draft_read", map[string]any{}, "seen.json"), say("read it")}})
 	})
 	s := d.assistCreate("")
 
@@ -793,8 +832,11 @@ func TestAssistUserEditsReachTheAgent(t *testing.T) {
 	if got.Status != "idle" {
 		t.Fatalf("status %q error %v", got.Status, got.Error)
 	}
-	if seen, err := os.ReadFile(filepath.Join(d.assistDir(s.ID), "seen.yaml")); err != nil || string(seen) != newer {
-		t.Errorf("the agent saw %q (%v), want the editor's content", seen, err)
+	var seen struct {
+		YAML string `json:"yaml"`
+	}
+	if b, err := os.ReadFile(filepath.Join(d.assistDir(s.ID), "seen.json")); err != nil || json.Unmarshal(b, &seen) != nil || seen.YAML != newer {
+		t.Errorf("the agent saw %q (%v), want the editor's content", b, err)
 	}
 	if got.Draft.YAML != newer || got.Draft.UpdatedBy != "user" {
 		t.Errorf("draft = %+v", got.Draft)
@@ -1006,10 +1048,8 @@ func scriptYAML(n int, interval string) string {
 	return fmt.Sprintf("id: probe\ninterval: %s\nlang: bash\nscript: |\n  echo '[{\"id\":%d}]'\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n", interval, n)
 }
 
-// agentTest is the agent running `hal9001 assist test`; the result lands in file (written only when it ran).
-func agentTest(id, file string) step {
-	return execPermission(id, "hal9001 assist test", []step{shellStep("hal9001 assist test > " + file)}, say("the test was refused"))
-}
+// agentTest is the agent calling draft_test; the result lands in file (written only when it ran).
+func agentTest(id, file string) step { return mcpStep(id, "draft_test", map[string]any{}, file) }
 
 // toolContents returns the content items of the tool message that carries the approval.
 func (d *Daemon) toolContents(sessionID, approvalID string) []map[string]any {
@@ -1053,7 +1093,7 @@ func TestAssistTestOfAChangedScriptNeedsApprovalOnce(t *testing.T) {
 	d.assistSend(s.ID, "first", nil)
 	ap := d.waitPendingApproval()
 	pr := ap["permission_request"].(map[string]any)
-	if ap["assist_session_id"] != s.ID || pr["tool_kind"] != "execute" || pr["matched_rule"] != "policy:gated" || !strings.Contains(fmt.Sprint(pr["reason"]), "changed since the user last tested or approved") {
+	if ap["assist_session_id"] != s.ID || pr["title"] != "hal tool: draft_test" || pr["matched_rule"] != "hal:approval" || !strings.Contains(fmt.Sprint(pr["reason"]), "changed since the user last tested or approved") {
 		t.Fatalf("approval = %v", ap)
 	}
 	d.assistWait(s.ID, "awaiting_approval")
@@ -1089,7 +1129,7 @@ func TestAssistTestOfAChangedScriptNeedsApprovalOnce(t *testing.T) {
 		t.Error("the test of the approved script did not run")
 	}
 	runs := d.assistRuns(s.ID)
-	if p := d.permissions(runs[1].ID); len(p) != 1 || decisionOf(p[0]) != "allow" || *p[0].DecidedBy != "policy" || !strings.HasPrefix(ruleOf(p[0]), "allow.commands[0]") {
+	if p := d.halPerms(runs[1].ID, "draft_test"); len(p) != 1 || decisionOf(p[0]) != "allow" || *p[0].DecidedBy != "policy" || ruleOf(p[0]) != "hal:builtin" {
 		t.Errorf("second test permission = %+v", p)
 	}
 
@@ -1155,8 +1195,8 @@ func TestAssistUserTestApprovesTheScriptAndTheDaemonEnforcesIt(t *testing.T) {
 	if got := d.assistTurn(s.ID, "run"); got.Status != "idle" || !fileExists(filepath.Join(d.assistDir(s.ID), "r1.json")) {
 		t.Errorf("the agent's test of the user-tested script: status %q", got.Status)
 	}
-	if p := d.permissions(d.assistRuns(s.ID)[1].ID); len(p) != 1 || *p[0].DecidedBy != "policy" {
-		t.Errorf("permissions = %+v, want the test allowed by policy", p)
+	if p := d.halPerms(d.assistRuns(s.ID)[1].ID, "draft_test"); len(p) != 1 || *p[0].DecidedBy != "policy" {
+		t.Errorf("permissions = %+v, want the test allowed without asking", p)
 	}
 
 	// The script mentions $LATER_KEY. Once that credential exists, a test would use it: what the user approved no
@@ -1210,7 +1250,7 @@ func TestAssistExistingSensorsSavedScriptNeedsNoApproval(t *testing.T) {
 func TestAssistSessionOfANewSensorBecomesTheSensorsSessionOnceItIsCreated(t *testing.T) {
 	const other = "id: elsewhere\ninterval: 1h\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\n"
 	d := newAssistDaemon(t, func(d *Daemon) {
-		d.assistRuntime(false, turn{When: when("write it$"), Steps: []step{assistEdit(emitTwoYAML), say("written")}})
+		d.assistRuntime(false, turn{When: when("write it$"), Steps: []step{assistEdit(emitTwoYAML), mcpStep("i", "draft_read", map[string]any{"path": "instructions"}, "instructions.txt"), say("written")}})
 	})
 	authored := d.assistCreate("")
 	unrelated := d.assistCreate("")
@@ -1235,8 +1275,8 @@ func TestAssistSessionOfANewSensorBecomesTheSensorsSessionOnceItIsCreated(t *tes
 
 	// The sensor's own env keys now apply to the session.
 	d.Put("/api/sensors/emit-two/env/EMIT_TOKEN", map[string]any{"value": secretSensorValue}).Want(204)
-	d.assistTurn(authored.ID, "write it") // rewrites the instructions
-	instr := d.Read("data/assist/" + authored.ID + "/AGENTS.md")
+	d.assistTurn(authored.ID, "write it") // the agent reads fresh instructions
+	instr := d.Read("data/assist/" + authored.ID + "/instructions.txt")
 	if !strings.Contains(instr, "`EMIT_TOKEN`") {
 		t.Errorf("the instructions do not list the sensor's env key:\n%s", instr)
 	}
