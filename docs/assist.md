@@ -45,6 +45,9 @@ flowchart LR
    overwrite an edit the agent made meanwhile). `POST .../test` runs the draft yourself and approves its script for the agent's later tests. `POST .../cancel` cancels the
    running turn. `DELETE /api/assist/sessions/{id}` ends the session.
 6. Save the sensor with `PUT /api/sensors/{id}` (or create it with `POST /api/sensors`) using the draft's YAML.
+   Creating a sensor whose id is the draft's id of a session on a new sensor makes that session a session on the sensor
+   (`target.id` is set): the agent is told the sensor's own env variable names and tests with their values from then on, and
+   the session is offered by "Ask AI" on that sensor.
 
 Session status: `idle`, `running`, `awaiting_approval` (a tool call is waiting for you), `failed` (the last turn failed,
 `error` says why; the session still takes a message), `closed`.

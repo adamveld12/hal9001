@@ -225,6 +225,22 @@ func (s *session) updateDraft(yaml, expected string) (*store.AssistSession, erro
 	return s.copyRowLocked(), nil
 }
 
+// adopt makes the session edit the existing sensor sensorID instead of a new one. The draft is validated again
+// (an id that differs from the sensor is now flagged) and the instructions list the sensor's env keys.
+func (s *session) adopt(sensorID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.row.Status == store.AssistClosed || s.row.TargetID != "" || s.row.DraftSensorID != sensorID {
+		return nil
+	}
+	s.row.TargetID = sensorID
+	s.row.DraftSensorID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, sensorID)
+	if err := s.saveLocked(); err != nil {
+		return err
+	}
+	return s.writeInstructions()
+}
+
 func (s *session) usableLocked() error {
 	if s.closed || s.row.Status == store.AssistClosed {
 		return fmt.Errorf("%w: the session is closed", core.ErrInvalidState)

@@ -300,6 +300,32 @@ func (m *Manager) Close(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// SensorCreated makes the open sessions that were authoring a new sensor with this id sessions on it, so their
+// tests and instructions use the sensor's own env keys and its saved script.
+func (m *Manager) SensorCreated(ctx context.Context, sensorID string) error {
+	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{
+		TargetKind: store.AssistTargetSensor, ListOpts: store.ListOpts{Limit: 500},
+	})
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range page.Items {
+		if row.TargetID != "" || row.DraftSensorID != sensorID {
+			continue
+		}
+		s, err := m.session(ctx, row.ID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := s.adopt(sensorID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // ToolApprovalPending links a gated tool call to its approval and marks the session as waiting for it.
 func (m *Manager) ToolApprovalPending(runID, toolCallID, approvalID string) {
 	if s := m.sessionOfRun(runID); s != nil {

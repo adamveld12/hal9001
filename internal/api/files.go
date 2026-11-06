@@ -313,6 +313,12 @@ func (s *Server) createSensor(w http.ResponseWriter, r *http.Request) {
 	if !s.saveFile(w, r, spec.KindSensor, id, raw, "", ds) {
 		return
 	}
+	if s.opts.Assist != nil {
+		// The file is saved either way; a failure here only leaves a session on the "new sensor" target.
+		if err := s.opts.Assist.SensorCreated(r.Context(), id); err != nil {
+			s.log().Error("api: attach assist sessions to the new sensor", "sensor", id, "err", err)
+		}
+	}
 	v, err := s.sensorDetail(r, id)
 	if err != nil {
 		s.writeError(w, r, err)
