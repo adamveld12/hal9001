@@ -67,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
         icon: "command",
         key: "m",
       },
+      { to: "/sandboxes", label: "Sandboxes", icon: "box", key: "b" },
       { to: "/settings/auth", label: "Auth", icon: "lock", key: "u" },
     ],
   },
@@ -286,7 +287,7 @@ export function AppShell() {
             <span>
               <Kbd>g</Kbd> then <Kbd>i</Kbd> <Kbd>a</Kbd> <Kbd>s</Kbd>{" "}
               <Kbd>f</Kbd> <Kbd>p</Kbd> <Kbd>t</Kbd> <Kbd>r</Kbd> <Kbd>,</Kbd>{" "}
-              <Kbd>e</Kbd> <Kbd>m</Kbd> <Kbd>u</Kbd> to jump
+              <Kbd>e</Kbd> <Kbd>m</Kbd> <Kbd>b</Kbd> <Kbd>u</Kbd> to jump
             </span>
           )}
         </div>
