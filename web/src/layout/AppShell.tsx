@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { Link, NavLink, Outlet, useNavigate } from "react-router";
 import { useStatus } from "../api/status";
 import { useStreamState } from "../api/streamHooks";
 import { Icon, type IconName } from "../components/icons";
@@ -138,10 +138,14 @@ export function AppShell() {
               </span>{" "}
               running
             </span>
-            <span title="Queued flow and agent runs">
+            <Link
+              to="/flows?view=queue"
+              title="Queued flow and agent runs: open the queue"
+              className="hover:text-fg"
+            >
               <span className="font-medium tabular-nums text-fg">{queued}</span>{" "}
               queued
-            </span>
+            </Link>
           </div>
           <div className="ml-auto flex items-center gap-3">
             <NavLink

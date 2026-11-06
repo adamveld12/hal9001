@@ -50,6 +50,7 @@ const (
 	FlowRunFailed           FlowRunStatus = "failed"
 	FlowRunKilled           FlowRunStatus = "killed"
 	FlowRunInterrupted      FlowRunStatus = "interrupted"
+	FlowRunCancelled        FlowRunStatus = "cancelled" // removed from the queue
 
 	KindLive   FlowRunKind = "live"
 	KindReplay FlowRunKind = "replay"
@@ -63,6 +64,7 @@ const (
 	NodeKilled           NodeRunStatus = "killed"
 	NodeInterrupted      NodeRunStatus = "interrupted"
 	NodeSkipped          NodeRunStatus = "skipped"
+	NodeCancelled        NodeRunStatus = "cancelled" // removed from the queue
 
 	DecisionEmitted NodeDecision = "emitted"
 	DecisionDropped NodeDecision = "dropped"
@@ -142,7 +144,7 @@ const (
 
 func (s FlowRunStatus) valid() bool {
 	switch s {
-	case FlowRunQueued, FlowRunRunning, FlowRunAwaitingApproval, FlowRunSucceeded, FlowRunFailed, FlowRunKilled, FlowRunInterrupted:
+	case FlowRunQueued, FlowRunRunning, FlowRunAwaitingApproval, FlowRunSucceeded, FlowRunFailed, FlowRunKilled, FlowRunInterrupted, FlowRunCancelled:
 		return true
 	}
 	return false
@@ -151,7 +153,7 @@ func (s FlowRunStatus) valid() bool {
 // Terminal reports whether the status is final (no further transitions except pruning).
 func (s FlowRunStatus) Terminal() bool {
 	switch s {
-	case FlowRunSucceeded, FlowRunFailed, FlowRunKilled, FlowRunInterrupted:
+	case FlowRunSucceeded, FlowRunFailed, FlowRunKilled, FlowRunInterrupted, FlowRunCancelled:
 		return true
 	}
 	return false
@@ -161,7 +163,7 @@ func (k FlowRunKind) valid() bool { return k == KindLive || k == KindReplay || k
 
 func (s NodeRunStatus) valid() bool {
 	switch s {
-	case NodeQueued, NodeRunning, NodeAwaitingApproval, NodeDone, NodeFailed, NodeKilled, NodeInterrupted, NodeSkipped:
+	case NodeQueued, NodeRunning, NodeAwaitingApproval, NodeDone, NodeFailed, NodeKilled, NodeInterrupted, NodeSkipped, NodeCancelled:
 		return true
 	}
 	return false
@@ -344,6 +346,8 @@ type FlowRun struct {
 	CreatedAt time.Time     `json:"created_at"`
 	StartedAt *time.Time    `json:"started_at,omitempty"`
 	EndedAt   *time.Time    `json:"ended_at,omitempty"`
+	// CancelledBy is the principal who removed the run from the queue (status cancelled).
+	CancelledBy string `json:"cancelled_by,omitempty"`
 
 	// FlowYAML is write-only input. When set on CreateFlowRun, the flow version
 	// (FlowID, FlowHash) is inserted in the same transaction if missing.

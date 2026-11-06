@@ -27,7 +27,7 @@ func page(items ...any) map[string]any {
 func flowRun(id, status string) map[string]any {
 	return map[string]any{
 		"id": id, "flow_id": "triage-github", "flow_hash": hash, "event_id": id2, "kind": "live", "replay_of": nil,
-		"dry_run": false, "status": status, "error": nil, "created_at": ts, "started_at": ts, "ended_at": nil,
+		"dry_run": false, "status": status, "error": nil, "cancelled_by": nil, "created_at": ts, "started_at": ts, "ended_at": nil,
 	}
 }
 

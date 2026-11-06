@@ -206,6 +206,10 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"pauseKillSwitch":  s.pauseKillSwitch,
 		"resumeKillSwitch": s.resumeKillSwitch,
 
+		"getQueue":        s.getQueue,
+		"clearQueue":      s.clearQueue,
+		"removeFromQueue": s.removeFromQueue,
+
 		"listSensors":     s.listSensors,
 		"createSensor":    s.createSensor,
 		"validateSensor":  s.validateSensor,

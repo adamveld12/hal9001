@@ -28,6 +28,8 @@ export function statusTone(status: string | undefined | null): Tone {
       return "run";
     case "queued":
       return "info";
+    case "cancelled":
+      return "muted";
     default:
       return "muted";
   }

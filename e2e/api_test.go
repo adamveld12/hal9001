@@ -50,6 +50,8 @@ type FlowRun struct {
 	DryRun   bool   `json:"dry_run"`
 	Status   string `json:"status"`
 	Error    string `json:"error"`
+
+	CancelledBy string `json:"cancelled_by"`
 }
 
 type NodeRun struct {
@@ -71,6 +73,7 @@ type NodeRun struct {
 	Stderr          TextBlob `json:"stderr"`
 	ExitCode        *int     `json:"exit_code"`
 	DurationMS      *int     `json:"duration_ms"`
+	StartedAt       string   `json:"started_at"`
 }
 
 type NodeRunDetail struct {
