@@ -503,7 +503,7 @@ Only agent nodes may use `mode: worktree`.
 
 ### MCP servers
 
-`mcp_servers` are passed to the agent session. `name` is required and unique. `type` is `stdio` (default; fields
+`mcp_servers` are passed to the agent session. `name` is required, unique, and not `hal` (reserved for hal's own tools). `type` is `stdio` (default; fields
 `command`, `args`, `env`), `http` or `sse` (fields `url`, `headers`).
 
 ### Prompts and notes

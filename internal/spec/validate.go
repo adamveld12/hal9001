@@ -494,6 +494,8 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 			c.errorf(CodeRequired, mp+".name", "mcp server name is required")
 		case seen[m.Name]:
 			c.errorf(CodeDuplicateID, mp+".name", "mcp server %q is declared twice", m.Name)
+		case m.Name == "hal":
+			c.errorf(CodeInvalidValue, mp+".name", "mcp server name \"hal\" is reserved for hal's own tools")
 		}
 		seen[m.Name] = true
 		c.enum(mp+".type", m.Type, []string{MCPStdio, MCPHTTP, MCPSSE}, true)
