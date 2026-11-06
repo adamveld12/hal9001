@@ -15,7 +15,18 @@ Read `REQUIREMENTS.md` before changing anything. These rules apply to every huma
 - When a hook fails, triage before doing anything else:
   1. **Assume the code is wrong first.** Read the failure, fix the code, commit again.
   2. If the failure is clearly the tooling (a crash in the tool itself, a false positive that can't be fixed in code, a broken environment, a hook that can't run in a worktree), **stop and report it** to the coordinator/user with the exact command, output, and your diagnosis. Do not change `lefthook.yml`, `.golangci.yml`, `mise.toml`, or lint configs to work around it.
-- Pre-commit runs: gitleaks, gofmt/goimports, `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, `tsc`, vitest. Pre-push adds `go test -race` and the full web check.
+- Pre-commit runs: gitleaks, gofmt/goimports, `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, `tsc`, vitest. Pre-push runs the race detector and the e2e suite (see `mise.toml`) and the full web check. Agents do not push; the coordinator runs `mise run check` once on the merged tree.
+
+## Verification ladder (agents)
+
+Run the cheapest check that can fail for what you changed, and stop when it passes.
+
+1. While coding: `mise exec -- go test -short ./internal/<pkg>/...` for the packages you touched (and `pnpm --dir web test` for web logic).
+2. Before committing: just commit. The pre-commit hook runs fmt, lint, `go test -short ./...` and the web checks; don't run them by hand first.
+3. Slice done: run only the e2e tests for your feature (`go test ./e2e/ -run <YourFeature>`), plus `mise run e2e` once if you touched `e2e/` helpers or `internal/{engine,api,agent,daemon,assist}`.
+4. Do NOT run `go test -race`, `-count=N` loops, stress runs or `mise run check` unless the coordinator asked you to investigate a race or a flaky test. If your slice changes concurrency code (`internal/{agent,engine,api,assist,runner,store}`), run `mise run race` once before your final report.
+5. A hook failure in a test you did not touch: rerun the hook once. If it fails again, report the test name and output to the coordinator and continue; don't investigate it.
+6. Tests wait on events, not time: no new `time.Sleep` in tests; use the helpers in the package (barriers, injectable clocks, `?wait=` long-polls) instead.
 
 ## Parallel work
 
