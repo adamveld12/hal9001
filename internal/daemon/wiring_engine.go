@@ -16,6 +16,7 @@ func newEngine(p engineParams) (*engine.Engine, error) {
 		Log:       p.Log,
 		UIBaseURL: p.UIBaseURL,
 		Clock:     p.Clock,
+		MCPURL:    p.MCPURL, Executable: p.Executable,
 	})
 }
 
@@ -26,6 +27,7 @@ func newAPI(p apiParams) http.Handler {
 		Engine:    p.Engine,
 		Assist:    p.Assist,
 		Auth:      p.Auth,
+		MCP:       p.MCP,
 		Workspace: p.Workspace,
 		Reload:    p.Reload,
 		Version:   p.Version,

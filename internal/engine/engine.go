@@ -14,6 +14,7 @@ import (
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 )
 
 // Options configures New.
@@ -31,6 +32,11 @@ type Options struct {
 	UIBaseURL string
 	// Clock drives sensor schedules and agent run and approval timeouts; nil means the wall clock.
 	Clock agent.Clock
+	// MCPURL is the daemon's own base URL, handed to hal's MCP server in every agent session (e.g.
+	// "http://127.0.0.1:41233"). It must be the address the daemon actually listens on, not the UI URL.
+	MCPURL string
+	// Executable is the hal9001 binary agents spawn as `hal9001 mcp`; default: this process's executable.
+	Executable string
 }
 
 // Engine executes sensors, flows and agent runs. It implements core.Engine.
@@ -79,6 +85,7 @@ type Engine struct {
 
 	broker   *storeBroker
 	observer observerSlot
+	tools    *tools.Hub
 
 	assistTests sync.Map // flow run id -> *assistTest, for the runs of TestFlow
 }
@@ -123,6 +130,9 @@ func New(opt Options) (*Engine, error) {
 	e.dbCtx = context.WithoutCancel(e.ctx)
 	e.broker = &storeBroker{e: e}
 	e.snap = newSnapshot(&spec.Workspace{Home: home})
+	if e.tools, err = e.newToolHub(); err != nil {
+		return nil, fmt.Errorf("engine: tool hub: %w", err)
+	}
 	return e, nil
 }
 
@@ -142,6 +152,10 @@ func (e *Engine) start(ctx context.Context) error {
 	res, err := e.st.MarkInterrupted(ctx)
 	if err != nil {
 		return fmt.Errorf("engine: mark interrupted: %w", err)
+	}
+	// Runs do not survive a restart, so neither do their MCP capability tokens.
+	if _, err := e.st.RevokeAllMCPTokens(ctx); err != nil {
+		return fmt.Errorf("engine: revoke mcp tokens: %w", err)
 	}
 	if res != (store.InterruptResult{}) {
 		e.log.Info("engine: reconciled interrupted work", "result", res)

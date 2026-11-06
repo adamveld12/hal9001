@@ -12,6 +12,7 @@ import (
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 )
 
 // runAgent executes an agent node (§7): it renders the prompt, resolves the
@@ -63,8 +64,26 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	} else if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
 		expectNote = true
 	}
+	runID := e.st.NewID()
+	phase := agent.PhasePropose
+	if prev != nil {
+		phase = agent.PhaseExecute
+	}
+	ht, err := e.openHalTools(ctx, tools.RunSpec{
+		Kind: tools.KindFlow, RunID: runID, Info: func() tools.RunInfo { return e.agentRunInfo(ne, runID) },
+		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
+		ReadOnly:        agent.PolicyFor(mode, style, phase) == agent.PolicyReadonly,
+		Sandbox:         node.Sandbox, Image: node.Image, Repo: node.Repo, Ref: node.Ref, Tools: node.Tools,
+	})
+	if err != nil {
+		return failure(errConfig, "hal tools: "+err.Error())
+	}
+	defer ht.sess.Close()
+	if prev == nil {
+		prompt = tools.Preamble(tools.PreambleData{Info: e.agentRunInfo(ne, runID), Now: e.clock.Now(), Tools: ht.sess.Tools()}) + prompt
+	}
 	req := agent.RunRequest{
-		RunID:           e.st.NewID(),
+		RunID:           runID,
 		NodeRunID:       nr.ID,
 		Runtime:         node.Runtime,
 		Config:          rt,
@@ -73,13 +92,15 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		Prompt:          prompt,
 		Model:           node.Model,
 		Cwd:             cwd,
-		MCPServers:      convertMCP(node.MCPServers),
+		MCPServers:      append([]agent.MCPServer{ht.server}, convertMCP(node.MCPServers)...),
 		Timeout:         node.Timeout.Std(),
 		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
 		ExpectNote:      expectNote,
 	}
+	req.Allow.Tools = append(req.Allow.Tools, tools.AgentAllowTools...)
 	if node.Allow != nil {
-		req.Allow = agent.AllowRules{Tools: node.Allow.Tools, Commands: node.Allow.Commands}
+		req.Allow.Tools = append(req.Allow.Tools, node.Allow.Tools...)
+		req.Allow.Commands = node.Allow.Commands
 	}
 	rec := &runRecorder{e: e, red: ne.snap.red, model: node.Model, worktree: e.worktreePath(wtKey)}
 	ex := &agent.Executor{

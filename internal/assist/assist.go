@@ -29,6 +29,7 @@ import (
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 )
 
 const (
@@ -64,6 +65,8 @@ type Host interface {
 	Recorder(assistSessionID, model string) agent.Recorder
 	// Broker is the approval queue.
 	Broker() agent.ApprovalBroker
+	// Tools is the hub of hal's per-run MCP tool sessions; every agent process gets one.
+	Tools() *tools.Hub
 	Clock() agent.Clock
 	// TestFlow runs a validated flow draft once on one input as a dry-run test run and returns what every node did.
 	TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error)
@@ -393,6 +396,7 @@ func (s *session) allowRules() agent.AllowRules {
 	home := m.home
 	data := filepath.Join(home, "data")
 	rules := agent.AllowRules{
+		Tools: tools.AgentAllowTools,
 		// Rule 0 runs the draft with the user's credentials: it is vetoed unless the code is what the user has
 		// tested or approved (see vetoTest).
 		Commands: []string{

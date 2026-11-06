@@ -65,6 +65,9 @@ type Options struct {
 	ListenAddr string
 	// Clock drives the engine's sensor schedules and agent timeouts; nil means the wall clock. Tests only.
 	Clock agent.Clock
+	// Executable is the hal9001 binary agents spawn as their `hal9001 mcp` server; default: os.Executable. Tests only
+	// (an in-process daemon's executable is the test binary).
+	Executable string
 	// Ready, when set, is called once the daemon is serving, with the bound address. Tests only.
 	Ready func(addr net.Addr)
 }
@@ -135,6 +138,7 @@ func Run(ctx context.Context, opts Options) error {
 		Notifier:  notify.New(notify.WithLogger(log)),
 		UIBaseURL: uiBaseURL(opts.UIURL, os.Getenv(EnvUIURL), port),
 		Clock:     opts.Clock,
+		MCPURL:    "http://127.0.0.1:" + strconv.Itoa(port), Executable: opts.Executable,
 	})
 	if err != nil {
 		return fmt.Errorf("daemon: engine: %w", err)
@@ -163,7 +167,7 @@ func Run(ctx context.Context, opts Options) error {
 	// (defers run last in, first out).
 	assistMgr, err := assist.New(assist.Options{
 		Store: st, Home: home, Host: eng.AssistHost(), Log: log,
-		URL: "http://127.0.0.1:" + strconv.Itoa(port), IdleTimeout: opts.AssistIdleTimeout,
+		URL: "http://127.0.0.1:" + strconv.Itoa(port), IdleTimeout: opts.AssistIdleTimeout, Executable: opts.Executable,
 	})
 	if err != nil {
 		return fmt.Errorf("daemon: assist: %w", err)
@@ -193,7 +197,7 @@ func Run(ctx context.Context, opts Options) error {
 	}()
 
 	apiHandler := newAPI(apiParams{
-		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr,
+		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
 		Workspace: d.workspace, Reload: d.reload,
 		Version: opts.Version, UI: ui, Log: log,
 	})

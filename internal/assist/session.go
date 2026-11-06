@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"hal9001/internal/agent"
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 )
 
 // draftPollInterval is how often the draft file is compared with the stored draft while a turn runs. Agents
@@ -28,9 +30,13 @@ type session struct {
 	id  string
 	dir string
 
-	mu        sync.Mutex // guards everything below, and serialises draft changes
-	row       store.AssistSession
-	ag        *agent.Session
+	mu  sync.Mutex // guards everything below, and serialises draft changes
+	row store.AssistSession
+	ag  *agent.Session
+	// halTools is the hal MCP session of the agent process (token valid while ag lives); runID is the running turn's
+	// agent run id, "" between turns.
+	halTools  *tools.Session
+	runID     atomic.Pointer[string]
 	turn      *turn
 	idle      *time.Timer
 	approvals map[string]string   // tool call id -> approval id, for the running turn
@@ -329,6 +335,7 @@ func (s *session) send(text string, yaml *string) (*store.AssistSession, error) 
 		return nil, fmt.Errorf("assist: the daemon is stopping")
 	}
 	s.turn = t
+	s.runID.Store(&t.runID)
 	s.stopIdleLocked()
 	s.approvals, s.pending = map[string]string{}, map[string]struct{}{}
 	s.pendingTests, s.testApprovals = map[string]*pendingTest{}, map[string]*pendingTest{}
@@ -358,6 +365,19 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 	if !ok {
 		return nil, fmt.Errorf("runtime %q is no longer configured in config.yaml", s.row.Runtime)
 	}
+	ht, err := s.m.host.Tools().Open(s.m.host.Context(), tools.RunSpec{
+		Kind: tools.KindAssist, RunID: s.id,
+		Info: func() tools.RunInfo {
+			info := tools.RunInfo{AssistSessionID: s.id}
+			if id := s.runID.Load(); id != nil {
+				info.AgentRunID = *id
+			}
+			return info
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hal tools: %w", err)
+	}
 	ex := &agent.Executor{
 		Recorder:      &sessionRecorder{s: s, inner: s.m.host.Recorder(s.id, s.row.Model)},
 		Broker:        s.m.host.Broker(),
@@ -368,11 +388,15 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 	}
 	ag, err := ex.NewSession(agent.SessionRequest{
 		Runtime: s.row.Runtime, Config: rt, Cwd: s.dir, Model: s.row.Model, LoadSessionID: s.row.ACPSessionID,
+		MCPServers: []agent.MCPServer{{
+			Name: tools.ServerName, Type: "stdio", Command: s.m.opt.Executable, Args: tools.ServerArgs(s.m.opt.URL, ht.Token()),
+		}},
 	})
 	if err != nil {
+		ht.Close()
 		return nil, err
 	}
-	s.ag = ag
+	s.ag, s.halTools = ag, ht
 	return ag, nil
 }
 
@@ -479,6 +503,7 @@ func (s *session) finishTurn(t *turn, rec agent.RunRecord, runErr error) {
 		}
 	}
 	s.turn = nil
+	s.runID.Store(nil)
 	s.m.mu.Lock()
 	delete(s.m.byRun, t.runID)
 	s.m.mu.Unlock()
@@ -743,8 +768,10 @@ func (s *session) close(ctx context.Context) error {
 	s.closed = true
 	s.stopIdleLocked()
 	if s.ag != nil {
+		ag, ht := s.ag, s.halTools
 		s.mu.Unlock()
-		s.ag.Close()
+		ag.Close()
+		ht.Close()
 		s.mu.Lock()
 	}
 	if err := os.RemoveAll(s.dir); err != nil {
@@ -759,9 +786,10 @@ func (s *session) close(ctx context.Context) error {
 func (s *session) shutdown() {
 	s.mu.Lock()
 	s.stopIdleLocked()
-	ag := s.ag
+	ag, ht := s.ag, s.halTools
 	s.mu.Unlock()
 	if ag != nil {
 		ag.Close()
+		ht.Close()
 	}
 }

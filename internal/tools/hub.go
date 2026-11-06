@@ -87,6 +87,9 @@ type RunSpec struct {
 	Info func() RunInfo
 	// ApprovalTimeout bounds one approval wait (default DefaultApprovalTimeout).
 	ApprovalTimeout time.Duration
+	// ReadOnly makes every call that would need approval fail without asking: the run may not act (a read-only or
+	// dry-run agent node, the planning phase of a proposal).
+	ReadOnly bool
 
 	// Node fields for providers (sandbox, custom tools): see internal/spec.Node.
 	Sandbox string
@@ -294,6 +297,9 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 	info := s.spec.Info()
 	var recordID string
 	if needs, why := approval(t, args); needs {
+		if s.spec.ReadOnly || info.DryRun {
+			return Result{}, fmt.Errorf("tool %s was not run: %s; this run is read-only", name, why)
+		}
 		if info.AgentRunID == "" {
 			return Result{}, fmt.Errorf("tool %s needs approval but no agent run is active", name)
 		}
@@ -336,4 +342,17 @@ func approval(t Tool, args json.RawMessage) (bool, string) {
 		return false, ""
 	}
 	return t.Approval(args)
+}
+
+// AgentAllowTools are allow.tools patterns that make the agent runtime's own permission layer let hal's MCP tools
+// through: hal decides at execution time (approval, read-only, dry-run), so the agent layer must not ask a second time.
+// Runtimes name MCP tools differently (claude: mcp__hal__gh_api); each pattern covers one convention.
+var AgentAllowTools = []string{`^mcp__hal__`, `^hal[._:/ -]`, `^hal \(MCP\)`}
+
+// ServerName is the name of hal's MCP server in the agent's session.
+const ServerName = "hal"
+
+// ServerArgs are the arguments of the command that runs hal's stdio MCP server for token against the daemon at url.
+func ServerArgs(url, token string) []string {
+	return []string{"mcp", "--url", url, "--token", token}
 }
