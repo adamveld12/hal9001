@@ -53,7 +53,7 @@ flowchart LR
 | Flow | DAG of nodes subscribed to sensors (`flows/*.yaml`). One FlowRun per event per flow. |
 | Node | `command` (process), `agent` (ACP session) or `inbox` (note for you). Nodes have named output ports. |
 | Prompt | Reusable prompt template for agent nodes (`prompts/*.md`). |
-| Inbox item / Approval | A note for you; a pending decision from an `approve`-mode agent. |
+| Inbox item / Approval | A note for you; a pending decision from an `approve`-mode agent. The web UI opens on the Inbox, which lists notes and pending approvals together (filters: All, Needs action, Notes) and is where approvals are decided; the Approvals page keeps the history. macOS notifications open `/inbox/<id>` (note) or `/inbox/approval/<id>` (approval) with that item selected, even if it is archived or already decided. |
 
 Authoring details: [docs/flows.md](docs/flows.md).
 
@@ -179,6 +179,7 @@ Files are hot-reloaded. A save from the UI or API that is based on a stale copy 
 | `retention_days` | 30 | Nightly prune of runs, events, blobs and worktrees (keeps anything tied to a starred inbox item or pending approval). |
 | `dedup_retention_days` | 180 | Dedup keys are kept longer so old items do not re-fire. |
 | `notify_min_priority` | `normal` | Inbox items at or above this raise a macOS notification (`low`, `normal`, `high`, `urgent`). Every new approval notifies. |
+| `HAL9001_UI_URL` (env, not config) | `http://localhost:9001` | Origin of notification deep links. `mise run dev` sets it to the Vite server, `http://localhost:5173`. |
 | `approval_timeout` | `1h` | Default wait for a `per_tool` approval before the run fails (`approval_timeout`). Agent nodes can override it. |
 | `session_ttl` | `7d` | Sliding lifetime of a login session. |
 | `allowed_hosts` | `[]` | Extra `Host` values the server accepts (your Tailscale hostname). |

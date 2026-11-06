@@ -45,7 +45,7 @@ depends = ["dev:api", "dev:web"]
 
 [tasks."dev:api"]
 description = "Rebuild and restart the daemon on 127.0.0.1:9001 whenever Go code, the API contract or seed content changes"
-run = "watchexec --restart --stop-signal SIGTERM --stop-timeout 10s --exts go,yaml,sql,md --watch cmd --watch internal --watch api --watch content -- 'go build -o bin/hal9001-dev ./cmd/hal9001 && exec bin/hal9001-dev serve'"
+run = "watchexec --restart --stop-signal SIGTERM --stop-timeout 10s --exts go,yaml,sql,md --watch cmd --watch internal --watch api --watch content -- 'go build -o bin/hal9001-dev ./cmd/hal9001 && HAL9001_UI_URL=http://localhost:5173 exec bin/hal9001-dev serve'"
 
 [tasks."dev:web"]
 description = "Vite dev server with hot module reload; proxies /api to the daemon"

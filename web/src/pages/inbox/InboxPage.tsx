@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useLocation, useSearchParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  isAlreadyDecided,
+  useApproval,
+  useApprovalsList,
+  useDecideApproval,
+  type Approval,
+} from "../../api/approvals";
+import { qk } from "../../api/keys";
+import { ApprovalDetail } from "../approvals/ApprovalDetail";
+import { decisionNotice } from "../approvals/queue";
 import {
   mergeInboxPages,
   useBulkInbox,
@@ -48,6 +59,14 @@ import { useHotkeys } from "./hotkeys";
 import { InboxDetail } from "./InboxDetail";
 import { InboxFilterBar } from "./InboxFilterBar";
 import { InboxList } from "./InboxList";
+import {
+  mergeInboxRows,
+  noteKey,
+  selectionFromKey,
+  selectionFromPath,
+  selectionKey,
+  selectionPath,
+} from "./merge";
 import { rowDomId, withPinned } from "./model";
 import { moveCursor, neighborAfterRemoval } from "./selection";
 
@@ -92,7 +111,16 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 export function InboxPage() {
-  const { id: openId } = useParams<{ id: string }>();
+  const location = useLocation();
+  const selection = useMemo(
+    () => selectionFromPath(location.pathname),
+    [location.pathname],
+  );
+  const openId = selection?.kind === "note" ? selection.id : undefined;
+  const openApprovalId =
+    selection?.kind === "approval" ? selection.id : undefined;
+  const openKey = selection ? selectionKey(selection) : undefined;
+  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const status = useStatus();
@@ -108,6 +136,18 @@ export function InboxPage() {
   const list = useInboxList(query, filters.sort);
   const detail = useInboxItem(openId);
   const update = useUpdateInbox();
+  const approvalList = useApprovalsList({ status: ["pending"] });
+  const approvalDetail = useApproval(openApprovalId);
+  const decide = useDecideApproval();
+  const { hasNextPage: moreApprovals, fetchNextPage: fetchMoreApprovals } =
+    approvalList;
+  useEffect(() => {
+    if (moreApprovals) void fetchMoreApprovals();
+  }, [moreApprovals, fetchMoreApprovals]);
+  const pendingApprovals = useMemo(
+    () => approvalList.data?.pages.flatMap((p) => p.items) ?? [],
+    [approvalList.data],
+  );
 
   const loaded = useMemo(
     () => mergeInboxPages(list.data?.pages ?? []),
@@ -138,21 +178,34 @@ export function InboxPage() {
     openPos.search === search &&
     detail.data?.id === openId
       ? detail.data
-      : undefined;
-  const items = withPinned(loaded, pinned, openPos?.index ?? 0);
-  const ids = items.map((i) => i.id);
+      : // Deep link to a note the list does not hold (archived, filtered out).
+        openId && openPos?.id !== openId && detail.data?.id === openId
+        ? detail.data
+        : undefined;
+  const items = withPinned(
+    loaded,
+    pinned,
+    openPos && openPos.id === openId ? openPos.index : 0,
+  );
+  const noteIds = items.map((i) => i.id);
+  const rows = useMemo(
+    () => mergeInboxRows(items, pendingApprovals, filters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loaded, pinned, pendingApprovals, filters],
+  );
+  const ids = rows.map((r) => r.key);
 
   const [cursorState, setCursorState] = useState<{
-    openId: string | undefined;
+    openKey: string | undefined;
     id: string;
   } | null>(null);
-  // The cursor follows the open item until the keyboard moves it.
+  // The cursor (a row key) follows the open item until the keyboard moves it.
   const cursorId =
-    cursorState && cursorState.openId === openId
+    cursorState && cursorState.openKey === openKey
       ? cursorState.id
-      : (openId ?? null);
+      : (openKey ?? null);
   const setCursor = (id: string | null) =>
-    setCursorState(id ? { openId, id } : null);
+    setCursorState(id ? { openKey, id } : null);
 
   const [cursorPos, setCursorPos] = useState<Position | null>(null);
   const cursorAt = cursorId ? ids.indexOf(cursorId) : -1;
@@ -164,13 +217,15 @@ export function InboxPage() {
     setCursorPos({ id: cursorId, index: cursorAt, search });
   }
 
+  // Also runs when the row first appears, so a deep link scrolls once the list loads.
+  const cursorListed = cursorAt >= 0;
   useEffect(() => {
-    if (cursorId) {
+    if (cursorId && cursorListed) {
       document
         .getElementById(rowDomId(cursorId))
         ?.scrollIntoView({ block: "nearest" });
     }
-  }, [cursorId]);
+  }, [cursorId, cursorListed]);
 
   // Opening a note marks it read, once per note, so un-reading it sticks.
   const autoRead = useRef(new Set<string>());
@@ -184,8 +239,12 @@ export function InboxPage() {
     mutate({ id: it.id, patch: { read: true } });
   }, [detail.data, openId, mutate]);
 
-  const open = (id: string, replace = false) =>
-    void navigate({ pathname: `/inbox/${id}`, search }, { replace });
+  const open = (key: string, replace = false) => {
+    const sel = selectionFromKey(key);
+    if (sel) {
+      void navigate({ pathname: selectionPath(sel), search }, { replace });
+    }
+  };
   const closeDetail = () => void navigate({ pathname: "/inbox", search });
 
   const patch = (item: InboxItem, p: InboxPatch) =>
@@ -193,10 +252,11 @@ export function InboxPage() {
 
   /** Archiving leaves the list; focus (and the open note) moves to the next one. */
   const toggleArchive = (item: InboxItem) => {
-    const next = neighborAfterRemoval(ids, item.id);
+    const key = noteKey(item.id);
+    const next = neighborAfterRemoval(ids, key);
     patch(item, { archived: !item.archived });
-    if (item.id === cursorId) setCursor(next);
-    if (item.id === openId) {
+    if (key === cursorId) setCursor(next);
+    if (key === openKey) {
       if (next) open(next, true);
       else closeDetail();
     }
@@ -205,8 +265,54 @@ export function InboxPage() {
   const shown: InboxItem | undefined =
     detail.data ?? items.find((i) => i.id === openId);
   const cursorItem =
-    items.find((i) => i.id === cursorId) ??
-    (cursorId === openId ? shown : undefined);
+    items.find((i) => noteKey(i.id) === cursorId) ??
+    (cursorId === openKey && openId ? shown : undefined);
+
+  // Approvals: the comment draft, the outcome notice and the decision itself.
+  const [draft, setDraft] = useState({ id: "", text: "" });
+  const comment = draft.id === openApprovalId ? draft.text : "";
+  const [notice, setNotice] = useState<string | null>(null);
+  const shownApproval: Approval | undefined =
+    approvalDetail.data ??
+    pendingApprovals.find((a) => a.id === openApprovalId);
+  const canDecide =
+    shownApproval?.status === "pending" && shownApproval.id === openApprovalId;
+  const decideApproval = (
+    a: Approval,
+    action: "approve" | "deny",
+    cancelRun?: boolean,
+  ) => {
+    if (decide.isPending) return;
+    const pendingKeys = rows
+      .filter((r) => r.kind === "approval")
+      .map((r) => r.key);
+    const next = neighborAfterRemoval(
+      pendingKeys,
+      selectionKey({ kind: "approval", id: a.id }),
+    );
+    decide.mutate(
+      { id: a.id, action, comment, cancelRun },
+      {
+        onSuccess: (done) => {
+          setNotice(decisionNotice(done));
+          setDraft({ id: "", text: "" });
+          // Keep working through the queue; the last one stays open to show its outcome.
+          if (next) open(next, true);
+        },
+        onError: (err) => {
+          if (isAlreadyDecided(err)) {
+            setNotice(
+              "That approval was already decided or has expired. The list was refreshed.",
+            );
+          }
+        },
+      },
+    );
+  };
+  const onStale = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ["approvals"] });
+    void qc.invalidateQueries({ queryKey: qk("approval", openApprovalId) });
+  }, [qc, openApprovalId]);
 
   useHotkeys({
     j: () => setCursor(moveCursor(ids, cursorId, 1, cursorPos?.index ?? 0)),
@@ -215,8 +321,14 @@ export function InboxPage() {
       if (cursorId) open(cursorId);
     },
     Escape: () => {
-      if (openId) closeDetail();
+      if (openKey) closeDetail();
     },
+    a: () => canDecide && decideApproval(shownApproval, "approve"),
+    d: () => canDecide && decideApproval(shownApproval, "deny"),
+    c: () =>
+      canDecide &&
+      shownApproval.type === "tool_call" &&
+      decideApproval(shownApproval, "deny", true),
     e: () => cursorItem && toggleArchive(cursorItem),
     s: () => cursorItem && patch(cursorItem, { starred: !cursorItem.starred }),
     u: () => cursorItem && patch(cursorItem, { read: !cursorItem.read }),
@@ -226,7 +338,7 @@ export function InboxPage() {
   const bulk = useBulkInbox();
   const counter = useBulkInbox();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const sel = pruneSelection(selected, ids);
+  const sel = pruneSelection(selected, noteIds);
   const [clearing, setClearing] = useState<{
     preset: ClearPreset;
     filter: InboxBulkFilter;
@@ -289,12 +401,18 @@ export function InboxPage() {
 
   const filtered = activeFilterCount(filters) > 0;
   const unread = status.data?.unread_inbox;
+  const pending = status.data?.pending_approvals;
+  const subtitle =
+    unread === undefined
+      ? undefined
+      : `${unread} unread${pending ? `, ${pending} need action` : ""}`;
+  const showApprovalError = decide.isError && !isAlreadyDecided(decide.error);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         title="Inbox"
-        subtitle={unread === undefined ? undefined : `${unread} unread`}
+        subtitle={subtitle}
         actions={
           <div className="hidden items-center gap-3 text-[11px] text-muted lg:flex">
             {SHORTCUTS.map(([key, label]) => (
@@ -321,6 +439,36 @@ export function InboxPage() {
           </Button>
         </div>
       )}
+      {notice && (
+        <div
+          role="status"
+          className="flex items-center gap-2 border-b border-ok/40 bg-ok/10 px-4 py-1.5 text-xs text-ok"
+        >
+          {notice}
+          <Button
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => setNotice(null)}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
+      {showApprovalError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-bad/40 bg-bad/10 px-4 py-1.5 text-xs text-bad"
+        >
+          Could not record the decision: {errorMessage(decide.error)}
+          <Button
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => decide.reset()}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
       {update.isError && (
         <div
           role="alert"
@@ -338,41 +486,41 @@ export function InboxPage() {
       )}
       <div className="flex min-h-0 flex-1">
         <section
-          aria-label="Notes"
+          aria-label="Inbox items"
           className={cx(
             "min-h-0 w-full shrink-0 flex-col overflow-hidden border-r border-line md:flex md:w-[26rem]",
-            openId ? "hidden" : "flex",
+            openKey ? "hidden" : "flex",
           )}
         >
-          {items.length > 0 && (
+          {noteIds.length > 0 && (
             <BulkBar
-              selection={pageSelection(sel, ids)}
+              selection={pageSelection(sel, noteIds)}
               count={sel.size}
               archivedView={filters.archived}
               busy={bulk.isPending}
-              onToggleAll={() => setSelected(toggleAllOnPage(sel, ids))}
+              onToggleAll={() => setSelected(toggleAllOnPage(sel, noteIds))}
               onAction={(a) => runBulk(a, { ids: [...sel] })}
               onDelete={() => setDeleting(true)}
               onPreset={openPreset}
             />
           )}
           <div className="min-h-0 flex-1 overflow-auto">
-            {list.isPending ? (
-              <LoadingState label="Loading notes" />
+            {list.isPending || approvalList.isPending ? (
+              <LoadingState label="Loading inbox" />
             ) : list.isError && !list.data ? (
               <ErrorState
                 error={list.error}
                 onRetry={() => void list.refetch()}
               />
-            ) : items.length === 0 ? (
+            ) : rows.length === 0 ? (
               <EmptyState
                 title={
-                  filtered ? "No notes match these filters" : "Inbox is empty"
+                  filtered ? "Nothing matches these filters" : "Inbox is empty"
                 }
                 hint={
                   filtered
                     ? undefined
-                    : "Notes written by inbox nodes and agent runs show up here."
+                    : "Notes and approvals waiting for a decision show up here."
                 }
                 action={
                   filtered && (
@@ -389,15 +537,15 @@ export function InboxPage() {
             ) : (
               <>
                 <InboxList
-                  items={items}
+                  rows={rows}
                   grouped={filters.sort === "priority"}
-                  openId={openId}
-                  cursorId={cursorId}
+                  openKey={openKey}
+                  cursorKey={cursorId}
                   selected={sel}
                   onToggle={(id) => setSelected(toggleSelected(sel, id))}
                   search={search}
                 />
-                {list.hasNextPage && (
+                {filters.kind !== "action" && list.hasNextPage && (
                   <div className="p-3">
                     <Button
                       disabled={list.isFetchingNextPage}
@@ -412,17 +560,39 @@ export function InboxPage() {
           </div>
         </section>
         <section
-          aria-label="Note"
+          aria-label="Detail"
           className={cx(
             "min-h-0 min-w-0 flex-1 overflow-auto md:block",
-            openId ? "block" : "hidden",
+            openKey ? "block" : "hidden",
           )}
         >
-          {!openId ? (
+          {!selection ? (
             <EmptyState
-              title="Select a note"
+              title="Select an item"
               hint="Pick one from the list, or move with j and k and press Enter."
             />
+          ) : selection.kind === "approval" ? (
+            shownApproval ? (
+              <ApprovalDetail
+                key={shownApproval.id}
+                approval={shownApproval}
+                comment={comment}
+                onComment={(text) => setDraft({ id: shownApproval.id, text })}
+                busy={decide.isPending}
+                onDecide={(action, cancelRun) =>
+                  decideApproval(shownApproval, action, cancelRun)
+                }
+                onStale={onStale}
+                backTo={{ pathname: "/inbox", search }}
+              />
+            ) : approvalDetail.isError ? (
+              <ErrorState
+                error={approvalDetail.error}
+                onRetry={() => void approvalDetail.refetch()}
+              />
+            ) : (
+              <LoadingState label="Loading approval" />
+            )
           ) : shown ? (
             <InboxDetail
               item={shown}

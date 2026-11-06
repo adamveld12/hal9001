@@ -191,7 +191,7 @@ func TestScenario07ProposalApproveResumesSameSession(t *testing.T) {
 	}
 	d.Eventually("the approval notification", func() bool {
 		for _, n := range d.Notifications() {
-			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/approvals/"+ap.ID {
+			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/inbox/approval/"+ap.ID {
 				return strings.Contains(n["message"], proposalPlan)
 			}
 		}
@@ -371,7 +371,7 @@ func TestScenario07aPerToolAllow(t *testing.T) {
 	}
 	d.Eventually("the approval notification", func() bool {
 		for _, n := range d.Notifications() {
-			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/approvals/"+ap.ID {
+			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/inbox/approval/"+ap.ID {
 				return true
 			}
 		}

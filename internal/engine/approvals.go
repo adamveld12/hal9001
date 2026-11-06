@@ -33,7 +33,7 @@ func (b *storeBroker) SubmitProposal(_ context.Context, p agent.ProposalApproval
 		Kind:  "approval",
 		Title: "Approve proposal: " + e.nodeLabel(p.NodeRunID),
 		Body:  truncate(firstLine(p.Proposal), 200),
-		URL:   e.url("/approvals/" + a.ID),
+		URL:   e.url(ApprovalPath(a.ID)),
 	})
 	return a.ID, nil
 }
@@ -68,7 +68,7 @@ func (b *storeBroker) AwaitToolApproval(ctx context.Context, t agent.ToolApprova
 		Kind:  "approval",
 		Title: "Approve tool call: " + e.nodeLabel(t.NodeRunID),
 		Body:  truncate(t.Title, 200),
-		URL:   e.url("/approvals/" + a.ID),
+		URL:   e.url(ApprovalPath(a.ID)),
 	})
 	select {
 	case d := <-ch:
@@ -155,6 +155,12 @@ func (e *Engine) notify(n core.Notification) {
 		e.log.Warn("engine: notification failed", "kind", n.Kind, "err", err)
 	}
 }
+
+// InboxPath is the UI path of an inbox note.
+func InboxPath(id string) string { return "/inbox/" + id }
+
+// ApprovalPath is the UI path of an approval, opened inside the Inbox.
+func ApprovalPath(id string) string { return "/inbox/approval/" + id }
 
 // url builds an absolute UI deep link.
 func (e *Engine) url(path string) string {

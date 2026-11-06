@@ -21,6 +21,8 @@ interface NavSection {
   items: NavItem[];
 }
 
+const INBOX_BADGE_TITLE = "Unread notes plus pending approvals";
+
 const NAV_SECTIONS: NavSection[] = [
   {
     label: "Notify",
@@ -168,6 +170,8 @@ export function AppShell() {
   const stream = useStreamState();
   const theme = useTheme();
   const s = status.data;
+  const inboxCount =
+    s === undefined ? undefined : s.unread_inbox + s.pending_approvals;
   const running = (s?.running_flow_runs ?? 0) + (s?.running_agent_runs ?? 0);
   const queued = s?.queue_total ?? 0;
 
@@ -211,7 +215,7 @@ export function AppShell() {
                 {section.items.map((n) => {
                   const count =
                     n.to === "/inbox"
-                      ? s?.unread_inbox
+                      ? inboxCount
                       : n.to === "/approvals"
                         ? s?.pending_approvals
                         : undefined;
@@ -220,7 +224,13 @@ export function AppShell() {
                     <li key={n.to}>
                       <NavLink
                         to={n.to}
-                        title={n.key ? `${n.label} (g ${n.key})` : n.label}
+                        title={
+                          n.to === "/inbox"
+                            ? `Inbox (g i): ${INBOX_BADGE_TITLE}`
+                            : n.key
+                              ? `${n.label} (g ${n.key})`
+                              : n.label
+                        }
                         aria-label={collapsed ? n.label : undefined}
                         className={({ isActive }) =>
                           cx(
@@ -322,15 +332,15 @@ export function AppShell() {
             <NavLink
               to="/inbox"
               className="inline-flex items-center gap-1.5 text-xs"
-              title="Unread inbox items"
+              title={INBOX_BADGE_TITLE}
             >
               <Icon name="inbox" size={14} />
               Inbox
               <Badge
-                tone={s?.unread_inbox ? "info" : "muted"}
+                tone={inboxCount ? "info" : "muted"}
                 className="tabular-nums"
               >
-                {s?.unread_inbox ?? 0}
+                {inboxCount ?? 0}
               </Badge>
             </NavLink>
             <span

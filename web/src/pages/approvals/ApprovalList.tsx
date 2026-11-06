@@ -2,7 +2,6 @@ import { Link } from "react-router";
 import type { Approval } from "../../api/approvals";
 import { Time } from "../../components/Time";
 import { Badge, StatusBadge } from "../../components/ui";
-import { cx } from "../../lib/cx";
 import { Countdown } from "./Countdown";
 import { approvalTitle } from "./queue";
 
@@ -14,24 +13,12 @@ export function TypeBadge({ type }: { type: Approval["type"] }) {
   );
 }
 
-function Row({
-  approval: a,
-  open,
-  search,
-}: {
-  approval: Approval;
-  open: boolean;
-  search: string;
-}) {
+function Row({ approval: a }: { approval: Approval }) {
   const pending = a.status === "pending";
   return (
     <Link
-      to={{ pathname: `/approvals/${a.id}`, search }}
-      aria-current={open ? "true" : undefined}
-      className={cx(
-        "block border-b border-line px-3 py-2 text-xs no-underline",
-        open ? "bg-raised" : "hover:bg-raised/60",
-      )}
+      to={{ pathname: `/inbox/approval/${a.id}` }}
+      className="block border-b border-line px-3 py-2 text-xs no-underline hover:bg-raised/60"
     >
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate font-medium">
@@ -58,19 +45,11 @@ function Row({
   );
 }
 
-export function ApprovalList({
-  items,
-  openId,
-  search,
-}: {
-  items: readonly Approval[];
-  openId: string | undefined;
-  search: string;
-}) {
+export function ApprovalList({ items }: { items: readonly Approval[] }) {
   return (
     <div>
       {items.map((a) => (
-        <Row key={a.id} approval={a} open={a.id === openId} search={search} />
+        <Row key={a.id} approval={a} />
       ))}
     </div>
   );

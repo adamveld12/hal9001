@@ -3,8 +3,12 @@ import { PRIORITIES } from "../../api/inbox";
 
 export type DryRunFilter = "any" | "hide" | "only";
 
+/** All items, only pending approvals ("Needs action"), or only notes. */
+export type InboxKind = "all" | "action" | "notes";
+
 /** Inbox list filters as the user sees them; the URL search params are the source of truth. */
 export interface InboxFilters {
+  kind: InboxKind;
   unread: boolean;
   starred: boolean;
   /** Show only archived items. */
@@ -17,6 +21,7 @@ export interface InboxFilters {
 }
 
 export const DEFAULT_FILTERS: InboxFilters = {
+  kind: "all",
   unread: false,
   starred: false,
   archived: false,
@@ -29,7 +34,9 @@ export const DEFAULT_FILTERS: InboxFilters = {
 export function filtersFromParams(p: URLSearchParams): InboxFilters {
   const priority = p.get("priority");
   const dry = p.get("dry");
+  const kind = p.get("kind");
   return {
+    kind: kind === "action" || kind === "notes" ? kind : "all",
     unread: p.get("unread") === "1",
     starred: p.get("starred") === "1",
     archived: p.get("archived") === "1",
@@ -43,6 +50,7 @@ export function filtersFromParams(p: URLSearchParams): InboxFilters {
 /** Only non-default values are written, so the default view has a clean URL. */
 export function filtersToParams(f: InboxFilters): URLSearchParams {
   const p = new URLSearchParams();
+  if (f.kind !== "all") p.set("kind", f.kind);
   if (f.unread) p.set("unread", "1");
   if (f.starred) p.set("starred", "1");
   if (f.archived) p.set("archived", "1");
@@ -68,6 +76,7 @@ export function filtersToQuery(f: InboxFilters): InboxQuery {
 /** Number of filters that differ from the default view (sort excluded). */
 export function activeFilterCount(f: InboxFilters): number {
   return [
+    f.kind !== "all",
     f.unread,
     f.starred,
     f.archived,

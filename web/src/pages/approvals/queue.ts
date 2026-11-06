@@ -126,3 +126,12 @@ export function describeDecision(a: Approval): string {
       return `Denied by ${a.decided_by ?? "unknown"}${a.cancel_run ? ", run cancelled" : ""}`;
   }
 }
+
+/** Confirmation shown after a decision was recorded. */
+export function decisionNotice(a: Approval): string {
+  if (a.status === "approved") {
+    return a.type === "tool_call" ? "Tool call allowed." : "Proposal approved.";
+  }
+  if (a.cancel_run) return "Denied. The run was cancelled.";
+  return a.type === "tool_call" ? "Tool call denied." : "Proposal denied.";
+}

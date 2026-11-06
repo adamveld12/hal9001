@@ -6,6 +6,7 @@ import {
   DEFAULT_FILTERS,
   type DryRunFilter,
   type InboxFilters,
+  type InboxKind,
 } from "./filters";
 import { PRIORITY_LABEL } from "./model";
 
@@ -45,8 +46,25 @@ export function InboxFilterBar({
     </Button>
   );
 
+  const kinds: [InboxKind, string][] = [
+    ["all", "All"],
+    ["action", "Needs action"],
+    ["notes", "Notes"],
+  ];
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+      <div role="group" aria-label="Show" className="flex items-center gap-1">
+        {kinds.map(([k, label]) => (
+          <Button
+            key={k}
+            variant={filters.kind === k ? "primary" : "default"}
+            aria-pressed={filters.kind === k}
+            onClick={() => onChange({ ...filters, kind: k })}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
       {toggle("unread", "Unread")}
       {toggle("starred", "Starred")}
       {toggle("archived", "Archived")}
@@ -92,7 +110,7 @@ export function InboxFilterBar({
         <option value="time">Time</option>
       </Select>
       <TextInput
-        aria-label="Search notes"
+        aria-label="Search inbox"
         type="search"
         placeholder="Search title and summary"
         className="w-56"

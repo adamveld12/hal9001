@@ -11,6 +11,7 @@ describe("inbox filters", () => {
   it("round-trips through URL params and keeps the default URL empty", () => {
     expect(filtersToParams(DEFAULT_FILTERS).toString()).toBe("");
     const f = {
+      kind: "action" as const,
       unread: true,
       starred: true,
       archived: false,

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,6 +51,9 @@ type Options struct {
 	// BasePATH is the PATH handed to node processes; default: this process's PATH
 	// (under launchd, the login-shell PATH captured by `hal9001 install`).
 	BasePATH string
+	// UIURL is the origin notification deep links point at. Empty: $HAL9001_UI_URL,
+	// else http://localhost:<port> (the daemon's own port, 9001 by default).
+	UIURL string
 	// Log receives operational logs; default slog.Default().
 	Log *slog.Logger
 
@@ -129,7 +133,7 @@ func Run(ctx context.Context, opts Options) error {
 	eng, err := newEngine(engineParams{
 		Store: st, Home: home, BasePATH: basePATH, Log: log,
 		Notifier:  notify.New(notify.WithLogger(log)),
-		UIBaseURL: "http://localhost:" + strconv.Itoa(port),
+		UIBaseURL: uiBaseURL(opts.UIURL, os.Getenv(EnvUIURL), port),
 		Clock:     opts.Clock,
 	})
 	if err != nil {
@@ -351,4 +355,19 @@ func logDiagnostics(log *slog.Logger, ws *spec.Workspace) {
 	if errs > 0 || warns > 0 {
 		log.Warn("workspace loaded with findings", "errors", errs, "warnings", warns)
 	}
+}
+
+// EnvUIURL overrides the origin of notification deep links, e.g. the Vite dev
+// server (http://localhost:5173) while developing.
+const EnvUIURL = "HAL9001_UI_URL"
+
+// uiBaseURL picks the notification link origin: the option, then the
+// environment value, then the daemon's own address.
+func uiBaseURL(opt, env string, port int) string {
+	for _, v := range []string{opt, env} {
+		if v = strings.TrimSpace(v); v != "" {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return "http://localhost:" + strconv.Itoa(port)
 }

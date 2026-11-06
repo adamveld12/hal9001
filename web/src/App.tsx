@@ -4,7 +4,13 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { lazy, Suspense, useState, type ComponentType } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from "react-router";
 import { ApiError } from "./api/client";
 import { qk } from "./api/keys";
 import { useWhoAmI } from "./api/status";
@@ -106,6 +112,12 @@ function makeQueryClient(): QueryClient {
   return client;
 }
 
+/** Old /approvals/<id> links open the approval inside the Inbox. */
+function ApprovalRedirect() {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={`/inbox/approval/${id ?? ""}`} replace />;
+}
+
 function AuthGate() {
   const who = useWhoAmI();
   if (who.isPending) return <LoadingState label="Connecting" />;
@@ -116,16 +128,17 @@ function AuthGate() {
     <StreamProvider>
       <Routes>
         <Route element={<AppShell />}>
-          <Route index element={<Navigate to="/timeline" replace />} />
+          <Route index element={<Navigate to="/inbox" replace />} />
           <Route path="timeline" element={<TimelinePage />} />
           <Route path="events/:id" element={<EventDetailPage />} />
           <Route path="runs/:id" element={<RunDetailPage />} />
           <Route path="agent-runs" element={<AgentRunsPage />} />
           <Route path="agent-runs/:id" element={<AgentRunPage />} />
           <Route path="inbox" element={<InboxPage />} />
+          <Route path="inbox/approval/:id" element={<InboxPage />} />
           <Route path="inbox/:id" element={<InboxPage />} />
           <Route path="approvals" element={<ApprovalsPage />} />
-          <Route path="approvals/:id" element={<ApprovalsPage />} />
+          <Route path="approvals/:id" element={<ApprovalRedirect />} />
           <Route path="flows" element={<FlowsPage />} />
           <Route path="flows/:id" element={<FlowEditorPage />} />
           <Route
@@ -144,7 +157,7 @@ function AuthGate() {
           />
           <Route path="settings/runtimes" element={<SettingsRuntimesPage />} />
           <Route path="settings/auth" element={<SettingsAuthPage />} />
-          <Route path="*" element={<Navigate to="/timeline" replace />} />
+          <Route path="*" element={<Navigate to="/inbox" replace />} />
         </Route>
       </Routes>
     </StreamProvider>

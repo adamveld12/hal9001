@@ -393,7 +393,7 @@ func (e *Engine) addInbox(snap *snapshot, it *store.InboxItem) error {
 			Kind:  "inbox",
 			Title: it.Title,
 			Body:  truncate(firstLine(it.SummaryMD), 200),
-			URL:   e.url("/inbox/" + it.ID),
+			URL:   e.url(InboxPath(it.ID)),
 		})
 	}
 	return nil

@@ -108,7 +108,7 @@ func TestScenario7ProposalApproveResumesSameSession(t *testing.T) {
 		t.Errorf("rendered prompt not stored: %q", h.text(runs[0].Prompt))
 	}
 	notes := h.notes.kind("approval")
-	if len(notes) != 1 || notes[0].URL != uiBase+"/approvals/"+ap.ID || !strings.Contains(notes[0].Body, "Plan: create hello.txt") {
+	if len(notes) != 1 || notes[0].URL != uiBase+"/inbox/approval/"+ap.ID || !strings.Contains(notes[0].Body, "Plan: create hello.txt") {
 		t.Fatalf("approval notifications: %+v", notes)
 	}
 	if _, err := os.Stat(h.stateFile("work", "hello.txt")); err == nil {
@@ -258,7 +258,7 @@ func TestScenario7aPerToolAllow(t *testing.T) {
 		t.Error("tool approval has no expiry")
 	}
 	h.eventually("the approval notification", func() bool { return len(h.notes.kind("approval")) == 1 })
-	if notes := h.notes.kind("approval"); notes[0].URL != uiBase+"/approvals/"+ap.ID {
+	if notes := h.notes.kind("approval"); notes[0].URL != uiBase+"/inbox/approval/"+ap.ID {
 		t.Errorf("notifications: %+v", notes)
 	}
 	if _, err := os.Stat(h.stateFile("work", "note.txt")); err == nil {
