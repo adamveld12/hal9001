@@ -42,6 +42,8 @@ const PATHS = {
   grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
   code: "M9 7l-5 5 5 5M15 7l5 5-5 5",
   sidebar: "M4 5h16v14H4zM9 5v14",
+  env: "M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h2M16 4h2a2 2 0 012 2v12a2 2 0 01-2 2h-2M9 9h6M9 13h6",
+  lock: "M6 11h12v9H6zM8 11V8a4 4 0 018 0v3",
 } as const;
 
 export type IconName = keyof typeof PATHS;

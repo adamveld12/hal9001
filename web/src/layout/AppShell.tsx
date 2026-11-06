@@ -12,20 +12,65 @@ interface NavItem {
   to: string;
   label: string;
   icon: IconName;
-  /** second key of the `g <key>` go-to shortcut */
-  key: string;
+  /** second key of the `g <key>` go-to shortcut, if any */
+  key?: string;
 }
 
-const NAV: NavItem[] = [
-  { to: "/timeline", label: "Timeline", icon: "timeline", key: "t" },
-  { to: "/inbox", label: "Inbox", icon: "inbox", key: "i" },
-  { to: "/approvals", label: "Approvals", icon: "approvals", key: "a" },
-  { to: "/flows", label: "Flows", icon: "flows", key: "f" },
-  { to: "/agent-runs", label: "Agent runs", icon: "agent", key: "r" },
-  { to: "/sensors", label: "Sensors", icon: "sensors", key: "s" },
-  { to: "/prompts", label: "Prompts", icon: "prompts", key: "p" },
-  { to: "/settings", label: "Settings", icon: "settings", key: "," },
+interface NavSection {
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "Notify",
+    items: [
+      { to: "/inbox", label: "Inbox", icon: "inbox", key: "i" },
+      { to: "/approvals", label: "Approvals", icon: "approvals", key: "a" },
+    ],
+  },
+  {
+    label: "Automate",
+    items: [
+      { to: "/sensors", label: "Sensors", icon: "sensors", key: "s" },
+      { to: "/flows", label: "Flows", icon: "flows", key: "f" },
+      { to: "/prompts", label: "Prompts", icon: "prompts", key: "p" },
+    ],
+  },
+  {
+    label: "Observe",
+    items: [
+      { to: "/timeline", label: "Timeline", icon: "timeline", key: "t" },
+      { to: "/agent-runs", label: "Agent runs", icon: "agent", key: "r" },
+    ],
+  },
+  {
+    label: "Configure",
+    items: [
+      {
+        to: "/settings/general",
+        label: "General",
+        icon: "settings",
+        key: ",",
+      },
+      {
+        to: "/settings/environment",
+        label: "Environment",
+        icon: "env",
+        key: "e",
+      },
+      {
+        to: "/settings/runtimes",
+        label: "Runtimes",
+        icon: "command",
+        key: "m",
+      },
+      { to: "/settings/auth", label: "Auth", icon: "lock", key: "u" },
+    ],
+  },
 ];
+
+const NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.items);
 
 /** `g` then a letter jumps to a page (Linear style); ignored while typing. */
 function useGoToShortcuts() {
@@ -147,52 +192,70 @@ export function AppShell() {
           />
           {!collapsed && "hal9001"}
         </div>
-        <ul className="flex-1 space-y-0.5 p-2">
-          {NAV.map((n) => {
-            const count =
-              n.to === "/inbox"
-                ? s?.unread_inbox
-                : n.to === "/approvals"
-                  ? s?.pending_approvals
-                  : undefined;
-            const tone = n.to === "/inbox" ? "info" : "warn";
-            return (
-              <li key={n.to}>
-                <NavLink
-                  to={n.to}
-                  title={`${n.label} (g ${n.key})`}
-                  aria-label={collapsed ? n.label : undefined}
-                  className={({ isActive }) =>
-                    cx(
-                      "relative flex items-center gap-2 rounded-md py-1.5 text-[13px]",
-                      collapsed ? "justify-center px-0" : "px-2",
-                      isActive
-                        ? "bg-raised font-medium"
-                        : "text-muted hover:bg-raised hover:text-fg",
-                    )
-                  }
-                >
-                  <Icon name={n.icon} size={15} />
-                  {!collapsed && n.label}
-                  {collapsed ? (
-                    count ? (
-                      <span
-                        className={cx(
-                          "absolute right-1 top-0.5 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 tabular-nums text-white",
-                          tone === "info" ? "bg-info" : "bg-warn",
-                        )}
+        <div className="flex-1 overflow-y-auto p-2">
+          {NAV_SECTIONS.map((section, si) => (
+            <div
+              key={section.label}
+              role="group"
+              aria-label={section.label}
+              className={si > 0 ? (collapsed ? "mt-2" : "mt-3") : undefined}
+            >
+              {collapsed ? (
+                si > 0 && <hr className="mx-1 mb-2 border-t border-line" />
+              ) : (
+                <div className="mb-1 px-2 text-[10px] font-medium uppercase tracking-wider text-muted">
+                  {section.label}
+                </div>
+              )}
+              <ul className="space-y-0.5">
+                {section.items.map((n) => {
+                  const count =
+                    n.to === "/inbox"
+                      ? s?.unread_inbox
+                      : n.to === "/approvals"
+                        ? s?.pending_approvals
+                        : undefined;
+                  const tone = n.to === "/inbox" ? "info" : "warn";
+                  return (
+                    <li key={n.to}>
+                      <NavLink
+                        to={n.to}
+                        title={n.key ? `${n.label} (g ${n.key})` : n.label}
+                        aria-label={collapsed ? n.label : undefined}
+                        className={({ isActive }) =>
+                          cx(
+                            "relative flex items-center gap-2 rounded-md py-1.5 text-[13px]",
+                            collapsed ? "justify-center px-0" : "px-2",
+                            isActive
+                              ? "bg-raised font-medium"
+                              : "text-muted hover:bg-raised hover:text-fg",
+                          )
+                        }
                       >
-                        {count > 99 ? "99+" : count}
-                      </span>
-                    ) : null
-                  ) : (
-                    <Count n={count} tone={tone} />
-                  )}
-                </NavLink>
-              </li>
-            );
-          })}
-        </ul>
+                        <Icon name={n.icon} size={15} />
+                        {!collapsed && n.label}
+                        {collapsed ? (
+                          count ? (
+                            <span
+                              className={cx(
+                                "absolute right-1 top-0.5 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 tabular-nums text-white",
+                                tone === "info" ? "bg-info" : "bg-warn",
+                              )}
+                            >
+                              {count > 99 ? "99+" : count}
+                            </span>
+                          ) : null
+                        ) : (
+                          <Count n={count} tone={tone} />
+                        )}
+                      </NavLink>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
         <div
           className={cx(
             "flex items-center border-t border-line p-2 text-[11px] text-muted",
@@ -211,8 +274,9 @@ export function AppShell() {
           </button>
           {!collapsed && (
             <span>
-              <Kbd>g</Kbd> then <Kbd>t</Kbd> <Kbd>i</Kbd> <Kbd>a</Kbd>{" "}
-              <Kbd>f</Kbd> <Kbd>r</Kbd> <Kbd>s</Kbd> <Kbd>p</Kbd> to jump
+              <Kbd>g</Kbd> then <Kbd>i</Kbd> <Kbd>a</Kbd> <Kbd>s</Kbd>{" "}
+              <Kbd>f</Kbd> <Kbd>p</Kbd> <Kbd>t</Kbd> <Kbd>r</Kbd> <Kbd>,</Kbd>{" "}
+              <Kbd>e</Kbd> <Kbd>m</Kbd> <Kbd>u</Kbd> to jump
             </span>
           )}
         </div>

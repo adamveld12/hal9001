@@ -63,9 +63,25 @@ const PromptsPage = page(
   () => import("./pages/prompts/PromptsPage"),
   "PromptsPage",
 );
-const SettingsPage = page(
+const SettingsRedirect = page(
   () => import("./pages/settings/SettingsPage"),
-  "SettingsPage",
+  "SettingsRedirect",
+);
+const SettingsGeneralPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsGeneralPage",
+);
+const SettingsEnvironmentPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsEnvironmentPage",
+);
+const SettingsRuntimesPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsRuntimesPage",
+);
+const SettingsAuthPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsAuthPage",
 );
 
 function makeQueryClient(): QueryClient {
@@ -120,7 +136,14 @@ function AuthGate() {
           <Route path="sensors/:id" element={<SensorsPage />} />
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="prompts/:name" element={<PromptsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="settings" element={<SettingsRedirect />} />
+          <Route path="settings/general" element={<SettingsGeneralPage />} />
+          <Route
+            path="settings/environment"
+            element={<SettingsEnvironmentPage />}
+          />
+          <Route path="settings/runtimes" element={<SettingsRuntimesPage />} />
+          <Route path="settings/auth" element={<SettingsAuthPage />} />
           <Route path="*" element={<Navigate to="/timeline" replace />} />
         </Route>
       </Routes>
