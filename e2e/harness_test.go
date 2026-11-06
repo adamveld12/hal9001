@@ -574,7 +574,7 @@ func (d *Daemon) Tick(dur time.Duration) {
 	}
 }
 
-// Eventually polls cond every 20ms until it holds, failing with what after 30s.
+// Eventually polls cond every 5ms until it holds, failing with what after 30s.
 func (d *Daemon) Eventually(what string, cond func() bool) {
 	d.t.Helper()
 	d.EventuallyWithin(30*time.Second, what, cond)
@@ -588,7 +588,7 @@ func (d *Daemon) EventuallyWithin(limit time.Duration, what string, cond func() 
 		if time.Now().After(deadline) {
 			d.t.Fatalf("timed out after %s waiting for %s", limit, what)
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
