@@ -3,9 +3,13 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
@@ -134,6 +138,157 @@ func TestFlowTestQueuesAllEntryNodesInOneCommit(t *testing.T) {
 	for _, n := range res.Nodes {
 		if n.Status != string(store.NodeDone) {
 			t.Errorf("node %s is %s, want done", n.NodeID, n.Status)
+		}
+	}
+}
+
+// A flow run must not be ended by a sibling branch while a node that has just
+// finished still has follow-ups to queue. The test holds the split node where
+// its record becomes visible, lets the sibling end the run (it finishes, fails
+// or is killed by the kill switch) and waits for the run to end before the
+// split node goes on. With the follow-up committed together with the node it
+// exists by then, and the run waits for it. Committed afterwards, it reaches a
+// run that is already over: skipped, so its inbox item is never created (the
+// dry-run replay e2e flake), or left queued for good behind the kill switch.
+func TestRunWaitsForTheFollowUpsOfTheNodeThatFinishedLast(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tail   string // what the sibling does after it signals that it runs
+		kill   bool   // end the sibling with the kill switch instead of opening its gate
+		status store.FlowRunStatus
+		note   store.NodeRunStatus // what became of the follow-up of the split node
+	}{
+		{"succeeded", "while [ ! -f GATE ]; do sleep 0.02; done", false, store.FlowRunSucceeded, store.NodeDone},
+		{"failed", "while [ ! -f GATE ]; do sleep 0.02; done\nexit 1", false, store.FlowRunFailed, store.NodeDone},
+		{"killed", "sleep 300", true, store.FlowRunKilled, store.NodeSkipped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.idleSensor()
+			dir := t.TempDir()
+			started, gate := filepath.Join(dir, "started"), filepath.Join(dir, "gate")
+			tail := strings.ReplaceAll(strings.ReplaceAll(tc.tail, "GATE", gate), "\n", "\n      ")
+			h.flow("f", `id: f
+enabled: true
+subscribe: [src]
+nodes:
+  - id: split
+    type: command
+    lang: bash
+    script: |
+      while [ ! -f `+started+` ]; do sleep 0.02; done
+      echo '{"n":1}'
+  - id: sibling
+    type: command
+    lang: bash
+    script: |
+      touch `+started+`
+      `+tail+`
+  - {id: note, type: inbox, title: "note"}
+edges:
+  - {from: split, to: note}
+`)
+			var split, ended sync.Once
+			over := make(chan struct{})
+			h.st.SetNotifier(func(c store.Change) {
+				switch {
+				case c.Resource == store.ResFlowRun && c.Op == store.OpUpdate:
+					if fr, err := h.st.GetFlowRun(context.Background(), c.ID); err == nil && fr.Status.Terminal() {
+						ended.Do(func() { close(over) })
+					}
+				case c.Resource == store.ResNodeRun && c.Op == store.OpUpdate:
+					nr, err := h.st.GetNodeRun(context.Background(), c.ID)
+					if err != nil || nr.NodeID != "split" || nr.Status != store.NodeDone {
+						return
+					}
+					split.Do(func() {
+						if tc.kill {
+							_, _ = h.eng.Pause(context.Background(), true, "test")
+						} else {
+							_ = os.WriteFile(gate, nil, 0o600)
+						}
+						select {
+						case <-over:
+						case <-time.After(waitFor):
+						}
+					})
+				}
+			})
+			h.start()
+
+			id := h.injectRun(`{"id":"1"}`)
+			h.waitRun(id, tc.status)
+			if n := h.node(id, "note"); n.Status != tc.note {
+				t.Errorf("follow-up of the split node is %s (%s), want %s\n%s", n.Status, n.Reason, tc.note, h.dumpRun(id))
+			}
+			for _, n := range h.nodeRuns(id) {
+				if n.Status == store.NodeQueued || n.Status == store.NodeRunning {
+					t.Errorf("node %s is still %s in a %s run\n%s", n.NodeID, n.Status, tc.status, h.dumpRun(id))
+				}
+			}
+			wantItems := 1
+			if tc.note != store.NodeDone {
+				wantItems = 0
+			}
+			if got := len(h.inboxItems()); got != wantItems {
+				t.Errorf("%d inbox items, want %d\n%s", got, wantItems, h.dumpRun(id))
+			}
+		})
+	}
+}
+
+// Removing a run that waits in the queue (the cancelled end of a run) takes the
+// follow-ups of a node that finished a moment before. The run waits behind a
+// full command pool; the split node is held where its record becomes visible
+// and the run is removed then. With the follow-up committed together with the
+// node it is cancelled with the rest; committed afterwards it joined a run that
+// was already cancelled and stayed queued behind the kill switch.
+func TestRemoveQueuedTakesTheFollowUpsOfTheNodeThatFinishedLast(t *testing.T) {
+	h := newHarness(t, withConfig("max_command_runs: 1\n"))
+	h.idleSensor()
+	h.flow("f", `id: f
+enabled: true
+subscribe: [src]
+nodes:
+  - id: split
+    type: command
+    lang: bash
+    script: |
+      echo '{"n":1}'
+  - id: other
+    type: command
+    lang: bash
+    script: "true"
+  - {id: note, type: inbox, title: note}
+edges:
+  - {from: split, to: note}
+`)
+	var once sync.Once
+	h.st.SetNotifier(func(c store.Change) {
+		if c.Resource != store.ResNodeRun || c.Op != store.OpUpdate {
+			return
+		}
+		nr, err := h.st.GetNodeRun(context.Background(), c.ID)
+		if err != nil || nr.NodeID != "split" || nr.Status != store.NodeDone {
+			return
+		}
+		once.Do(func() {
+			// Nothing starts while paused, so the queue stands still under the test.
+			if _, err := h.eng.Pause(context.Background(), false, "test"); err != nil {
+				t.Errorf("pause: %v", err)
+			}
+			if _, err := h.eng.RemoveQueued(context.Background(), nr.FlowRunID, "test"); err != nil {
+				t.Errorf("remove from the queue: %v", err)
+			}
+		})
+	})
+	h.start()
+
+	id := h.injectRun(`{"id":"1"}`)
+	h.waitRun(id, store.FlowRunCancelled)
+	for _, node := range []string{"other", "note"} {
+		if n := h.node(id, node); n.Status != store.NodeCancelled {
+			t.Errorf("node %s is %s, want cancelled with its run\n%s", node, n.Status, h.dumpRun(id))
 		}
 	}
 }

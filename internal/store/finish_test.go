@@ -111,3 +111,34 @@ func TestFinishNodeRunAndCreateNodeRunsAreAllOrNothing(t *testing.T) {
 		t.Errorf("%d node runs after creating two, want 3", n)
 	}
 }
+
+// A run is cancelled with everything queued in it, including the follow-ups of
+// a node that finished a moment before: they exist by then, so none is left
+// queued behind a cancelled run.
+func TestCancelQueuedTakesTheFollowUpsOfAFinishedNode(t *testing.T) {
+	s, _ := newTestStore(t)
+	fr := mkFlowRun(t, s, "F", "", FlowRunRunning)
+	parent := mkNodeRun(t, s, fr.ID, "split", NodeCommand, NodeRunning)
+	waiting := mkNodeRun(t, s, fr.ID, "other", NodeCommand, NodeQueued)
+
+	if _, err := s.CancelQueued(ctx(), fr.ID, "me"); !errors.Is(err, ErrNotQueued) {
+		t.Fatalf("CancelQueued while a node runs: %v, want ErrNotQueued", err)
+	}
+
+	parent.Status, parent.Decision = NodeDone, DecisionEmitted
+	next := &NodeRun{FlowRunID: fr.ID, NodeID: "note", NodeType: NodeInbox, ParentNodeRunID: parent.ID}
+	must(t, s.FinishNodeRun(ctx(), parent, []*NodeRun{next}))
+
+	got, err := s.CancelQueued(ctx(), fr.ID, "me")
+	must(t, err)
+	if got.Status != FlowRunCancelled {
+		t.Errorf("flow run is %s, want cancelled", got.Status)
+	}
+	for _, id := range []string{waiting.ID, next.ID} {
+		n, err := s.GetNodeRun(ctx(), id)
+		must(t, err)
+		if n.Status != NodeCancelled {
+			t.Errorf("node run %s is %s after the cancellation, want cancelled", n.NodeID, n.Status)
+		}
+	}
+}
