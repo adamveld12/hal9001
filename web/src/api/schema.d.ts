@@ -843,6 +843,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/mcp/ready": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * The agent's MCP client is connected (hal MCP backend)
+     * @description `hal9001 mcp` calls this once the agent's MCP client has initialized against it, so hal can hold the first prompt
+     *     until the agent can see its tools (omp does not wait for its MCP servers). Authorized by the run capability token
+     *     like the other `/api/mcp/` operations.
+     */
+    post: operations["markMcpReady"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/mcp/call": {
     parameters: {
       query?: never;
@@ -5725,6 +5747,37 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      /** @description The daemon has no tool hub (not expected in a normal daemon). */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      default: components["responses"]["Error"];
+    };
+  };
+  markMcpReady: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Recorded. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
       /** @description The daemon has no tool hub (not expected in a normal daemon). */
       503: {
         headers: {

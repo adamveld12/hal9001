@@ -325,6 +325,7 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 	}
 	ag, err := ex.NewSession(agent.SessionRequest{
 		Runtime: s.row.Runtime, Config: rt, Cwd: s.dir, Model: s.row.Model, LoadSessionID: s.row.ACPSessionID,
+		ToolsReady: tools.ToolsReady(ht),
 		MCPServers: []agent.MCPServer{{
 			Name: tools.ServerName, Type: "stdio", Command: s.m.opt.Executable, Args: tools.ServerArgs(s.m.opt.URL, ht.Token()),
 		}},

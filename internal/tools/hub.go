@@ -165,9 +165,35 @@ type Session struct {
 	token string
 	hash  string
 
+	ready     chan struct{} // closed when the agent's MCP client has initialized against hal's server
+	readyOnce sync.Once
+
 	mu      sync.Mutex
 	closers []func()
 	closed  bool
+}
+
+// MarkReady records that the agent's MCP client finished its handshake with hal's MCP server (`hal9001 mcp` reports
+// it). Some runtimes (omp) do not wait for their MCP servers before the first prompt, so the executor waits for this.
+func (s *Session) MarkReady() { s.readyOnce.Do(func() { close(s.ready) }) }
+
+// WaitReady blocks until MarkReady, the timeout or ctx; it reports whether the handshake happened. A short settle time
+// follows it so the runtime can list the tools it just learned about.
+func (s *Session) WaitReady(ctx context.Context, timeout time.Duration) bool {
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-s.ready:
+	case <-t.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+	select {
+	case <-time.After(300 * time.Millisecond):
+	case <-ctx.Done():
+	}
+	return true
 }
 
 // HashToken is the stored form of a token.
@@ -188,7 +214,7 @@ func (h *Hub) Open(ctx context.Context, spec RunSpec) (*Session, error) {
 	if spec.ApprovalTimeout <= 0 {
 		spec.ApprovalTimeout = DefaultApprovalTimeout
 	}
-	s := &Session{h: h, spec: spec, reg: h.base.Clone()}
+	s := &Session{h: h, spec: spec, reg: h.base.Clone(), ready: make(chan struct{})}
 	h.mu.Lock()
 	providers := append([]Provider(nil), h.providers...)
 	h.mu.Unlock()

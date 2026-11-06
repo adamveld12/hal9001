@@ -46,6 +46,7 @@ type options struct {
 	prompts     multiFlag
 	promptFile  string
 	mcpEcho     bool
+	mcpStdio    multiFlag // name=command arg...
 	mcpDelay    time.Duration
 	canary      bool
 	env         multiFlag
@@ -113,6 +114,7 @@ func parseFlags(args []string, stderr io.Writer) (*options, error) {
 	fs.StringVar(&o.promptFile, "prompt-file", "", "read one prompt from this file")
 	fs.BoolVar(&o.mcpEcho, "mcp-echo", false, "pass a local stdio MCP server exposing an 'echo' tool in session/new")
 	fs.DurationVar(&o.mcpDelay, "mcp-echo-delay", 0, "with --mcp-echo: the echo tool holds its reply back this long (tests tool-call timeouts)")
+	fs.Var(&o.mcpStdio, "mcp-stdio", "pass an extra stdio MCP server in session/new as name=command arg... (repeatable)")
 	fs.BoolVar(&o.canary, "canary", false, "write AGENTS.md and CLAUDE.md with canary tokens into the working directory")
 	fs.Var(&o.env, "env", "KEY=VALUE added to the agent process environment (repeatable)")
 	fs.StringVar(&o.loadID, "load", "", "call session/load with this session id instead of session/new")
@@ -430,6 +432,14 @@ func (p *prober) mcpServers() []acp.McpServer {
 			Args:    mcpEchoArgs(p.mcpLog, p.opts.mcpDelay),
 			Env:     []acp.EnvVariable{},
 		}})
+	}
+	for _, spec := range p.opts.mcpStdio {
+		name, cmdline, _ := strings.Cut(spec, "=")
+		argv := strings.Fields(cmdline)
+		if name == "" || len(argv) == 0 {
+			continue
+		}
+		servers = append(servers, acp.McpServer{Stdio: &acp.McpServerStdio{Name: name, Command: argv[0], Args: append([]string{}, argv[1:]...), Env: []acp.EnvVariable{}}})
 	}
 	return servers
 }

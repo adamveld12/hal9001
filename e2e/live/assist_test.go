@@ -45,8 +45,8 @@ type liveAssistSession struct {
 	} `json:"messages"`
 }
 
-// One real claude turn on the cheapest model: asked to create a sensor that emits two static items, the agent edits
-// the draft (allowed without asking), runs `hal9001 assist test` (a new script, so the user is asked: the test allows
+// One real claude turn on the cheapest model: asked to create a sensor that emits two static items, the agent writes
+// the draft with draft_write, calls draft_test (a new script, so the user is asked: the test allows
 // it, and checks the approval shows the script) and ends with a summary. Passes when the draft validates, the
 // daemon's own test of it returns 2 items, and nothing but that one test asked for a person.
 func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
@@ -55,8 +55,7 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 	if !rt.selected() {
 		t.Skip("claude not selected by HAL9001_LIVE_RUNTIMES")
 	}
-	bin := buildCLI(t)
-	s := startStack(t, stackOpts{binDir: bin})
+	s := startStack(t, stackOpts{})
 
 	var created liveAssistSession
 	s.must(http.StatusCreated, http.MethodPost, "/api/assist/sessions", map[string]any{
@@ -80,7 +79,7 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 		if got.Status == "awaiting_approval" {
 			for _, ap := range s.approvals("status=pending") {
 				pr := ap.PermissionRequest
-				if pr == nil || pr.ToolKind != "execute" || !strings.Contains(pr.Title, "assist test") {
+				if pr == nil || pr.Title != "hal tool: draft_test" {
 					t.Fatalf("the agent asked for something other than the test of its script: %+v (%+v)", ap, pr)
 				}
 				asked++
@@ -121,7 +120,7 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 	var ranTest bool
 	for _, p := range s.permissionRequests(*got.LastAgentRunID) {
 		t.Logf("permission: kind=%s title=%q decision=%v by=%v rule=%v", p.ToolKind, p.Title, deref(p.Decision), deref(p.DecidedBy), deref(p.MatchedRule))
-		isTest := p.ToolKind == "execute" && strings.Contains(p.Title, "assist test")
+		isTest := p.Title == "hal tool: draft_test"
 		if isTest && deref(p.Decision) == "allow" && deref(p.DecidedBy) == "user" {
 			ranTest = true
 		}
@@ -130,7 +129,7 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 		}
 	}
 	if !ranTest {
-		t.Error("the agent never ran `hal9001 assist test` with the user's approval")
+		t.Error("the agent never ran draft_test with the user's approval")
 	}
 	if asked != 1 {
 		t.Errorf("the user was asked %d times, want once (the new script)", asked)
@@ -156,8 +155,7 @@ func TestLiveAssistClaudeAuthorsAFlow(t *testing.T) {
 	if !rt.selected() {
 		t.Skip("claude not selected by HAL9001_LIVE_RUNTIMES")
 	}
-	bin := buildCLI(t)
-	s := startStack(t, stackOpts{binDir: bin, keepSensors: []string{"demo-ticker"}})
+	s := startStack(t, stackOpts{keepSensors: []string{"demo-ticker"}})
 
 	// No enabled flow subscribes to demo-ticker, so poll it once now: it fires its three items, which the session
 	// then offers as samples.

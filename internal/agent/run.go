@@ -300,7 +300,13 @@ func (r *run) handshake() bool {
 	if !r.applyMode() {
 		return false
 	}
-	return r.applyModel()
+	if !r.applyModel() {
+		return false
+	}
+	if f := r.p.req.ToolsReady; f != nil && r.p.req.Config.Lockdown.WaitForMCP {
+		f(r.ctx)
+	}
+	return true
 }
 
 func convertMCP(in []MCPServer) []acp.McpServer {

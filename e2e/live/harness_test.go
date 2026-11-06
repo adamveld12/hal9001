@@ -56,8 +56,8 @@ type stackOpts struct {
 	configPatch func(string) string
 	// env is written to <home>/env.
 	env string
-	// binDir, when set, is put first on the PATH of the daemon and everything it starts (for example a
-	// directory holding a built hal9001, which assist agents run as `hal9001 assist test`).
+	// binDir is a directory holding a built hal9001 (default: built into a temp dir). It is put first on the PATH of
+	// the daemon and everything it starts, and the daemon hands that binary to every agent as its `hal9001 mcp` server.
 	binDir string
 }
 
@@ -67,10 +67,16 @@ type stackOpts struct {
 func startStack(t *testing.T, o stackOpts) *stack {
 	t.Helper()
 	adapters := adapterPaths(t) // resolved in the repo, where mise.toml pins them
+	if o.binDir == "" {
+		o.binDir = buildCLI(t) // before the chdir below: the build runs from the repo
+	}
 	// launchd starts the daemon in /, outside any repo: mise shims resolve
 	// tool versions from the working directory, so do the same here.
 	t.Chdir("/")
 	home := t.TempDir()
+	if keep := os.Getenv("HAL9001_LIVE_KEEP_HOME"); keep != "" { // for debugging: the home outlives the test
+		home = keep
+	}
 	if _, err := spec.Init(home, content.FS); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +140,7 @@ func startStack(t *testing.T, o stackOpts) *stack {
 	}
 	go func() {
 		done <- daemon.Run(ctx, daemon.Options{
-			Home: home, Version: "live", BasePATH: basePATH, ListenAddr: "127.0.0.1:0",
+			Home: home, Version: "live", BasePATH: basePATH, ListenAddr: "127.0.0.1:0", Executable: filepath.Join(o.binDir, "hal9001"),
 			Log:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
 			Ready: func(a net.Addr) { ready <- a },
 		})
@@ -271,6 +277,7 @@ type agentRun struct {
 	ParseError   bool            `json:"parse_error"`
 	Error        *string         `json:"error"`
 	AgentInfo    json.RawMessage `json:"agent_info"`
+	Stderr       *string         `json:"stderr"`
 }
 
 type permissionRequest struct {

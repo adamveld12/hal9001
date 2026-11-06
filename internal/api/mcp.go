@@ -40,6 +40,15 @@ func (s *Server) listMcpTools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tools": sess.Tools()})
 }
 
+func (s *Server) markMcpReady(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.mcpSession(w, r)
+	if !ok {
+		return
+	}
+	sess.MarkReady()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) callMcpTool(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.mcpSession(w, r)
 	if !ok {

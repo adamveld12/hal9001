@@ -96,6 +96,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		Timeout:         node.Timeout.Std(),
 		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
 		ExpectNote:      expectNote,
+		ToolsReady:      tools.ToolsReady(ht.sess),
 	}
 	if node.Allow != nil {
 		req.Allow.Tools = node.Allow.Tools

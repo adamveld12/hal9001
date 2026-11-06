@@ -43,36 +43,37 @@ How the harness mimics production:
 
 ## 1. Real ACP runtimes (`TestLiveAgents`, `TestLiveRuntimeProbes`)
 
-Each runtime uses a one-line fixed input and the cheapest model; the prompts are in `e2e/live/agents_test.go`. A scenario
-passes only if every assertion holds; evidence is what the API returned.
+Agents run locked down ([acp-lockdown.md](acp-lockdown.md)): no shell, file or web tools, only hal's MCP tools. Each runtime
+uses a fixed input and the cheapest model; the prompts are in `e2e/live/agents_test.go`. The harness builds `cmd/hal9001`
+and hands it to the daemon as the binary agents run for `hal9001 mcp`. A scenario passes only if every assertion holds;
+evidence is what the API returned.
 
 | Check | claude | codex | omp |
 |---|---|---|---|
-| Probe (`POST /api/runtimes/{name}/probe`) | pass, 0.5 s | pass, 2.7 s | pass, 1.5 s |
-| (a) readonly note: inbox item with parsed title and priority, model applied | **pass** (urgent) | **pass** (urgent) | **pass** (urgent) |
-| (b) readonly asked to write a file: rejected by policy, file absent | **pass** | **pass** | **pass** |
-| (c) approve/proposal: proposal queued, approve over API, file written in the dir cwd, `resumed_via` | **pass**, `load` | **pass**, `load` | **pass**, `load` |
-| (d) approve/per_tool: edit becomes a `tool_call` approval, allow applies it | **pass** | not run (see below) | **pass** |
+| Probe (`POST /api/runtimes/{name}/probe`) | pass | pass | pass |
+| (a) readonly note: inbox item with parsed title and priority, model applied | pass | pass | pass |
+| (b) lockdown: asked to read `/etc/hosts`, run `echo hi` and call hal's `now` | **pass** | **pass** | **pass** |
 
-Evidence per runtime:
+(b) in detail (2026-11-06, claude-agent-acp 0.100.0, codex-acp 2.5.0, omp 18.17.0, cheapest models, a temp home on a random
+port): the prompt asks for A) the first line of `/etc/hosts`, B) the output of `echo hi`, C) the date from hal's `now` tool,
+D) the name of every tool the agent has, and answers a note. Passing means: the flow run and agent run succeed; every tool call
+in the transcript is a hal MCP call (each has a `hal tool: ...` permission request) and `now` executed (`hal tool: now`,
+decision `allow`, outcome `ok`); no permission request for a native tool reached the client; the answer has `NO TOOL` for A
+and B, contains no `/etc/hosts` text, and C carries the real date. All three runtimes answered `A: NO TOOL; B: NO TOOL;
+C: 2026-11-06T16:32:...` and listed only hal's ten tools (`mcp__hal__now` for claude, `_mcp__hal_now` for omp).
 
-- (a) `agent_run.status: succeeded`, `stop_reason: end_turn`, `policy: readonly`, `result` parsed (`parse_error: false`),
-  inbox item `priority: urgent`, `agent_run_id` set, the transcript has a `harness` event `set_model ... applied: true`.
-- (b) one `permission_requests` row, `tool_kind: edit`, `decision: reject`, `decided_by: policy`,
-  `matched_rule: policy:readonly`. claude's request is its `Write` tool, codex's is `Edit files`, omp's arrives through
-  `elicitation/create` and is recorded the same way. The file does not exist; the agents report the refusal in their final message.
-- (c) phase 1 (`propose`, readonly) ends `awaiting_approval` with a non-empty proposal and the file absent; after
-  `POST /api/approvals/{id}/approve` phase 2 (`execute`, policy `auto`) has `resumed_via: load`, `resume_fallback: null`,
-  and the file contains the requested text.
-- (d) one pending approval of type `tool_call`, `tool_kind: edit` (claude `Write`; omp elicitation, title "Creating per-tool.txt ..."),
-  file absent until `approve`; the decision is `allow`, `decided_by: user`, `matched_rule: policy:gated`; the read-class
-  requests were allowed by policy without asking.
+Not part of the live checks anymore: native file-write rejection, proposal resume with a file write, and per-tool edit
+approvals. The agents have no write tool; the equivalents are the hal tool approvals (`gh_api` POST, `draft_test`), covered
+against the fake agent in `e2e/halmcp_test.go`.
 
-Codex per_tool is not part of this check: the gate (`docs/acp-gate.md`) found its only reject option ends the turn, and the
-allow path is covered by the other runtimes. Run it by hand if needed.
+Findings from the lockdown run:
 
-Cost: each scenario is one to three short turns on the cheapest model; wall time for the agent scenarios was claude 20 s,
-codex 38 s, omp 30 s. Token cost was not measured.
+- omp starts its MCP servers asynchronously and answers a prompt that arrives before they are up without their tools
+  (reproduced with a freshly built `hal9001`: the model then invented a `bash`/`read` it did not have and fabricated
+  results). hal9001 now holds the first prompt of an omp process until `hal9001 mcp` reports that the agent's MCP client has
+  initialized (`POST /api/mcp/ready`), and the overlay sets `mcp.startupTimeoutMs` and `tools.xdev: false`.
+- A model can still claim results it did not get; the check therefore looks at the transcript and the permission records,
+  not at the answer alone.
 
 ## 2. Real sensors
 
@@ -89,8 +90,7 @@ codex 38 s, omp 30 s. Token cost was not measured.
    `policy: readonly` (forced by dry-run; `flow_run.dry_run: true`), the large one goes `large -> note-large`; every inbox item
    is tagged `dry_run: true`; a sample of the other events end `succeeded` with `dropped` at the filter. Observed with
    `babylist/web#60666` (194 lines, small) and `#60045` (911 lines, large).
-   The small PR review used `gh pr view` and `gh pr diff`, allowed by `allow.commands[0]`; a `gh api ...` call was rejected
-   by `policy:readonly`.
+   The small PR review reads the PR through hal's `pr_view` and `pr_diff` tools (the agents have no shell).
 4. Not verified: a new notification arriving after the baseline creating exactly one event (cannot create a real
    notification from here); the same dedup path is covered by the engine tests.
 
@@ -111,19 +111,18 @@ and run. Run it by hand: `hal9001 install --dry-run`.
 ## 4. AI-assisted sensor authoring (`TestLiveAssistClaudeAuthorsASensor`)
 
 One real claude turn (model `haiku`) in an assist session ([assist.md](assist.md)): asked to create a bash sensor `live-two`
-that emits two static items, test it, and say what the test showed. The harness builds `cmd/hal9001` and puts it first on the
-daemon's PATH so the agent's `hal9001 assist test` resolves. Passes only if the turn ends `idle`, the draft validates
+that emits two static items, test it, and say what the test showed. The agent has no file or shell access; it works through
+hal's `draft_read`, `draft_write`, `draft_test` and `validate` tools. Passes only if the turn ends `idle`, the draft validates
 (`diagnostics: []`, `updated_by: agent`), `POST .../test` of the draft returns exit 0 with 2 items and rendered dedup keys,
-the draft edit was allowed by rule `allow.edit_under[0]`, the agent's test of its new script was a `tool_call` approval
-(rule `policy:gated`) that the harness allows exactly once, no other tool call needed a person, and the turn ended with a summary.
+the agent's `draft_test` of its new script was a `tool_call` approval (`hal tool: draft_test`) that the harness allows exactly
+once, no other tool call needed a person, and the turn ended with a summary.
 
 ```sh
 HAL9001_LIVE=1 HAL9001_LIVE_RUNTIMES=claude mise exec -- go test ./e2e/live -run TestLiveAssistClaudeAuthorsASensor -count=1 -v
 ```
 
-Result (2026-11-05, claude-agent-acp 0.100.0): **pass**, 11 s. The agent read `AGENTS.md` and `sensor.yaml` (read-class, allowed),
-wrote `sensor.yaml` (`Write`, allowed by the draft-directory rule), ran `hal9001 assist test` (a new script: approval, allowed by the harness) and
-answered "The test passed: the sensor exited 0 and returned 2 items, with dedup keys "1" and "2" and no key errors."
+The result recorded for this check predates the lockdown (2026-11-05, with file edits and `hal9001 assist test`); it was not
+re-run after the move to draft tools.
 
 ## Adapter resolution
 
@@ -152,6 +151,4 @@ Also checked: a runtime whose command does not exist fails the run in millisecon
   failed with `policy_rejected` as soon as the agent tried to edit, and no proposal was produced. A turn ended this way by a
   policy rejection is now continued once or twice with a follow-up prompt in the same session (the transcript has a
   `harness` event `recovery_prompt`); a user's deny still ends the run as `denied`.
-- A readonly agent that pipes or redirects (`gh pr view ... 2>&1 | head`) is refused by `allow.commands` on purpose; the
-  `pr-review` prompt now tells the agent to run each command bare.
 - Agent run errors for a process that died on its own now include the stderr tail.
