@@ -44,5 +44,18 @@
 // function decides per call whether the arguments need a user's approval; Run's error becomes a tool error the agent
 // sees. Tool names are lowercase snake_case.
 //
+// # Sandbox tools
+//
+// SandboxProvider(manager, opts) adds fs_read, fs_write, fs_list, fs_search and shell to runs whose node sets
+// `sandbox:`. It opens a session through the sandbox Manager (node image, repo, ref; the node input becomes
+// input.json) and closes it with Session.CloseWith(success): a failed run keeps its per_run workspace. fs_write and
+// shell use Tool.Policy (VerdictAllow / VerdictApprove / VerdictDeny): an approval's reason carries the policy rule and,
+// for fs_write, a unified diff; a deny is recorded as a denied permission request (decided by policy) and the agent
+// gets a tool error. The per_run workspace is keyed by the node run, so the propose and execute phases of an approve
+// node share it. (Depot stops its per_run sandbox when a phase ends, so only its workdir name is shared.)
+//
+// RunInSandbox(ctx, session, lang, script, stdin, env, timeout) runs a tool script (bash, python, node, or exec for a
+// command line) inside a sandbox session; env values are exported for that command and redacted from the result.
+//
 // Tests of a tool set need no daemon: build a Hub with a fake Host, Open a session and call Session.Call.
 package tools

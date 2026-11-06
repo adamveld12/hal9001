@@ -1,15 +1,18 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"hal9001/internal/runner"
+	"hal9001/internal/sandbox"
 	"hal9001/internal/spec"
 	"hal9001/internal/transform"
 )
@@ -83,7 +86,7 @@ func customTool(opt CustomOptions, rs RunSpec, id string, ct CustomTool) Tool {
 			var res UserResult
 			var err error
 			if t.RunsInSandbox {
-				res, err = runToolInSandbox(ctx, rs, eff, c.Args, uo)
+				res, err = runToolInSandbox(ctx, c.Sandbox, eff, c.Args, uo)
 			} else {
 				res, err = RunUserTool(ctx, eff, c.Args, uo)
 			}
@@ -99,14 +102,72 @@ func customTool(opt CustomOptions, rs RunSpec, id string, ct CustomTool) Tool {
 	}
 }
 
-// runToolInSandbox is where a runs_in_sandbox tool executes inside the node's sandbox session. It is the single
-// plug-in point for sandbox execution: it must run the tool like RunUserTool does (arguments on stdin and as ARG_
-// variables, redacted result) but in the sandbox.
-//
-//nolint:unparam // the sandbox implementation returns a result.
-func runToolInSandbox(_ context.Context, rs RunSpec, _ *spec.Tool, _ json.RawMessage, _ UserOptions) (UserResult, error) {
-	if rs.Sandbox == "" {
-		return UserResult{}, errors.New("this tool runs in a sandbox; set sandbox: on the agent node")
+// runToolInSandbox runs a runs_in_sandbox tool in the run's sandbox session (the node's `sandbox:`): the arguments
+// go on stdin as JSON and as ARG_ variables next to the tool's env, the script runs in the sandbox workdir, and the
+// result is redacted. It returns the same errors as RunUserTool.
+func runToolInSandbox(ctx context.Context, sess sandbox.Session, tool *spec.Tool, args json.RawMessage, opts UserOptions) (UserResult, error) {
+	var out UserResult
+	if sess == nil {
+		return out, errors.New("this tool runs in a sandbox; set sandbox: on the agent node")
 	}
-	return UserResult{}, errors.New("running tools in the node's sandbox is not available yet")
+	norm, err := NormalizeArgs(tool, args)
+	if err != nil {
+		return out, err
+	}
+	out.Args = norm
+	var obj map[string]any
+	dec := json.NewDecoder(bytes.NewReader(norm))
+	dec.UseNumber()
+	if err := dec.Decode(&obj); err != nil {
+		return out, &ArgError{Msg: err.Error()}
+	}
+	env := make(map[string]string, len(opts.Env)+len(obj)+2)
+	maps.Copy(env, opts.Env)
+	for k, v := range obj {
+		if s, ok := argEnvValue(v); ok {
+			env["ARG_"+strings.ToUpper(k)] = s
+		}
+	}
+	env["HAL_NODE"] = tool.ID
+	if opts.RunID != "" {
+		env["HAL_RUN_ID"] = opts.RunID
+	}
+	timeout := tool.Timeout.Std()
+	if opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+	if timeout == 0 {
+		timeout = spec.DefaultToolTimeout.Std()
+	}
+	script := tool.Script
+	if tool.Lang == spec.LangExec {
+		quoted := make([]string, len(tool.Command))
+		for i, a := range tool.Command {
+			quoted[i] = shellQuote(a)
+		}
+		script = strings.Join(quoted, " ")
+	}
+	start := time.Now()
+	res, err := RunInSandbox(ctx, sess, tool.Lang, script, norm, env, timeout)
+	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return out, cause
+		}
+		return out, fmt.Errorf("run tool %s in sandbox: %w", tool.ID, err)
+	}
+	out.Stdout = strings.TrimRight(opts.Redactor.String(res.Stdout), " \t\r\n")
+	out.Stderr = opts.Redactor.String(res.Stderr)
+	out.ExitCode = res.ExitCode
+	out.TimedOut = res.TimedOut
+	out.DurationMS = time.Since(start).Milliseconds()
+	if res.TimedOut || res.ExitCode != 0 {
+		return out, &ToolError{ExitCode: res.ExitCode, TimedOut: res.TimedOut, Stderr: tail(out.Stderr), Timeout: timeout}
+	}
+	if t := strings.TrimSpace(out.Stdout); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		var v any
+		if json.Unmarshal([]byte(t), &v) == nil {
+			out.Structured = json.RawMessage(t)
+		}
+	}
+	return out, nil
 }

@@ -27,24 +27,30 @@ const (
 	KindTool Kind = "tool"
 	// KindToolEnv is a tool's own env file, env.d/tools/<id>.env.
 	KindToolEnv Kind = "tool_env"
+	// KindSandbox is a sandbox backend's config, sandboxes/<backend>.yaml, and
+	// KindSandboxEnv its own env file, env.d/sandboxes/<backend>.env.
+	KindSandbox    Kind = "sandbox"
+	KindSandboxEnv Kind = "sandbox_env"
 )
 
 // Directory names under the home dir (REQUIREMENTS §3).
 const (
-	DirSensors   = "sensors"
-	DirFlows     = "flows"
-	DirPrompts   = "prompts"
-	DirEnvD      = "env.d"
-	DirSensorEnv = "env.d/sensors"
-	DirTools     = "tools"
-	DirToolEnv   = "env.d/tools"
-	DirData      = "data"
-	DirBlobs     = "data/blobs"
-	DirState     = "data/state"
-	DirWorktrees = "data/worktrees"
-	FileConfig   = "config.yaml"
-	FileEnv      = "env"
-	FileDB       = "data/hal.db"
+	DirSensors    = "sensors"
+	DirFlows      = "flows"
+	DirPrompts    = "prompts"
+	DirEnvD       = "env.d"
+	DirSensorEnv  = "env.d/sensors"
+	DirTools      = "tools"
+	DirToolEnv    = "env.d/tools"
+	DirSandboxes  = "sandboxes"
+	DirSandboxEnv = "env.d/sandboxes"
+	DirData       = "data"
+	DirBlobs      = "data/blobs"
+	DirState      = "data/state"
+	DirWorktrees  = "data/worktrees"
+	FileConfig    = "config.yaml"
+	FileEnv       = "env"
+	FileDB        = "data/hal.db"
 )
 
 // Rel returns the file's path relative to the home dir. config and env ignore
@@ -67,6 +73,10 @@ func (k Kind) Rel(id string) string {
 		return idPath(DirTools, id, ".yaml")
 	case KindToolEnv:
 		return idPath(DirToolEnv, id, ".env")
+	case KindSandbox:
+		return idPath(DirSandboxes, id, ".yaml")
+	case KindSandboxEnv:
+		return idPath(DirSandboxEnv, id, ".env")
 	}
 	return ""
 }
@@ -82,7 +92,7 @@ func idPath(dir, id, ext string) string {
 func (k Kind) Path(home, id string) string { return filepath.Join(home, filepath.FromSlash(k.Rel(id))) }
 
 func (k Kind) needsID() bool {
-	return k == KindSensor || k == KindFlow || k == KindPrompt || k == KindSensorEnv || k == KindTool || k == KindToolEnv
+	return k == KindSensor || k == KindFlow || k == KindPrompt || k == KindSensorEnv || k == KindTool || k == KindToolEnv || k == KindSandbox || k == KindSandboxEnv
 }
 
 // Errors returned by the file functions.
@@ -151,7 +161,7 @@ func WriteFile(home string, k Kind, id string, data []byte, expectedHash string)
 	if err != nil {
 		return "", err
 	}
-	if k == KindSensorEnv || k == KindToolEnv {
+	if k == KindSensorEnv || k == KindToolEnv || k == KindSandboxEnv {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return "", err
 		}

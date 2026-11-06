@@ -25,8 +25,10 @@ import (
 	"hal9001/internal/authstore"
 	"hal9001/internal/httpsec"
 	"hal9001/internal/notify"
+	"hal9001/internal/sandbox"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 	"hal9001/internal/webui"
 )
 
@@ -153,6 +155,14 @@ func Run(ctx context.Context, opts Options) error {
 	d.lastGoodConfig = ws.Config
 	d.ws.Store(ws)
 
+	// Sandbox manager: one backend per sandbox config, rebuilt on reload; sweeps failed per_run workspaces.
+	d.sandboxes = sandbox.NewManager(sandbox.ManagerOptions{
+		Home: home, Log: log,
+		RetentionDays: func() int { return d.effective(d.workspace()).Config.Value.RetentionDays },
+	})
+	defer d.sandboxes.Close()
+	eng.ToolHub().AddProvider(tools.SandboxProvider(d.sandboxes, tools.SandboxOptions{}))
+
 	ui, err := webui.New(webui.Options{Dir: opts.WebDir})
 	if err != nil {
 		return err
@@ -185,6 +195,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := eng.Start(runCtx); err != nil {
 		return fmt.Errorf("daemon: start engine: %w", err)
 	}
+	d.sandboxes.Start(runCtx)
 	engineRunning := true
 	defer func() {
 		if engineRunning {
@@ -286,6 +297,8 @@ type daemon struct {
 	log    *slog.Logger
 	engine runtimeEngine
 	auth   *auth.Manager
+	// sandboxes is set by Run; tests that build a daemon directly leave it nil.
+	sandboxes *sandbox.Manager
 
 	ws atomic.Pointer[spec.Workspace]
 
@@ -312,6 +325,9 @@ func (d *daemon) reload() {
 		d.lastGoodConfig = ws.Config
 	}
 	d.ws.Store(ws)
+	if d.sandboxes != nil {
+		d.sandboxes.Reload()
+	}
 	eff := d.effective(ws)
 	d.engine.Apply(eff)
 	if err := d.auth.Reload(AuthConfig(eff.Config.Value)); err != nil {

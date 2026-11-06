@@ -20,6 +20,8 @@ type Refs struct {
 	Runtimes map[string]Runtime
 	// Tools are the custom tool ids (valid or not). Nil skips the check of an agent node's tools.
 	Tools map[string]bool
+	// Sandboxes are the enabled sandbox backends (valid config files only) by backend name.
+	Sandboxes map[string]Sandbox
 }
 
 var (
@@ -455,6 +457,7 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 			c.errorf(CodeUnknownRuntime, p+".runtime", "unknown runtime %q%s", n.Runtime, availableList(sortedKeys(refs.Runtimes)))
 		}
 	}
+	validateAgentSandbox(c, p, n, refs)
 	c.enum(p+".mode", n.Mode, []string{ModeAuto, ModeApprove, ModeReadonly}, true)
 	if n.Approve != "" {
 		c.enum(p+".approve", n.Approve, []string{ApproveProposal, ApprovePerTool}, false)
@@ -690,4 +693,39 @@ func availableList(names []string) string {
 		return " (none defined)"
 	}
 	return " (available: " + strings.Join(names, ", ") + ")"
+}
+
+// validateAgentSandbox checks the sandbox fields of an agent node against the enabled sandbox backends.
+func validateAgentSandbox(c *collector, p string, n *Node, refs *Refs) {
+	if n.Sandbox == "" {
+		for field, v := range map[string]string{"image": n.Image, "repo": n.Repo, "ref": n.Ref} {
+			if v != "" {
+				c.errorf(CodeFieldNotAllowed, p+"."+field, "%s needs a sandbox", field)
+			}
+		}
+		return
+	}
+	if n.Ref != "" && n.Repo == "" {
+		c.errorf(CodeRequired, p+".repo", "ref needs a repo to clone")
+	}
+	if !ValidSandboxBackend(n.Sandbox) {
+		c.errorf(CodeInvalidEnum, p+".sandbox", "unknown sandbox %q (use one of %s)", n.Sandbox, strings.Join(SandboxBackends, ", "))
+		return
+	}
+	var sb Sandbox
+	if refs.Sandboxes != nil {
+		var ok bool
+		if sb, ok = refs.Sandboxes[n.Sandbox]; !ok {
+			c.errorf(CodeUnknownSandbox, p+".sandbox", "sandbox %q is not enabled (Configure \u2192 Sandboxes)%s", n.Sandbox, availableList(sortedKeys(refs.Sandboxes)))
+			return
+		}
+	}
+	if n.Image == "" {
+		return
+	}
+	if n.Sandbox != SandboxDocker && n.Sandbox != SandboxKubernetes {
+		c.errorf(CodeFieldNotAllowed, p+".image", "image is only valid with the docker and kubernetes sandboxes")
+	} else if refs.Sandboxes != nil && !slices.Contains(sb.Images, n.Image) {
+		c.errorf(CodeInvalidEnum, p+".image", "image %q is not in the images of the %s sandbox%s", n.Image, n.Sandbox, availableList(sb.Images))
+	}
 }

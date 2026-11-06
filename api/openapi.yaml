@@ -47,6 +47,7 @@ tags:
   - {name: prompts, description: Prompt library}
   - {name: runtimes, description: Configured ACP runtimes}
   - {name: settings, description: Settings and environment keys}
+  - {name: sandboxes, description: 'Sandbox backends: config, environment, connectivity check'}
   - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
   - {name: mcp, description: 'hal MCP server backend: tool list and calls, authorized by a per-run capability token'}
@@ -2479,6 +2480,169 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
+  /api/sandboxes:
+    get:
+      operationId: listSandboxes
+      tags: [sandboxes]
+      summary: Sandbox backends
+      description: |
+        One entry per backend (`local`, `docker`, `depot`, `kubernetes`, `ssh`), configured or not. A backend whose
+        file does not exist is listed with its defaults, disabled, `configured: false`.
+      x-hal-service: api
+      responses:
+        '200':
+          description: All five backends in display order.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sandboxes/{backend}:
+    parameters:
+      - {$ref: '#/components/parameters/SandboxBackend'}
+    get:
+      operationId: getSandbox
+      tags: [sandboxes]
+      summary: Config of one sandbox backend
+      description: |
+        The parsed `sandboxes/<backend>.yaml`, or the defaults when the file does not exist. `hash` is the hash of the
+        file (of empty content when it does not exist) and goes into `expected_hash` of the next write.
+        Credentials are not part of this file; they live in the backend's environment.
+      x-hal-service: api
+      responses:
+        '200':
+          description: The config with the diagnostics of the file.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateSandbox
+      tags: [sandboxes]
+      summary: Replace the config of a sandbox backend
+      description: |
+        Writes `sandboxes/<backend>.yaml` from `config` (creating it when absent). `expected_hash` must be the `hash`
+        of the last read; a mismatch is 409. Validation errors are 422 with diagnostics. A backend's own fields are only
+        required while it is `enabled`, so a half-filled backend can be saved disabled.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SandboxUpdateRequest'}
+      responses:
+        '200':
+          description: The stored config.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sandboxes/{backend}/check:
+    parameters:
+      - {$ref: '#/components/parameters/SandboxBackend'}
+    post:
+      operationId: checkSandbox
+      tags: [sandboxes]
+      summary: Test the connection of a sandbox backend
+      description: |
+        Tests the stored config (or `config` from the body, for an unsaved form) with the backend's environment:
+        `local` creates and removes a file in the root, `docker` pings the Engine, `kubernetes` runs `kubectl version`
+        and `auth can-i create pods`, `ssh` connects and runs a command in the root, `depot` lists sandboxes. Nothing
+        is left behind. A failed check is still 200 with `ok: false`. For `ssh` with no pinned host key (or a changed
+        one) `fingerprint` carries the server's SHA256 fingerprint: after the user confirms it, store it as `host_key`.
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SandboxCheckRequest'}
+      responses:
+        '200':
+          description: The outcome.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxCheckResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sandboxes/{backend}/env:
+    parameters:
+      - {$ref: '#/components/parameters/SandboxBackend'}
+    get:
+      operationId: listSandboxEnv
+      tags: [sandboxes]
+      summary: Environment keys of a sandbox backend
+      description: |
+        Keys from the backend's own env file (`env.d/sandboxes/<backend>.env`) only. Secret values (the default) are
+        write-only and never returned by any endpoint; a key marked plain (`secret: false`) returns its `value`.
+        `overrides_global` tells whether the global `env` file has the same key. Commands in the sandbox see the global
+        env overlaid by this file. Backend credentials are read from this file and are not passed to commands:
+        `DEPOT_TOKEN` and `DEPOT_ORG_ID` (depot), `SSH_PASSWORD`, `SSH_PRIVATE_KEY` and `SSH_KEY_PASSPHRASE` (ssh).
+      x-hal-service: api
+      responses:
+        '200':
+          description: Key names, sorted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxEnvKeyList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sandboxes/{backend}/env/{key}:
+    parameters:
+      - {$ref: '#/components/parameters/SandboxBackend'}
+      - {$ref: '#/components/parameters/EnvKey'}
+    put:
+      operationId: setSandboxEnv
+      tags: [sandboxes]
+      summary: Set an environment value on a sandbox backend
+      description: |
+        Creates or replaces the key in the backend's env file. Unless `secret` is false the value is redacted from
+        everything sandbox sessions return. Omit `value` to change only the `secret` flag of an existing key (404 when
+        the key does not exist).
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnvSetRequest'}
+      responses:
+        '204': {description: Stored.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteSandboxEnv
+      tags: [sandboxes]
+      summary: Remove an environment key from a sandbox backend
+      x-hal-service: admin
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
   /api/auth/{service}/begin:
     parameters:
       - {$ref: '#/components/parameters/AuthService'}
@@ -2908,6 +3072,11 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/AuthService'}
+    SandboxBackend:
+      name: backend
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/SandboxBackendName'}
     EnvKey:
       name: key
       in: path
@@ -4241,6 +4410,145 @@ components:
       properties:
         value: {type: string, writeOnly: true}
         secret: {type: boolean, description: 'false marks the value as not secret: it is not redacted from output and the API returns it. Default true.'}
+    SandboxBackendName:
+      type: string
+      enum: [local, docker, depot, kubernetes, ssh]
+    SandboxLifecycle:
+      type: string
+      enum: [per_run, persistent]
+      description: '`per_run`: a workspace (container, pod, sandbox, directory) per run, removed after a successful run; failed runs are kept for debugging. `persistent`: one long-lived environment with a per-run workdir.'
+    SandboxApprovalMode:
+      type: string
+      enum: [auto, always, rules]
+      description: 'Approval for `shell` and `fs_write` tool calls: `auto` runs them, `always` asks in the Inbox, `rules` applies `approval_rules` and asks when none matches.'
+    SandboxRuleAction:
+      type: string
+      enum: [auto, approve, deny]
+    SandboxResources:
+      type: object
+      additionalProperties: false
+      required: [cpus, memory_mb, disk_gb]
+      description: Compute limits; 0 means the backend default. Docker uses cpus and memory_mb, kubernetes the same as limits and requests, depot all three (whole vCPUs, 2 to 64).
+      properties:
+        cpus: {type: number, minimum: 0}
+        memory_mb: {type: integer, minimum: 0}
+        disk_gb: {type: integer, minimum: 0}
+    SandboxApprovalRules:
+      type: object
+      additionalProperties: false
+      required: [shell, fs_write]
+      description: The first matching rule wins; no match means approval is required.
+      properties:
+        shell:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [match, action]
+            properties:
+              match: {type: string, minLength: 1, description: Regular expression (RE2) searched in the whole command text. Anchor it with ^ and $.}
+              action: {$ref: '#/components/schemas/SandboxRuleAction'}
+        fs_write:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, action]
+            properties:
+              path: {type: string, minLength: 1, description: 'Glob relative to the workdir: `*` within a path segment, `**` across segments.'}
+              action: {$ref: '#/components/schemas/SandboxRuleAction'}
+    Sandbox:
+      type: object
+      additionalProperties: false
+      description: |
+        Config of one sandbox backend (`sandboxes/<backend>.yaml`). The fields after `resources` belong to the backend
+        named in their description and are ignored by the others. Credentials are not part of it (see the env endpoints).
+      required: [enabled, lifecycle, approval, approval_rules, timeout, resources, root, socket, images, network, org_id, image_ref, architecture, timeout_minutes, disable_tailnet, disable_depot_cache, secrets, endpoint, kubeconfig, context, namespace, service_account, host, port, user, key_file, host_key]
+      properties:
+        enabled: {type: boolean}
+        lifecycle: {$ref: '#/components/schemas/SandboxLifecycle'}
+        approval: {$ref: '#/components/schemas/SandboxApprovalMode'}
+        approval_rules: {$ref: '#/components/schemas/SandboxApprovalRules'}
+        timeout: {$ref: '#/components/schemas/Duration', description: Default timeout of one command.}
+        resources: {$ref: '#/components/schemas/SandboxResources'}
+        root: {type: string, description: 'local, ssh: root directory (`<root>/runs/<run-id>` for per_run). local default `<home>/data/sandboxes/local`; ssh may be relative to the remote home.'}
+        socket: {type: string, description: 'docker: Engine socket (`/path`, `unix:///path` or `tcp://host:port`). Default `DOCKER_HOST`, then the usual socket locations.'}
+        images: {type: array, items: {type: string}, description: 'docker, kubernetes: allowed images; the first is the default.'}
+        network: {type: boolean, description: 'docker: false runs containers without a network.'}
+        org_id: {type: string, description: 'depot: organization id (else `DEPOT_ORG_ID` from the env).'}
+        image_ref: {type: string, description: 'depot: Depot snapshot image to boot; empty uses the default image.'}
+        architecture: {type: string, enum: ['', amd64, arm64], description: 'depot.'}
+        timeout_minutes: {type: integer, minimum: 0, maximum: 1440, description: 'depot: sandbox lifetime; 0 uses the Depot default (120).'}
+        disable_tailnet: {type: boolean, description: 'depot.'}
+        disable_depot_cache: {type: boolean, description: 'depot.'}
+        secrets: {type: object, additionalProperties: {type: string}, description: 'depot: environment variable name to Depot CI secret name.'}
+        endpoint: {type: string, description: 'depot: API endpoint; default https://api.depot.dev.'}
+        kubeconfig: {type: string, description: 'kubernetes: kubeconfig path (`KUBECONFIG`); empty uses kubectl''s default.'}
+        context: {type: string, description: 'kubernetes: kubectl context.'}
+        namespace: {type: string, description: 'kubernetes.'}
+        service_account: {type: string, description: 'kubernetes: service account of the pods.'}
+        host: {type: string, description: ssh.}
+        port: {type: integer, minimum: 0, maximum: 65535, description: 'ssh; default 22.'}
+        user: {type: string, description: ssh.}
+        key_file: {type: string, description: 'ssh: private key file; alternative to `SSH_PRIVATE_KEY` and `SSH_PASSWORD` in the env.'}
+        host_key: {type: string, description: 'ssh: pinned SHA256 host key fingerprint (`SHA256:...`). Required to connect; get it from the check endpoint.'}
+    SandboxSummary:
+      type: object
+      required: [backend, configured, enabled, lifecycle, approval, valid]
+      properties:
+        backend: {$ref: '#/components/schemas/SandboxBackendName'}
+        configured: {type: boolean, description: The config file exists.}
+        enabled: {type: boolean}
+        lifecycle: {$ref: '#/components/schemas/SandboxLifecycle'}
+        approval: {$ref: '#/components/schemas/SandboxApprovalMode'}
+        valid: {type: boolean, description: The file has no errors.}
+    SandboxList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SandboxSummary'}}
+    SandboxDetail:
+      type: object
+      required: [backend, configured, hash, config, diagnostics]
+      properties:
+        backend: {$ref: '#/components/schemas/SandboxBackendName'}
+        configured: {type: boolean}
+        hash: {$ref: '#/components/schemas/Hash'}
+        config: {$ref: '#/components/schemas/Sandbox'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    SandboxUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_hash, config]
+      properties:
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        config: {$ref: '#/components/schemas/Sandbox'}
+    SandboxCheckRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        config: {$ref: '#/components/schemas/Sandbox'}
+    SandboxCheckResult:
+      type: object
+      required: [ok, message, fingerprint]
+      properties:
+        ok: {type: boolean}
+        message: {type: string}
+        fingerprint: {type: [string, 'null'], description: 'ssh: SHA256 fingerprint the server presented when the host key is not pinned or does not match.'}
+    SandboxEnvKeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [key, overrides_global, secret, value]
+            properties:
+              key: {$ref: '#/components/schemas/EnvKeyName'}
+              secret: {type: boolean}
+              value: {type: [string, 'null'], description: 'The value of a plain key; null for a secret key.'}
+              overrides_global: {type: boolean, description: 'The global `env` file has the same key; commands in this sandbox see this value.'}
     AgentInfo:
       type: object
       description: '`agentInfo` from the ACP `initialize` response.'
@@ -5361,8 +5669,8 @@ components:
       description: A file under the home dir changed on disk or through the API (hot reload).
       required: [kind, id, hash, deleted]
       properties:
-        kind: {type: string, enum: [sensor, flow, prompt, settings, env, sensor_env, tool, tool_env]}
-        id: {type: [string, 'null'], description: 'Sensor id, flow id, tool id, or prompt name; for `sensor_env` and `tool_env` the owner id; null for settings and env.'}
+        kind: {type: string, enum: [sensor, flow, prompt, settings, env, sensor_env, tool, tool_env, sandbox, sandbox_env]}
+        id: {type: [string, 'null'], description: 'Sensor id, flow id, tool id, or prompt name; for `sensor_env` and `tool_env` the owner id; for `sandbox` and `sandbox_env` the backend name; null for settings and env.'}
         hash: {$ref: '#/components/schemas/NullableHash'}
         deleted: {type: boolean}
     SensorChange:

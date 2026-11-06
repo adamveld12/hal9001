@@ -41,6 +41,7 @@ const (
 	CodeUnknownPrompt   = "unknown_prompt"
 	CodeUnknownTool     = "unknown_tool"
 	CodeUnknownRuntime  = "unknown_runtime"
+	CodeUnknownSandbox  = "unknown_sandbox"
 	CodeUnknownStack    = "unknown_stack"
 	CodeUnknownModule   = "unknown_module"
 	CodeInvalidRegex    = "invalid_regex"

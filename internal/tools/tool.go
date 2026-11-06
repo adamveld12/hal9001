@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"time"
+
+	"hal9001/internal/sandbox"
 )
 
 // Tool is one tool the agent can call.
@@ -20,9 +22,23 @@ type Tool struct {
 	// Approval reports whether a call with these arguments needs a user's approval first, and why. A nil Approval
 	// means the tool never needs one. It is called before Run and must not have side effects.
 	Approval func(args json.RawMessage) (needs bool, reason string)
+	// Policy, when set, is used instead of Approval and can also deny a call outright. Same rules as Approval.
+	Policy func(args json.RawMessage) (Verdict, string)
 	// Run executes the tool. A returned error is reported to the agent as a tool error.
 	Run func(ctx context.Context, c Call) (Result, error)
 }
+
+// Verdict is the outcome of a tool's Policy for one call.
+type Verdict int
+
+const (
+	// VerdictAllow runs the call without asking.
+	VerdictAllow Verdict = iota
+	// VerdictApprove holds the call for a user's approval.
+	VerdictApprove
+	// VerdictDeny refuses the call: it is recorded as denied by policy and the agent gets a tool error.
+	VerdictDeny
+)
 
 // Call is one invocation of a tool.
 type Call struct {
@@ -32,6 +48,8 @@ type Call struct {
 	Info RunInfo
 	// Now is the session clock's current time.
 	Now time.Time
+	// Sandbox is the run's sandbox session when the node has one (an extension supplied it), else nil.
+	Sandbox sandbox.Session
 }
 
 // Result is what a tool returns to the agent.

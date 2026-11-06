@@ -70,6 +70,10 @@ const PromptsPage = page(
   () => import("./pages/prompts/PromptsPage"),
   "PromptsPage",
 );
+const SandboxesPage = page(
+  () => import("./pages/sandboxes/SandboxesPage"),
+  "SandboxesPage",
+);
 const SettingsRedirect = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsRedirect",
@@ -160,6 +164,8 @@ function AuthGate() {
           />
           <Route path="settings/runtimes" element={<SettingsRuntimesPage />} />
           <Route path="settings/auth" element={<SettingsAuthPage />} />
+          <Route path="sandboxes" element={<SandboxesPage />} />
+          <Route path="sandboxes/:backend" element={<SandboxesPage />} />
           <Route path="*" element={<Navigate to="/inbox" replace />} />
         </Route>
       </Routes>

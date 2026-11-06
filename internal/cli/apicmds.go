@@ -122,6 +122,7 @@ func (a *app) tree() *command {
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
 		group("env", "list, set and unset env variables", envCmds("")...),
+		group("sandboxes", "list, inspect, configure and check sandbox backends", sandboxCmds()...),
 		group("assist", "AI-assisted sensor authoring: sessions, draft, test runs", assistCmds()...),
 	}}
 	return root
@@ -833,21 +834,22 @@ func runtimeCmds() []*command {
 	}
 }
 
-// envCmds are the env list/set/unset commands. With perSensor they work on
-// one sensor's own env (`sensors env ... <id> ...`): the sensor id is the
-// first argument and the paths are under /api/sensors/<id>/env. Values are
-// secret (write-only) unless set with --plain; the API returns only plain
-// values.
-// envCmds builds list|set|unset for the global env (scope "") or one owner's own
-// env file (scope "sensors" or "tools", with the owner id as the first argument).
+// envCmds are the env list/set/unset commands. scope "" is the global env;
+// "sensors", "tools" and "sandboxes" work on one owner's own env file
+// (`sensors env ... <id> ...`): the id is the first argument and the paths are
+// under /api/<scope>/<id>/env. Values are secret (write-only) unless set with
+// --plain; the API returns only plain values.
 func envCmds(scope string) []*command {
 	var fromStdin, plain, secret bool
 	name, who, idArg, n := "env", "", "", 0
 	base := func(c *call) (string, []string) { return "/api/env", c.args }
-	perOwner := scope != ""
-	if perOwner {
-		owner := strings.TrimSuffix(scope, "s")
-		name, who, idArg, n = scope+" env", " on a "+owner, "<"+owner+"-id> ", 1
+	perID := scope != ""
+	if perID {
+		noun, idName := strings.TrimSuffix(scope, "s"), strings.TrimSuffix(scope, "s")+"-id"
+		if scope == "sandboxes" {
+			noun, idName = "sandbox backend", "backend"
+		}
+		name, who, idArg, n = scope+" env", " on a "+noun, "<"+idName+"> ", 1
 		base = func(c *call) (string, []string) { return "/api/" + scope + "/" + esc(c.args[0]) + "/env", c.args[1:] }
 	}
 	set := &leaf{
@@ -886,7 +888,7 @@ func envCmds(scope string) []*command {
 		},
 	}
 	list := apiGet("/api/env", "key", "secret", "value")
-	if perOwner {
+	if perID {
 		list = &leaf{usage: strings.TrimSpace(idArg), minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			path, _ := base(c)
 			return c.doEmit(ctx, http.MethodGet, path, nil, nil, "key", "overrides_global", "secret", "value")

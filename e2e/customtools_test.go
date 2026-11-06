@@ -105,3 +105,39 @@ func TestCustomToolUnknownIDIsDiagnostic(t *testing.T) {
 	}
 	t.Errorf("no unknown_tool diagnostic: %+v", res.Diagnostics)
 }
+
+const sbxTool = `id: note_file
+description: Write a note file in the workdir
+params:
+  text: {type: string, required: true}
+lang: bash
+runs_in_sandbox: true
+script: |
+  echo "$ARG_TEXT" > note.txt
+  echo "{\"wrote\": \"$ARG_TEXT\", \"pwd_has_note\": $(test -f note.txt && echo true || echo false)}"
+approve: never
+`
+
+// A runs_in_sandbox tool runs in the node's sandbox workdir: it writes a file there and returns its output.
+func TestCustomToolRunsInSandbox(t *testing.T) {
+	d := newDaemon(t)
+	root := filepath.Join(t.TempDir(), "sbx")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: persistent\napproval: auto\n")
+	d.Write("tools/note_file.yaml", sbxTool)
+	d.IdleSensor("src")
+	d.Prompt("p", "none", "go")
+	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: []step{
+		mcp("c1", "note_file", map[string]any{"text": "hi there"}), say("finished"),
+	}}}})
+	d.Flow("f", approvalFlow("per_tool", "    sandbox: local\n    tools: [note_file]\n"))
+	d.Start()
+	runID := d.InjectRun("src", map[string]any{"id": "1"})
+	done := d.WaitRun(runID, "succeeded")
+	tr := d.Transcript(d.AgentRuns(d.Node(done, "work").ID)[0].ID)
+	if b, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || strings.TrimSpace(string(b)) != "hi there" {
+		t.Fatalf("note.txt in the sandbox workdir: %q %v", b, err)
+	}
+	if !strings.Contains(tr, "mcp[c1] is_error=false") || !strings.Contains(tr, `wrote`) || !strings.Contains(tr, "pwd_has_note") {
+		t.Errorf("tool output missing:\n%s", tr)
+	}
+}

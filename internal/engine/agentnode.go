@@ -78,7 +78,8 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	if err != nil {
 		return failure(errConfig, "hal tools: "+err.Error())
 	}
-	defer ht.sess.Close()
+	runOK := false
+	defer func() { ht.sess.CloseWith(runOK) }() // a failed run keeps its sandbox workspace for debugging
 	if prev == nil {
 		prompt = tools.Preamble(tools.PreambleData{Info: e.agentRunInfo(ne, runID), Now: e.clock.Now(), Tools: ht.sess.Tools()}) + prompt
 	}
@@ -123,6 +124,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	if err != nil {
 		return failure(errConfig, err.Error())
 	}
+	runOK = res.Status == agent.StatusSucceeded
 	if wtKey != "" {
 		if rerr := e.wt.Release(e.dbCtx, wtKey, res.Status); rerr != nil {
 			e.log.Warn("engine: release worktree", "key", wtKey, "err", rerr)
