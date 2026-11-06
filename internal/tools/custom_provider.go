@@ -121,16 +121,16 @@ func runToolInSandbox(ctx context.Context, sess sandbox.Session, tool *spec.Tool
 	if err := dec.Decode(&obj); err != nil {
 		return out, &ArgError{Msg: err.Error()}
 	}
-	env := make(map[string]string, len(opts.Env)+len(obj)+2)
-	maps.Copy(env, opts.Env)
+	env := maps.Clone(opts.Env)
+	plain := make(map[string]string, len(obj)+2)
 	for k, v := range obj {
 		if s, ok := argEnvValue(v); ok {
-			env["ARG_"+strings.ToUpper(k)] = s
+			plain["ARG_"+strings.ToUpper(k)] = s
 		}
 	}
-	env["HAL_NODE"] = tool.ID
+	plain["HAL_NODE"] = tool.ID
 	if opts.RunID != "" {
-		env["HAL_RUN_ID"] = opts.RunID
+		plain["HAL_RUN_ID"] = opts.RunID
 	}
 	timeout := tool.Timeout.Std()
 	if opts.Timeout > 0 {
@@ -148,7 +148,7 @@ func runToolInSandbox(ctx context.Context, sess sandbox.Session, tool *spec.Tool
 		script = strings.Join(quoted, " ")
 	}
 	start := time.Now()
-	res, err := RunInSandbox(ctx, sess, tool.Lang, script, norm, env, timeout)
+	res, err := RunInSandboxEnv(ctx, sess, tool.Lang, script, norm, env, plain, timeout)
 	if err != nil {
 		if cause := context.Cause(ctx); cause != nil {
 			return out, cause

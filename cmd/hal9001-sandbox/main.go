@@ -83,6 +83,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	} else if scriptPath, err = filepath.Abs(scriptPath); err != nil {
 		return err
 	}
+	halBin, err := agenttest.BuildHal(binDir)
+	if err != nil {
+		return err
+	}
 	if _, err := fakeagent.Load(scriptPath); err != nil {
 		return err
 	}
@@ -94,7 +98,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	defer stop()
 
 	opts := daemon.Options{
-		Home: home, Version: "sandbox", WebDir: *webDir,
+		Home: home, Version: "sandbox", WebDir: *webDir, Executable: halBin,
 		ListenAddr: net.JoinHostPort("127.0.0.1", fmt.Sprint(*port)),
 		Log:        slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		Ready: func(addr net.Addr) {

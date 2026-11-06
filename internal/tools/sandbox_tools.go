@@ -330,6 +330,12 @@ func FormatExec(res sandbox.ExecResult) string {
 // values are treated as secrets and replaced by sandbox.Redacted in the result. A zero timeout means the
 // sandbox's command timeout.
 func RunInSandbox(ctx context.Context, sess sandbox.Session, lang, script string, stdin []byte, env map[string]string, timeout time.Duration) (sandbox.ExecResult, error) {
+	return RunInSandboxEnv(ctx, sess, lang, script, stdin, env, nil, timeout)
+}
+
+// RunInSandboxEnv is RunInSandbox with plain as well: variables exported like env but not treated as secrets (a
+// tool's ARG_ variables, whose values the result may legitimately contain).
+func RunInSandboxEnv(ctx context.Context, sess sandbox.Session, lang, script string, stdin []byte, env, plain map[string]string, timeout time.Duration) (sandbox.ExecResult, error) {
 	var runner, ext string
 	switch lang {
 	case "bash":
@@ -343,11 +349,13 @@ func RunInSandbox(ctx context.Context, sess sandbox.Session, lang, script string
 		return sandbox.ExecResult{}, fmt.Errorf("unknown tool language %q", lang)
 	}
 	var b strings.Builder
-	for k, v := range env {
-		if !validEnvName(k) {
-			return sandbox.ExecResult{}, fmt.Errorf("invalid environment variable name %q", k)
+	for _, vars := range []map[string]string{plain, env} {
+		for k, v := range vars {
+			if !validEnvName(k) {
+				return sandbox.ExecResult{}, fmt.Errorf("invalid environment variable name %q", k)
+			}
+			fmt.Fprintf(&b, "export %s=%s\n", k, shellQuote(v))
 		}
-		fmt.Fprintf(&b, "export %s=%s\n", k, shellQuote(v))
 	}
 	cmd := script
 	if runner != "" {

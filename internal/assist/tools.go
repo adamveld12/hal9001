@@ -68,17 +68,18 @@ func (s *session) draftTools() []tools.Tool {
 		{
 			Name: "draft_test",
 			Description: "Run the draft the way a poll (sensor) or one flow run (flow) would and return the result as JSON; flow sessions can pick the input with `sample` " +
-				"(an index of reference/samples/index.txt) or `event`. It runs the code with the user's credentials: the first test after the script changed asks the user for approval.",
+				"(an index of reference/samples/index.txt) or `event`; tool sessions pass `args` (the tool's arguments, result is stdout/stderr/exit code). It runs the code with the user's credentials: the first test after the script changed asks the user for approval.",
 			InputSchema: obj(map[string]any{
 				"sample": map[string]any{"type": "integer", "minimum": 0},
 				"event":  map[string]any{"type": "string"},
+				"args":   map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
 			}),
 			Approval: s.testApproval,
 			Run:      s.runDraftTest,
 		},
 		{
 			Name:        "validate",
-			Description: "Validate the current draft against the sensor or flow format and return the diagnostics as JSON.",
+			Description: "Validate the current draft against the sensor, flow or tool format and return the diagnostics as JSON.",
 			InputSchema: obj(map[string]any{}),
 			Run:         s.runValidate,
 		},
@@ -235,9 +236,12 @@ func (s *session) runValidate(_ context.Context, _ tools.Call) (tools.Result, er
 		return tools.Result{}, err
 	}
 	var diags json.RawMessage
-	if s.isFlow() {
+	switch {
+	case s.isFlow():
 		_, diags, _ = s.m.evaluateFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
-	} else {
+	case s.isTool():
+		_, diags = evaluateTool(s.row.DraftYAML, s.row.TargetID)
+	default:
 		_, diags = evaluate(s.row.DraftYAML, s.row.TargetID)
 	}
 	return tools.Result{Text: string(diags)}, nil
@@ -263,13 +267,14 @@ func (s *session) testApproval(json.RawMessage) (bool, string) {
 
 func (s *session) runDraftTest(ctx context.Context, c tools.Call) (tools.Result, error) {
 	var a struct {
-		Sample *int   `json:"sample"`
-		Event  string `json:"event"`
+		Sample *int            `json:"sample"`
+		Event  string          `json:"event"`
+		Args   json.RawMessage `json:"args"`
 	}
 	if err := json.Unmarshal(c.Args, &a); err != nil {
 		return tools.Result{}, fmt.Errorf("arguments: %w", err)
 	}
-	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event})
+	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event, Args: a.Args})
 	if err != nil {
 		var verr *core.ValidationError
 		if errors.As(err, &verr) {

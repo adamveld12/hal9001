@@ -137,7 +137,7 @@ func TestCustomToolRunsInSandbox(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || strings.TrimSpace(string(b)) != "hi there" {
 		t.Fatalf("note.txt in the sandbox workdir: %q %v", b, err)
 	}
-	if !strings.Contains(tr, "mcp[c1] is_error=false") || !strings.Contains(tr, `wrote`) || !strings.Contains(tr, "pwd_has_note") {
+	if !strings.Contains(tr, "mcp[c1] is_error=false") || !strings.Contains(tr, "pwd_has_note") || !strings.Contains(tr, "hi there") || strings.Contains(tr, "redacted") {
 		t.Errorf("tool output missing:\n%s", tr)
 	}
 }

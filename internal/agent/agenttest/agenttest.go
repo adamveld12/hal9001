@@ -17,17 +17,22 @@ import (
 )
 
 // BuildFakeAgent compiles cmd/fake-acp-agent into dir and returns the path.
-func BuildFakeAgent(dir string) (string, error) {
+func BuildFakeAgent(dir string) (string, error) { return buildCmd(dir, "fake-acp-agent") }
+
+// BuildHal compiles cmd/hal9001 into dir and returns the path: agents spawn it as their `hal9001 mcp` server.
+func BuildHal(dir string) (string, error) { return buildCmd(dir, "hal9001") }
+
+func buildCmd(dir, name string) (string, error) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("cannot locate module root")
 	}
 	root := filepath.Join(filepath.Dir(file), "..", "..", "..")
-	bin := filepath.Join(dir, "fake-acp-agent")
-	cmd := exec.CommandContext(context.Background(), "go", "build", "-buildvcs=false", "-o", bin, "hal9001/cmd/fake-acp-agent") //nolint:gosec // fixed arguments
+	bin := filepath.Join(dir, name)
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-buildvcs=false", "-o", bin, "hal9001/cmd/"+name) //nolint:gosec // fixed arguments
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("build fake-acp-agent: %w\n%s", err, out)
+		return "", fmt.Errorf("build %s: %w\n%s", name, err, out)
 	}
 	return bin, nil
 }

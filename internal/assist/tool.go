@@ -124,7 +124,7 @@ func (m *Manager) testTool(ctx context.Context, s *session, byAgent bool, req co
 		if approved, _ := s.scriptApprovedLocked(id, available); !approved {
 			s.mu.Unlock()
 			return zero, fmt.Errorf("%w: the draft's script changed since the user last tested or approved it; "+
-				"running it needs the user's approval (the permission request for `hal9001 assist test`)", core.ErrInvalidState)
+				"running it needs the user's approval (draft_test asks for it)", core.ErrInvalidState)
 		}
 	} else {
 		s.markApprovedLocked(id)
@@ -199,18 +199,19 @@ func clip(s string) string {
 // toolPreamble prefixes every prompt of a tool session.
 func toolPreamble(targetID string, global, own []string) string {
 	var b strings.Builder
-	b.WriteString("[hal9001 tool assistant] The draft is `" + ToolDraftFile + "` in the working directory: edit only that file. The tool format, how arguments reach the script and how to test are in AGENTS.md.\n")
+	b.WriteString("[hal9001 tool assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
+		"Call draft_read with path `instructions` first: it holds the tool format, how arguments reach the script and how to test.\n")
 	if targetID != "" {
 		b.WriteString("You are editing the existing tool `" + targetID + "`; keep its id.\n")
 	} else {
 		b.WriteString("You are creating a new tool.\n")
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), own...)) + ".\n")
-	b.WriteString("Test with `hal9001 assist test --args '<json>'` before you say it is done.\n\n")
+	b.WriteString("Test with draft_test (pass `args`) before you say it is done.\n\n")
 	return b.String()
 }
 
-// toolInstructions is the text of AGENTS.md / CLAUDE.md for a tool session.
+// toolInstructions is the authoring guide of a tool session; the agent reads it with draft_read path `instructions`.
 func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
@@ -218,7 +219,7 @@ func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) s
 	w("# Tool authoring: instructions for the assistant\n\n")
 	w("You help the user write or change ONE hal9001 custom tool. A custom tool is a script that an AI agent running inside hal9001 ")
 	w("can call: the agent supplies arguments, the script runs, its output goes back to the agent as the result. This directory is a ")
-	w("private draft directory (session %s). Your whole job is the file `%s` in it.\n\n", sessionID, ToolDraftFile)
+	w("private draft directory (session %s). Your whole job is the draft `%s`.\n\n", sessionID, ToolDraftFile)
 	if targetID != "" {
 		w("You are EDITING the existing tool `%s`. Keep `id: %s` unchanged: the user saves the draft over that tool.\n\n", targetID, targetID)
 	} else {
@@ -226,23 +227,22 @@ func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) s
 	}
 
 	w("## Rules\n\n")
-	w("- Edit only `%s`. Do not create or change other files. The user's own tool files, flows and settings are not here and must not be touched.\n", ToolDraftFile)
-	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords), and do not try to read `env` files or `~/.hal9001`. ")
+	w("- Change only the draft, with draft_write (the complete new file each time). The user's own tool files, flows and settings are not reachable and must not be touched.\n")
+	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords), and ")
 	w("The script reads credentials from the environment variables listed below; you only ever see their names.\n")
-	w("- Use only the tools you need. Reading, searching and editing `%s` are allowed. Running anything else asks the user for approval each time.\n", ToolDraftFile)
-	w("- Run the helper commands below exactly as written, one per call: no pipes, redirects, `&&`, `;` or `cd` (you are already in the right directory).\n")
-	w("- Test the draft with `hal9001 assist test` before you say it is done, and fix what it reports.\n")
+	w("- Reading and writing the draft and validating it never ask the user. Testing it asks only when the code changed (below).\n")
+	w("- Test the draft with draft_test before you say it is done, and fix what it reports.\n")
 	w("- A test runs the script with the user's real credentials, so the first test after you change the code (`lang`, `script`, `command`, or the credentials it mentions) asks the user to approve it: they see the script and a diff against the last approved version. ")
 	w("Before you run it, say in a sentence what the script does and which credentials it uses. Once the user allowed a version, testing the same code again does not ask. ")
 	w("Changing only `description`, `params`, `approve`, `timeout` or `runs_in_sandbox` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
 
-	w("## Helper commands\n\n")
-	w("- `hal9001 assist draft` prints the current draft with its validation diagnostics as JSON.\n")
-	w("- `hal9001 assist test --args '{\"name\": \"value\"}'` calls the draft once with those arguments (a JSON object in single quotes, no single quote inside; omit `--args` for none) and prints JSON: ")
+	w("## Tools\n\n")
+	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it and returns the same.\n")
+	w("- `validate` checks the draft against the tool format and returns the diagnostics.\n")
+	w("- `draft_test` calls the draft once with `args` (a JSON object; omit for none) and returns JSON: ")
 	w("`ok`, `args` (with defaults filled in), `stdout`, `structured` (stdout parsed when it is a JSON object or array), `stderr`, `exit_code`, `timed_out` and `error`. ")
-	w("Nothing is recorded. Values of the credentials appear as `«NAME»`.\n")
-	w("- `hal9001 tools validate tool.yaml` checks the file against the tool format only.\n\n")
+	w("Nothing is recorded. Values of the credentials appear as `«NAME»`.\n\n")
 
 	w("## The tool file\n\n")
 	w("```yaml\nid: http_get_json\ndescription: Fetch a URL with HTTP GET and return the JSON body.\nparams:\n  url: {type: string, description: The URL to fetch., required: true}\n  retries: {type: integer, default: 0}\nlang: python\nscript: |\n  import os\n  print(os.environ[\"ARG_URL\"])\napprove: always        # never | always | {when: {match: any, conditions: [...]}}\ntimeout: 30s\n```\n\n")
