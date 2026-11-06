@@ -51,6 +51,11 @@ func (e *Engine) pruneAt(ctx context.Context, now time.Time) (store.PruneResult,
 	if _, err := e.st.RemoveOrphanBlobs(ctx, res.OrphanBlobs); err != nil {
 		return res, fmt.Errorf("engine: remove orphan blobs: %w", err)
 	}
+	for _, id := range res.AssistSessionIDs {
+		if err := os.RemoveAll(filepath.Join(e.data, "assist", id)); err != nil {
+			e.log.Warn("engine: remove assist draft directory", "session", id, "err", err)
+		}
+	}
 	for _, path := range res.Worktrees {
 		if filepath.Dir(path) != e.wt.Dir {
 			continue // not ours to delete

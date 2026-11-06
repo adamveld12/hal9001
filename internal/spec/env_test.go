@@ -95,3 +95,44 @@ func TestEnvDiagnosticDoesNotEchoSecrets(t *testing.T) {
 		t.Errorf("diagnostic leaks the line: %+v", ds)
 	}
 }
+
+func TestEnvPlainMarker(t *testing.T) {
+	raw := "# keep me\nA=\"1\"\n# hal:plain A, GHOST\nB=2\nexport C=3\n#  hal:plain   C\n# hal:plainish D\nD=4\nQ=\"line\n# hal:plain Q\nend\"\n"
+	env, ds := ParseEnv([]byte(raw))
+	if HasErrors(ds) {
+		t.Fatal(ds)
+	}
+	for k, want := range map[string]bool{"A": true, "B": false, "C": true, "D": false, "Q": false, "GHOST": false} {
+		if env.IsPlain(k) != want {
+			t.Errorf("IsPlain(%s) = %v, want %v", k, !want, want)
+		}
+	}
+	secret := env.SecretVars()
+	if len(secret) != 3 || secret["B"] != "2" || secret["D"] != "4" || secret["Q"] == "" {
+		t.Errorf("SecretVars = %v", secret)
+	}
+	if got := mustJSON(t, env); got != `{"keys":["A","B","C","D","Q"]}` {
+		t.Errorf("JSON exposes more than names: %s", got)
+	}
+}
+
+func TestSetEnvPlainKeepsEverythingElse(t *testing.T) {
+	base := "# note\nA=1\n# hal:plain A,  C\nB=2\n"
+	for _, tc := range []struct {
+		name, in, key string
+		plain         bool
+		want          string
+	}{
+		{"mark a new key", base, "B", true, base + "# hal:plain B\n"},
+		{"marking twice changes nothing", base, "A", true, base},
+		{"unmark rewrites only that line", base, "A", false, "# note\nA=1\n# hal:plain C\nB=2\n"},
+		{"unmarking the last name drops the line", "A=1\n# hal:plain A\n", "A", false, "A=1\n"},
+		{"unmarking a secret key is a no-op", base, "B", false, base},
+		{"empty file", "", "A", true, "# hal:plain A\n"},
+		{"marker text inside a quoted value is not a marker", "A=\"x\n# hal:plain A\"\n", "A", true, "A=\"x\n# hal:plain A\"\n# hal:plain A\n"},
+	} {
+		if got := string(SetEnvPlain([]byte(tc.in), tc.key, tc.plain)); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}

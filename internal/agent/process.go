@@ -23,6 +23,10 @@ type process struct {
 	// stderrDone is closed when every holder of the stderr pipe closed it.
 	stderrDone chan struct{}
 	pgid       int
+	// updates accounts for the session/update notifications read from stdout (see updateGate).
+	updates *updateGate
+	// eof, when set, is closed once the ACP connection has read stdout to EOF.
+	eof <-chan struct{}
 }
 
 // startProcess runs argv in dir with env in a new process group. The agent's
@@ -118,6 +122,16 @@ func (p *process) stop(exitWait, killGrace time.Duration) {
 		}
 	}
 	p.signalGroup(syscall.SIGKILL)
+	// Every writer is gone, so the connection reaches EOF at once. Closing our read end before it did would drop
+	// output the agent wrote just before it exited.
+	if p.eof != nil {
+		t := time.NewTimer(time.Second)
+		select {
+		case <-p.eof:
+		case <-t.C:
+		}
+		t.Stop()
+	}
 	_ = p.stdout.Close()
 	// The kill closed every writer, so the stderr tail is complete shortly.
 	t := time.NewTimer(time.Second)

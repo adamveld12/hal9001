@@ -125,3 +125,37 @@ func sensorRun() map[string]any {
 		"stdout": blob(""), "stderr": blob(""), "error": nil,
 	}
 }
+
+const sensorYAML = "id: gh\nlang: bash\nscript: echo '[]'\n"
+
+func assistDraft() map[string]any {
+	return map[string]any{
+		"yaml": sensorYAML, "hash": hash, "sensor_id": "gh",
+		"diagnostics": []any{diagnostic("warning", "no-key", "key template missing")},
+		"updated_at":  ts, "updated_by": "agent",
+	}
+}
+
+func assistSession(status string) map[string]any {
+	return map[string]any{
+		"id": id1, "target": map[string]any{"kind": "sensor", "id": "gh"}, "runtime": "claude", "model": nil,
+		"status": status, "error": nil, "draft": assistDraft(), "last_agent_run_id": nil,
+		"created_at": ts, "updated_at": ts,
+	}
+}
+
+func assistSessionDetail() map[string]any {
+	d := assistSession("idle")
+	d["messages"] = []any{map[string]any{
+		"id": id2, "role": "user", "text": "make it poll hourly", "agent_run_id": nil, "tool_call": nil, "approval_id": nil, "created_at": ts,
+	}}
+	return d
+}
+
+func assistTestResult(exitCode int) map[string]any {
+	return map[string]any{
+		"exit_code": exitCode, "duration_ms": 42, "timed_out": false,
+		"items":      []any{map[string]any{"dedup_key": "1", "key_error": nil, "item": map[string]any{"id": 1}}},
+		"item_count": 1, "parse_error": nil, "stdout": blob(`[{"id":1}]`), "stderr": blob("boom"),
+	}
+}

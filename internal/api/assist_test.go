@@ -15,7 +15,7 @@ type assistDouble struct {
 	create func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
 	send   func(ctx context.Context, id, text string, yaml *string) (*store.AssistSession, error)
 	draft  func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
-	test   func(ctx context.Context, id string) (core.AssistTestResult, error)
+	test   func(ctx context.Context, id string, byAgent bool) (core.AssistTestResult, error)
 	cancel func(ctx context.Context, id string) (*store.AssistSession, error)
 	closeS func(ctx context.Context, id string) error
 }
@@ -41,11 +41,11 @@ func (d *assistDouble) UpdateDraft(ctx context.Context, id, yaml, expectedHash s
 	return d.draft(ctx, id, yaml, expectedHash)
 }
 
-func (d *assistDouble) TestDraft(ctx context.Context, id string) (core.AssistTestResult, error) {
+func (d *assistDouble) TestDraft(ctx context.Context, id string, byAgent bool) (core.AssistTestResult, error) {
 	if d.test == nil {
 		return core.AssistTestResult{}, errUnscripted
 	}
-	return d.test(ctx, id)
+	return d.test(ctx, id, byAgent)
 }
 
 func (d *assistDouble) Cancel(ctx context.Context, id string) (*store.AssistSession, error) {
@@ -203,14 +203,28 @@ func TestAssistMessageAndDraftErrorsMapToProblems(t *testing.T) {
 		t.Errorf("draft yaml = %v", y)
 	}
 
-	svc.test = func(context.Context, string) (core.AssistTestResult, error) {
+	var byAgent []bool
+	svc.test = func(_ context.Context, _ string, agent bool) (core.AssistTestResult, error) {
+		byAgent = append(byAgent, agent)
+		if agent {
+			return core.AssistTestResult{}, core.ErrInvalidState
+		}
 		return core.AssistTestResult{ExitCode: 0, Stdout: core.AssistText{Text: "[]", Size: 2}}, nil
 	}
 	res := e.do("POST", base+"/test", `{}`).want(200).json()
 	if items, ok := res["items"].([]any); !ok || len(items) != 0 || res["item_count"] != float64(0) || res["parse_error"] != nil {
 		t.Errorf("test result = %v (items must be an empty array, not null)", res)
 	}
-	svc.test = func(context.Context, string) (core.AssistTestResult, error) {
+	// The agent's tests carry the header; a script the user has not approved is a 409.
+	req := request("POST", base+"/test", []byte(`{}`))
+	req.Header.Set(assistAgentHeader, "1")
+	if r := serve(t, e.srv, req).want(409); r.problem() != "invalid-state" {
+		t.Errorf("agent test problem = %q", r.problem())
+	}
+	if len(byAgent) != 2 || byAgent[0] || !byAgent[1] {
+		t.Errorf("byAgent per call = %v, want [false true]", byAgent)
+	}
+	svc.test = func(context.Context, string, bool) (core.AssistTestResult, error) {
 		return core.AssistTestResult{}, core.ErrPaused
 	}
 	e.do("POST", base+"/test", `{}`).want(423)
@@ -274,11 +288,17 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 	msg := &store.AssistMessage{SessionID: mine.ID, Role: "assistant", Text: &text}
 	must(t, e.st.CreateAssistMessage(ctx(), msg))
 
-	up := c.expect("assist.updated").data()
+	// The session's creation may still be in flight when the stream opens: skip to the update.
+	var up map[string]any
+	for range 5 {
+		if up = c.expectUntil("assist.updated").data(); up["status"] == "running" {
+			break
+		}
+	}
 	if up["id"] != mine.ID || up["status"] != "running" || up["draft"].(map[string]any)["updated_by"] != "agent" {
 		t.Errorf("assist.updated = %v", up)
 	}
-	m := c.expect("assist.message").data()
+	m := c.expectUntil("assist.message").data()
 	if m["id"] != msg.ID || m["session_id"] != mine.ID || m["text"] != "hello" {
 		t.Errorf("assist.message = %v", m)
 	}

@@ -119,3 +119,54 @@ func nodeIDOf(t *testing.T, st *store.Store, flowRunID string) string {
 	}
 	return page.Items[0].ID
 }
+
+// Retention deletes assist sessions left idle past the retention window together with their draft directories, and
+// keeps recent ones.
+func TestRetentionRemovesOldAssistSessionsAndTheirDraftDirectories(t *testing.T) {
+	home := t.TempDir()
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	now := base
+	st, err := store.Open(filepath.Join(home, "data", "hal.db"), store.WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	e, err := New(Options{Store: st, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	mk := func() (*store.AssistSession, string) {
+		a := &store.AssistSession{TargetKind: store.AssistTargetSensor, Runtime: "claude", DraftYAML: "id: x\n", DraftHash: "h", DraftUpdatedBy: store.DraftByUser}
+		if err := st.CreateAssistSession(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(home, "data", "assist", a.ID)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "sensor.yaml"), []byte("id: x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return a, dir
+	}
+	old, oldDir := mk()
+	now = base.AddDate(0, 0, 40)
+	fresh, freshDir := mk()
+
+	if _, err := e.pruneAt(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Errorf("the draft directory of the old session survives: %v", err)
+	}
+	if _, err := st.GetAssistSession(ctx, old.ID); err == nil {
+		t.Error("the old session survives")
+	}
+	if _, err := os.Stat(freshDir); err != nil {
+		t.Errorf("the draft directory of the recent session was removed: %v", err)
+	}
+	if _, err := st.GetAssistSession(ctx, fresh.ID); err != nil {
+		t.Errorf("the recent session was pruned: %v", err)
+	}
+}

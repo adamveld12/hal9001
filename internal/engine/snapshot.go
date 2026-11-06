@@ -58,14 +58,18 @@ func newSnapshot(ws *spec.Workspace) *snapshot {
 		s.env = maps.Clone(ws.Env.Value.Vars)
 		s.envKeys = slices.Clone(ws.Env.Value.Keys)
 	}
-	secrets := []map[string]string{s.env}
+	// Only secret values are redacted; a value marked plain stays readable in output.
+	var secrets []map[string]string
+	if ws.Env.Value != nil {
+		secrets = append(secrets, ws.Env.Value.SecretVars())
+	}
 	for _, f := range ws.SensorEnv {
 		if f.Value == nil {
 			continue
 		}
 		s.sensorEnv[f.Name] = maps.Clone(f.Value.Vars)
-		// A per-sensor value is a secret everywhere the global env is.
-		secrets = append(secrets, f.Value.Vars)
+		// A per-sensor secret is a secret everywhere the global env is.
+		secrets = append(secrets, f.Value.SecretVars())
 	}
 	s.red = runner.NewRedactor(secrets...)
 	for _, f := range ws.Sensors {

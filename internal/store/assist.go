@@ -57,6 +57,11 @@ type AssistSession struct {
 	DraftUpdatedAt   time.Time       `json:"draft_updated_at"`
 	DraftUpdatedBy   string          `json:"draft_updated_by"`
 
+	// ApprovedScript is the canonical text of the script the user last tested or approved, and
+	// ApprovedScriptHash its identity; both are empty until then.
+	ApprovedScript     string `json:"approved_script,omitempty"`
+	ApprovedScriptHash string `json:"approved_script_hash,omitempty"`
+
 	// LastAgentRunID is the agent run of the latest turn.
 	LastAgentRunID string `json:"last_agent_run_id,omitempty"`
 	// ACPSessionID is the agent's own session id, kept so a later process can session/load it.
@@ -90,7 +95,8 @@ func validAssistRole(r string) bool {
 }
 
 const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_sensor_id, draft_diagnostics,
-	draft_updated_at, draft_updated_by, last_agent_run_id, acp_session_id, created_at, updated_at, closed_at`
+	draft_updated_at, draft_updated_by, last_agent_run_id, acp_session_id, created_at, updated_at, closed_at,
+	approved_script, approved_script_hash`
 
 func scanAssistSession(r rowScanner) (AssistSession, error) {
 	var (
@@ -100,7 +106,7 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 		closed                    sql.NullString
 	)
 	if err := r.Scan(&a.ID, &a.TargetKind, &a.TargetID, &a.Runtime, &a.Model, &status, &a.Error, &a.DraftYAML, &a.DraftHash, &a.DraftSensorID,
-		&diags, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed); err != nil {
+		&diags, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash); err != nil {
 		return AssistSession{}, scanErr(err)
 	}
 	a.Status, a.DraftDiagnostics = AssistStatus(status), parseRaw(diags)
@@ -160,9 +166,9 @@ func (s *Store) CreateAssistSession(ctx context.Context, a *AssistSession) error
 		return err
 	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftSensorID, diags,
-			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt))
+			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash)
 		if err != nil {
 			return fmt.Errorf("store: insert assist_session: %w", err)
 		}
@@ -183,7 +189,7 @@ func rawJSONArray(m json.RawMessage) (string, error) {
 }
 
 // UpdateAssistSession writes every mutable column (status, error, the draft,
-// last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
+// the approved script, last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
 func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error {
 	if err := a.validate(); err != nil {
 		return err
@@ -195,9 +201,10 @@ func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error
 	a.UpdatedAt = s.Now()
 	return s.write(ctx, func(t *txn) error {
 		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_sensor_id=?, draft_diagnostics=?,
-			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=? WHERE id=?`,
+			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=?,
+			approved_script=?, approved_script_hash=? WHERE id=?`,
 			a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftSensorID, diags,
-			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ID)
+			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.ID)
 		if err != nil {
 			return fmt.Errorf("store: update assist_session: %w", err)
 		}
@@ -355,16 +362,4 @@ func (s *Store) ListAssistMessages(ctx context.Context, sessionID string) ([]Ass
 		out = append(out, m)
 	}
 	return out, rows.Err()
-}
-
-// AssistApprovalFor returns the id of the tool-call approval raised by the
-// permission request of toolCallID in agentRunID, or "" when there is none.
-func (s *Store) AssistApprovalFor(ctx context.Context, agentRunID, toolCallID string) (string, error) {
-	var id string
-	err := s.rdb.QueryRowContext(ctx, `SELECT a.id FROM approvals a JOIN permission_requests p ON p.id = a.permission_request_id
-		WHERE a.agent_run_id = ? AND p.tool_call_id = ? ORDER BY a.id DESC LIMIT 1`, agentRunID, toolCallID).Scan(&id)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return id, err
 }

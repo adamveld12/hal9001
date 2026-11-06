@@ -56,6 +56,9 @@ type stackOpts struct {
 	configPatch func(string) string
 	// env is written to <home>/env.
 	env string
+	// binDir, when set, is put first on the PATH of the daemon and everything it starts (for example a
+	// directory holding a built hal9001, which assist agents run as `hal9001 assist test`).
+	binDir string
 }
 
 // startStack seeds a temp home from the shipped content, quiets the starter
@@ -115,6 +118,9 @@ func startStack(t *testing.T, o stackOpts) *stack {
 		t.Fatalf("login shell PATH (what `hal9001 install` captures): %v", err)
 	}
 
+	if o.binDir != "" {
+		basePATH = o.binDir + string(os.PathListSeparator) + basePATH
+	}
 	// Under launchd the plist's PATH is both the daemon's own PATH (which Go's
 	// exec uses to find the runtime commands) and the PATH of every node.
 	t.Setenv("PATH", basePATH)
@@ -472,8 +478,9 @@ func adapterPaths(t *testing.T) map[string]string {
 	return out
 }
 
-// patchRuntimeCommands replaces the bare adapter command names in the seeded
-// config.yaml with absolute paths.
+// patchRuntimeCommands replaces bare adapter command names in the seeded
+// config.yaml with absolute paths (a config that already pins them through
+// `mise exec` is left as it is).
 func patchRuntimeCommands(t *testing.T, home string, paths map[string]string) {
 	t.Helper()
 	cfg := filepath.Join(home, "config.yaml")
@@ -483,11 +490,9 @@ func patchRuntimeCommands(t *testing.T, home string, paths map[string]string) {
 	}
 	s := string(b)
 	for cmd, p := range paths {
-		old := "command: [" + cmd + "]"
-		if !strings.Contains(s, old) {
-			t.Fatalf("seeded config.yaml has no %q", old)
-		}
-		s = strings.Replace(s, old, "command: ["+p+"]", 1)
+		// The shipped config runs the adapters through `mise exec <tool>@<version> -- <adapter>`, which
+		// needs no patching; only a bare adapter command is replaced by its absolute path.
+		s = strings.Replace(s, "command: ["+cmd+"]", "command: ["+p+"]", 1)
 	}
 	writeFile(t, cfg, s)
 }

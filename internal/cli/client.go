@@ -27,6 +27,8 @@ type client struct {
 	base   string
 	cookie string
 	hc     *http.Client
+	// headers are added to every request (for example the assist agent marker).
+	headers http.Header
 }
 
 type response struct {
@@ -79,6 +81,9 @@ func (c *client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	if c.cookie != "" {
 		req.Header.Set("Cookie", c.cookie)
+	}
+	for k, v := range c.headers {
+		req.Header[k] = v
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {

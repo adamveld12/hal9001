@@ -108,6 +108,23 @@ Builds the binary and runs it from a bare environment (`PATH=/usr/bin:/bin:/usr/
 `/opt/homebrew/bin` and the system dirs. With that PATH, from a non-repo directory, `gh`, `jq`, `git`, `node` and `mise` resolve
 and run. Run it by hand: `hal9001 install --dry-run`.
 
+## 4. AI-assisted sensor authoring (`TestLiveAssistClaudeAuthorsASensor`)
+
+One real claude turn (model `haiku`) in an assist session ([assist.md](assist.md)): asked to create a bash sensor `live-two`
+that emits two static items, test it, and say what the test showed. The harness builds `cmd/hal9001` and puts it first on the
+daemon's PATH so the agent's `hal9001 assist test` resolves. Passes only if the turn ends `idle`, the draft validates
+(`diagnostics: []`, `updated_by: agent`), `POST .../test` of the draft returns exit 0 with 2 items and rendered dedup keys,
+the draft edit was allowed by rule `allow.edit_under[0]`, the agent's test of its new script was a `tool_call` approval
+(rule `policy:gated`) that the harness allows exactly once, no other tool call needed a person, and the turn ended with a summary.
+
+```sh
+HAL9001_LIVE=1 HAL9001_LIVE_RUNTIMES=claude mise exec -- go test ./e2e/live -run TestLiveAssistClaudeAuthorsASensor -count=1 -v
+```
+
+Result (2026-11-05, claude-agent-acp 0.100.0): **pass**, 11 s. The agent read `AGENTS.md` and `sensor.yaml` (read-class, allowed),
+wrote `sensor.yaml` (`Write`, allowed by the draft-directory rule), ran `hal9001 assist test` (a new script: approval, allowed by the harness) and
+answered "The test passed: the sensor exited 0 and returned 2 items, with dedup keys "1" and "2" and no key errors."
+
 ## Adapter resolution
 
 The adapters `claude-agent-acp` and `codex-acp` are pinned only in the repo's `mise.toml`. A mise shim picks its version from

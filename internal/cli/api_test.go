@@ -49,7 +49,12 @@ func TestReadCommandsHitTheRightEndpointsAndPrintTheResponseAsJSON(t *testing.T)
 		{"killswitch get", []string{"killswitch", "get"}, "GET /api/killswitch", nil, killSwitch(false)},
 		{"runtimes list", []string{"runtimes", "list"}, "GET /api/runtimes", nil, map[string]any{"items": []any{
 			map[string]any{"name": "claude", "command": []string{"claude-agent-acp"}, "modes": map[string]any{"ask": "default"}, "last_probe": nil}}}},
-		{"env list", []string{"env", "list"}, "GET /api/env", nil, map[string]any{"items": []any{map[string]any{"key": "GITHUB_TOKEN"}}}},
+		{"env list", []string{"env", "list"}, "GET /api/env", nil, map[string]any{"items": []any{
+			map[string]any{"key": "GITHUB_TOKEN", "secret": true, "value": nil},
+			map[string]any{"key": "LOG_LEVEL", "secret": false, "value": "debug"}}}},
+		{"sensors env list", []string{"sensors", "env", "list", "linear"}, "GET /api/sensors/linear/env", nil, map[string]any{"items": []any{
+			map[string]any{"key": "LINEAR_API_KEY", "overrides_global": true, "secret": true, "value": nil},
+			map[string]any{"key": "REGION", "overrides_global": false, "secret": false, "value": "eu"}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,6 +128,22 @@ func TestMutatingCommandsSendJSONBodiesWithJSONContentType(t *testing.T) {
 		{"sensors env set from stdin", []string{"sensors", "env", "set", "linear", "LINEAR_API_KEY", "--stdin"}, "lin_from_stdin\n", "PUT /api/sensors/linear/env/LINEAR_API_KEY", nil,
 			map[string]any{"value": "lin_from_stdin"}, canned{status: 204}},
 		{"sensors env unset", []string{"sensors", "env", "unset", "linear", "LINEAR_API_KEY"}, "", "DELETE /api/sensors/linear/env/LINEAR_API_KEY", nil, map[string]any{}, canned{status: 204}},
+		{"env set --plain sends the value with secret false", []string{"env", "set", "LOG_LEVEL", "debug", "--plain"}, "", "PUT /api/env/LOG_LEVEL", nil,
+			map[string]any{"value": "debug", "secret": false}, canned{status: 204}},
+		{"env set --plain --stdin", []string{"env", "set", "LOG_LEVEL", "--plain", "--stdin"}, "debug\n", "PUT /api/env/LOG_LEVEL", nil,
+			map[string]any{"value": "debug", "secret": false}, canned{status: 204}},
+		{"env set --secret sends the value with secret true", []string{"env", "set", "TOKEN", "t", "--secret"}, "", "PUT /api/env/TOKEN", nil,
+			map[string]any{"value": "t", "secret": true}, canned{status: 204}},
+		{"env set --plain alone flips the flag without a value", []string{"env", "set", "LOG_LEVEL", "--plain"}, "", "PUT /api/env/LOG_LEVEL", nil,
+			map[string]any{"secret": false}, canned{status: 204}},
+		{"env set --secret alone flips the flag without a value", []string{"env", "set", "LOG_LEVEL", "--secret"}, "", "PUT /api/env/LOG_LEVEL", nil,
+			map[string]any{"secret": true}, canned{status: 204}},
+		{"sensors env set --plain sends the value with secret false", []string{"sensors", "env", "set", "linear", "REGION", "eu", "--plain"}, "", "PUT /api/sensors/linear/env/REGION", nil,
+			map[string]any{"value": "eu", "secret": false}, canned{status: 204}},
+		{"sensors env set --plain alone flips the flag without a value", []string{"sensors", "env", "set", "linear", "REGION", "--plain"}, "", "PUT /api/sensors/linear/env/REGION", nil,
+			map[string]any{"secret": false}, canned{status: 204}},
+		{"sensors env set --secret alone flips the flag without a value", []string{"sensors", "env", "set", "linear", "REGION", "--secret"}, "", "PUT /api/sensors/linear/env/REGION", nil,
+			map[string]any{"secret": true}, canned{status: 204}},
 		{"test-node with an event", []string{"flows", "test-node", "triage-github", "classify", "--event", id2, "--dry-run"}, "", "POST /api/flows/triage-github/test-node", nil,
 			map[string]any{"node_id": "classify", "dry_run": true, "input": map[string]any{"source": "event", "event_id": id2}},
 			ok(map[string]any{"flow_run": flowRun(id1, "succeeded"), "node_run": nodeRun("done")})},
@@ -177,6 +198,67 @@ func TestEnvSetRejectsValueAndStdinTogether(t *testing.T) {
 	res := f.run(runOpts{stdin: "x"}, "env", "set", "K", "v", "--stdin")
 	if res.code != cli.ExitUsage || len(f.requests()) != 0 {
 		t.Errorf("exit %d, %d requests", res.code, len(f.requests()))
+	}
+}
+
+func TestEnvSetRejectsPlainAndSecretTogether(t *testing.T) {
+	f := newFakeDaemon(t)
+	for _, args := range [][]string{
+		{"env", "set", "K", "v", "--plain", "--secret"},
+		{"sensors", "env", "set", "s", "K", "--plain", "--secret"},
+	} {
+		if res := f.run(runOpts{}, args...); res.code != cli.ExitUsage {
+			t.Errorf("%v: exit %d, want %d", args, res.code, cli.ExitUsage)
+		}
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("%d requests were sent", n)
+	}
+}
+
+func TestEnvSetWithoutFlagsStillOmitsTheSecretField(t *testing.T) {
+	// Omitting secret lets the API apply its default (secret) when a value is set.
+	f := newFakeDaemon(t)
+	f.on("PUT /api/env/K", canned{status: 204})
+	if res := f.run(runOpts{}, "env", "set", "K", "v"); res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+	if strings.Contains(f.only().Body, "secret") {
+		t.Errorf("body = %s, want no secret field", f.only().Body)
+	}
+}
+
+func TestEnvListTableShowsTheSecretFlagAndPlainValuesOnly(t *testing.T) {
+	f := newFakeDaemon(t)
+	f.on("GET /api/env", ok(map[string]any{"items": []any{
+		map[string]any{"key": "GITHUB_TOKEN", "secret": true, "value": nil},
+		map[string]any{"key": "LOG_LEVEL", "secret": false, "value": "debug"}}}))
+	res := f.run(runOpts{}, "env", "list", "--table")
+	if res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(res.stdout), "\n")
+	if len(lines) != 3 || !regexp.MustCompile(`^KEY\s+SECRET\s+VALUE$`).MatchString(lines[0]) {
+		t.Fatalf("table = \n%s", res.stdout)
+	}
+	if !regexp.MustCompile(`^GITHUB_TOKEN\s+yes\s+-$`).MatchString(lines[1]) {
+		t.Errorf("secret row = %q, want yes and no value", lines[1])
+	}
+	if !regexp.MustCompile(`^LOG_LEVEL\s+no\s+debug$`).MatchString(lines[2]) {
+		t.Errorf("plain row = %q, want no and the value", lines[2])
+	}
+
+	f = newFakeDaemon(t)
+	f.on("GET /api/sensors/linear/env", ok(map[string]any{"items": []any{
+		map[string]any{"key": "LINEAR_API_KEY", "overrides_global": true, "secret": true, "value": nil},
+		map[string]any{"key": "REGION", "overrides_global": false, "secret": false, "value": "eu"}}}))
+	res = f.run(runOpts{}, "sensors", "env", "list", "linear", "--table")
+	lines = strings.Split(strings.TrimSpace(res.stdout), "\n")
+	if res.code != 0 || len(lines) != 3 || !regexp.MustCompile(`^KEY\s+OVERRIDES_GLOBAL\s+SECRET\s+VALUE$`).MatchString(lines[0]) {
+		t.Fatalf("exit %d, table = \n%s", res.code, res.stdout)
+	}
+	if !regexp.MustCompile(`^LINEAR_API_KEY\s+yes\s+yes\s+-$`).MatchString(lines[1]) || !regexp.MustCompile(`^REGION\s+no\s+no\s+eu$`).MatchString(lines[2]) {
+		t.Errorf("rows wrong:\n%s", res.stdout)
 	}
 }
 

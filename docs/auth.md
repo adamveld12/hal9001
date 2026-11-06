@@ -242,7 +242,7 @@ With `tailscale-identity` removed from the stack, tailnet devices must use a pas
   cross-site requests.
 - **Never expose it by other means.** There is no setting to bind another address. Do not proxy it to the internet; do
   not use `tailscale funnel` (`hal9001 tailscale status` flags it).
-- **Secrets.** The `env` file is never returned by the API, and its values are redacted from stored output. The password
+- **Secrets.** The secret values of the `env` file are never returned by the API, and are redacted from stored output. A value the user marked plain (`# hal:plain`) is returned and not redacted. The password
   hash lives in `config.yaml`, which is why config files are redacted in `settings get`.
 
 ## Auth events

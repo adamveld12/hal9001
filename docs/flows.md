@@ -186,9 +186,46 @@ separate: it pauses every sensor and also rejects "Poll now".
 file: the Environment section of the sensor page, or `hal9001 sensors env set <id> KEY`. They are stored in
 `env.d/sensors/<id>.env` (mode 0600, git-ignored; sensor YAML stays safe to commit), not in the sensor YAML. A poll
 gets the global `env` values with the sensor's own values on top (the sensor's value wins; the UI marks keys that
-override a global one). Values are write-only: the API and UI list key names only. They are redacted from stored
-output like the global values. A change applies on the next poll without a restart, and deleting the sensor deletes its
-env file.
+override a global one). Secret values are write-only: the API and UI list key names only. They are redacted from
+stored output like the global values. A change applies on the next poll without a restart, and deleting the sensor
+deletes its env file.
+
+**Plain (non-secret) values.** Every env value is secret by default. A value that is not sensitive, such as a login
+name or a host name, can be marked plain: the Secret toggle in the env editor (global or per sensor),
+`hal9001 env set KEY --plain` / `hal9001 sensors env set <id> KEY --plain` (with no value, `--plain` and `--secret`
+flip the flag of an existing key), or `secret: false` in `PUT /api/env/{key}` and `PUT /api/sensors/{id}/env/{key}`
+(omit `value` to flip only the flag). The flag is stored in the same file as a comment line,
+`# hal:plain KEY1 KEY2`, so the file stays plain `KEY=VALUE` text and the marker survives hand edits. A plain value is
+still injected into the process, but it is not redacted from stored output, and the env listings return its `value`.
+Secret values are never returned. A key written with `value` and without `secret` becomes secret again.
+
+**Email: the `imap-mail` sensor.** The default email sensor reads any IMAP mailbox with the Python 3 standard library
+(no packages, no OAuth). It is meant for Gmail with an app password and is configured entirely in its own Environment
+section (`IMAP_USER`, `IMAP_PASSWORD`; optional `IMAP_HOST`, `IMAP_PORT`, `IMAP_TLS`, `IMAP_MAILBOX`, `IMAP_SEARCH`,
+`IMAP_MAX`; defaults and meaning are in the comment at the top of `sensors/imap-mail.yaml` and in `env.example`).
+
+- Read-only: it opens the mailbox with `EXAMINE` and fetches with `BODY.PEEK`, so nothing is marked read, moved or
+  deleted. The default search is `UNSEEN`; after the first successful poll it adds `SINCE` the day before
+  `HAL_LAST_SUCCESS_AT`, and dedup drops the overlap. Each poll takes the newest `IMAP_MAX` (default 50) matches.
+- Gmail: when the server advertises `X-GM-EXT-1`, `id` is the `X-GM-MSGID` (the dedup key), `thread_id` is the
+  `X-GM-THRID`, `labels` are the Gmail labels and `url` opens the message in Gmail. Other servers get `id` =
+  `<UIDVALIDITY>:<UID>`, empty `labels` and a null `url`.
+- Items: `source`, `id`, `thread_id`, `uid`, `mailbox`, `from` (display string), `from_address`, `to`, `cc`, `subject`,
+  `date` (RFC 3339 UTC), `message_id`, `in_reply_to`, `labels`, `flags`, `snippet` (the first 2000 characters of the
+  plain-text part, or the HTML part stripped to text), `has_attachments`, `url`, `updated_at` (= `date`). Headers and
+  bodies are decoded with their declared charsets; undecodable bytes become U+FFFD.
+- Gmail setup: turn on IMAP (Gmail Settings > Forwarding and POP/IMAP), then create an app password (Google account >
+  Security > 2-Step Verification > App passwords) and set it as `IMAP_PASSWORD`. A Workspace admin can disable IMAP or
+  app passwords; the poll then fails with `AUTHENTICATIONFAILED` in its stderr and only the admin can fix that.
+- `IMAP_TLS=none` sends the password in clear and exists for tests and local bridges only. Failures (login, TLS,
+  connection, unknown mailbox) exit non-zero with a message that never contains the password.
+- Stored output is redacted like any secret env value, so while `IMAP_USER` is secret your own address shows as
+  `«IMAP_USER»` in the `to`/`cc`/`from_address` fields of stored events. Mark `IMAP_USER`, `IMAP_HOST`, `IMAP_PORT`,
+  `IMAP_TLS`, `IMAP_MAILBOX`, `IMAP_SEARCH` and `IMAP_MAX` plain (they are not sensitive) and the address appears as
+  is. Keep `IMAP_PASSWORD` secret.
+- `gmail-unread` (the `gog` CLI) remains as an alternative, but it needs Google OAuth, which a Workspace admin can
+  block. To use it, change the `email-secretary` flow to subscribe to `gmail-unread` and the prompt's
+  `{{.input.snippet}}` to `{{.input.text}}`.
 
 ## Flows
 

@@ -1,0 +1,351 @@
+# Mail over IMAP, read-only (python3 standard library only). The default email sensor: Gmail with an app password.
+#
+# Set these in the sensor's Environment section (UI) or `hal9001 sensors env set imap-mail KEY`:
+#   IMAP_USER      required, the mailbox login (for Gmail the full address)
+#   IMAP_PASSWORD  required (for Gmail an app password: Google account > Security > 2-Step Verification > App passwords)
+#   IMAP_HOST      default imap.gmail.com
+#   IMAP_PORT      default 993
+#   IMAP_TLS       ssl (default) | starttls | none  (none is for tests and local bridges only: it sends the password in clear)
+#   IMAP_MAILBOX   default INBOX
+#   IMAP_SEARCH    IMAP search criteria, default UNSEEN
+#   IMAP_MAX       newest messages per poll, default 50
+#
+# Mark everything except IMAP_PASSWORD plain (the Secret toggle in the Environment section, or `--plain`): plain values
+# are not redacted, so your own address shows normally in stored items instead of as «IMAP_USER».
+#
+# Gmail needs IMAP enabled (Gmail Settings > Forwarding and POP/IMAP). A Workspace admin can disable IMAP or app
+# passwords; the poll then fails with AUTHENTICATIONFAILED and only the admin can fix it.
+#
+# Nothing is changed in the mailbox: the mailbox is opened with EXAMINE and bodies are fetched with BODY.PEEK, so no
+# message is marked read. After the first poll only mail since HAL_LAST_SUCCESS_AT (minus one day) is searched;
+# dedup by id drops the overlap. On Gmail the id is X-GM-MSGID; elsewhere UIDVALIDITY:UID.
+id: imap-mail
+interval: 2m
+lang: python
+script: |
+  import email.policy
+  import html.parser
+  import imaplib
+  import json
+  import os
+  import re
+  import socket
+  import ssl
+  import sys
+  import base64
+  from datetime import datetime, timedelta, timezone
+  from email import message_from_bytes
+  from email.utils import parseaddr, parsedate_to_datetime
+
+  MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  SNIPPET_CHARS = 2000
+  TIMEOUT = 30
+
+  user = os.environ.get("IMAP_USER", "")
+  password = os.environ.get("IMAP_PASSWORD", "")
+
+
+  def die(msg):
+      if password:
+          msg = msg.replace(password, "***")
+      sys.stderr.write("imap-mail: " + msg + "\n")
+      sys.exit(1)
+
+
+  if not user or not password:
+      die("IMAP_USER and IMAP_PASSWORD are not set - set them in the sensor Environment section of the UI or in the global env file, see env.example")
+
+  host = os.environ.get("IMAP_HOST") or "imap.gmail.com"
+  tls = (os.environ.get("IMAP_TLS") or "ssl").lower()
+  mailbox = os.environ.get("IMAP_MAILBOX") or "INBOX"
+  search = (os.environ.get("IMAP_SEARCH") or "UNSEEN").strip()
+  try:
+      port = int(os.environ.get("IMAP_PORT") or 993)
+      max_items = int(os.environ.get("IMAP_MAX") or 50)
+  except ValueError:
+      die("IMAP_PORT and IMAP_MAX must be integers")
+  if tls not in ("ssl", "starttls", "none"):
+      die("IMAP_TLS must be ssl, starttls or none, got " + tls)
+  if max_items < 1:
+      die("IMAP_MAX must be at least 1")
+
+
+  def since_clause():
+      # IMAP SINCE has day granularity and the server picks the time zone: go back one day.
+      m = re.match(r"(\d{4})-(\d{2})-(\d{2})", os.environ.get("HAL_LAST_SUCCESS_AT", ""))
+      if not m:
+          return ""
+      try:
+          day = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))) - timedelta(days=1)
+      except ValueError:
+          return ""
+      return "SINCE %02d-%s-%04d" % (day.day, MONTHS[day.month - 1], day.year)
+
+
+  def connect():
+      ctx = ssl.create_default_context()
+      if tls == "ssl":
+          return imaplib.IMAP4_SSL(host, port, ssl_context=ctx, timeout=TIMEOUT)
+      conn = imaplib.IMAP4(host, port, timeout=TIMEOUT)
+      if tls == "starttls":
+          conn.starttls(ssl_context=ctx)
+      return conn
+
+
+  def errtext(e):
+      a = e.args[0] if e.args else ""
+      return a.decode("utf-8", "replace") if isinstance(a, bytes) else str(a)
+
+
+  def quote(s):
+      return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+  def utf7(s):
+      # IMAP modified UTF-7 (Gmail labels with non-ASCII names).
+      def seg(m):
+          if m.group(1) == "":
+              return "&"
+          b = m.group(1).replace(",", "/")
+          b += "=" * (-len(b) % 4)
+          return base64.b64decode(b).decode("utf-16-be", "replace")
+      try:
+          return re.sub(r"&([^-]*)-", seg, s)
+      except Exception:
+          return s
+
+
+  LABEL_TOKEN = re.compile(r'\s*(?:"((?:[^"\\]|\\.)*)"|([^\s()"]+))')
+
+
+  def parse_labels(text):
+      i = text.find("X-GM-LABELS (")
+      if i < 0:
+          return []
+      rest = text[i + len("X-GM-LABELS ("):]
+      out, pos = [], 0
+      while True:
+          m = LABEL_TOKEN.match(rest, pos)
+          if not m:
+              return out
+          pos = m.end()
+          if m.group(1) is not None:
+              out.append(utf7(re.sub(r"\\(.)", r"\1", m.group(1))))
+          else:
+              out.append(utf7(m.group(2)))
+
+
+  class TextExtractor(html.parser.HTMLParser):
+      SKIP = ("script", "style", "head", "title")
+
+      def __init__(self):
+          super().__init__(convert_charrefs=True)
+          self.parts = []
+          self.skip = 0
+
+      def handle_starttag(self, tag, attrs):
+          if tag in self.SKIP:
+              self.skip += 1
+          self.parts.append(" ")
+
+      def handle_endtag(self, tag):
+          if tag in self.SKIP and self.skip:
+              self.skip -= 1
+          self.parts.append(" ")
+
+      def handle_data(self, data):
+          if not self.skip:
+              self.parts.append(data)
+
+
+  def html_to_text(src):
+      p = TextExtractor()
+      try:
+          p.feed(src)
+          p.close()
+      except Exception:
+          return re.sub(r"<[^>]*>", " ", src)
+      return "".join(p.parts)
+
+
+  def part_text(part):
+      payload = part.get_payload(decode=True) or b""
+      try:
+          return payload.decode(part.get_content_charset() or "utf-8", "replace")
+      except (LookupError, ValueError):
+          return payload.decode("utf-8", "replace")
+
+
+  def snippet_of(msg):
+      text = ""
+      try:
+          body = msg.get_body(preferencelist=("plain",))
+          if body is not None:
+              text = part_text(body)
+          if not text.strip():
+              body = msg.get_body(preferencelist=("html",))
+              if body is not None:
+                  text = html_to_text(part_text(body))
+      except Exception:
+          text = ""
+      return re.sub(r"\s+", " ", text).strip()[:SNIPPET_CHARS]
+
+
+  def has_attachments(msg):
+      for part in msg.walk():
+          if part.is_multipart():
+              continue
+          disp = part.get_content_disposition()
+          if disp == "attachment" or (disp is None and part.get_filename()):
+              return True
+      return False
+
+
+  def header(msg, name):
+      try:
+          value = msg.get(name)
+          return re.sub(r"\s+", " ", str(value)).strip() if value is not None else ""
+      except Exception:
+          return ""
+
+
+  def utc_date(msg):
+      try:
+          d = parsedate_to_datetime(header(msg, "Date"))
+      except Exception:
+          return None
+      if d is None:
+          return None
+      if d.tzinfo is None:
+          d = d.replace(tzinfo=timezone.utc)
+      return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+  def fetch_one(conn, uid, gmail):
+      attrs = "UID FLAGS BODY.PEEK[]"
+      if gmail:
+          attrs += " X-GM-MSGID X-GM-THRID X-GM-LABELS"
+      typ, data = conn.uid("FETCH", str(uid), "(" + attrs + ")")
+      if typ != "OK":
+          die("FETCH of uid %s failed: %s" % (uid, typ))
+      meta, raw = [], None
+      for part in data:
+          if isinstance(part, tuple):
+              meta.append(part[0])
+              raw = part[1]
+          elif isinstance(part, bytes):
+              meta.append(part)
+      if raw is None:
+          return None
+      return " ".join(m.decode("utf-8", "replace") for m in meta), raw
+
+
+  def build_item(uid, uidvalidity, meta, raw, gmail):
+      msg = message_from_bytes(raw, policy=email.policy.default)
+      flags = []
+      m = re.search(r"FLAGS \(([^)]*)\)", meta)
+      if m:
+          flags = m.group(1).split()
+      msgid = re.search(r"X-GM-MSGID (\d+)", meta)
+      thrid = re.search(r"X-GM-THRID (\d+)", meta)
+      if gmail and msgid:
+          item_id = msgid.group(1)
+          url = "https://mail.google.com/mail/u/0/#all/%x" % int(item_id)
+      else:
+          item_id = "%s:%d" % (uidvalidity, uid)
+          url = None
+      from_addr = ""
+      try:
+          from_addr = parseaddr(header(msg, "From"))[1]
+      except Exception:
+          pass
+      date = utc_date(msg)
+      return {
+          "source": "imap",
+          "id": item_id,
+          "thread_id": thrid.group(1) if gmail and thrid else None,
+          "uid": uid,
+          "mailbox": mailbox,
+          "from": header(msg, "From"),
+          "from_address": from_addr,
+          "to": header(msg, "To"),
+          "cc": header(msg, "Cc"),
+          "subject": header(msg, "Subject"),
+          "date": date,
+          "message_id": header(msg, "Message-ID"),
+          "in_reply_to": header(msg, "In-Reply-To"),
+          "labels": parse_labels(meta) if gmail else [],
+          "flags": flags,
+          "snippet": snippet_of(msg),
+          "has_attachments": has_attachments(msg),
+          "url": url,
+          "updated_at": date,
+      }
+
+
+  def poll():
+      conn = connect()
+      try:
+          try:
+              conn.login(user, password)
+          except imaplib.IMAP4.error as e:
+              die("login failed: %s. For Gmail check that IMAP is enabled, that the password is an app password, and that the Workspace admin has not disabled app passwords or IMAP (AUTHENTICATIONFAILED)" % errtext(e))
+          typ, caps = conn.capability()
+          gmail = typ == "OK" and any(b"X-GM-EXT-1" in c.upper() for c in caps if c)
+          try:
+              typ, dat = conn.select(quote(mailbox), readonly=True)
+          except imaplib.IMAP4.error as e:
+              die("cannot open mailbox %s: %s" % (mailbox, errtext(e)))
+          if typ != "OK":
+              detail = dat[-1] if dat and dat[-1] else typ
+              if isinstance(detail, bytes):
+                  detail = detail.decode("utf-8", "replace")
+              die("cannot open mailbox %s: %s" % (mailbox, detail))
+          uidvalidity = ""
+          _, uv = conn.response("UIDVALIDITY")
+          if uv and uv[0]:
+              uidvalidity = uv[0].decode()
+
+          criteria = search
+          since = since_clause()
+          if since:
+              criteria = "(%s) %s" % (search, since)
+          typ, data = conn.uid("SEARCH", None, criteria)
+          if typ != "OK":
+              die("search failed: %s" % typ)
+          uids = sorted(int(u) for u in (data[0] or b"").split())
+          uids = uids[-max_items:][::-1]
+
+          items = []
+          for uid in uids:
+              got = fetch_one(conn, uid, gmail)
+              if got is None:
+                  continue
+              try:
+                  items.append(build_item(uid, uidvalidity, got[0], got[1], gmail))
+              except Exception as e:
+                  sys.stderr.write("imap-mail: skipping uid %d: %s\n" % (uid, e))
+          return items
+      finally:
+          try:
+              conn.logout()
+          except Exception:
+              pass
+
+
+  try:
+      result = poll()
+  except imaplib.IMAP4.error as e:
+      die("IMAP error: %s" % errtext(e))
+  except ssl.SSLError as e:
+      die("TLS error talking to %s:%d: %s" % (host, port, e))
+  except (socket.timeout, OSError) as e:
+      die("cannot talk to %s:%d: %s" % (host, port, e))
+  except Exception as e:
+      die("unexpected %s: %s" % (type(e).__name__, e))
+
+  for item in result:
+      sys.stdout.write(json.dumps(item) + "\n")
+key: "{{.id}}"
+first_run: baseline
+timeout: 90s

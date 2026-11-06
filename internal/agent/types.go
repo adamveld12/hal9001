@@ -85,15 +85,22 @@ const (
 	// ReasonPolicyEndedTurn: the policy rejected a tool call and the agent
 	// ended its turn instead of continuing (e.g. codex).
 	ReasonPolicyEndedTurn = "policy_rejected"
+	// ReasonCancelled: the user cancelled a session turn.
+	ReasonCancelled = "cancelled"
 )
 
-// Cancellation causes. A caller cancels the context it passes to Run/Resume
-// with one of these (context.WithCancelCause) to say why.
+// Cancellation causes. A caller cancels the context it passes to
+// Run/Resume/Session.Prompt with one of these (context.WithCancelCause) to say
+// why.
 var (
 	// ErrKilled is the kill-switch cause: the run ends with status killed.
 	ErrKilled = errors.New("agent run killed")
 	// ErrInterrupted is the daemon-shutdown cause: status interrupted.
 	ErrInterrupted = errors.New("agent run interrupted")
+	// ErrCancelled is the user-cancel cause for one session turn: the turn
+	// ends killed with reason cancelled and the session's process normally
+	// stays usable.
+	ErrCancelled = errors.New("agent run cancelled")
 
 	errTimeout         = errors.New("agent run timed out")
 	errApprovalTimeout = errors.New("approval timed out")
@@ -164,6 +171,21 @@ type AllowRules struct {
 	Tools []string `json:"tools,omitempty"`
 	// Commands are regexes matched against the command of execute-kind tools.
 	Commands []string `json:"commands,omitempty"`
+	// EditUnder are directories inside which edit-class tool calls (kinds
+	// edit, delete, move) are allowed without approval, provided the call
+	// names at least one target path and every path lies inside one of them.
+	EditUnder []string `json:"edit_under,omitempty"`
+	// Protected are files or directories whose reading needs approval: a
+	// read-class call naming a path inside one is not allowed by its kind.
+	Protected []string `json:"protected,omitempty"`
+	// CommandVeto, when set, is asked about a command that matched allow.commands[i] before the rule allows it:
+	// a non-empty answer is the reason the command is not allowed automatically after all, and it is decided like
+	// any other call that no rule allows (approval queue when gated, rejected when read-only). It lets a caller
+	// make a rule depend on state the static patterns cannot see.
+	CommandVeto func(req ToolRequest, rule int) string `json:"-"`
+	// Base resolves relative paths of EditUnder, Protected and tool calls. It
+	// defaults to the run's working directory.
+	Base string `json:"base,omitempty"`
 }
 
 // PolicyFor is the permission policy of a node's phase (§7.2). Proposal

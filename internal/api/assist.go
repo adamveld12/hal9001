@@ -18,6 +18,9 @@ import (
 
 const maxAssistText = 64 << 10
 
+// assistAgentHeader marks a draft test requested by the agent (the CLI sends it inside an assist session).
+const assistAgentHeader = "X-Hal9001-Assist-Agent"
+
 type assistTargetView struct {
 	Kind string  `json:"kind"`
 	ID   *string `json:"id"`
@@ -258,7 +261,7 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := svc.TestDraft(r.Context(), r.PathValue("id"))
+	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "")
 	if err != nil {
 		s.writeError(w, r, err)
 		return

@@ -74,7 +74,8 @@ mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --
 | `slack-mentions-dms` | `SLACK_USER_TOKEN` | User token (`xoxp-...`) from a Slack app installed to your workspace. Scopes: `search:read`, `im:history`, `im:read`, `users:read`. |
 | `github-notifications`, `triage-github` | `gh auth login` | The token must read notifications (classic scope `notifications`, or `repo`) and pull requests. |
 | `linear-assigned` | `LINEAR_API_KEY` | Linear Settings > Account > Security & access. Read-only is enough. |
-| `gmail-unread` | [`gog`](https://github.com/steipete/gogcli) | Install it, then `gog auth add you@example.com`. Set `GOG_ACCOUNT` in `env` when `gog` has several accounts. |
+| `imap-mail` | `python3`, `IMAP_USER`, `IMAP_PASSWORD` | The default email sensor. Set the values in the sensor's Environment section. For Gmail: enable IMAP in Gmail settings and create an app password (Google account > Security > 2-Step Verification > App passwords). A Workspace admin can disable IMAP or app passwords; the poll then fails with `AUTHENTICATIONFAILED`. Other IMAP servers: also set `IMAP_HOST` (see [docs/flows.md](docs/flows.md#sensors)). Read-only: nothing is marked read. |
+| `gmail-unread` | [`gog`](https://github.com/steipete/gogcli) | Alternative to `imap-mail`; needs Google OAuth, which a Workspace admin can block. Install it, then `gog auth add you@example.com`. Set `GOG_ACCOUNT` in `env` when `gog` has several accounts. |
 | Claude agents | Claude Code login | Runtime `claude`, adapter `claude-agent-acp` (mise-pinned). |
 | Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`, adapter `codex-acp` (mise-pinned). |
 | omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs `omp acp`. Not in `mise.toml` (a Homebrew install). |
@@ -85,7 +86,10 @@ Credentials go in `~/.hal9001/env` (`KEY=VALUE` per line, injected into every se
 the UI or API, and redacted from stored output). A sensor can also have its own values (for example `LINEAR_API_KEY`
 on the Linear sensor): set them in the sensor's Environment section in the UI or with `hal9001 sensors env set`. They
 are stored in `env.d/sensors/<id>.env`, reach only that sensor and override a same-named global value. The first run
-seeds `env.example` next to it:
+seeds `env.example` next to it. Every value is secret unless you mark it plain: for a value that is not sensitive (a
+login name, a host name) use the Secret toggle in the UI, `--plain` on `env set` / `sensors env set`, or a
+`# hal:plain KEY ...` comment line in the file. Plain values are shown by the UI and API and are not redacted from
+output.
 
 ```sh
 cp ~/.hal9001/env.example ~/.hal9001/env && chmod 600 ~/.hal9001/env
@@ -239,6 +243,12 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `sensors env list <id>` | Key names of the sensor's own env, and whether each overrides a global key. Values are never shown. |
 | `sensors env set <id> <KEY> [value]` | `--stdin` reads the value from stdin. Takes effect on the next poll. |
 | `sensors env unset <id> <KEY>` | |
+| `sensors validate [file.yaml\|-]` | Validate sensor YAML without saving. |
+| `assist create --runtime <name>` | Start an AI-assisted authoring session: `--sensor <id>` (edit an existing sensor), `--model`, `--yaml file\|-`. See [docs/assist.md](docs/assist.md). |
+| `assist list` / `assist get <session>` | `--target-kind`, `--target-id`; `get` includes the conversation. |
+| `assist send <session> <text...>` | `--yaml file\|-` replaces the draft first. Starts one agent turn. |
+| `assist test [<session>]` / `assist draft [<session>]` | Run the draft like Poll now (redacted JSON result) / print the draft with its diagnostics. The session defaults to `HAL9001_ASSIST_SESSION`. |
+| `assist cancel [<session>]` / `assist close <session>` | Cancel the running turn / end the session and delete its draft directory. |
 | `events list` | `--sensor`, `--flow`, `--kind`, `--status`, `--decision`, `--q`, `--since`, `--until` (RFC 3339), `--limit`, `--cursor` |
 | `events get <id>` | The event with its fan-out of flow runs. |
 | `events inject <sensor-id>` | `--file item.json` (default: JSON on stdin). Goes through dedup and fan-out like a polled item. |
@@ -321,6 +331,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/auth.md](docs/auth.md) | Auth stacks, modules, Tailscale setup, threat notes. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
+| [docs/assist.md](docs/assist.md) | AI-assisted sensor authoring: draft, permission policy, secret model, lifecycle. |
 | [docs/api.md](docs/api.md) | REST API guide: auth, pagination, long-polling, SSE, errors, curl walkthrough. |
 | [docs/live-smoke.md](docs/live-smoke.md) | Live smoke tests against real runtimes and services. |
 | [cmd/fake-acp-agent/README.md](cmd/fake-acp-agent/README.md) | The scripted ACP agent used by tests. |
