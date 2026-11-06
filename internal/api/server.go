@@ -290,6 +290,14 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listEnvKeys":    s.listEnvKeys,
 		"setEnvValue":    s.setEnvValue,
 		"deleteEnvValue": s.deleteEnvValue,
+
+		"listSandboxes":    s.listSandboxes,
+		"getSandbox":       s.getSandbox,
+		"updateSandbox":    s.updateSandbox,
+		"checkSandbox":     s.checkSandbox,
+		"listSandboxEnv":   s.listSandboxEnv,
+		"setSandboxEnv":    s.setSandboxEnvValue,
+		"deleteSandboxEnv": s.deleteSandboxEnvValue,
 	}
 }
 
