@@ -2,56 +2,58 @@
 # Tools are pinned in mise.toml; every command runs through `mise exec` so hooks, agents, and manual runs use the same versions.
 
 pre-commit:
-  parallel: true
-  commands:
-    gitleaks:
-      run: mise exec -- gitleaks git --pre-commit --staged --redact --no-banner
-
-    go-fmt:
+  # Fixers run first, one after another, and re-stage what they change; then the checks run in parallel
+  # against the fixed files.
+  piped: true
+  jobs:
+    - name: go-fmt
       glob: "*.go"
-      run: mise exec -- golangci-lint fmt --diff {staged_files}
+      run: mise exec -- golangci-lint fmt {staged_files}
+      stage_fixed: true
 
-    go-mod-tidy:
-      glob: "{go.mod,go.sum,*.go}"
-      run: mise exec -- go mod tidy -diff
-
-    golangci-lint:
-      glob: "*.go"
-      run: mise exec -- golangci-lint run ./...
-
-    go-test:
-      glob: "{*.go,go.mod,go.sum}"
-      run: mise exec -- go test -short ./...
-
-    api-types:
-      glob: "{api/openapi.yaml,web/src/api/schema.d.ts}"
-      run: |
-        mise exec -- pnpm --dir web gen:api
-        if ! git diff --quiet -- web/src/api/schema.d.ts; then
-          echo "web/src/api/schema.d.ts is out of date with api/openapi.yaml."
-          echo "Run: mise exec -- pnpm --dir web gen:api   and stage web/src/api/schema.d.ts"
-          exit 1
-        fi
-
-    web-format:
+    - name: web-format
       root: "web/"
       glob: "*.{ts,tsx,js,jsx,json,css,html,md}"
-      run: mise exec -- pnpm exec prettier --check {staged_files}
+      run: mise exec -- pnpm exec prettier --write {staged_files}
+      stage_fixed: true
 
-    web-lint:
-      root: "web/"
-      glob: "*.{ts,tsx,js,jsx}"
-      run: mise exec -- pnpm exec oxlint --deny-warnings {staged_files}
+    - name: api-types
+      glob: "{api/openapi.yaml,web/src/api/schema.d.ts}"
+      run: mise exec -- pnpm --dir web gen:api && git add web/src/api/schema.d.ts
 
-    web-typecheck:
-      root: "web/"
-      glob: "*.{ts,tsx}"
-      run: mise exec -- pnpm typecheck
+    - name: checks
+      group:
+        parallel: true
+        jobs:
+          - name: gitleaks
+            run: mise exec -- gitleaks git --pre-commit --staged --redact --no-banner
 
-    web-test:
-      root: "web/"
-      glob: "*.{ts,tsx}"
-      run: mise exec -- pnpm test
+          - name: go-mod-tidy
+            glob: "{go.mod,go.sum,*.go}"
+            run: mise exec -- go mod tidy -diff
+
+          - name: golangci-lint
+            glob: "*.go"
+            run: mise exec -- golangci-lint run ./...
+
+          - name: go-test
+            glob: "{*.go,go.mod,go.sum}"
+            run: mise exec -- go test -short ./...
+
+          - name: web-lint
+            root: "web/"
+            glob: "*.{ts,tsx,js,jsx}"
+            run: mise exec -- pnpm exec oxlint --deny-warnings {staged_files}
+
+          - name: web-typecheck
+            root: "web/"
+            glob: "*.{ts,tsx}"
+            run: mise exec -- pnpm typecheck
+
+          - name: web-test
+            root: "web/"
+            glob: "*.{ts,tsx}"
+            run: mise exec -- pnpm test
 
 pre-push:
   parallel: true

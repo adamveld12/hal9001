@@ -102,7 +102,7 @@ func TestEveryOperationIsDeclaredAndDocumentsProblems(t *testing.T) {
 		"listFlowRuns", "getFlowRun", "getNodeRun",
 		"listAgentRuns", "getAgentRun", "listAgentEvents", "listAgentPermissionRequests", "downloadAgentRunRaw",
 		"listApprovals", "getApproval", "approveApproval", "denyApproval",
-		"listInbox", "getInboxItem", "updateInboxItem",
+		"listInbox", "getInboxItem", "updateInboxItem", "bulkInbox",
 		"listPrompts", "createPrompt", "getPrompt", "updatePrompt", "deletePrompt", "renderPrompt",
 		"listRuntimes", "probeRuntime",
 		"listAssistSessions", "createAssistSession", "getAssistSession", "deleteAssistSession", "sendAssistMessage", "updateAssistDraft", "testAssistDraft", "listAssistSamples", "cancelAssistSession",

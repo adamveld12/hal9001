@@ -21,62 +21,78 @@ function Row({
   item,
   open,
   cursor,
+  selected,
+  onToggle,
   search,
 }: {
   item: InboxItem;
   open: boolean;
   cursor: boolean;
+  selected: boolean;
+  onToggle: (id: string) => void;
   search: string;
 }) {
   return (
-    <Link
-      id={rowDomId(item.id)}
-      to={{ pathname: `/inbox/${item.id}`, search }}
-      aria-current={open ? "true" : undefined}
+    <div
       className={cx(
-        "block border-b border-line px-3 py-2 text-xs no-underline",
-        open ? "bg-raised" : "hover:bg-raised/60",
+        "flex items-stretch border-b border-line",
+        open ? "bg-raised" : selected ? "bg-raised/40" : "hover:bg-raised/60",
         cursor && "outline-1 -outline-offset-1 outline-accent",
       )}
     >
-      <div className="flex items-center gap-2">
-        <span
-          aria-label={item.read ? "Read" : "Unread"}
-          className={cx(
-            "size-1.5 shrink-0 rounded-full",
-            item.read ? "bg-transparent" : "bg-accent",
-          )}
+      <label className="flex shrink-0 cursor-pointer items-start px-3 pt-2.5">
+        <input
+          type="checkbox"
+          aria-label={`Select ${item.title}`}
+          checked={selected}
+          onChange={() => onToggle(item.id)}
         />
-        <span
-          className={cx(
-            "min-w-0 flex-1 truncate",
-            item.read ? "text-muted" : "font-semibold",
-          )}
-        >
-          {item.title}
-        </span>
-        {item.starred && (
-          <Icon
-            name="star"
-            size={12}
-            className="shrink-0 fill-current text-warn"
-            aria-label="Starred"
+      </label>
+      <Link
+        id={rowDomId(item.id)}
+        to={{ pathname: `/inbox/${item.id}`, search }}
+        aria-current={open ? "true" : undefined}
+        className="block min-w-0 flex-1 py-2 pr-3 text-xs no-underline"
+      >
+        <div className="flex items-center gap-2">
+          <span
+            aria-label={item.read ? "Read" : "Unread"}
+            className={cx(
+              "size-1.5 shrink-0 rounded-full",
+              item.read ? "bg-transparent" : "bg-accent",
+            )}
           />
-        )}
-        <Time ts={item.created_at} />
-      </div>
-      <div className="mt-1 flex items-center gap-1.5 pl-3.5 text-[11px] text-muted">
-        {item.priority !== "normal" && (
-          <PriorityBadge priority={item.priority} />
-        )}
-        <span className="truncate">
-          {item.flow_id} / {item.node_id}
-        </span>
-        {item.dry_run && <Badge tone="info">dry-run</Badge>}
-        {item.parse_error && <Badge tone="warn">parse error</Badge>}
-        {item.archived && <Badge>archived</Badge>}
-      </div>
-    </Link>
+          <span
+            className={cx(
+              "min-w-0 flex-1 truncate",
+              item.read ? "text-muted" : "font-semibold",
+            )}
+          >
+            {item.title}
+          </span>
+          {item.starred && (
+            <Icon
+              name="star"
+              size={12}
+              className="shrink-0 fill-current text-warn"
+              aria-label="Starred"
+            />
+          )}
+          <Time ts={item.created_at} />
+        </div>
+        <div className="mt-1 flex items-center gap-1.5 pl-3.5 text-[11px] text-muted">
+          {item.priority !== "normal" && (
+            <PriorityBadge priority={item.priority} />
+          )}
+          <span className="truncate">
+            {item.flow_id} / {item.node_id}
+          </span>
+          {item.dry_run && <Badge tone="info">dry-run</Badge>}
+          {item.parse_error && <Badge tone="warn">parse error</Badge>}
+          {item.archived && <Badge>archived</Badge>}
+        </div>
+      </Link>
+    </div>
   );
 }
 
@@ -86,12 +102,16 @@ export function InboxList({
   grouped,
   openId,
   cursorId,
+  selected,
+  onToggle,
   search,
 }: {
   items: readonly InboxItem[];
   grouped: boolean;
   openId: string | undefined;
   cursorId: string | null;
+  selected: ReadonlySet<string>;
+  onToggle: (id: string) => void;
   search: string;
 }) {
   const rows = (list: readonly InboxItem[]) =>
@@ -101,6 +121,8 @@ export function InboxList({
         item={item}
         open={item.id === openId}
         cursor={item.id === cursorId}
+        selected={selected.has(item.id)}
+        onToggle={onToggle}
         search={search}
       />
     ));

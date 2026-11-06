@@ -796,6 +796,7 @@ func (s *Server) listInbox(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
 	opts := q.page()
 	minPriority := q.enum("priority", priorities...)
+	maxPriority := q.enum("max_priority", priorities...)
 	read := q.boolp("read")
 	starred := q.boolp("starred")
 	archived := q.enum("archived", "true", "false", "any")
@@ -819,9 +820,10 @@ func (s *Server) listInbox(w http.ResponseWriter, r *http.Request) {
 		no := false
 		f.Archived = &no
 	}
-	if minPriority != "" {
-		for _, p := range priorities[slices.Index(priorities, minPriority):] {
-			f.Priorities = append(f.Priorities, store.Priority(p))
+	if minPriority != "" || maxPriority != "" {
+		if f.Priorities = priorityRange(minPriority, maxPriority); len(f.Priorities) == 0 {
+			badRequest(w, "max_priority is below priority")
+			return
 		}
 	}
 	page, err := s.opts.Store.ListInbox(r.Context(), f)

@@ -1199,6 +1199,41 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/inbox/bulk": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Archive, unarchive, mark, or delete many inbox items
+     * @description Applies `action` to the items named by `ids` or to every item the `filter` matches (exactly one of the two).
+     *     The filter is evaluated by the server inside the write transaction, so it covers every match, not only the
+     *     rows a client has loaded. `filter` takes the query parameters of `GET /api/inbox` (`read`, `starred`,
+     *     `archived`, `priority`, `max_priority`, `dry_run`, `flow_id`, `q`) as JSON, plus `older_than` (a duration such as
+     *     `7d`, or an RFC 3339 time: only items created before it). Its `dry_run` selects items of dry-run flows; the
+     *     top-level `dry_run` previews the action. An unset `filter.archived` means unarchived items, except for
+     *     `unarchive` and `delete`, which default to archived items. `{}` matches every item the default allows.
+     *
+     *     Starred items are never archived or deleted unless `include_starred` is true. `delete` only removes archived
+     *     items; other targets are skipped and counted in `skipped_not_archived` (the request does not fail). Ids that
+     *     do not exist are ignored. `unarchive`, `mark_read` and `mark_unread` do not look at the star.
+     *
+     *     `matched` counts the selected items including skipped ones; `changed` counts items that were modified (or
+     *     would be, with the top-level `dry_run: true`, which changes nothing and emits no events). `changed_ids` lists
+     *     them, e.g. to undo an archive with `unarchive`. Deleting is permanent. Each changed item emits
+     *     `inbox.updated` (a delete emits `stream.resync`), and `status.changed` carries the new `unread_inbox`.
+     */
+    post: operations["bulkInbox"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/inbox/{id}": {
     parameters: {
       query?: never;
@@ -3367,6 +3402,40 @@ export interface components {
     InboxList: {
       items: components["schemas"]["InboxItem"][];
       next_cursor: components["schemas"]["NextCursor"];
+    };
+    InboxBulkFilter: {
+      read?: boolean;
+      starred?: boolean;
+      /** @enum {string} */
+      archived?: "true" | "false" | "any";
+      priority?: components["schemas"]["Priority"];
+      max_priority?: components["schemas"]["Priority"];
+      /** @description Only items of dry-run flows. */
+      dry_run?: boolean;
+      flow_id?: components["schemas"]["Slug"];
+      /** @description A duration (`7d`, `36h`) or an RFC 3339 time. Matches items created before it. */
+      older_than?: string;
+      q?: string;
+    };
+    InboxBulkRequest: {
+      /** @enum {string} */
+      action: "archive" | "unarchive" | "mark_read" | "mark_unread" | "delete";
+      ids?: components["schemas"]["Ulid"][];
+      filter?: components["schemas"]["InboxBulkFilter"];
+      /** @default false */
+      include_starred?: boolean;
+      /**
+       * @description Count only; change nothing.
+       * @default false
+       */
+      dry_run?: boolean;
+    };
+    InboxBulkResult: {
+      matched: number;
+      changed: number;
+      skipped_starred: number;
+      skipped_not_archived: number;
+      changed_ids: components["schemas"]["Ulid"][];
     };
     InboxPatch: {
       read?: boolean;
@@ -6051,6 +6120,8 @@ export interface operations {
         limit?: components["parameters"]["Limit"];
         /** @description Minimum priority. */
         priority?: components["schemas"]["Priority"];
+        /** @description Maximum priority. `priority=low&max_priority=low` lists only low items. */
+        max_priority?: components["schemas"]["Priority"];
         read?: boolean;
         starred?: boolean;
         archived?: "true" | "false" | "any";
@@ -6079,6 +6150,36 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  bulkInbox: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InboxBulkRequest"];
+      };
+    };
+    responses: {
+      /** @description What the action matched and changed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InboxBulkResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };

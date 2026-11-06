@@ -8,6 +8,7 @@ export function ConfirmDialog({
   children,
   confirmLabel,
   busy,
+  confirmDisabled,
   onConfirm,
   onCancel,
 }: {
@@ -16,6 +17,8 @@ export function ConfirmDialog({
   children: ReactNode;
   confirmLabel: string;
   busy?: boolean;
+  /** Disables only the confirm button (Cancel stays available). */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -44,7 +47,11 @@ export function ConfirmDialog({
         <Button onClick={onCancel} disabled={busy}>
           Cancel
         </Button>
-        <Button variant="danger" onClick={onConfirm} disabled={busy}>
+        <Button
+          variant="danger"
+          onClick={onConfirm}
+          disabled={busy || confirmDisabled}
+        >
           {confirmLabel}
         </Button>
       </div>

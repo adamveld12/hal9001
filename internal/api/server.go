@@ -263,6 +263,7 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listInbox":       s.listInbox,
 		"getInboxItem":    s.getInboxItem,
 		"updateInboxItem": s.updateInboxItem,
+		"bulkInbox":       s.bulkInbox,
 
 		"listPrompts":  s.listPrompts,
 		"createPrompt": s.createPrompt,

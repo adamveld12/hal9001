@@ -178,3 +178,55 @@ export function useUpdateInbox() {
     },
   });
 }
+
+export type InboxBulkRequest = Schemas["InboxBulkRequest"];
+export type InboxBulkFilter = Schemas["InboxBulkFilter"];
+export type InboxBulkResult = Schemas["InboxBulkResult"];
+export type InboxBulkAction = InboxBulkRequest["action"];
+
+/** The server accepts at most this many ids per request. */
+export const BULK_MAX_IDS = 1000;
+
+function emptyBulkResult(): InboxBulkResult {
+  return {
+    matched: 0,
+    changed: 0,
+    skipped_starred: 0,
+    skipped_not_archived: 0,
+    changed_ids: [],
+  };
+}
+
+/** Run a bulk request. Id lists longer than the server limit are sent in several requests and summed. */
+export async function postInboxBulk(
+  req: InboxBulkRequest,
+): Promise<InboxBulkResult> {
+  const send = (body: InboxBulkRequest) =>
+    unwrap(api.POST("/api/inbox/bulk", { body }));
+  const ids = req.ids;
+  if (!ids || ids.length <= BULK_MAX_IDS) return send(req);
+  const total = emptyBulkResult();
+  for (let i = 0; i < ids.length; i += BULK_MAX_IDS) {
+    const r = await send({ ...req, ids: ids.slice(i, i + BULK_MAX_IDS) });
+    total.matched += r.matched;
+    total.changed += r.changed;
+    total.skipped_starred += r.skipped_starred;
+    total.skipped_not_archived += r.skipped_not_archived;
+    total.changed_ids.push(...r.changed_ids);
+  }
+  return total;
+}
+
+/** Bulk archive / unarchive / mark / delete; refreshes the lists and the unread badge. */
+export function useBulkInbox() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: postInboxBulk,
+    onSuccess: (_r, req) => {
+      if (req.dry_run) return;
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
+      void qc.invalidateQueries({ queryKey: ["inbox-item"] });
+      void qc.invalidateQueries({ queryKey: qk("status") });
+    },
+  });
+}
