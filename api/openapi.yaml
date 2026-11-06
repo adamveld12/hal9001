@@ -3009,8 +3009,10 @@ components:
       description: |
         Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
         `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
+        Exactly one of `prompt` (a library prompt name) or `instructions` (inline prompt template) is required.
+        `output` (`note` default, or `none`) applies to inline `instructions` only.
       additionalProperties: false
-      required: [id, type, runtime, mode, prompt]
+      required: [id, type, runtime, mode]
       properties:
         id: {$ref: '#/components/schemas/Slug'}
         type: {type: string, enum: [agent]}
@@ -3018,6 +3020,8 @@ components:
         mode: {$ref: '#/components/schemas/AgentMode'}
         approve: {$ref: '#/components/schemas/ApproveStyle'}
         prompt: {$ref: '#/components/schemas/Slug'}
+        instructions: {type: string}
+        output: {type: string, enum: [note, none]}
         extra_prompt: {type: string}
         model: {type: string}
         cwd: {$ref: '#/components/schemas/Cwd'}

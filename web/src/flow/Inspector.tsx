@@ -1,7 +1,17 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { errorMessage } from "../api/client";
+import { useCreatePrompt } from "../api/prompts";
+import { buildPromptMarkdown } from "../pages/prompts/skeleton";
 import { CodeEditor } from "../components/CodeEditor";
 import { Icon } from "../components/icons";
-import { Field, Select, TextArea, TextInput, Toggle } from "../components/ui";
+import {
+  Button,
+  Field,
+  Select,
+  TextArea,
+  TextInput,
+  Toggle,
+} from "../components/ui";
 import { langForCommand } from "../lib/codeLang";
 import { cx } from "../lib/cx";
 import {
@@ -17,6 +27,15 @@ import {
   type InboxNode,
   type Lang,
 } from "./model";
+import {
+  promptSource,
+  templateHints,
+  toInlinePrompt,
+  toSavedPrompt,
+  type PromptSource,
+} from "./agentPrompt";
+import { discoverFields } from "./transform/fields";
+import { useSampleInput } from "./transform/useSampleInput";
 import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
 
@@ -291,13 +310,159 @@ function CwdForm({
   );
 }
 
+function PromptSection({
+  node,
+  diags,
+  prompts,
+  flowId,
+  onChange,
+}: {
+  node: AgentNode;
+  diags: Diagnostic[];
+  prompts: string[];
+  flowId: string;
+  onChange: (p: (n: AgentNode) => AgentNode) => void;
+}) {
+  const [source, setSource] = useState<PromptSource>(promptSource(node));
+  const [saveName, setSaveName] = useState("");
+  const create = useCreatePrompt();
+  const sample = useSampleInput(flowId, node.id);
+  const hints = useMemo(
+    () =>
+      sample.input === undefined
+        ? []
+        : templateHints(discoverFields(sample.input).map((f) => f.path)),
+    [sample.input],
+  );
+  const inline = source === "inline";
+  const instructionErrors = msgs(diags, "instructions");
+  const nameOk =
+    /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(saveName) &&
+    !prompts.includes(saveName);
+  const save = () =>
+    create.mutate(
+      buildPromptMarkdown({
+        name: saveName,
+        description: "",
+        output: node.output ?? "note",
+        body: node.instructions ?? "",
+      }),
+      {
+        onSuccess: (detail) => {
+          onChange((n) => toSavedPrompt(n, detail.name));
+          setSource("library");
+          setSaveName("");
+        },
+      },
+    );
+  return (
+    <div className="space-y-2" data-section="prompt">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="m-0 text-xs font-semibold">Prompt</h3>
+        <Toggle
+          label="Use a saved prompt"
+          checked={!inline}
+          onChange={(on) => {
+            setSource(on ? "library" : "inline");
+            onChange((n) => (on ? toSavedPrompt(n) : toInlinePrompt(n)));
+          }}
+        />
+      </div>
+      {inline ? (
+        <>
+          <Field
+            label="Instructions (template)"
+            error={instructionErrors}
+            hint={
+              hints.length > 0
+                ? `Variables from the sample: ${hints.join(" ")}`
+                : "Go template: {{.input.field}} is the item, {{.event}} the event."
+            }
+          >
+            <CodeEditor
+              label="Instructions"
+              lang="markdown"
+              value={node.instructions ?? ""}
+              invalid={instructionErrors.length > 0}
+              onChange={(v) => onChange((n) => ({ ...n, instructions: v }))}
+              minHeight="8rem"
+              maxHeight="20rem"
+            />
+          </Field>
+          <Field
+            label="Output"
+            error={msgs(diags, "output")}
+            hint="note: the agent ends with an inbox note; none: free text."
+          >
+            <Select
+              value={node.output ?? "note"}
+              onChange={(e) =>
+                onChange((n) => ({
+                  ...n,
+                  output: e.target.value as "note" | "none",
+                }))
+              }
+            >
+              <option>note</option>
+              <option>none</option>
+            </Select>
+          </Field>
+          <div className="flex items-end gap-2">
+            <Field
+              label="Save as reusable prompt"
+              error={create.error ? [errorMessage(create.error)] : []}
+            >
+              <TextInput
+                value={saveName}
+                placeholder="prompt name"
+                onChange={(e) => setSaveName(e.target.value)}
+              />
+            </Field>
+            <Button
+              disabled={
+                !nameOk ||
+                (node.instructions ?? "").trim() === "" ||
+                create.isPending
+              }
+              onClick={save}
+            >
+              Save
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Field
+          label="Saved prompt"
+          error={[...msgs(diags, "prompt"), ...instructionErrors]}
+          hint="From the prompt library."
+        >
+          <Select
+            value={node.prompt ?? ""}
+            invalid={msgs(diags, "prompt").length > 0}
+            onChange={(e) =>
+              onChange((n) => ({ ...n, prompt: e.target.value }))
+            }
+          >
+            <option value="">(choose a prompt)</option>
+            {prompts.map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
+    </div>
+  );
+}
+
 function AgentForm({
   node,
   diags,
   prompts,
   runtimes,
+  flowId,
   onChange,
 }: {
+  flowId: string;
   node: AgentNode;
   diags: Diagnostic[];
   prompts: string[];
@@ -376,22 +541,13 @@ function AgentForm({
           </Field>
         )}
       </div>
-      <Field
-        label="Prompt"
-        error={msgs(diags, "prompt")}
-        hint="From the prompt library."
-      >
-        <Select
-          value={node.prompt ?? ""}
-          invalid={msgs(diags, "prompt").length > 0}
-          onChange={(e) => onChange((n) => ({ ...n, prompt: e.target.value }))}
-        >
-          <option value="">(choose a prompt)</option>
-          {promptOptions.map((p) => (
-            <option key={p}>{p}</option>
-          ))}
-        </Select>
-      </Field>
+      <PromptSection
+        node={node}
+        diags={diags}
+        prompts={promptOptions}
+        flowId={flowId}
+        onChange={onChange}
+      />
       <Field
         label="Extra prompt (template)"
         error={msgs(diags, "extra_prompt")}
@@ -635,6 +791,7 @@ export function Inspector(props: InspectorProps) {
           diags={diagnostics}
           prompts={props.prompts}
           runtimes={props.runtimes}
+          flowId={props.flowId}
           onChange={(p) =>
             props.onChange((n) => (n.type === "agent" ? p(n) : n))
           }

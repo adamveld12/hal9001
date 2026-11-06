@@ -56,7 +56,11 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	}
 
 	expectNote := node.Mode == spec.ModeReadonly
-	if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
+	if node.Instructions != "" {
+		if node.Output != spec.OutputNone {
+			expectNote = true
+		}
+	} else if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
 		expectNote = true
 	}
 	req := agent.RunRequest{
@@ -152,11 +156,17 @@ func (e *Engine) worktreePath(key string) string {
 // appends the node's extra_prompt.
 func (e *Engine) renderPrompt(ne *nodeEnv) (string, error) {
 	node := ne.node
-	p := ne.snap.prompts[node.Prompt]
-	if p == nil {
-		return "", fmt.Errorf("prompt %q does not exist", node.Prompt)
+	var body string
+	var err error
+	if node.Instructions != "" {
+		body, err = ne.render("instructions", node.Instructions)
+	} else {
+		p := ne.snap.prompts[node.Prompt]
+		if p == nil {
+			return "", fmt.Errorf("prompt %q does not exist", node.Prompt)
+		}
+		body, err = ne.render("prompt "+node.Prompt, p.Body)
 	}
-	body, err := ne.render("prompt "+node.Prompt, p.Body)
 	if err != nil {
 		return "", err
 	}

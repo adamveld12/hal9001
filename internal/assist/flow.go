@@ -329,6 +329,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("- `%s/docs/flows.md`: the full format of sensors, flows, nodes, templates and prompts. Read the flow and node sections before you write a flow.\n", ReferenceDir)
 	w("- `%s/sensors/<id>.yaml`: the user's sensors, i.e. what can be subscribed to (the definitions contain no secret values).\n", ReferenceDir)
 	w("- `%s/prompts/<name>.md`: the user's existing prompts, which agent nodes can use.\n", ReferenceDir)
+	w("- For agent nodes PREFER inline `instructions: |` (a prompt template written on the node, `output: note|none`, default `note`) over creating a prompt file. Create a prompt file under `%s/` only when the user asks for a reusable prompt or several nodes share one; an agent node has either `prompt` or `instructions`, never both.\n", PromptsDir)
 	w("- `%s/runtimes.txt`: the names of the configured agent runtimes (`runtime:` of an agent node).\n", ReferenceDir)
 	w("- `%s/samples/<sensor>.jsonl` and `%s/samples/index.txt`: up to 5 recent real event payloads per sensor, redacted, one JSON value per line. ", ReferenceDir, ReferenceDir)
 	w("Look at them before you write field names: use the fields that are really there.\n\n")

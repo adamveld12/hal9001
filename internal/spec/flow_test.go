@@ -237,6 +237,16 @@ func TestFlowValidationErrors(t *testing.T) {
 			code: CodeRequired, path: "nodes[0].mode", node: "a", msg: "mode is required",
 		},
 		{
+			name: "agent with both prompt and instructions",
+			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, prompt: pr-review, instructions: hi}\n", "  []\n"),
+			code: CodeFieldNotAllowed, path: "nodes[0].instructions", node: "a", msg: "set either prompt (a file in prompts/) or instructions (inline), not both",
+		},
+		{
+			name: "agent with neither prompt nor instructions",
+			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, extra_prompt: hi}\n", "  []\n"),
+			code: CodeRequired, path: "nodes[0].instructions", node: "a", msg: "set instructions (inline prompt) or prompt (a file in prompts/)",
+		},
+		{
 			name: "invalid lang",
 			yaml: flowWith("  - {id: a, type: command, lang: perl, script: x}\n", "  []\n"),
 			code: CodeInvalidEnum, path: "nodes[0].lang", node: "a", msg: `lang "perl" is not valid`,

@@ -303,7 +303,7 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 
 var nodeFieldsAllowed = map[string][]string{
 	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:     {"runtime", "mode", "approve", "prompt", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
 }
@@ -318,7 +318,7 @@ func (n *Node) setFields() []string {
 		{"lang", n.Lang != ""}, {"ports", len(n.Ports) > 0}, {"script", n.Script != ""}, {"command", len(n.Command) > 0},
 		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
-		{"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
+		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
 		{"title", n.Title != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
@@ -458,9 +458,19 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 			c.errorf(CodeFieldNotAllowed, p+".approve", "approve is only valid with mode approve")
 		}
 	}
-	if n.Prompt == "" && n.ExtraPrompt == "" {
-		c.errorf(CodeRequired, p+".prompt", "prompt is required (a file in prompts/), or set extra_prompt")
+	switch {
+	case n.Prompt != "" && n.Instructions != "":
+		c.errorf(CodeFieldNotAllowed, p+".instructions", "set either prompt (a file in prompts/) or instructions (inline), not both")
+	case n.Prompt == "" && n.Instructions == "":
+		c.errorf(CodeRequired, p+".instructions", "set instructions (inline prompt) or prompt (a file in prompts/)")
 	}
+	if n.Output != "" {
+		c.enum(p+".output", n.Output, []string{OutputNote, OutputNone}, false)
+		if n.Instructions == "" {
+			c.errorf(CodeFieldNotAllowed, p+".output", "output is only valid with instructions; a prompt file sets its own output")
+		}
+	}
+	c.template(p+".instructions", n.Instructions)
 	if n.Prompt != "" {
 		if !ValidID(n.Prompt) {
 			c.errorf(CodeInvalidID, p+".prompt", "prompt name %q is invalid", n.Prompt)

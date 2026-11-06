@@ -34,6 +34,37 @@ func (d *Daemon) fileThere(path string) bool {
 	return err == nil
 }
 
+// An agent node with inline instructions (no prompt file) renders its template
+// and produces an inbox note.
+func TestInlineInstructionsAgentNote(t *testing.T) {
+	d := newDaemon(t)
+	d.IdleSensor("src")
+	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: []step{
+		say(`Done. {"title":"Inline note","priority":"low","summary_md":"ok"}`),
+	}}}})
+	d.Flow("inline", `id: inline
+enabled: true
+subscribe: [src]
+nodes:
+  - id: work
+    type: agent
+    runtime: fake
+    mode: readonly
+    instructions: |
+      Triage {{.input.id}}
+`)
+	d.Start()
+
+	run := d.RunOf("src", map[string]any{"id": "7"})
+	runs := d.AgentRuns(d.Node(run, "work").ID)
+	if len(runs) != 1 || !strings.Contains(runs[0].RenderedPrompt, "Triage 7") {
+		t.Fatalf("agent runs: %+v", runs)
+	}
+	if items := d.Inbox(); len(items) != 1 || items[0].Title != "Inline note" {
+		t.Fatalf("inbox: %+v", items)
+	}
+}
+
 // Scenario 6: a readonly agent produces an inbox item with title and priority,
 // its transcript and permission requests are visible through the API, and a
 // notification deep-links to the item. (The notification is recorded by a fake

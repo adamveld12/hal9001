@@ -431,7 +431,10 @@ opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|ar
   runtime: claude          # a key of `runtimes` in config.yaml
   mode: approve            # auto | approve | readonly (required)
   approve: proposal        # proposal | per_tool; only with mode approve; default proposal
-  prompt: pr-review        # prompts/pr-review.md (or omit and give extra_prompt)
+  prompt: pr-review        # a library prompt (prompts/pr-review.md) ...
+  # instructions: |        # ... or, instead of prompt, the prompt written inline (same template data)
+  #   Review {{.input.url}}.
+  # output: note           # inline only: note (default) | none
   extra_prompt: "Focus on tests. Title: {{.input.title}}"
   model: sonnet            # optional; set through the agent's `model` config option
   cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
@@ -504,6 +507,11 @@ output: note             # note = the final message carries the inbox note JSON;
 You are reviewing {{.input.url}}.
 ...
 ```
+
+Give each agent node exactly one of `prompt` (a library prompt) or `instructions` (inline text on the node); both or
+neither is a validation error. Inline `instructions` is rendered exactly like a prompt file body, and its `output`
+(`note` by default, or `none`) replaces the prompt file's front matter `output`. Use a prompt file when several nodes share
+the text; the flow editor's "Save as reusable prompt" turns inline instructions into one. `extra_prompt` works with either.
 
 The prompt body is a template over the data model above. The node's `extra_prompt` (also a template) is appended. The
 rendered prompt is stored on the agent run. With `output: note`, or in `readonly` mode, the agent ends its final message
