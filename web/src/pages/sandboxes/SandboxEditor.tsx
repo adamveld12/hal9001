@@ -36,7 +36,7 @@ const CREDENTIALS: Record<SandboxBackend, string> = {
   local: "Commands run on this Mac with the global env plus the keys below.",
   docker: "Optional DOCKER_HOST selects the Engine socket.",
   depot:
-    "Needs DEPOT_TOKEN (secret) and, for app or multi-organization tokens, DEPOT_ORG_ID. They are never passed to commands.",
+    "Needs DEPOT_TOKEN (secret; set it in the Token field above) and, for app or multi-organization tokens, DEPOT_ORG_ID. They are never passed to commands.",
   kubernetes: "Commands in the pods see the global env plus the keys below.",
   ssh: "Needs SSH_PASSWORD, or SSH_PRIVATE_KEY (and SSH_KEY_PASSPHRASE), unless a key file is set. They are never passed to commands.",
 };
@@ -83,6 +83,17 @@ function ConfigForm({
   const update = useUpdateSandbox(backend);
   const check = useCheckSandbox(backend);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // Depot token typed in the form. It is written to the sandbox env file on
+  // Save / Check, never to depot.yaml, and never read back.
+  const [token, setToken] = useState("");
+  const setEnv = useSetSandboxEnv(backend);
+  const envKeys = useSandboxEnv(backend);
+  const tokenSet = envKeys.data?.some((k) => k.key === DEPOT_TOKEN) ?? false;
+  const tokenMissing =
+    backend === "depot" &&
+    formEnabled(draft, detail) &&
+    !tokenSet &&
+    token.trim() === "";
 
   const form = draft?.form ?? formFromConfig(detail.config);
   const parsed = configFromForm(form);
@@ -90,7 +101,7 @@ function ConfigForm({
   const stale =
     (draft !== null && draft.baseHash !== detail.hash) ||
     isConflict(update.error);
-  const dirty = draft !== null;
+  const dirty = draft !== null || token.trim() !== "";
 
   const editForm = (patch: Partial<SandboxForm>) => {
     setDraft({
@@ -105,19 +116,31 @@ function ConfigForm({
 
   const reload = () => {
     setDraft(null);
+    setToken("");
     update.reset();
     check.reset();
     onReload();
   };
+  // The token goes first so the server's validation of the config sees it.
+  const storeToken = async () => {
+    if (backend !== "depot" || token.trim() === "") return;
+    await setEnv.mutateAsync({ key: DEPOT_TOKEN, value: token.trim() });
+    setToken("");
+  };
   const save = () => {
     if (!("config" in parsed) || stale) return;
-    update.mutate(
-      { expected_hash: detail.hash, config: parsed.config },
-      { onSuccess: () => setDraft(null) },
+    const config = parsed.config;
+    void storeToken().then(() =>
+      update.mutate(
+        { expected_hash: detail.hash, config },
+        { onSuccess: () => setDraft(null) },
+      ),
     );
   };
   const runCheck = () => {
-    if ("config" in parsed) check.mutate(parsed.config);
+    if (!("config" in parsed)) return;
+    const config = parsed.config;
+    void storeToken().then(() => check.mutate(config));
   };
   const diagnostics = diagnosticMessages(update.error);
   const fileProblems = detail.diagnostics.filter((d) => d.severity === "error");
@@ -164,11 +187,18 @@ function ConfigForm({
         }
       >
         <div className="space-y-3">
-          <Toggle
-            label="Enabled"
-            checked={c.enabled}
-            onChange={(v) => edit({ enabled: v })}
-          />
+          {backend === "local" ? (
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <Badge tone="ok">Always on</Badge>
+              The local sandbox needs no setup and cannot be disabled.
+            </div>
+          ) : (
+            <Toggle
+              label="Enabled"
+              checked={c.enabled}
+              onChange={(v) => edit({ enabled: v })}
+            />
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Lifecycle" hint={lifecycleHint(backend, c.lifecycle)}>
               <Select
@@ -202,6 +232,12 @@ function ConfigForm({
         errors={errors}
         edit={edit}
         editForm={editForm}
+        token={{
+          value: token,
+          set: tokenSet,
+          required: tokenMissing,
+          onChange: setToken,
+        }}
       />
 
       <Panel title="Approval">
@@ -234,7 +270,14 @@ function ConfigForm({
         <Button
           variant="primary"
           icon="save"
-          disabled={!dirty || "errors" in parsed || stale || update.isPending}
+          disabled={
+            !dirty ||
+            "errors" in parsed ||
+            stale ||
+            tokenMissing ||
+            update.isPending ||
+            setEnv.isPending
+          }
           onClick={save}
         >
           {update.isPending ? "Saving…" : "Save"}
@@ -243,6 +286,7 @@ function ConfigForm({
           disabled={!dirty || update.isPending}
           onClick={() => {
             setDraft(null);
+            setToken("");
             update.reset();
             check.reset();
           }}
@@ -251,11 +295,16 @@ function ConfigForm({
         </Button>
         <Button
           icon="play"
-          disabled={"errors" in parsed || check.isPending}
+          disabled={"errors" in parsed || tokenMissing || check.isPending}
           onClick={runCheck}
         >
           {check.isPending ? "Checking…" : "Check connection"}
         </Button>
+        {setEnv.isError && (
+          <span role="alert" className="text-xs text-bad">
+            {errorMessage(setEnv.error)}
+          </span>
+        )}
         {update.isError && !isConflict(update.error) && (
           <span role="alert" className="text-xs text-bad">
             {errorMessage(update.error)}
@@ -303,6 +352,21 @@ function lifecycleHint(backend: SandboxBackend, lifecycle: string): string {
   return lifecycle === "persistent" ? persistent[backend] : per[backend];
 }
 
+const DEPOT_TOKEN = "DEPOT_TOKEN";
+
+interface TokenField {
+  value: string;
+  /** DEPOT_TOKEN exists in the sandbox env (its value is never readable). */
+  set: boolean;
+  /** Depot is enabled and no token is set or typed. */
+  required: boolean;
+  onChange: (v: string) => void;
+}
+
+function formEnabled(draft: Draft | null, detail: SandboxDetail): boolean {
+  return (draft?.form.config ?? detail.config).enabled;
+}
+
 type EditFn = (patch: Partial<SandboxConfig>) => void;
 
 function BackendFields({
@@ -311,13 +375,16 @@ function BackendFields({
   errors,
   edit,
   editForm,
+  token,
 }: {
   backend: SandboxBackend;
   form: SandboxForm;
   errors: Partial<Record<keyof SandboxForm, string>>;
   edit: EditFn;
   editForm: (p: Partial<SandboxForm>) => void;
+  token: TokenField;
 }) {
+  const [replacing, setReplacing] = useState(false);
   const c = form.config;
   const text = (
     key: keyof SandboxConfig,
@@ -410,6 +477,27 @@ function BackendFields({
       return (
         <Panel title="Depot">
           <div className="space-y-3">
+            <Field
+              label="Token (required)"
+              hint="Stored as DEPOT_TOKEN in the sandbox environment, not in depot.yaml. Write-only: never shown again."
+              error={token.required ? ["Depot token is required"] : undefined}
+            >
+              {token.set && !replacing && token.value === "" ? (
+                <div className="flex items-center gap-2">
+                  <Badge tone="ok">set</Badge>
+                  <span className="font-mono text-xs text-muted">••••••••</span>
+                  <Button onClick={() => setReplacing(true)}>Replace</Button>
+                </div>
+              ) : (
+                <TextInput
+                  type="password"
+                  autoComplete="off"
+                  value={token.value}
+                  placeholder={token.set ? "New token" : "Depot token"}
+                  onChange={(e) => token.onChange(e.target.value)}
+                />
+              )}
+            </Field>
             <div className="grid grid-cols-2 gap-3">
               {text(
                 "org_id",

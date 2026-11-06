@@ -89,3 +89,37 @@ func TestAgentNodeSandboxRefs(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalSandboxIsAlwaysOn(t *testing.T) {
+	home := t.TempDir()
+	put(t, home, "sensors/s.yaml", "id: s\ninterval: 1m\nlang: bash\nscript: echo\nkey: k\n")
+	put(t, home, "prompts/p.md", "---\nname: p\n---\nb\n")
+	put(t, home, "config.yaml", "runtimes:\n  claude: {command: claude}\n")
+	put(t, home, "flows/f.yaml", "id: f\nenabled: true\nsubscribe: [s]\nnodes:\n  - {id: work, type: agent, runtime: claude, mode: auto, prompt: p, sandbox: local}\n")
+	if got := Load(home).Flows[0].Diagnostics; HasErrors(got) {
+		t.Fatalf("sandbox: local without a sandbox file is rejected: %v", got)
+	}
+	s, ds := CheckSandbox(SandboxLocal, nil)
+	if len(ds) != 0 || !s.Enabled || len(s.Rules.FSWrite) != 1 || s.Rules.FSWrite[0].Action != RuleAuto {
+		t.Fatalf("local default = %+v %v", s, ds)
+	}
+	s, ds = CheckSandbox(SandboxLocal, []byte("enabled: false\n"))
+	if HasErrors(ds) || len(ds) != 1 || ds[0].Severity != SeverityWarning || !s.Enabled {
+		t.Fatalf("enabled: false = %+v %v", s, ds)
+	}
+}
+
+func TestDepotRequiresToken(t *testing.T) {
+	home := t.TempDir()
+	cfg := []byte("enabled: true\norg_id: org-1\n")
+	if _, ds := CheckSandboxIn(home, SandboxDepot, cfg); !HasErrors(ds) || !strings.Contains(ds[0].Message, "Depot token is required") {
+		t.Fatalf("enabled depot without a token: %v", ds)
+	}
+	if _, ds := CheckSandboxIn(home, SandboxDepot, []byte("org_id: org-1\n")); len(ds) != 0 {
+		t.Fatalf("disabled depot needs no token: %v", ds)
+	}
+	put(t, home, "env.d/sandboxes/depot.env", "DEPOT_TOKEN=tok-123456\n")
+	if _, ds := CheckSandboxIn(home, SandboxDepot, cfg); len(ds) != 0 {
+		t.Fatalf("enabled depot with a token: %v", ds)
+	}
+}

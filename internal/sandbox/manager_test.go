@@ -28,7 +28,7 @@ func TestManagerOpenReloadAndSweep(t *testing.T) {
 	m := NewManager(ManagerOptions{Home: home, RetentionDays: func() int { return 1 }})
 	defer m.Close()
 
-	if _, err := m.Open(ctx, "local", RunSpec{RunID: "r1"}); !errors.Is(err, ErrDisabled) {
+	if _, err := m.Open(ctx, "docker", RunSpec{RunID: "r1"}); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("Open on a disabled backend = %v", err)
 	}
 	writeLocalCfg(t, home, "enabled: true\nroot: "+root+"\n")
@@ -71,7 +71,8 @@ func TestManagerOpenReloadAndSweep(t *testing.T) {
 
 	writeLocalCfg(t, home, "enabled: false\n")
 	m.Reload()
-	if _, err := m.Open(ctx, "local", RunSpec{RunID: "r3"}); !errors.Is(err, ErrDisabled) {
-		t.Fatalf("Open after disabling = %v", err)
+	// The local sandbox has no off switch: enabled: false is ignored.
+	if _, err := m.Open(ctx, "local", RunSpec{RunID: "r3"}); err != nil {
+		t.Fatalf("Open with enabled: false = %v", err)
 	}
 }

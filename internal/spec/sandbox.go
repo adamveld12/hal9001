@@ -76,7 +76,8 @@ type SandboxRules struct {
 // The common fields apply to every backend; the others only to the backends
 // named in their comment and are ignored elsewhere. Credentials (the Depot
 // token, SSH password or private key) are not part of the file: they live in
-// the backend's env file.
+// the backend's env file. The local backend is always enabled: its `enabled`
+// field is ignored (a false value only draws a warning).
 type Sandbox struct {
 	Enabled   bool             `yaml:"enabled" json:"enabled"`
 	Lifecycle string           `yaml:"lifecycle" json:"lifecycle"`
@@ -123,6 +124,11 @@ func DefaultSandbox(backend string) Sandbox {
 		},
 	}
 	switch backend {
+	case SandboxLocal:
+		// Always on and usable with no file: writes inside the workdir run without asking
+		// (paths that leave it are denied); shell commands ask unless a rule matches.
+		s.Enabled = true
+		s.Rules.FSWrite = []SandboxPathRule{{Path: "**", Action: RuleAuto}}
 	case SandboxDocker, SandboxKubernetes:
 		s.Images = []string{"ubuntu:24.04"}
 	case SandboxSSH:
@@ -160,6 +166,12 @@ func ParseSandbox(backend string, b []byte) (*Sandbox, []Diagnostic) {
 	if fatal {
 		return nil, ds
 	}
+	if backend == SandboxLocal && !s.Enabled {
+		// The local sandbox has no off switch; a file saying so is still accepted.
+		s.Enabled = true
+		ds = append(ds, Diagnostic{Path: "enabled", Severity: SeverityWarning, Code: CodeInvalidValue,
+			Message: "enabled is ignored for the local sandbox: it is always on"})
+	}
 	s.normalize()
 	return &s, ds
 }
@@ -176,6 +188,42 @@ func CheckSandbox(backend string, b []byte) (*Sandbox, []Diagnostic) {
 		ds = append(ds, ValidateSandbox(backend, s)...)
 	}
 	return s, withFile(file, ds)
+}
+
+// Credential variable of the depot backend; it lives in the sandbox env file, never in depot.yaml.
+const envDepotToken = "DEPOT_TOKEN"
+
+// ValidateSandboxCredentials checks the credentials s needs, which live in the
+// home's env files (the global env overlaid by the backend's own): an enabled
+// depot sandbox requires DEPOT_TOKEN.
+func ValidateSandboxCredentials(home, backend string, s *Sandbox) []Diagnostic {
+	if backend != SandboxDepot || !s.Enabled {
+		return nil
+	}
+	for _, f := range []struct {
+		kind Kind
+		id   string
+	}{{KindSandboxEnv, backend}, {KindEnv, ""}} {
+		raw, _, err := ReadFile(home, f.kind, f.id)
+		if err != nil {
+			continue
+		}
+		if env, _ := ParseEnv(raw); strings.TrimSpace(env.Vars[envDepotToken]) != "" {
+			return nil
+		}
+	}
+	return []Diagnostic{{Path: envDepotToken, Severity: SeverityError, Code: CodeRequired,
+		Message: "Depot token is required: set " + envDepotToken + " in the sandbox environment"}}
+}
+
+// CheckSandboxIn is CheckSandbox plus the credential checks of
+// ValidateSandboxCredentials against the env files of home.
+func CheckSandboxIn(home, backend string, b []byte) (*Sandbox, []Diagnostic) {
+	s, ds := CheckSandbox(backend, b)
+	if s != nil {
+		ds = append(ds, withFile(KindSandbox.Rel(backend), ValidateSandboxCredentials(home, backend, s))...)
+	}
+	return s, ds
 }
 
 // MarshalSandbox renders s as YAML.

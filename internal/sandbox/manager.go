@@ -61,7 +61,7 @@ func (m *Manager) load(backend string) (spec.Sandbox, Env, string, error) {
 	if err != nil && !errors.Is(err, spec.ErrNotFound) {
 		return spec.Sandbox{}, Env{}, "", err
 	}
-	cfg, ds := spec.CheckSandbox(backend, raw)
+	cfg, ds := spec.CheckSandboxIn(m.opts.Home, backend, raw)
 	if cfg == nil || spec.HasErrors(ds) {
 		msg := "invalid config"
 		if len(ds) > 0 {

@@ -52,11 +52,14 @@
 // # Backends
 //
 //   - local: <root>/runs/<run-id> (per_run, removed on success) or <root>; commands run with /bin/sh on this
-//     machine. Default root <home>/data/sandboxes/local.
+//     machine. Always enabled (no `enabled` switch, no config file needed): the default root
+//     <home>/data/sandboxes/local is created on demand, and the default policy lets fs_write inside the workdir
+//     run while shell commands ask.
 //   - docker: Engine API on the socket (config, DOCKER_HOST, or a standard socket). One container per run, or
 //     one per image kept running; the workdir is /tmp/hal/<run-id>. network:false uses the none network.
 //   - depot: depot.sandbox.v1 over Connect+JSON: CreateSandbox per run (StopSandbox at the end) or one kept
-//     alive sandbox. Credentials DEPOT_TOKEN and optionally DEPOT_ORG_ID come from the sandbox env.
+//     alive sandbox. DEPOT_TOKEN (required while depot is enabled; the Depot tab writes it to
+//     env.d/sandboxes/depot.env, never to depot.yaml) and optionally DEPOT_ORG_ID come from the sandbox env.
 //   - kubernetes: kubectl with KUBECONFIG, --context and -n; one pod per run (deleted at the end) or one pod
 //     per image; the workdir is /tmp/hal/<run-id>.
 //   - ssh: golang.org/x/crypto/ssh; auth by key_file / SSH_PRIVATE_KEY / SSH_PASSWORD; the host key must be

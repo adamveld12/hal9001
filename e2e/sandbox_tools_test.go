@@ -160,3 +160,31 @@ func TestSandboxWorkspaceSurvivesProposalPhases(t *testing.T) {
 		t.Errorf("workspace kept after the node run succeeded: %v", entries)
 	}
 }
+
+// The local sandbox needs no config file: it is always on, rooted in <home>/data/sandboxes/local, and
+// fs_write inside the workdir runs without approval.
+func TestLocalSandboxWorksWithNoConfig(t *testing.T) {
+	d := newDaemon(t)
+	d.IdleSensor("src")
+	d.Prompt("p", "none", "go {{.input.id}}")
+	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: []step{
+		mcp("c1", "fs_write", map[string]any{"path": "notes/ok.txt", "content": "hello"}),
+		say("finished"),
+	}}}})
+	d.Flow("f", approvalFlow("per_tool", "    sandbox: local\n"))
+	d.Start()
+	if _, err := os.Stat(filepath.Join(d.Home, "sandboxes", "local.yaml")); err == nil {
+		t.Fatal("test setup wrote a sandbox config")
+	}
+	runID := d.InjectRun("src", map[string]any{"id": "1"})
+	tr := d.Transcript(d.AgentRuns(d.Node(d.WaitRun(runID, "succeeded"), "work").ID)[0].ID)
+	if n := len(d.Approvals("")); n != 0 {
+		t.Errorf("fs_write asked for approval: %d", n)
+	}
+	if !strings.Contains(tr, "mcp[c1] is_error=false wrote 5 bytes") {
+		t.Errorf("fs_write did not succeed:\n%s", tr)
+	}
+	if _, err := os.Stat(filepath.Join(d.Home, "data", "sandboxes", "local")); err != nil {
+		t.Errorf("default root was not created: %v", err)
+	}
+}

@@ -4488,7 +4488,7 @@ components:
         named in their description and are ignored by the others. Credentials are not part of it (see the env endpoints).
       required: [enabled, lifecycle, approval, approval_rules, timeout, resources, root, socket, images, network, org_id, image_ref, architecture, timeout_minutes, disable_tailnet, disable_depot_cache, secrets, endpoint, kubeconfig, context, namespace, service_account, host, port, user, key_file, host_key]
       properties:
-        enabled: {type: boolean}
+        enabled: {type: boolean, description: 'Always true for local, which cannot be disabled (a stored false is ignored with a warning). Required fields of other backends are only checked while enabled. An enabled depot also needs DEPOT_TOKEN in its env file (422 "Depot token is required" otherwise).'}
         lifecycle: {$ref: '#/components/schemas/SandboxLifecycle'}
         approval: {$ref: '#/components/schemas/SandboxApprovalMode'}
         approval_rules: {$ref: '#/components/schemas/SandboxApprovalRules'}

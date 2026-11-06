@@ -46,8 +46,8 @@ func TestSandboxConfigAndCheck(t *testing.T) {
 	var names []string
 	for _, it := range list.Items {
 		names = append(names, it.Backend)
-		if it.Configured || it.Enabled {
-			t.Errorf("%s is configured before any write", it.Backend)
+		if it.Configured || it.Enabled != (it.Backend == "local") { // local is always on
+			t.Errorf("%s is configured or enabled before any write: %+v", it.Backend, it)
 		}
 	}
 	if got := strings.Join(names, ","); got != "local,docker,depot,kubernetes,ssh" {
@@ -137,10 +137,10 @@ func TestSandboxConfigAndCheck(t *testing.T) {
 	// The CLI is a client of the same endpoints.
 	d.sameAsAPI("sandboxes get", d.cliJSON("", "sandboxes", "get", "local"), "/api/sandboxes/local")
 	d.sameAsAPI("sandboxes list", d.cliJSON("", "sandboxes", "list"), "/api/sandboxes")
-	if out := d.cliJSON(`{"enabled": false, "timeout": "90s"}`, "sandboxes", "set", "local").(map[string]any); out["config"].(map[string]any)["timeout"] != "1m30s" {
+	if out := d.cliJSON(`{"timeout": "90s"}`, "sandboxes", "set", "local").(map[string]any); out["config"].(map[string]any)["timeout"] != "1m30s" {
 		t.Fatalf("sandboxes set: %v", out)
 	}
-	if got := d.sandbox("local"); got.Config["enabled"] != false || got.Config["root"] != root {
+	if got := d.sandbox("local"); got.Config["enabled"] != true || got.Config["timeout"] != "1m30s" || got.Config["root"] != root {
 		t.Fatalf("set did not merge over the current config: %+v", got.Config)
 	}
 	if out := d.cliJSON("", "sandboxes", "check", "local").(map[string]any); out["ok"] != true {
@@ -154,5 +154,23 @@ func TestSandboxConfigAndCheck(t *testing.T) {
 	}
 	if _, _, code := d.CLI("", "sandboxes", "get", "nope"); code == 0 {
 		t.Error("unknown backend must fail")
+	}
+}
+
+// Enabling depot needs DEPOT_TOKEN in env.d/sandboxes/depot.env; the token is never part of depot.yaml.
+func TestDepotRequiresToken(t *testing.T) {
+	d := newDaemon(t)
+	d.Start()
+	cur := d.sandbox("depot")
+	cfg := cur.Config
+	cfg["enabled"], cfg["org_id"] = true, "org-1"
+	resp := d.Put("/api/sandboxes/depot", map[string]any{"expected_hash": cur.Hash, "config": cfg}).Want(422)
+	if !strings.Contains(resp.String(), "Depot token is required") {
+		t.Fatalf("422 body: %s", resp)
+	}
+	d.Put("/api/sandboxes/depot/env/DEPOT_TOKEN", map[string]any{"value": "tok-123456"}).Want(204)
+	d.Put("/api/sandboxes/depot", map[string]any{"expected_hash": cur.Hash, "config": cfg}).Want(200)
+	if yaml := d.Read("sandboxes/depot.yaml"); strings.Contains(yaml, "tok-123456") {
+		t.Fatalf("token leaked into depot.yaml:\n%s", yaml)
 	}
 }

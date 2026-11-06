@@ -43,7 +43,7 @@ func (s *Server) sandboxFile(backend string) (detail sandboxDetail, err error) {
 		return detail, err
 	}
 	detail = sandboxDetail{Backend: backend, Configured: exists, Hash: hash, Diagnostics: []spec.Diagnostic{}}
-	cfg, ds := spec.CheckSandbox(backend, raw)
+	cfg, ds := spec.CheckSandboxIn(s.opts.Home, backend, raw)
 	if ds != nil {
 		detail.Diagnostics = ds
 	}
@@ -99,12 +99,15 @@ func (s *Server) updateSandbox(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, false) || !expectedHashOK(w, req.ExpectedHash) {
 		return
 	}
+	if backend == spec.SandboxLocal {
+		req.Config.Enabled = true // the local sandbox has no off switch
+	}
 	raw, err := spec.MarshalSandbox(req.Config)
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
-	_, ds := spec.CheckSandbox(backend, raw)
+	_, ds := spec.CheckSandboxIn(s.opts.Home, backend, raw)
 	if spec.HasErrors(ds) {
 		validationProblem(w, "the sandbox config has errors", ds)
 		return
@@ -166,7 +169,8 @@ func (s *Server) checkSandbox(w http.ResponseWriter, r *http.Request) {
 	// A check needs the backend's fields whether or not it is enabled yet.
 	probe := cfg
 	probe.Enabled = true
-	if ds := spec.ValidateSandbox(backend, &probe); spec.HasErrors(ds) {
+	ds := append(spec.ValidateSandbox(backend, &probe), spec.ValidateSandboxCredentials(s.opts.Home, backend, &probe)...)
+	if spec.HasErrors(ds) {
 		validationProblem(w, "the sandbox config has errors", ds)
 		return
 	}

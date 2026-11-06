@@ -102,15 +102,15 @@ func (w *Workspace) Refs() *Refs {
 	return r
 }
 
-// enabledSandboxes reads sandboxes/*.yaml and returns the valid, enabled backends.
+// enabledSandboxes reads sandboxes/*.yaml and returns the valid, enabled backends; local is always one, with its defaults when it has no file.
 func enabledSandboxes(home string) map[string]Sandbox {
 	out := map[string]Sandbox{}
 	for _, b := range SandboxBackends {
 		raw, _, err := ReadFile(home, KindSandbox, b)
-		if err != nil {
+		if err != nil && b != SandboxLocal {
 			continue
 		}
-		if cfg, ds := CheckSandbox(b, raw); cfg != nil && !HasErrors(ds) && cfg.Enabled {
+		if cfg, ds := CheckSandboxIn(home, b, raw); cfg != nil && !HasErrors(ds) && cfg.Enabled {
 			out[b] = *cfg
 		}
 	}
