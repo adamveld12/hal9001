@@ -45,12 +45,26 @@ func TestSensorDefaults(t *testing.T) {
 	}
 }
 
+func TestSensorWithoutScheduleIsManual(t *testing.T) {
+	s, ds := CheckSensor("s", []byte("id: s\nlang: bash\nscript: echo\nkey: '{{.id}}'\n"))
+	if len(ds) != 0 {
+		t.Fatalf("diagnostics: %v", ds)
+	}
+	sched, err := s.Schedule()
+	if err != nil || !sched.Manual() {
+		t.Fatalf("schedule = %+v, %v; want manual", sched, err)
+	}
+	timed := Sensor{Interval: Duration(time.Minute)}
+	if sched, _ := timed.Schedule(); sched.Manual() {
+		t.Errorf("an interval sensor must not be manual")
+	}
+}
+
 func TestSensorValidationErrors(t *testing.T) {
 	const ok = "lang: bash\nscript: echo\nkey: '{{.id}}'\n"
 	tests := []struct {
 		name, yaml, code, path, msg string
 	}{
-		{"neither interval nor cron", "id: s\n" + ok, CodeInvalidSchedule, "interval", "one of interval or cron is required"},
 		{"both interval and cron", "id: s\ninterval: 1m\ncron: '* * * * *'\n" + ok, CodeInvalidSchedule, "cron", "not both"},
 		{"interval needs a unit", "id: s\ninterval: 30\n" + ok, CodeYAMLType, "interval", `invalid duration "30"`},
 		{"interval below one second", "id: s\ninterval: 500ms\n" + ok, CodeInvalidSchedule, "interval", "below the 1s minimum"},

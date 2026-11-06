@@ -72,7 +72,7 @@ func sensorSummary() map[string]any {
 		"sensor":      map[string]any{"id": "github-notifications", "lang": "bash", "interval": "2m", "script": "gh api notifications"},
 		"diagnostics": []any{},
 		"status": map[string]any{
-			"state": "idle", "paused": false, "paused_at": nil, "paused_by": nil, "last_run": nil, "last_success_at": ts, "next_poll_at": nil, "new_items_24h": 7,
+			"state": "idle", "paused": false, "paused_at": nil, "paused_by": nil, "last_run": nil, "last_success_at": ts, "next_poll_at": nil, "manual": false, "reset_at": nil, "reset_by": nil, "new_items_24h": 7,
 		},
 	}
 }
@@ -124,6 +124,29 @@ func sensorRun() map[string]any {
 		"started_at": ts, "ended_at": nil, "duration_ms": nil, "exit_code": nil, "item_count": nil, "new_count": nil,
 		"stdout": blob(""), "stderr": blob(""), "error": nil,
 	}
+}
+
+func pollResult() map[string]any {
+	r := sensorRun()
+	r["new_events"], r["rerun_events"], r["flow_run_ids"] = 1, 0, []any{id1}
+	return r
+}
+
+func runFlowResult() map[string]any {
+	return map[string]any{
+		"flow_id": "triage-github", "flow_run_ids": []any{id1},
+		"sensors": []any{map[string]any{
+			"sensor_id": "github-notifications", "run": sensorRun(), "new_events": 1, "rerun_events": 0, "flow_run_ids": []any{id1}, "error": nil,
+		}},
+	}
+}
+
+func resetResult(run bool) map[string]any {
+	out := map[string]any{"sensor_id": "gh", "reset_at": ts, "reset_by": "localhost", "keys_cleared": 3, "run": nil}
+	if run {
+		out["run"] = pollResult()
+	}
+	return out
 }
 
 const sensorYAML = "id: gh\nlang: bash\nscript: echo '[]'\n"

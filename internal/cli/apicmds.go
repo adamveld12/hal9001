@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -148,9 +149,8 @@ func sensorCmds() []*command {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/resume", nil, nil)
 		}}),
 		group("env", "list, set and unset a sensor's own env variables (values are secret and write-only unless set with --plain)", envCmds(true)...),
-		cmd("poll", "poll a sensor now", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
-			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/poll", nil, nil)
-		}}),
+		cmd("poll", "run a sensor now (Run now); --rerun-seen also re-runs items already seen", sensorPollLeaf()),
+		cmd("reset", "forget a sensor's dedup keys and incremental state so its next run treats every item as new (history is kept)", sensorResetLeaf()),
 		cmd("validate", "validate sensor YAML from a file or stdin without saving", sensorValidateLeaf()),
 	}
 }
@@ -275,6 +275,7 @@ func flowCmds() []*command {
 		cmd("get", "show one flow with its YAML", idGet("/api/flows/%s")),
 		cmd("validate", "validate flow YAML from a file or stdin without saving", validate),
 		cmd("test-node", "run one node on a sample input", testNode),
+		cmd("run", "run a flow now: poll every sensor it subscribes to and run it on what they return", flowRunLeaf()),
 	}
 }
 
@@ -316,6 +317,162 @@ func testNodeInput(c *call, event, nodeRun, jsonInput string) (map[string]any, e
 		return nil, usagef("flows test-node: the input is not valid JSON")
 	}
 	return map[string]any{"source": "json", "json": json.RawMessage(raw)}, nil
+}
+
+// stringList is a repeatable string flag.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// runNowFlags are the flags shared by the commands that start flow runs from a poll.
+type runNowFlags struct {
+	rerunSeen bool
+	wait      bool
+	timeout   time.Duration
+}
+
+func (r *runNowFlags) register(fs *flag.FlagSet) {
+	fs.BoolVar(&r.rerunSeen, "rerun-seen", false, "also re-run items whose dedup key was already seen (replay runs; dedup state is unchanged)")
+	fs.BoolVar(&r.wait, "wait", false, "wait for the created flow runs to finish and print their final status as flow_runs")
+	fs.DurationVar(&r.timeout, "timeout", 10*time.Minute, "with --wait: stop waiting after this long and print the current state")
+}
+
+// emitRuns prints a poll or flow-run response. With --wait it first waits for
+// every run in its flow_run_ids and adds their final state as flow_runs.
+func (r *runNowFlags) emitRuns(ctx context.Context, c *call, resp *response) error {
+	if !r.wait {
+		return c.emit(resp)
+	}
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return c.emit(resp)
+	}
+	var ids []string
+	_ = json.Unmarshal(out["flow_run_ids"], &ids)
+	deadline := time.Now().Add(r.timeout)
+	runs := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		got, err := c.waitFor(ctx, "/api/flow-runs/"+esc(id), time.Until(deadline), flowRunDone)
+		if err != nil {
+			return err
+		}
+		var d struct {
+			FlowRun struct {
+				ID     string `json:"id"`
+				FlowID string `json:"flow_id"`
+				Kind   string `json:"kind"`
+				Status string `json:"status"`
+				Error  string `json:"error"`
+			} `json:"flow_run"`
+		}
+		if err := json.Unmarshal(got.Body, &d); err != nil {
+			return fmt.Errorf("read flow run %s: %w", id, err)
+		}
+		run := map[string]any{"id": d.FlowRun.ID, "flow_id": d.FlowRun.FlowID, "kind": d.FlowRun.Kind, "status": d.FlowRun.Status}
+		if d.FlowRun.Error != "" {
+			run["error"] = d.FlowRun.Error
+		}
+		runs = append(runs, run)
+	}
+	raw, err := json.Marshal(runs)
+	if err != nil {
+		return err
+	}
+	out["flow_runs"] = raw
+	body, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	return c.emit(&response{Status: resp.Status, Body: body})
+}
+
+func sensorPollLeaf() *leaf {
+	var rf runNowFlags
+	var flows stringList
+	return &leaf{
+		usage: "<id> [--rerun-seen] [--flow <flow-id> ...] [--wait [--timeout 10m]]", minArgs: 1, maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			rf.register(fs)
+			fs.Var(&flows, "flow", "send new events and re-runs only to this flow (repeatable); it may be disabled")
+		},
+		run: func(ctx context.Context, c *call) error {
+			var body []byte
+			if rf.rerunSeen || len(flows) > 0 {
+				req := map[string]any{"rerun_seen": rf.rerunSeen}
+				if len(flows) > 0 {
+					req["flows"] = []string(flows)
+				}
+				body, _ = jsonBody(req)
+			}
+			resp, err := c.client().do(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/poll", nil, body)
+			if err != nil {
+				return err
+			}
+			return rf.emitRuns(ctx, c, resp)
+		},
+	}
+}
+
+func flowRunLeaf() *leaf {
+	var rf runNowFlags
+	return &leaf{
+		usage: "<id> [--rerun-seen] [--wait [--timeout 10m]]", minArgs: 1, maxArgs: 1,
+		flags: rf.register,
+		run: func(ctx context.Context, c *call) error {
+			body, _ := jsonBody(map[string]any{"rerun_seen": rf.rerunSeen})
+			resp, err := c.client().do(ctx, http.MethodPost, "/api/flows/"+esc(c.args[0])+"/run", nil, body)
+			if err != nil {
+				return err
+			}
+			return rf.emitRuns(ctx, c, resp)
+		},
+	}
+}
+
+// isTerminal reports whether r is an interactive terminal.
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+func sensorResetLeaf() *leaf {
+	var run, yes bool
+	var flows stringList
+	return &leaf{
+		usage: "<id> [--run [--flow <flow-id> ...]] [--yes]", minArgs: 1, maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.BoolVar(&run, "run", false, "run the sensor right after the reset (a manual run: never baseline)")
+			fs.Var(&flows, "flow", "with --run: send the run's events only to this flow (repeatable)")
+			fs.BoolVar(&yes, "yes", false, "do not ask for confirmation")
+		},
+		run: func(ctx context.Context, c *call) error {
+			if len(flows) > 0 && !run {
+				return usagef("sensors reset: --flow needs --run")
+			}
+			if !yes && isTerminal(c.env.Stdin) {
+				_, _ = fmt.Fprintf(c.stderr(), "Reset the dedup state of sensor %s? Every item it returns next time counts as new and triggers its flows again. History is kept. [y/N] ", c.args[0])
+				line, _ := bufio.NewReader(c.env.Stdin).ReadString('\n')
+				if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+					return usagef("sensors reset: cancelled")
+				}
+			}
+			req := map[string]any{"run": run}
+			if len(flows) > 0 {
+				req["rerun_flows"] = []string(flows)
+			}
+			body, _ := jsonBody(req)
+			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/reset", nil, body)
+		},
+	}
 }
 
 // pollWait is how long `--wait` asks the server to hold each request.

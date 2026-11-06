@@ -40,7 +40,7 @@ func TestScenario2PollDedupAndRetrigger(t *testing.T) {
 		return len(h.events("src")) == 3 && st.LastSuccessAt != nil
 	})
 
-	run, err := h.eng.PollSensor(t.Context(), "src")
+	run, err := h.poll(t.Context(), "src")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestScenario2PollDedupAndRetrigger(t *testing.T) {
 	}
 
 	write(`{"id":"a","updated_at":"1"}` + "\n" + `{"id":"b","updated_at":"2"}` + "\n" + `{"id":"c","updated_at":"1"}` + "\n")
-	run, err = h.eng.PollSensor(t.Context(), "src")
+	run, err = h.poll(t.Context(), "src")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestScenario3BaselineWithFakeGH(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = f.Close()
-	run, err := h.eng.PollSensor(t.Context(), "gh-notes")
+	run, err := h.poll(t.Context(), "gh-notes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestFailedPollDoesNotAdvanceLastSuccess(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run, err := h.eng.PollSensor(t.Context(), "src")
+	run, err := h.poll(t.Context(), "src")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestFailedPollDoesNotAdvanceLastSuccess(t *testing.T) {
 	if err := os.Remove(marker); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.eng.PollSensor(t.Context(), "src"); err != nil {
+	if _, err := h.poll(t.Context(), "src"); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(out)
@@ -217,7 +217,7 @@ func TestInjectEventDedupAndFanOut(t *testing.T) {
 	if _, err := h.eng.InjectEvent(t.Context(), "nope", []byte(`{}`)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown sensor: %v, want ErrNotFound", err)
 	}
-	if _, err := h.eng.PollSensor(t.Context(), "nope"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := h.poll(t.Context(), "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("poll unknown sensor: %v", err)
 	}
 }
@@ -238,7 +238,7 @@ func TestOnlySubscribedSensorsArePolled(t *testing.T) {
 	if b, _ := os.ReadFile(count); strings.Contains(string(b), "x") {
 		t.Fatal("unsubscribed sensor was polled on schedule")
 	}
-	run, err := h.eng.PollSensor(context.Background(), "lonely")
+	run, err := h.poll(context.Background(), "lonely")
 	if err != nil || run.Status != store.SensorSucceeded {
 		t.Fatalf("manual poll: %+v %v", run, err)
 	}
@@ -317,9 +317,9 @@ func TestPollWhileRunningIsRejected(t *testing.T) {
 	h.start()
 	var wg sync.WaitGroup
 	var first *store.SensorRun
-	wg.Go(func() { first, _ = h.eng.PollSensor(context.Background(), "slow") })
+	wg.Go(func() { first, _ = h.poll(context.Background(), "slow") })
 	h.eventually("the poll to start", func() bool { _, err := os.Stat(started); return err == nil })
-	if _, err := h.eng.PollSensor(t.Context(), "slow"); !errors.Is(err, core.ErrInvalidState) {
+	if _, err := h.poll(t.Context(), "slow"); !errors.Is(err, core.ErrInvalidState) {
 		t.Errorf("second poll: %v, want ErrInvalidState", err)
 	}
 	if err := os.WriteFile(gate, nil, 0o600); err != nil {
@@ -336,7 +336,7 @@ func TestPollWithInvalidOutputFails(t *testing.T) {
 	h := newHarness(t)
 	h.sensor("bad", "id: bad\ninterval: 1h\nlang: bash\nscript: echo 'this is not json'\nkey: \"{{.id}}\"\ntimeout: 10s\n")
 	h.start()
-	run, err := h.eng.PollSensor(t.Context(), "bad")
+	run, err := h.poll(t.Context(), "bad")
 	if err != nil {
 		t.Fatal(err)
 	}

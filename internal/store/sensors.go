@@ -191,13 +191,13 @@ func (s *Store) ListSensorStates(ctx context.Context) ([]SensorState, error) {
 	return out, rows.Err()
 }
 
-const sensorStateSQL = `SELECT sensor_id, last_run_id, last_run_at, last_success_at, last_error, consecutive_failures, paused_at, paused_by, updated_at FROM sensor_state`
+const sensorStateSQL = `SELECT sensor_id, last_run_id, last_run_at, last_success_at, last_error, consecutive_failures, paused_at, paused_by, reset_at, reset_by, updated_at FROM sensor_state`
 
 func scanSensorState(r rowScanner) (SensorState, error) {
 	var st SensorState
-	var lastRun, lastOK, paused sql.NullString
+	var lastRun, lastOK, paused, reset sql.NullString
 	var updated string
-	if err := r.Scan(&st.SensorID, &st.LastRunID, &lastRun, &lastOK, &st.LastError, &st.ConsecutiveFailures, &paused, &st.PausedBy, &updated); err != nil {
+	if err := r.Scan(&st.SensorID, &st.LastRunID, &lastRun, &lastOK, &st.LastError, &st.ConsecutiveFailures, &paused, &st.PausedBy, &reset, &st.ResetBy, &updated); err != nil {
 		return SensorState{}, scanErr(err)
 	}
 	var err error
@@ -210,10 +210,48 @@ func scanSensorState(r rowScanner) (SensorState, error) {
 	if st.PausedAt, err = parseTSPtr(paused); err != nil {
 		return SensorState{}, err
 	}
+	if st.ResetAt, err = parseTSPtr(reset); err != nil {
+		return SensorState{}, err
+	}
 	if st.UpdatedAt, err = parseTS(updated); err != nil {
 		return SensorState{}, err
 	}
 	return st, nil
+}
+
+// ResetSensor forgets everything the sensor remembers between polls: its
+// dedup keys (so every item it returns next time is new) and last_success_at
+// (so HAL_LAST_SUCCESS_AT is unset and first_run applies again). Events, runs
+// and inbox items stay as history. It records who reset it and when, and
+// returns the new state and the number of dedup keys that were cleared. A
+// pause is kept.
+func (s *Store) ResetSensor(ctx context.Context, sensorID, by string) (SensorState, int64, error) {
+	if sensorID == "" {
+		return SensorState{}, 0, fmt.Errorf("%w: sensor_id required", ErrInvalid)
+	}
+	var cleared int64
+	err := s.write(ctx, func(t *txn) error {
+		res, err := t.ExecContext(ctx, `DELETE FROM seen_keys WHERE sensor_id = ?`, sensorID)
+		if err != nil {
+			return fmt.Errorf("store: clear dedup keys: %w", err)
+		}
+		if cleared, err = res.RowsAffected(); err != nil {
+			return err
+		}
+		now := ts(s.now())
+		if _, err = t.ExecContext(ctx, `INSERT INTO sensor_state (sensor_id, reset_at, reset_by, updated_at) VALUES (?, ?, ?, ?)
+			ON CONFLICT (sensor_id) DO UPDATE SET last_success_at=NULL, reset_at=excluded.reset_at, reset_by=excluded.reset_by, updated_at=excluded.updated_at`,
+			sensorID, now, by, now); err != nil {
+			return fmt.Errorf("store: reset sensor state: %w", err)
+		}
+		t.note(ResSensorState, sensorID, OpUpdate)
+		return nil
+	})
+	if err != nil {
+		return SensorState{}, 0, err
+	}
+	st, err := s.GetSensorState(ctx, sensorID)
+	return st, cleared, err
 }
 
 // SetSensorPaused pauses or resumes one sensor and returns its new state.
@@ -319,28 +357,50 @@ func (s *Store) IngestEvent(ctx context.Context, ev *Event) (bool, error) {
 		if created, err = t.claimKey(ctx, ev.SensorID, ev.DedupKey, now); err != nil || !created {
 			return err
 		}
-		if ev.ID == "" {
-			ev.ID = s.NewID()
-		}
-		if ev.CreatedAt.IsZero() {
-			ev.CreatedAt = now.UTC()
-		}
-		if err := t.prep(ctx, "events", "", contentField{"payload", &ev.Payload}); err != nil {
-			return err
-		}
-		_, err = t.ExecContext(ctx, `INSERT INTO events (id, sensor_id, sensor_run_id, dedup_key, payload_text, payload_ref, payload_size, created_at)
-			VALUES (?,?,?,?,?,?,?,?)`,
-			ev.ID, ev.SensorID, nullStr(ev.SensorRunID), ev.DedupKey, ev.Payload.Text, ev.Payload.Ref, ev.Payload.Size, ts(ev.CreatedAt))
-		if err != nil {
-			return fmt.Errorf("store: insert event: %w", err)
-		}
-		t.note(ResEvent, ev.ID, OpCreate)
-		return nil
+		return t.insertEvent(ctx, s, ev, now)
 	})
 	if err != nil {
 		created = false
 	}
 	return created, err
+}
+
+// AddEvent inserts ev for a dedup key without touching the dedup state: the
+// key is recorded as seen if it was not, and an existing claim stays as it
+// is. It stores a fresh event for an item that was already seen, such as a
+// manual re-run of an item whose original event was pruned. Normal ingestion
+// uses IngestEvent.
+func (s *Store) AddEvent(ctx context.Context, ev *Event) error {
+	if ev.SensorID == "" {
+		return fmt.Errorf("%w: sensor_id required", ErrInvalid)
+	}
+	return s.write(ctx, func(t *txn) error {
+		now := s.now()
+		if _, err := t.claimKey(ctx, ev.SensorID, ev.DedupKey, now); err != nil {
+			return err
+		}
+		return t.insertEvent(ctx, s, ev, now)
+	})
+}
+
+func (t *txn) insertEvent(ctx context.Context, s *Store, ev *Event, now time.Time) error {
+	if ev.ID == "" {
+		ev.ID = s.NewID()
+	}
+	if ev.CreatedAt.IsZero() {
+		ev.CreatedAt = now.UTC()
+	}
+	if err := t.prep(ctx, "events", "", contentField{"payload", &ev.Payload}); err != nil {
+		return err
+	}
+	_, err := t.ExecContext(ctx, `INSERT INTO events (id, sensor_id, sensor_run_id, dedup_key, payload_text, payload_ref, payload_size, created_at)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		ev.ID, ev.SensorID, nullStr(ev.SensorRunID), ev.DedupKey, ev.Payload.Text, ev.Payload.Ref, ev.Payload.Size, ts(ev.CreatedAt))
+	if err != nil {
+		return fmt.Errorf("store: insert event: %w", err)
+	}
+	t.note(ResEvent, ev.ID, OpCreate)
+	return nil
 }
 
 func eventCols(slim bool) string {
@@ -364,6 +424,18 @@ func scanEvent(r rowScanner) (Event, error) {
 // GetEvent returns one event with full inline payload.
 func (s *Store) GetEvent(ctx context.Context, id string) (*Event, error) {
 	return getEvent(ctx, s.rdb, id, false)
+}
+
+// GetEventByKey returns the most recent event of a sensor with the exact dedup
+// key, with full inline payload. ErrNotFound when no such event exists, for
+// example because it was pruned while its key is still remembered.
+func (s *Store) GetEventByKey(ctx context.Context, sensorID, key string) (*Event, error) {
+	e, err := scanEvent(s.rdb.QueryRowContext(ctx,
+		"SELECT "+eventCols(false)+" FROM events WHERE sensor_id = ? AND dedup_key = ? ORDER BY id DESC LIMIT 1", sensorID, key))
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
 }
 
 func getEvent(ctx context.Context, q dbq, id string, slim bool) (*Event, error) {

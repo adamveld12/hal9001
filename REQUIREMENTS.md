@@ -112,7 +112,7 @@ PATH: the daemon runs under launchd, which has a minimal PATH. `hal9001 install`
 ```yaml
 # sensors/github-notifications.yaml
 id: github-notifications
-interval: 2m              # or cron: "*/5 9-18 * * 1-5"
+interval: 2m              # or cron: "*/5 9-18 * * 1-5"; neither = manual-only (never scheduled)
 lang: bash
 script: |
   gh api notifications --paginate -q '.[]' 
@@ -123,7 +123,10 @@ timeout: 60s
 
 - Output: JSON array or JSONL of items. Each item gets a dedup key from the `key` template; unseen keys become Events.
 - Every poll is recorded (SensorRun: start, duration, item count, new count, stdout/stderr, exit code). Failures are shown on the sensor page and don't advance `HAL_LAST_SUCCESS_AT`.
-- Manual "Poll now" button. Sensors pause with the kill switch.
+- Manual "Run now" (`POST /api/sensors/{id}/poll`, optional body `{rerun_seen, flows}`). It is an explicit user action: it works while the sensor is paused or has no subscriber, is rejected (423) under the kill switch, and never applies `first_run: baseline` (only the scheduler's first poll baselines). New items become events and fan out as usual; with `rerun_seen` items whose key was already seen are replayed (`kind: replay`, current flow version) into each target flow, where the replayed event is the key's most recent event or, if retention pruned it, a new event stored for that manual run; the dedup state does not change. `flows` restricts fan-out and re-runs to the listed flows (which may be disabled). The response is the SensorRun plus `new_events`, `rerun_events`, `flow_run_ids`. Sensors pause with the kill switch.
+- Run a flow now (`POST /api/flows/{id}/run`, `{rerun_seen}`): polls every sensor the flow subscribes to, in parallel, with that flow as the only target; also for a flow with `enabled: false` (explicit user action); 422 when it subscribes to nothing.
+- A sensor with neither `interval` nor `cron` is manual-only: valid, never scheduled, `next_poll_at` null, status `manual`.
+- Reset (`POST /api/sensors/{id}/reset`, `{run, rerun_flows}`): clears the sensor's dedup keys and `last_success_at` (history is kept), records who and when, so the next poll is that of a new sensor (the scheduler applies `first_run` again; `run: true` runs it at once, without baseline). 409 while the sensor is polling; 423 only with `run: true`.
 - Starter sensors shipped in `sensors/` (editable templates):
 
 | Sensor | Mechanism | Credential | Key |
@@ -328,7 +331,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 
 ## 8. Execution engine
 
-- Sensor scheduler: one goroutine per sensor; skips a tick if the previous poll is still running.
+- Sensor scheduler: one goroutine per scheduled sensor (none for a manual-only one); skips a tick if the previous poll is still running.
 - Event → FlowRun fan-out for each enabled, subscribed flow. Each FlowRun executes its DAG; node outputs are persisted before downstream nodes start.
 - Queues persisted in SQLite. Concurrency: `config.yaml` `max_agent_runs` (global, default 2), flow `max_concurrent` (default 2), command-node pool (default 8). Excess runs wait as `queued` and are visible in the UI.
 - Timeouts per node (default: command 60s, agent 30m); kill whole process group.
@@ -375,7 +378,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 The backend is a JSON REST API; the web UI and the CLI are both clients of it and have no private endpoints. Everything the tool does can be driven and verified with `curl` or the CLI.
 
 - Contract: `api/openapi.yaml` (OpenAPI 3.1), updated in the same commit as handlers. TS types for the UI are generated from it.
-- Resources: sensors (incl. `POST /api/sensors/{id}/poll`), events, flows (CRUD on YAML + `validate`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), auth.
+- Resources: sensors (incl. `POST /api/sensors/{id}/poll` and `/reset`), events, flows (CRUD on YAML + `validate`, `POST /api/flows/{id}/run`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), auth.
 - Test entry points:
   - `POST /api/events` injects an event for a sensor id without polling (body = item JSON); goes through dedup and fan-out exactly like a polled item.
   - `POST /api/flows/{id}/test-node` runs one node on a supplied input (same as "Run node on sample").
@@ -490,8 +493,8 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 | Agent run | Agent info and capabilities, rendered prompt, argv, cwd, phase timeline (propose → approval → execute), streaming transcript (messages, thoughts, plan, tool calls with input/output/diffs, collapsible), every permission request with its decision, who made it, and the matched rule, final result JSON, raw JSON-RPC download. |
 | Inbox | Notes sorted by priority/time; read/star/archive; copy suggested reply; links; "open trace". |
 | Approvals | Pending queue of both types. Proposal: proposal markdown, originating event, agent context, Approve / Deny with comment. Tool call: tool title, kind, input or diff, time left until `approval_timeout`, Allow / Deny / Deny + cancel run. History tab. |
-| Flows | List (enabled, dry-run, last run, error rate). Editor: canvas with node palette (command, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; save writes YAML. |
-| Sensors | List with status, last poll, new items, errors; edit (same code editor), "Poll now", recent SensorRuns. |
+| Flows | List (enabled, dry-run, last run, error rate; "Run now"). Editor: canvas with node palette (command, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; "Run now" (saved version; disabled with unsaved changes or without subscribed sensors); save writes YAML. |
+| Sensors | List with status (incl. manual), last poll, new items, errors; edit (same code editor), "Run now" with "Re-run items already seen", "Reset dedup state…", recent SensorRuns. |
 | Prompts | List / edit prompt files with preview rendered against a sample event. |
 | Settings | Concurrency, retention, notification threshold, env file keys (names and secret flag; secret values masked, plain values shown, per-key Secret toggle), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |
 

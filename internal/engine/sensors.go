@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,10 +24,11 @@ type sensorLoop struct {
 	sig    string
 }
 
-// syncSensors starts a scheduler for every sensor that an enabled flow
-// subscribes to, and stops those that lost their last subscriber, were
-// removed or changed. A poll that is running keeps running: polls are
-// bound to the engine, not to their scheduler.
+// syncSensors starts a scheduler for every scheduled sensor that an enabled
+// flow subscribes to, and stops those that lost their last subscriber, were
+// removed or changed. A manual-only sensor (no interval, no cron) never gets
+// one. A poll that is running keeps running: polls are bound to the engine,
+// not to their scheduler.
 func (e *Engine) syncSensors() {
 	if !e.started.Load() || e.stopping.Load() {
 		return
@@ -48,6 +50,9 @@ func (e *Engine) syncSensors() {
 		sched, err := s.Schedule()
 		if err != nil {
 			e.log.Warn("engine: sensor has no usable schedule", "sensor", id, "err", err)
+			continue
+		}
+		if sched.Manual() {
 			continue
 		}
 		lctx, cancel := context.WithCancel(e.ctx)
@@ -81,7 +86,7 @@ func (e *Engine) sensorLoop(ctx context.Context, id string, sched spec.Schedule)
 		case <-t.C:
 		}
 		if !e.isPaused() && !e.sensorPaused(ctx, id) {
-			_, done, err := e.startPoll(id, store.OriginSchedule)
+			_, done, err := e.startPoll(id, store.OriginSchedule, core.PollOptions{})
 			switch {
 			case err == nil:
 				select {
@@ -153,34 +158,85 @@ func (e *Engine) firstDue(ctx context.Context, id string, sched spec.Schedule) t
 
 // PollSensor runs one poll now (works for any valid sensor, subscribed or
 // not) and returns the recorded run once it has finished. If ctx ends first
-// the run keeps going and its current, unfinished record is returned.
-// ErrPaused while the kill switch is engaged, ErrInvalidState when a poll of
-// this sensor is already running.
-func (e *Engine) PollSensor(ctx context.Context, sensorID string) (*store.SensorRun, error) {
+// the run keeps going and its current, unfinished record is returned, without
+// counts. ErrPaused while the kill switch is engaged, ErrInvalidState when a
+// poll of this sensor is already running.
+//
+// A manual poll never baselines: on a sensor's very first successful poll its
+// items become events even with first_run: baseline. opts picks the target
+// flows and whether already-seen items are re-run (see core.PollOptions); a
+// *core.ValidationError reports a flow that does not subscribe to the sensor,
+// store.ErrNotFound an unknown one.
+func (e *Engine) PollSensor(ctx context.Context, sensorID string, opts core.PollOptions) (core.PollResult, error) {
 	if e.isPaused() {
-		return nil, fmt.Errorf("%w: sensor polls are rejected while the kill switch is engaged", core.ErrPaused)
+		return core.PollResult{}, fmt.Errorf("%w: sensor polls are rejected while the kill switch is engaged", core.ErrPaused)
 	}
-	run, done, err := e.startPoll(sensorID, store.OriginManual)
+	run, done, err := e.startPoll(sensorID, store.OriginManual, opts)
 	if err != nil {
-		return nil, err
+		return core.PollResult{}, err
 	}
 	select {
 	case final := <-done:
 		return final, nil
 	case <-ctx.Done():
-		return run, nil
+		return core.PollResult{Run: run}, nil
 	}
+}
+
+// pollPlan is what one poll does with its items, and what it did.
+type pollPlan struct {
+	manual    bool     // an explicit user action: no first_run baseline
+	rerunSeen bool     // replay items whose key was already seen
+	targets   []string // flows that receive new events and re-runs
+
+	newEvents, rerunEvents int
+	flowRunIDs             []string
+}
+
+func (p *pollPlan) result(run *store.SensorRun) core.PollResult {
+	return core.PollResult{Run: run, NewEvents: p.newEvents, RerunEvents: p.rerunEvents, FlowRunIDs: p.flowRunIDs}
+}
+
+// pollTargets resolves the flows a poll feeds: the enabled flows subscribed to
+// the sensor, or, when flows is given, exactly those flows (each must exist
+// and subscribe to the sensor; it may be disabled).
+func pollTargets(snap *snapshot, sensorID string, flows []string) ([]string, error) {
+	if len(flows) == 0 {
+		return snap.subs[sensorID], nil
+	}
+	var targets []string
+	for _, id := range flows {
+		fd := snap.flows[id]
+		if fd == nil {
+			return nil, fmt.Errorf("%w: flow %q", store.ErrNotFound, id)
+		}
+		if !slices.Contains(fd.flow.Subscribe, sensorID) {
+			return nil, &core.ValidationError{Diagnostics: []spec.Diagnostic{{
+				Severity: spec.SeverityError, Code: spec.CodeInvalidValue, Path: "flows",
+				Message: fmt.Sprintf("flow %q does not subscribe to sensor %q", id, sensorID),
+			}}}
+		}
+		if !slices.Contains(targets, id) {
+			targets = append(targets, id)
+		}
+	}
+	return targets, nil
 }
 
 // startPoll records a running SensorRun and polls in the background. done
 // delivers the finished record. It fails with ErrInvalidState while another
 // poll of the sensor is in flight.
-func (e *Engine) startPoll(sensorID string, origin store.SensorOrigin) (*store.SensorRun, <-chan *store.SensorRun, error) {
+func (e *Engine) startPoll(sensorID string, origin store.SensorOrigin, opts core.PollOptions) (*store.SensorRun, <-chan core.PollResult, error) {
 	snap := e.snapshot()
 	sensor := snap.sensors[sensorID]
 	if sensor == nil {
 		return nil, nil, fmt.Errorf("%w: sensor %q", store.ErrNotFound, sensorID)
 	}
+	targets, err := pollTargets(snap, sensorID, opts.Flows)
+	if err != nil {
+		return nil, nil, err
+	}
+	plan := &pollPlan{manual: origin == store.OriginManual, rerunSeen: opts.RerunSeen, targets: targets}
 	e.pollMu.Lock()
 	if e.polling[sensorID] {
 		e.pollMu.Unlock()
@@ -199,14 +255,15 @@ func (e *Engine) startPoll(sensorID string, origin store.SensorOrigin) (*store.S
 		release()
 		return nil, nil, err
 	}
-	done := make(chan *store.SensorRun, 1)
+	done := make(chan core.PollResult, 1)
 	started := e.spawn(func(ctx context.Context) {
 		defer release()
 		pctx, cancel := context.WithCancelCause(ctx)
 		defer cancel(nil)
 		untrack := e.track("poll:"+run.ID, cancel)
 		defer untrack()
-		done <- e.doPoll(pctx, run, sensor, snap)
+		final := e.doPoll(pctx, run, sensor, snap, plan)
+		done <- plan.result(final)
 	})
 	if !started {
 		release()
@@ -229,8 +286,10 @@ type polledItem struct {
 	key string
 }
 
-// doPoll executes the sensor command and ingests its items (§5).
-func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.Sensor, snap *snapshot) *store.SensorRun {
+// doPoll executes the sensor command and ingests its items (§5). The plan says
+// where new events go, whether seen items are re-run, and collects what the
+// poll started.
+func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.Sensor, snap *snapshot, plan *pollPlan) *store.SensorRun {
 	state, err := e.st.GetSensorState(e.dbCtx, sensor.ID)
 	if err != nil {
 		return e.finishPoll(run, snap, nil, fmt.Errorf("load sensor state: %w", err))
@@ -284,8 +343,11 @@ func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.
 		return e.finishPoll(run, snap, &res, err)
 	}
 	run.ItemCount = len(items)
-	baseline := state.LastSuccessAt == nil && sensor.FirstRun == spec.FirstRunBaseline
+	// An explicit poll fires what it finds, even on the sensor's very first
+	// run: baselining is for the scheduler's unattended first poll.
+	baseline := state.LastSuccessAt == nil && sensor.FirstRun == spec.FirstRunBaseline && !plan.manual
 	run.Baseline = baseline
+	handled := make(map[string]bool, len(items))
 	for _, it := range items {
 		if ctx.Err() != nil {
 			return e.finishPoll(run, snap, &res, context.Cause(ctx))
@@ -296,12 +358,28 @@ func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.
 			}
 			continue
 		}
-		created, _, _, err := e.ingest(snap, run.ID, sensor.ID, it)
+		if handled[it.key] {
+			continue // the same key twice in one poll is one item
+		}
+		handled[it.key] = true
+		created, _, runIDs, err := e.ingest(snap, run.ID, sensor.ID, it, plan.targets)
 		if err != nil {
 			return e.finishPoll(run, snap, &res, err)
 		}
-		if created {
+		switch {
+		case created:
 			run.NewCount++
+			plan.newEvents++
+			plan.flowRunIDs = append(plan.flowRunIDs, runIDs...)
+		case plan.rerunSeen:
+			runIDs, err := e.rerunSeen(snap, run.ID, sensor.ID, it, plan.targets)
+			if err != nil {
+				return e.finishPoll(run, snap, &res, err)
+			}
+			if len(runIDs) > 0 {
+				plan.rerunEvents++
+				plan.flowRunIDs = append(plan.flowRunIDs, runIDs...)
+			}
 		}
 	}
 	return e.finishPoll(run, snap, &res, nil)
@@ -381,9 +459,9 @@ func decodeJSON(b []byte) (any, error) {
 	return v, nil
 }
 
-// ingest dedups one item into an event and fans it out to the subscribed
-// flows. created reports whether the key was new.
-func (e *Engine) ingest(snap *snapshot, sensorRunID, sensorID string, it polledItem) (created bool, ev *store.Event, flowRunIDs []string, err error) {
+// ingest dedups one item into an event and fans it out to the target flows.
+// created reports whether the key was new.
+func (e *Engine) ingest(snap *snapshot, sensorRunID, sensorID string, it polledItem, targets []string) (created bool, ev *store.Event, flowRunIDs []string, err error) {
 	ev = &store.Event{SensorID: sensorID, SensorRunID: sensorRunID, DedupKey: it.key, Payload: store.Inline(string(it.raw))}
 	created, err = e.st.IngestEvent(e.dbCtx, ev)
 	if err != nil {
@@ -392,14 +470,43 @@ func (e *Engine) ingest(snap *snapshot, sensorRunID, sensorID string, it polledI
 	if !created {
 		return false, nil, nil, nil
 	}
-	return true, ev, e.fanOut(snap, ev), nil
+	return true, ev, e.fanOut(snap, ev, targets), nil
 }
 
-// fanOut creates one queued live FlowRun per enabled flow subscribed to the
-// event's sensor (§8), each pinned to the flow version it will run.
-func (e *Engine) fanOut(snap *snapshot, ev *store.Event) []string {
+// rerunSeen starts a kind=replay run of an item whose key was already seen
+// into each target flow, using the current flow version, and returns the run
+// ids. It replays the key's most recent stored event. When that event has been
+// pruned, the item is stored as a new event of this (manual) sensor run, which
+// is how such an event is marked as manual in the trace; the dedup state does
+// not change either way. Nothing is stored when there is no target flow.
+func (e *Engine) rerunSeen(snap *snapshot, sensorRunID, sensorID string, it polledItem, targets []string) ([]string, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	ev, err := e.st.GetEventByKey(e.dbCtx, sensorID, it.key)
+	if errors.Is(err, store.ErrNotFound) {
+		ev = &store.Event{SensorID: sensorID, SensorRunID: sensorRunID, DedupKey: it.key, Payload: store.Inline(string(it.raw))}
+		err = e.st.AddEvent(e.dbCtx, ev)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("re-run item: %w", err)
+	}
+	ids := make([]string, 0, len(targets))
+	for _, flowID := range targets {
+		fr, err := e.replayRun(e.dbCtx, snap, ev, flowID, false)
+		if err != nil {
+			return nil, fmt.Errorf("re-run item into flow %q: %w", flowID, err)
+		}
+		ids = append(ids, fr.ID)
+	}
+	return ids, nil
+}
+
+// fanOut creates one queued live FlowRun per target flow for the event (§8),
+// each pinned to the flow version it will run.
+func (e *Engine) fanOut(snap *snapshot, ev *store.Event, targets []string) []string {
 	var ids []string
-	for _, flowID := range snap.subs[ev.SensorID] {
+	for _, flowID := range targets {
 		fd := snap.flows[flowID]
 		fr := &store.FlowRun{
 			FlowID:   flowID,
@@ -448,7 +555,7 @@ func (e *Engine) InjectEvent(_ context.Context, sensorID string, item json.RawMe
 	if err := e.st.CreateSensorRun(e.dbCtx, run); err != nil {
 		return core.InjectResult{}, err
 	}
-	created, ev, flowRunIDs, err := e.ingest(snap, "", sensorID, polledItem{raw: compact.Bytes(), key: key})
+	created, ev, flowRunIDs, err := e.ingest(snap, "", sensorID, polledItem{raw: compact.Bytes(), key: key}, snap.subs[sensorID])
 	end := time.Now().UTC()
 	run.EndedAt = &end
 	d := end.Sub(start).Milliseconds()
@@ -474,27 +581,11 @@ func (e *Engine) InjectEvent(_ context.Context, sensorID string, item json.RawMe
 
 // eventByKey finds the stored event of a dedup key, or nil if it was pruned.
 func (e *Engine) eventByKey(sensorID, key string) *store.Event {
-	cursor := ""
-	for range 10 {
-		page, err := e.st.ListEvents(e.dbCtx, store.EventFilter{SensorID: sensorID, Search: key, Slim: true, ListOpts: store.ListOpts{Limit: 200, Cursor: cursor}})
-		if err != nil {
-			return nil
-		}
-		for i := range page.Items {
-			if page.Items[i].DedupKey == key {
-				ev, err := e.st.GetEvent(e.dbCtx, page.Items[i].ID)
-				if err != nil {
-					return nil
-				}
-				return ev
-			}
-		}
-		if page.NextCursor == "" {
-			return nil
-		}
-		cursor = page.NextCursor
+	ev, err := e.st.GetEventByKey(e.dbCtx, sensorID, key)
+	if err != nil {
+		return nil
 	}
-	return nil
+	return ev
 }
 
 // eventPayload loads an event's payload bytes.

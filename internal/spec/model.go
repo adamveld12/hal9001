@@ -160,8 +160,8 @@ type AuthModule struct {
 	Options map[string]any `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
-// Sensor is sensors/<id>.yaml (REQUIREMENTS §5). Exactly one of Interval and
-// Cron is set.
+// Sensor is sensors/<id>.yaml (REQUIREMENTS §5). At most one of Interval and
+// Cron is set; with neither the sensor is manual-only (never scheduled).
 type Sensor struct {
 	ID       string   `yaml:"id" json:"id"`
 	Interval Duration `yaml:"interval,omitempty" json:"interval,omitempty"`

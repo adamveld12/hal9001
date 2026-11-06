@@ -47,7 +47,7 @@ func TestScenario14PauseStopsSensorsAndQueuesWork(t *testing.T) {
 	if after := countLines(polls); after != before {
 		t.Fatalf("sensor polled while paused: %d -> %d", before, after)
 	}
-	if _, err := h.eng.PollSensor(t.Context(), "src"); !errors.Is(err, core.ErrPaused) {
+	if _, err := h.poll(t.Context(), "src"); !errors.Is(err, core.ErrPaused) {
 		t.Errorf("poll while paused: %v, want ErrPaused", err)
 	}
 	if _, _, err := h.eng.TestNode(t.Context(), core.TestNodeRequest{FlowID: "f", NodeID: "note", Input: []byte(`{"id":"1"}`)}); !errors.Is(err, core.ErrPaused) {

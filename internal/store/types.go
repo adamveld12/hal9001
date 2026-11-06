@@ -303,8 +303,12 @@ type SensorState struct {
 	ConsecutiveFailures int        `json:"consecutive_failures"`
 	// PausedAt is set while the sensor is paused (never polled by the
 	// scheduler); PausedBy is the principal that paused it.
-	PausedAt  *time.Time `json:"paused_at,omitempty"`
-	PausedBy  string     `json:"paused_by,omitempty"`
+	PausedAt *time.Time `json:"paused_at,omitempty"`
+	PausedBy string     `json:"paused_by,omitempty"`
+	// ResetAt is when the sensor's dedup state was last reset (ResetSensor);
+	// ResetBy is the principal that did it.
+	ResetAt   *time.Time `json:"reset_at,omitempty"`
+	ResetBy   string     `json:"reset_by,omitempty"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 

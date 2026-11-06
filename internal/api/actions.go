@@ -121,19 +121,154 @@ func (s *Server) replayEvent(w http.ResponseWriter, r *http.Request) {
 
 // ---- sensors ----
 
+// pollRequest is the optional body of POST /api/sensors/{id}/poll.
+type pollRequest struct {
+	RerunSeen bool     `json:"rerun_seen"`
+	Flows     []string `json:"flows"`
+}
+
+// pollResultView is the SensorRun of a poll plus what the poll started.
+type pollResultView struct {
+	sensorRunView
+	NewEvents   int      `json:"new_events"`
+	RerunEvents int      `json:"rerun_events"`
+	FlowRunIDs  []string `json:"flow_run_ids"`
+}
+
+func (s *Server) pollResultView(res core.PollResult) pollResultView {
+	return pollResultView{
+		sensorRunView: s.sensorRunView(*res.Run, false),
+		NewEvents:     res.NewEvents, RerunEvents: res.RerunEvents, FlowRunIDs: nonNilStrings(res.FlowRunIDs),
+	}
+}
+
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
+}
+
+// checkFlowIDs answers 422 unless every id can be a flow id.
+func checkFlowIDs(w http.ResponseWriter, ids []string) bool {
+	for _, id := range ids {
+		if !spec.ValidID(id) {
+			fieldProblem(w, "flows", "flows must be flow ids")
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) pollSensor(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.opts.Workspace().Sensor(id) == nil {
 		notFound(w, "no sensor %q", id)
 		return
 	}
-	run, err := s.opts.Engine.PollSensor(r.Context(), id)
+	var req pollRequest
+	if !decodeJSON(w, r, &req, true) || !checkFlowIDs(w, req.Flows) {
+		return
+	}
+	res, err := s.opts.Engine.PollSensor(r.Context(), id, core.PollOptions{RerunSeen: req.RerunSeen, Flows: req.Flows})
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
-	w.Header().Set("Location", "/api/sensor-runs/"+run.ID)
-	writeJSON(w, http.StatusAccepted, s.sensorRunView(*run, false))
+	w.Header().Set("Location", "/api/sensor-runs/"+res.Run.ID)
+	writeJSON(w, http.StatusAccepted, s.pollResultView(res))
+}
+
+// resetResultView answers POST /api/sensors/{id}/reset. Run has the shape of a
+// poll result when the reset ran the sensor, else null.
+type resetResultView struct {
+	SensorID    string          `json:"sensor_id"`
+	ResetAt     *time.Time      `json:"reset_at"`
+	ResetBy     *string         `json:"reset_by"`
+	KeysCleared int64           `json:"keys_cleared"`
+	Run         *pollResultView `json:"run"`
+}
+
+func (s *Server) resetSensor(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.sensorExists(w, id) {
+		return
+	}
+	var req struct {
+		Run        bool     `json:"run"`
+		RerunFlows []string `json:"rerun_flows"`
+	}
+	if !decodeJSON(w, r, &req, true) || !checkFlowIDs(w, req.RerunFlows) {
+		return
+	}
+	if len(req.RerunFlows) > 0 && !req.Run {
+		fieldProblem(w, "rerun_flows", "rerun_flows only applies together with run: true")
+		return
+	}
+	res, err := s.opts.Engine.ResetSensor(r.Context(), id, principal(r), core.ResetOptions{Run: req.Run, Flows: req.RerunFlows})
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	out := resetResultView{
+		SensorID: id, ResetAt: utcPtr(res.State.ResetAt), ResetBy: &res.State.ResetBy, KeysCleared: res.KeysCleared,
+	}
+	if res.Poll != nil {
+		v := s.pollResultView(*res.Poll)
+		out.Run = &v
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---- flows ----
+
+type runFlowSensorView struct {
+	SensorID    string         `json:"sensor_id"`
+	Run         *sensorRunView `json:"run"`
+	NewEvents   int            `json:"new_events"`
+	RerunEvents int            `json:"rerun_events"`
+	FlowRunIDs  []string       `json:"flow_run_ids"`
+	Error       *string        `json:"error"`
+}
+
+type runFlowResultView struct {
+	FlowID     string              `json:"flow_id"`
+	Sensors    []runFlowSensorView `json:"sensors"`
+	FlowRunIDs []string            `json:"flow_run_ids"`
+}
+
+func (s *Server) runFlow(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	f := s.opts.Workspace().Flow(id)
+	if f == nil {
+		notFound(w, "no flow %q", id)
+		return
+	}
+	if !f.Valid() {
+		conflictProblem(w, typeInvalidState, "the flow has validation errors; fix it before running it", nil)
+		return
+	}
+	var req struct {
+		RerunSeen bool `json:"rerun_seen"`
+	}
+	if !decodeJSON(w, r, &req, true) {
+		return
+	}
+	res, err := s.opts.Engine.RunFlow(r.Context(), id, core.RunFlowOptions{RerunSeen: req.RerunSeen})
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	out := runFlowResultView{FlowID: res.FlowID, Sensors: make([]runFlowSensorView, 0, len(res.Sensors)), FlowRunIDs: nonNilStrings(res.FlowRunIDs)}
+	for _, sr := range res.Sensors {
+		v := runFlowSensorView{SensorID: sr.SensorID, FlowRunIDs: []string{}, Error: nonEmpty(sr.Error)}
+		if sr.Poll != nil {
+			run := s.sensorRunView(*sr.Poll.Run, false)
+			v.Run, v.NewEvents, v.RerunEvents, v.FlowRunIDs = &run, sr.Poll.NewEvents, sr.Poll.RerunEvents, nonNilStrings(sr.Poll.FlowRunIDs)
+		}
+		out.Sensors = append(out.Sensors, v)
+	}
+	writeJSON(w, http.StatusAccepted, out)
 }
 
 // pauseSensor and resumeSensor are idempotent and answer with the updated

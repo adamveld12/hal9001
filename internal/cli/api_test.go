@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"strings"
@@ -97,7 +98,15 @@ func TestMutatingCommandsSendJSONBodiesWithJSONContentType(t *testing.T) {
 		resp      canned
 	}{
 		{"sensors poll sends an empty JSON object", []string{"sensors", "poll", "gh"}, "", "POST /api/sensors/gh/poll", nil, map[string]any{},
-			canned{status: 202, body: sensorRun(), location: "/api/sensor-runs/" + id1}},
+			canned{status: 202, body: pollResult(), location: "/api/sensor-runs/" + id1}},
+		{"sensors poll sends rerun_seen and the flows filter", []string{"sensors", "poll", "gh", "--rerun-seen", "--flow", "a", "--flow", "b"}, "", "POST /api/sensors/gh/poll", nil,
+			map[string]any{"rerun_seen": true, "flows": []any{"a", "b"}}, canned{status: 202, body: pollResult(), location: "/api/sensor-runs/" + id1}},
+		{"flows run sends rerun_seen", []string{"flows", "run", "triage-github", "--rerun-seen"}, "", "POST /api/flows/triage-github/run", nil,
+			map[string]any{"rerun_seen": true}, canned{status: 202, body: runFlowResult()}},
+		{"sensors reset without run", []string{"sensors", "reset", "gh", "--yes"}, "", "POST /api/sensors/gh/reset", nil,
+			map[string]any{"run": false}, canned{status: 200, body: resetResult(false)}},
+		{"sensors reset with run and flows", []string{"sensors", "reset", "gh", "--run", "--flow", "triage-github"}, "", "POST /api/sensors/gh/reset", nil,
+			map[string]any{"run": true, "rerun_flows": []any{"triage-github"}}, canned{status: 200, body: resetResult(true)}},
 		{"events inject posts the item with the sensor in the query", []string{"events", "inject", "github-notifications"}, `{"id":"42","reason":"review_requested"}`,
 			"POST /api/events", url.Values{"sensor_id": {"github-notifications"}}, map[string]any{"id": "42", "reason": "review_requested"},
 			canned{status: 201, location: "/api/events/" + id2, body: map[string]any{"event": event(), "deduplicated": false, "dedup_key": "42", "flow_runs": []any{flowRunBrief()}}}},
@@ -358,6 +367,34 @@ func TestRunsGetWaitLongPollsUntilTheRunFinishes(t *testing.T) {
 	}
 	if !strings.Contains(res.stdout, `"status": "succeeded"`) {
 		t.Errorf("final output is not the finished run:\n%s", res.stdout)
+	}
+}
+
+func TestPollAndFlowRunWaitPrintTheFinalStatusOfTheCreatedRuns(t *testing.T) {
+	for _, args := range [][]string{
+		{"sensors", "poll", "gh", "--wait"},
+		{"flows", "run", "triage-github", "--wait"},
+	} {
+		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+			f := newFakeDaemon(t)
+			f.on("POST /api/sensors/gh/poll", canned{status: 202, body: pollResult()})
+			f.on("POST /api/flows/triage-github/run", canned{status: 202, body: runFlowResult()})
+			f.on("GET /api/flow-runs/"+id1, ok(flowRunDetail("running")), ok(flowRunDetail("succeeded")))
+			res := f.run(runOpts{}, args...)
+			if res.code != 0 {
+				t.Fatalf("exit %d: %s", res.code, res.stderr)
+			}
+			var out struct {
+				FlowRunIDs []string                      `json:"flow_run_ids"`
+				FlowRuns   []struct{ ID, Status string } `json:"flow_runs"`
+			}
+			if err := json.Unmarshal([]byte(res.stdout), &out); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, res.stdout)
+			}
+			if len(out.FlowRunIDs) != 1 || len(out.FlowRuns) != 1 || out.FlowRuns[0].ID != id1 || out.FlowRuns[0].Status != "succeeded" {
+				t.Errorf("output = %s, want the run ids and the final status of the run", res.stdout)
+			}
+		})
 	}
 }
 

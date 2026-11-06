@@ -26,7 +26,9 @@ import (
 // an unscripted call fails with an error so it surfaces as a 500.
 type engineDouble struct {
 	inject       func(ctx context.Context, sensorID string, item json.RawMessage) (core.InjectResult, error)
-	poll         func(ctx context.Context, sensorID string) (*store.SensorRun, error)
+	poll         func(ctx context.Context, sensorID string, opts core.PollOptions) (core.PollResult, error)
+	runFlow      func(ctx context.Context, flowID string, opts core.RunFlowOptions) (core.RunFlowResult, error)
+	resetSensor  func(ctx context.Context, sensorID, principal string, opts core.ResetOptions) (core.ResetResult, error)
 	pauseSensor  func(ctx context.Context, sensorID, principal string) (store.SensorState, error)
 	resumeSensor func(ctx context.Context, sensorID string) (store.SensorState, error)
 	replay       func(ctx context.Context, eventID, flowID string, dryRun bool) (*store.FlowRun, error)
@@ -46,11 +48,25 @@ func (d *engineDouble) InjectEvent(ctx context.Context, sensorID string, item js
 	return d.inject(ctx, sensorID, item)
 }
 
-func (d *engineDouble) PollSensor(ctx context.Context, sensorID string) (*store.SensorRun, error) {
+func (d *engineDouble) PollSensor(ctx context.Context, sensorID string, opts core.PollOptions) (core.PollResult, error) {
 	if d.poll == nil {
-		return nil, errUnscripted
+		return core.PollResult{}, errUnscripted
 	}
-	return d.poll(ctx, sensorID)
+	return d.poll(ctx, sensorID, opts)
+}
+
+func (d *engineDouble) RunFlow(ctx context.Context, flowID string, opts core.RunFlowOptions) (core.RunFlowResult, error) {
+	if d.runFlow == nil {
+		return core.RunFlowResult{}, errUnscripted
+	}
+	return d.runFlow(ctx, flowID, opts)
+}
+
+func (d *engineDouble) ResetSensor(ctx context.Context, sensorID, principal string, opts core.ResetOptions) (core.ResetResult, error) {
+	if d.resetSensor == nil {
+		return core.ResetResult{}, errUnscripted
+	}
+	return d.resetSensor(ctx, sensorID, principal, opts)
 }
 
 func (d *engineDouble) PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error) {

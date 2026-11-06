@@ -151,7 +151,7 @@ exec:
 ```yaml
 # sensors/github-notifications.yaml
 id: github-notifications
-interval: 2m              # or: cron: "*/5 9-18 * * 1-5"
+interval: 2m              # or: cron: "*/5 9-18 * * 1-5"; leave both out for a manual-only sensor
 lang: bash
 script: |
   gh api notifications --paginate -q '.[]'
@@ -162,25 +162,69 @@ timeout: 60s
 
 | Field | Meaning |
 |---|---|
-| `interval` / `cron` | Exactly one. Interval is a Go duration (`30s`, `2m`, `1h`; minimum `1s`). Cron is 5 fields (minute hour day-of-month month day-of-week) with lists, ranges, steps and names, in local time. |
+| `interval` / `cron` | At most one. Interval is a Go duration (`30s`, `2m`, `1h`; minimum `1s`). Cron is 5 fields (minute hour day-of-month month day-of-week) with lists, ranges, steps and names, in local time. With neither, the sensor is **manual-only**: the scheduler never polls it (no next poll; the API reports `status.manual: true` and the UI shows "manual") and only Run now does. |
 | `lang`, `script` / `command`, `cwd`, `timeout` | As in the node contract. `timeout` defaults to 60s. |
 | `key` | Required. A template over one item that yields its dedup key. Items whose key was already seen are dropped; a changed key (for example one that includes `updated_at`) re-triggers. |
-| `first_run` | `baseline` (default): the first poll marks everything seen without firing. `fire`: emit everything. |
+| `first_run` | `baseline` (default): the scheduler's first poll marks everything seen without firing. `fire`: emit everything. A manual poll (Run now) never baselines. |
 
 The sensor prints a JSON array, or JSONL (one item per line). Every poll is recorded (duration, item count, new count,
 stdout, stderr, exit code); a failed poll does not advance `HAL_LAST_SUCCESS_AT`.
 
-Only sensors subscribed to by at least one **enabled** flow are scheduled. `hal9001 sensors poll <id>` polls any valid
-sensor now (rejected while the kill switch is engaged). `hal9001 events inject <sensor-id> < item.json` pushes one item
-through dedup and fan-out without running the script. Starter sensors and their credentials are listed in the
-[README](../README.md#prerequisites).
+Only sensors subscribed to by at least one **enabled** flow are scheduled, and never a manual-only one.
+`hal9001 events inject <sensor-id> < item.json` pushes one item through dedup and fan-out without running the script.
+Starter sensors and their credentials are listed in the [README](../README.md#prerequisites).
+
+**Run now.** Kick off a sensor and its flows whenever you want instead of waiting for the interval:
+`hal9001 sensors poll <id> [--rerun-seen] [--flow ID ...] [--wait]` (UI: Run now on the sensor page;
+`POST /api/sensors/{id}/poll` with an optional body `{rerun_seen, flows}`). It polls any valid sensor now, subscribed or
+not, paused or not, and waits for the poll to finish. Items with a new dedup key become events and fan out to the
+enabled flows subscribed to the sensor, as for a scheduled poll. The response is the sensor run plus `new_events`,
+`rerun_events` and `flow_run_ids`, so you can follow the runs (`hal9001 runs get <id> --wait`; `--wait` on the poll
+waits for all of them and prints their final status as `flow_runs`).
+
+- **Re-run seen items.** Items whose key was already seen create no event, so by default nothing happens for them. With
+  `--rerun-seen` (UI: "Re-run items already seen"; remembered per sensor in the browser) each such item is replayed
+  as a `kind: replay` run into every target flow, on the flow's *current* version, as `events replay` does. The event
+  that is replayed is the most recent stored event of that key. If that event was already pruned by retention (the
+  key is remembered longer than events), the item is stored again as a new event belonging to this manual poll (its
+  sensor run has trigger `manual`) and run. The dedup state does not change, and replay runs show in the timeline by
+  default.
+- **Limit the flows.** `flows` (`--flow ID`, repeatable) sends new events and re-runs only to those flows. Each must
+  subscribe to the sensor (422 otherwise) and may be disabled. Note that an event created this way is not run by the
+  other subscribed flows later: its key is now seen (replay it into them with `events replay`).
+- **No baseline.** A manual poll never applies `first_run: baseline`: on a sensor's very first poll its items become
+  events normally. Only the scheduler's first poll baselines. A manual first poll still counts as the first
+  success, so the scheduler does not baseline afterwards.
+- The kill switch rejects Run now with 423. A poll that is already running gives 409.
+
+**Run a flow now.** `hal9001 flows run <flow-id> [--rerun-seen] [--wait]` (UI: Run now in the flow editor and on the
+Flows list; `POST /api/flows/{id}/run`) polls every sensor the flow subscribes to, in parallel, each as a normal
+manual sensor run, with this flow as the only target: other flows subscribed to those sensors get nothing. The saved
+version of the flow runs (the editor disables Run now while it has unsaved changes). The result lists each sensor's run
+with its counts and `flow_run_ids`, plus all created `flow_run_ids`; a sensor that cannot be polled (missing, invalid,
+already running) is reported with an `error` and the others still run. A flow that subscribes to nothing gives 422. A
+flow with `enabled: false` can still be run this way: running it is an explicit user action, so "This flow is
+disabled; Run now still runs it once."
+
+**Resetting a sensor.** `hal9001 sensors reset <id> [--run [--flow ID ...]] [--yes]` (UI: "Reset dedup state…" in the
+menu of the sensor page; `POST /api/sensors/{id}/reset` with `{run, rerun_flows}`) makes the sensor forget what it has
+seen: its dedup keys are cleared, and so is its incremental state (`last_success_at`, so `HAL_LAST_SUCCESS_AT` is
+unset on the next poll). Who did it and when is stored (`status.reset_at`, `status.reset_by`; the sensor page header
+shows it). Every item the sensor returns next time counts as new and triggers its flows again. Events, sensor runs, flow
+runs and inbox items stay as history (the new events sit next to the old ones; a later re-run replays the newest event
+of a key), and files the script keeps in `$HAL_STATE_DIR` are not touched. Without `--run` the next *scheduled* poll is
+that of a brand-new sensor, so `first_run: baseline` baselines again and `fire` emits everything. With `--run` the
+reset is followed at once by a manual poll, which never baselines. A reset works while the sensor is paused (it stays
+paused), is refused with 409 while a poll of the sensor is running, and with `--run` is rejected with 423 under the
+kill switch (a plain reset is not a poll and still works). Without `--yes` the CLI asks for confirmation when it runs on
+a terminal.
 
 **Pausing one sensor.** `hal9001 sensors pause <id>` (UI: the pause toggle on the Sensors list and the sensor page)
 stops the scheduler polling that sensor until `sensors resume <id>`. The state is operational, not part of the YAML: it
 lives in the database, survives restarts and records who paused the sensor and when. A paused sensor has state `paused`
-and no next poll. Explicit actions still work: `sensors poll` ("Poll now") and `events inject` are user requests, not
+and no next poll. Explicit actions still work: Run now, reset and `events inject` are user requests, not
 scheduled polls. Resuming starts the schedule over (an overdue interval sensor polls at once). The kill switch is
-separate: it pauses every sensor and also rejects "Poll now".
+separate: it pauses every sensor and also rejects Run now.
 
 **Per-sensor environment.** Credentials a single sensor needs can be set on the sensor instead of the global `env`
 file: the Environment section of the sensor page, or `hal9001 sensors env set <id> KEY`. They are stored in

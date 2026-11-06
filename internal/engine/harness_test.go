@@ -257,6 +257,12 @@ func (h *harness) reload() {
 	h.eng.Apply(ws)
 }
 
+// poll runs a plain manual poll (no options) and returns its sensor run.
+func (h *harness) poll(ctx context.Context, sensorID string) (*store.SensorRun, error) {
+	res, err := h.eng.PollSensor(ctx, sensorID, core.PollOptions{})
+	return res.Run, err
+}
+
 func (h *harness) inject(item string) core.InjectResult {
 	h.t.Helper()
 	res, err := h.eng.InjectEvent(h.t.Context(), "src", json.RawMessage(item))

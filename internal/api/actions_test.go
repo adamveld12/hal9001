@@ -219,23 +219,104 @@ func TestReplayAndPoll(t *testing.T) {
 	e.do("POST", "/api/events/"+ev.ID+"/replay", map[string]any{"flow": "dry", "x": 1}).want(400)
 
 	// Poll now.
-	e.eng.poll = func(_ context.Context, id string) (*store.SensorRun, error) {
+	var gotPoll core.PollOptions
+	e.eng.poll = func(_ context.Context, id string, opts core.PollOptions) (core.PollResult, error) {
+		gotPoll = opts
 		run := &store.SensorRun{SensorID: id, Origin: store.OriginManual}
-		return run, e.st.CreateSensorRun(ctx(), run)
+		return core.PollResult{Run: run, NewEvents: 2, RerunEvents: 1, FlowRunIDs: []string{"01JC7Z3K9Q8V5T2M4N6P8R0S1A", "01JC7Z3K9Q8V5T2M4N6P8R0S1B", "01JC7Z3K9Q8V5T2M4N6P8R0S1C"}}, e.st.CreateSensorRun(ctx(), run)
 	}
 	r = e.do("POST", "/api/sensors/demo-ticker/poll", nil).want(202)
-	var sr struct{ ID, Trigger, Status string }
+	var sr struct {
+		ID, Trigger, Status string
+		NewEvents           int      `json:"new_events"`
+		RerunEvents         int      `json:"rerun_events"`
+		FlowRunIDs          []string `json:"flow_run_ids"`
+	}
 	r.decode(&sr)
 	if sr.Trigger != "manual" || sr.Status != "running" || r.Header.Get("Location") != "/api/sensor-runs/"+sr.ID {
 		t.Errorf("poll = %s", r.Body)
 	}
+	if sr.NewEvents != 2 || sr.RerunEvents != 1 || len(sr.FlowRunIDs) != 3 || gotPoll.RerunSeen || len(gotPoll.Flows) != 0 {
+		t.Errorf("an empty body must keep today's behavior and report the counts: %s, opts %+v", r.Body, gotPoll)
+	}
+	e.do("POST", "/api/sensors/demo-ticker/poll", map[string]any{"rerun_seen": true, "flows": []string{"dry"}}).want(202)
+	if !gotPoll.RerunSeen || len(gotPoll.Flows) != 1 || gotPoll.Flows[0] != "dry" {
+		t.Errorf("options = %+v", gotPoll)
+	}
+	e.do("POST", "/api/sensors/demo-ticker/poll", map[string]any{"flows": []string{"not a slug"}}).want(422)
+	e.do("POST", "/api/sensors/demo-ticker/poll", map[string]any{"rerun": true}).want(400)
 	e.do("POST", "/api/sensors/ghost/poll", nil).want(404)
-	e.eng.poll = func(context.Context, string) (*store.SensorRun, error) {
-		return nil, fmt.Errorf("a poll of this sensor is running: %w", core.ErrInvalidState)
+	e.eng.poll = func(context.Context, string, core.PollOptions) (core.PollResult, error) {
+		return core.PollResult{}, fmt.Errorf("a poll of this sensor is running: %w", core.ErrInvalidState)
 	}
 	e.do("POST", "/api/sensors/demo-ticker/poll", nil).want(409)
-	e.eng.poll = func(context.Context, string) (*store.SensorRun, error) { return nil, core.ErrPaused }
+	e.eng.poll = func(context.Context, string, core.PollOptions) (core.PollResult, error) {
+		return core.PollResult{}, core.ErrPaused
+	}
 	e.do("POST", "/api/sensors/demo-ticker/poll", nil).want(423)
+}
+
+func TestRunFlowAndResetSensor(t *testing.T) {
+	e := newEnv(t)
+	e.eng.runFlow = func(_ context.Context, id string, opts core.RunFlowOptions) (core.RunFlowResult, error) {
+		if opts.RerunSeen {
+			return core.RunFlowResult{}, &core.ValidationError{Diagnostics: []spec.Diagnostic{{Severity: spec.SeverityError, Code: spec.CodeInvalidValue, Path: "subscribe", Message: "subscribes to nothing"}}}
+		}
+		run := &store.SensorRun{SensorID: "demo-ticker", Origin: store.OriginManual}
+		return core.RunFlowResult{FlowID: id, FlowRunIDs: []string{"01JC7Z3K9Q8V5T2M4N6P8R0S1X"}, Sensors: []core.FlowSensorResult{
+			{SensorID: "demo-ticker", Poll: &core.PollResult{Run: run, NewEvents: 1, FlowRunIDs: []string{"01JC7Z3K9Q8V5T2M4N6P8R0S1X"}}},
+			{SensorID: "gone", Error: "no such sensor"},
+		}}, e.st.CreateSensorRun(ctx(), run)
+	}
+	r := e.do("POST", "/api/flows/demo/run", nil).want(202)
+	var out struct {
+		FlowID  string `json:"flow_id"`
+		Sensors []struct {
+			SensorID   string               `json:"sensor_id"`
+			Run        *struct{ ID string } `json:"run"`
+			FlowRunIDs []string             `json:"flow_run_ids"`
+			Error      *string              `json:"error"`
+		}
+		FlowRunIDs []string `json:"flow_run_ids"`
+	}
+	r.decode(&out)
+	if out.FlowID != "demo" || len(out.Sensors) != 2 || out.Sensors[0].Run == nil || out.Sensors[0].Error != nil ||
+		out.Sensors[1].Run != nil || out.Sensors[1].Error == nil || len(out.Sensors[1].FlowRunIDs) != 0 || len(out.FlowRunIDs) != 1 {
+		t.Errorf("run flow = %s", r.Body)
+	}
+	e.do("POST", "/api/flows/demo/run", map[string]any{"rerun_seen": true}).want(422)
+	e.do("POST", "/api/flows/ghost/run", nil).want(404)
+	e.eng.runFlow = func(context.Context, string, core.RunFlowOptions) (core.RunFlowResult, error) {
+		return core.RunFlowResult{}, core.ErrPaused
+	}
+	e.do("POST", "/api/flows/demo/run", nil).want(423)
+
+	var gotReset core.ResetOptions
+	e.eng.resetSensor = func(_ context.Context, id, principal string, opts core.ResetOptions) (core.ResetResult, error) {
+		gotReset = opts
+		now := time.Now()
+		return core.ResetResult{State: store.SensorState{SensorID: id, ResetAt: &now, ResetBy: principal}, KeysCleared: 4}, nil
+	}
+	r = e.do("POST", "/api/sensors/demo-ticker/reset", nil).want(200)
+	var rs struct {
+		KeysCleared int64     `json:"keys_cleared"`
+		ResetBy     *string   `json:"reset_by"`
+		Run         *struct{} `json:"run"`
+	}
+	r.decode(&rs)
+	if rs.KeysCleared != 4 || rs.ResetBy == nil || rs.Run != nil || gotReset.Run {
+		t.Errorf("reset = %s, opts %+v", r.Body, gotReset)
+	}
+	e.do("POST", "/api/sensors/demo-ticker/reset", map[string]any{"run": true, "rerun_flows": []string{"demo"}}).want(200)
+	if !gotReset.Run || len(gotReset.Flows) != 1 {
+		t.Errorf("reset options = %+v", gotReset)
+	}
+	e.do("POST", "/api/sensors/demo-ticker/reset", map[string]any{"rerun_flows": []string{"demo"}}).want(422)
+	e.do("POST", "/api/sensors/ghost/reset", nil).want(404)
+	e.eng.resetSensor = func(context.Context, string, string, core.ResetOptions) (core.ResetResult, error) {
+		return core.ResetResult{}, core.ErrInvalidState
+	}
+	e.do("POST", "/api/sensors/demo-ticker/reset", nil).want(409)
 }
 
 func TestTestNode(t *testing.T) {

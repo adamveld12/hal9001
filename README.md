@@ -135,7 +135,9 @@ bin/hal9001 status --table                 # daemon counters and kill switch
 bin/hal9001 inbox list --table             # 2 items: one urgent, one normal
 bin/hal9001 events list --sensor demo-ticker --table
 bin/hal9001 runs list --table
-bin/hal9001 sensors poll demo-ticker       # poll now: same items, deduped, no new events
+bin/hal9001 sensors poll demo-ticker       # Run now: same items, deduped, no new events
+bin/hal9001 sensors poll demo-ticker --rerun-seen --wait   # replay the seen items into the flow and wait for the runs
+bin/hal9001 flows run demo --rerun-seen    # or run the flow itself: polls its sensors, runs only this flow
 ```
 
 The other starter flows (`triage-slack`, `triage-github`, `linear-triage`, `email-secretary`) are disabled and
@@ -238,8 +240,9 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `status` | Daemon counters and kill switch state. |
 | `tailscale status` | Tailscale CLI reachability, this Mac's tailnet hostname and owner, whether serve is configured, whether the hostname is in `allowed_hosts`. |
 | `sensors list` / `sensors get <id>` | |
-| `sensors poll <id>` | Poll now (rejected while the kill switch is engaged; works on a paused sensor). |
-| `sensors pause <id>` / `sensors resume <id>` | Stop or restart the scheduled polls of one sensor. Persisted across restarts; `poll` and `events inject` still work while paused. |
+| `sensors poll <id>` | Run now: poll the sensor at once (rejected while the kill switch is engaged; works on a paused or manual-only sensor, and never baselines). `--rerun-seen` also replays items already seen into each target flow, `--flow <id>` (repeatable) limits new events and re-runs to those flows, `--wait`/`--timeout 10m` wait for the created flow runs and print their final status as `flow_runs`. Prints the sensor run with `new_events`, `rerun_events`, `flow_run_ids`. |
+| `sensors reset <id>` | Forget the sensor's dedup keys and `HAL_LAST_SUCCESS_AT` so its next run treats every item as new (history is kept; works on a paused sensor; 409 while it polls). `--run` runs it right after (`--flow <id>` limits that run), `--yes` skips the confirmation asked on a terminal. |
+| `sensors pause <id>` / `sensors resume <id>` | Stop or restart the scheduled polls of one sensor. Persisted across restarts; Run now and `events inject` still work while paused. |
 | `sensors env list <id>` | Key names of the sensor's own env, and whether each overrides a global key. Values are never shown. |
 | `sensors env set <id> <KEY> [value]` | `--stdin` reads the value from stdin. Takes effect on the next poll. |
 | `sensors env unset <id> <KEY>` | |
@@ -255,6 +258,7 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `events replay <event-id>` | `--flow <flow-id>` (required), `--dry-run=true\|false` (omit to keep the flow's setting). |
 | `flows list` / `flows get <id>` | |
 | `flows validate [file.yaml\|-]` | Validate flow YAML without saving. |
+| `flows run <id>` | Run now: poll every sensor the flow subscribes to and run only this flow on what they return (also a flow with `enabled: false`). `--rerun-seen` replays seen items into it, `--wait`/`--timeout 10m` wait for the created runs and print their final status. |
 | `flows test-node <flow-id> <node-id>` | Input from one of `--event <id>`, `--node-run <id>[:<index>]`, `--json <value>`, or stdin. `--dry-run`, `--wait 60s`. |
 | `runs list` | `--flow`, `--event`, `--kind` (`live`, `replay`, `test`), `--status`, `--replay-of`, `--since`, `--until`, `--limit`, `--cursor` |
 | `runs get <id>` | `--wait` (block until finished or awaiting approval), `--timeout 10m` |

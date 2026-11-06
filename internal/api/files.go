@@ -131,7 +131,14 @@ type sensorStatusView struct {
 	LastRun       *sensorRunView `json:"last_run"`
 	LastSuccessAt *time.Time     `json:"last_success_at"`
 	NextPollAt    *time.Time     `json:"next_poll_at"`
-	NewItems24h   int            `json:"new_items_24h"`
+	// Manual is true for a sensor with neither interval nor cron: the
+	// scheduler never polls it (NextPollAt is null); only Run now does.
+	Manual bool `json:"manual"`
+	// ResetAt and ResetBy say when and by whom the sensor's dedup state was
+	// last reset; null if it never was.
+	ResetAt     *time.Time `json:"reset_at"`
+	ResetBy     *string    `json:"reset_by"`
+	NewItems24h int        `json:"new_items_24h"`
 }
 
 type sensorSummaryView struct {
@@ -169,6 +176,10 @@ func (s *Server) sensorStatus(ctx context.Context, id string, sensor *spec.Senso
 		by := state.PausedBy
 		v.Paused, v.PausedAt, v.PausedBy = true, utcPtr(state.PausedAt), &by
 	}
+	if state.ResetAt != nil {
+		by := state.ResetBy
+		v.ResetAt, v.ResetBy = utcPtr(state.ResetAt), &by
+	}
 	paused := killSwitch || v.Paused
 	var last *store.SensorRun
 	if len(runs.Items) > 0 {
@@ -186,20 +197,24 @@ func (s *Server) sensorStatus(ctx context.Context, id string, sensor *spec.Senso
 	case state.ConsecutiveFailures > 0:
 		v.State = "failing"
 	}
-	// The engine only schedules sensors that an enabled flow subscribes to.
-	if valid && !paused && sensor != nil && s.sensorSubscribed(id) {
+	// The engine only schedules sensors that an enabled flow subscribes to, and
+	// never a manual-only one.
+	if sensor != nil {
 		if sched, err := sensor.Schedule(); err == nil {
-			now := time.Now()
-			base := now
-			if state.LastRunAt != nil {
-				base = *state.LastRunAt
+			v.Manual = sched.Manual()
+			if valid && !paused && !v.Manual && s.sensorSubscribed(id) {
+				now := time.Now()
+				base := now
+				if state.LastRunAt != nil {
+					base = *state.LastRunAt
+				}
+				next := sched.Next(base)
+				if next.Before(now) {
+					next = now
+				}
+				next = next.UTC()
+				v.NextPollAt = &next
 			}
-			next := sched.Next(base)
-			if next.Before(now) {
-				next = now
-			}
-			next = next.UTC()
-			v.NextPollAt = &next
 		}
 	}
 	return v, nil

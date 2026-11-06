@@ -22,7 +22,13 @@ func (e *Engine) Replay(ctx context.Context, eventID, flowID string, dryRun bool
 	if err != nil {
 		return nil, err
 	}
-	fd := e.snapshot().flows[flowID]
+	return e.replayRun(ctx, e.snapshot(), ev, flowID, dryRun)
+}
+
+// replayRun queues a kind=replay run of ev through the version of flowID in
+// snap, linked to the event's most recent earlier run in that flow.
+func (e *Engine) replayRun(ctx context.Context, snap *snapshot, ev *store.Event, flowID string, dryRun bool) (*store.FlowRun, error) {
+	fd := snap.flows[flowID]
 	if fd == nil {
 		return nil, fmt.Errorf("%w: flow %q", store.ErrNotFound, flowID)
 	}

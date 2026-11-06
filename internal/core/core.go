@@ -40,6 +40,63 @@ type InjectResult struct {
 	FlowRunIDs []string // flow runs created by fan-out (queued); empty when Duplicate
 }
 
+// PollOptions are the run options of a manual poll. The zero value is the
+// plain "Poll now": new items become events and fan out to every enabled
+// subscribed flow.
+type PollOptions struct {
+	// RerunSeen also starts a kind=replay run of every item whose dedup key was
+	// already seen, into each target flow. The dedup state does not change.
+	RerunSeen bool
+	// Flows restricts fan-out and re-runs to these flows. Each must exist and
+	// subscribe to the sensor; unlike the default targets it may be disabled.
+	// Empty means every enabled flow subscribed to the sensor.
+	Flows []string
+}
+
+// PollResult is the outcome of a manual poll.
+type PollResult struct {
+	Run         *store.SensorRun
+	NewEvents   int      // items that became events
+	RerunEvents int      // already-seen items re-run into at least one flow
+	FlowRunIDs  []string // runs created: live runs of new events, then replay runs
+}
+
+// RunFlowOptions are the options of Engine.RunFlow.
+type RunFlowOptions struct {
+	RerunSeen bool
+}
+
+// FlowSensorResult is one subscribed sensor's part of RunFlow. Poll is nil and
+// Error set when the poll could not be started (the sensor is missing or
+// invalid, or a poll of it is already running).
+type FlowSensorResult struct {
+	SensorID string
+	Poll     *PollResult
+	Error    string
+}
+
+// RunFlowResult is the outcome of POST /api/flows/{id}/run.
+type RunFlowResult struct {
+	FlowID     string
+	Sensors    []FlowSensorResult // in the flow's subscribe order
+	FlowRunIDs []string           // every run created, in Sensors order
+}
+
+// ResetOptions are the options of Engine.ResetSensor.
+type ResetOptions struct {
+	// Run immediately runs the sensor now (a manual poll, never baseline).
+	Run bool
+	// Flows restricts that run to these flows (see PollOptions.Flows).
+	Flows []string
+}
+
+// ResetResult is the outcome of POST /api/sensors/{id}/reset.
+type ResetResult struct {
+	State       store.SensorState
+	KeysCleared int64
+	Poll        *PollResult // set when the reset ran the sensor
+}
+
 // TestNodeRequest is POST /api/flows/{id}/test-node. Flow, when non-nil, is an
 // unsaved editor copy that is validated and used instead of the file on disk.
 type TestNodeRequest struct {
@@ -78,8 +135,16 @@ type ProbeResult struct {
 type Engine interface {
 	// InjectEvent runs item through dedup and fan-out exactly like a polled item.
 	InjectEvent(ctx context.Context, sensorID string, item json.RawMessage) (InjectResult, error)
-	// PollSensor runs one poll now and returns the recorded sensor run.
-	PollSensor(ctx context.Context, sensorID string) (*store.SensorRun, error)
+	// PollSensor runs one poll now (a manual poll: it never applies
+	// first_run: baseline) and returns the recorded sensor run with what the
+	// poll started.
+	PollSensor(ctx context.Context, sensorID string, opts PollOptions) (PollResult, error)
+	// RunFlow polls every sensor the flow subscribes to now, in parallel, with
+	// the flow as the only target. It works for a disabled flow.
+	RunFlow(ctx context.Context, flowID string, opts RunFlowOptions) (RunFlowResult, error)
+	// ResetSensor clears the sensor's dedup keys and incremental state, records
+	// principal as who did it, and optionally runs the sensor at once.
+	ResetSensor(ctx context.Context, sensorID, principal string, opts ResetOptions) (ResetResult, error)
 	// PauseSensor stops the scheduler polling one sensor (persisted; idempotent).
 	// Poll now and event injection still work. principal is recorded as who paused it.
 	PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error)

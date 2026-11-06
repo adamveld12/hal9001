@@ -68,10 +68,10 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("- `hal9001 sensors validate sensor.yaml` checks the file against the sensor format only.\n\n")
 
 	w("## The sensor file\n\n")
-	w("```yaml\nid: github-notifications\ninterval: 2m            # or: cron: \"*/5 9-18 * * 1-5\"  (exactly one of the two)\nlang: bash\nscript: |\n  gh api notifications --paginate -q '.[]'\nkey: \"{{.id}}:{{.updated_at}}\"\nfirst_run: baseline\ntimeout: 60s\n```\n\n")
+	w("```yaml\nid: github-notifications\ninterval: 2m            # or: cron: \"*/5 9-18 * * 1-5\"  (at most one of the two)\nlang: bash\nscript: |\n  gh api notifications --paginate -q '.[]'\nkey: \"{{.id}}:{{.updated_at}}\"\nfirst_run: baseline\ntimeout: 60s\n```\n\n")
 	w("| Field | Meaning |\n|---|---|\n")
 	w("| `id` | Names the sensor and its file. |\n")
-	w("| `interval` / `cron` | Exactly one. `interval` is a Go duration (`30s`, `2m`, `1h`; at least `1s`). `cron` has 5 fields (minute hour day-of-month month day-of-week) in local time. |\n")
+	w("| `interval` / `cron` | At most one; with neither the sensor only runs on request (Run now). `interval` is a Go duration (`30s`, `2m`, `1h`; at least `1s`). `cron` has 5 fields (minute hour day-of-month month day-of-week) in local time. |\n")
 	w("| `lang` | `bash`, `python` (python3), `node`, `jq` (`jq -c -f`) or `exec` (`command: [argv...]`, no shell, no `script`). Inline `script` for every language except `exec`. |\n")
 	w("| `cwd` | Optional working directory (a plain path). Default: the sensor's persistent state directory `$HAL_STATE_DIR`. |\n")
 	w("| `key` | Required. A Go `text/template` over ONE item that yields its dedup key. |\n")

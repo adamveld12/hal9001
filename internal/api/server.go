@@ -213,6 +213,7 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"updateSensor":    s.updateSensor,
 		"deleteSensor":    s.deleteSensor,
 		"pollSensor":      s.pollSensor,
+		"resetSensor":     s.resetSensor,
 		"pauseSensor":     s.pauseSensor,
 		"resumeSensor":    s.resumeSensor,
 		"listSensorEnv":   s.listSensorEnv,
@@ -233,6 +234,7 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"updateFlow":       s.updateFlow,
 		"deleteFlow":       s.deleteFlow,
 		"testFlowNode":     s.testFlowNode,
+		"runFlow":          s.runFlow,
 		"listFlowVersions": s.listFlowVersions,
 		"getFlowVersion":   s.getFlowVersion,
 

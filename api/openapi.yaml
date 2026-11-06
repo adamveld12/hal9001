@@ -434,27 +434,88 @@ paths:
     post:
       operationId: pollSensor
       tags: [sensors]
-      summary: Poll now
+      summary: Run now (poll a sensor)
       description: |
-        Starts a poll outside the schedule and returns the new SensorRun immediately. Follow it with
+        Polls the sensor outside its schedule, waits for the poll to finish and returns the recorded SensorRun
+        together with what it started. If the client gives up first the poll keeps running; follow it with
         `GET /api/sensor-runs/{id}?wait=30s`. 409 `invalid-state` when a poll of this sensor is already running;
         423 `paused` while the kill switch is engaged. A sensor that was paused individually
-        (`POST /api/sensors/{id}/pause`) can still be polled this way: only the scheduler honours that pause.
+        (`POST /api/sensors/{id}/pause`) can still be polled this way: only the scheduler honours that pause. A sensor
+        without `interval` and `cron` (manual-only) is run this way only.
+
+        The body is optional; an empty body is the plain poll. Items whose dedup key is new become events and fan out
+        as live runs to the enabled flows subscribed to the sensor (`new_events`). With `rerun_seen: true`, each item
+        whose key was already seen is also replayed (`kind: replay` runs on the current flow versions) into those
+        flows (`rerun_events`); the replayed event is the most recent stored event of that key, and when it has been
+        pruned the item is stored as a new event of this manual run. The dedup state does not change. `flows`
+        restricts both to the listed flows, each of which must subscribe to the sensor and may be disabled.
+
+        A manual poll never applies `first_run: baseline`: on the sensor's very first poll its items become events
+        normally. Only the scheduler's first poll baselines.
       x-hal-service: admin
       x-hal-paused: reject
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PollRequest'}
       responses:
         '202':
-          description: Poll started.
+          description: Poll finished (or still running if the request was cancelled).
           headers:
             Location: {$ref: '#/components/headers/Location'}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/SensorRun'}
+              schema: {$ref: '#/components/schemas/PollResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/reset:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    post:
+      operationId: resetSensor
+      tags: [sensors]
+      summary: Reset a sensor's dedup state
+      description: |
+        Makes the sensor forget what it has seen: its dedup keys are cleared and so is its incremental state
+        (`last_success_at`, so `HAL_LAST_SUCCESS_AT` is unset on the next poll). Who did it and when is stored
+        (`status.reset_at`, `status.reset_by`). Events, sensor runs, flow runs and inbox items are kept as history;
+        the script's own files in `$HAL_STATE_DIR` are not touched.
+
+        Afterwards the sensor behaves like a brand-new one: every item it returns next time is new and triggers its
+        flows again, and the next scheduled poll applies `first_run` (`baseline` marks everything seen without
+        firing, `fire` emits everything). With `run: true` the reset is followed at once by a manual poll (which never
+        baselines; `rerun_flows` restricts it to those flows, as `flows` does for the poll endpoint) and `run` has the
+        shape of the poll response.
+
+        Works while the sensor is paused. 409 `invalid-state` while a poll of the sensor is running (nothing is
+        changed). 423 `paused` under the kill switch only with `run: true` (nothing is changed).
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SensorResetRequest'}
+      responses:
+        '200':
+          description: The sensor was reset.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorResetResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         '423': {$ref: '#/components/responses/Paused'}
         default: {$ref: '#/components/responses/Error'}
   /api/sensors/{id}/pause:
@@ -918,6 +979,46 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}/run:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+    post:
+      operationId: runFlow
+      tags: [flows]
+      summary: Run a flow now
+      description: |
+        Polls every sensor the flow subscribes to, in parallel, each as a normal manual sensor run, with this flow as
+        the only target: new items become events with a live run of this flow only, and with `rerun_seen: true` items
+        already seen are replayed into it (`kind: replay`). Other flows subscribed to those sensors get nothing. The
+        saved version of the flow runs. Blocks until the polls have finished; the flow runs it created are returned
+        and can be followed with `GET /api/flow-runs/{id}?wait=30s`.
+
+        A flow with `enabled: false` can be run this way: running it is an explicit user action. 422 when the flow
+        subscribes to no sensor. 409 `invalid-state` when the flow file has errors. A sensor that cannot be polled
+        (missing, invalid, or already being polled) is reported in its entry with `error`; the others still run. 423
+        `paused` while the kill switch is engaged.
+      x-hal-service: admin
+      x-hal-paused: reject
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FlowRunNowRequest'}
+      responses:
+        '202':
+          description: The polls finished; flow runs were created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowRunNowResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '423': {$ref: '#/components/responses/Paused'}
@@ -2578,8 +2679,8 @@ components:
     Sensor:
       type: object
       description: |
-        Sensor definition (§5). Exactly one of `interval` and `cron`. `exec` takes `command`; every other `lang`
-        takes `script`.
+        Sensor definition (§5). At most one of `interval` and `cron`; with neither the sensor is manual-only: the
+        scheduler never polls it and only "Run now" does. `exec` takes `command`; every other `lang` takes `script`.
       additionalProperties: false
       required: [id, lang]
       properties:
@@ -2881,7 +2982,7 @@ components:
     # ---------------------------------------------------------------- file resources (sensors, flows, prompts)
     SensorStatus:
       type: object
-      required: [state, paused, paused_at, paused_by, last_run, last_success_at, next_poll_at, new_items_24h]
+      required: [state, paused, paused_at, paused_by, last_run, last_success_at, next_poll_at, manual, reset_at, reset_by, new_items_24h]
       properties:
         paused:
           type: boolean
@@ -2896,7 +2997,12 @@ components:
         last_success_at: {$ref: '#/components/schemas/NullableTimestamp'}
         next_poll_at:
           $ref: '#/components/schemas/NullableTimestamp'
-          description: 'When the scheduler polls next. `null` while paused (kill switch or this sensor), when the file is invalid, and when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Poll now" still works).'
+          description: 'When the scheduler polls next. `null` while paused (kill switch or this sensor), when the file is invalid, when no enabled flow subscribes to the sensor (such a sensor is not scheduled; "Run now" still works) and for a manual-only sensor (`manual`).'
+        manual: {type: boolean, description: 'The sensor has neither `interval` nor `cron`: the scheduler never polls it, only "Run now" (`POST /api/sensors/{id}/poll`) does.'}
+        reset_at:
+          $ref: '#/components/schemas/NullableTimestamp'
+          description: 'When the sensor''s dedup state was last reset (`POST /api/sensors/{id}/reset`); null if never.'
+        reset_by: {type: [string, 'null'], description: 'Principal that last reset the sensor; null if never reset.'}
         new_items_24h: {type: integer, minimum: 0}
     SensorSummary:
       type: object
@@ -3379,6 +3485,70 @@ components:
         deduplicated: {type: boolean, description: 'True when the key was already seen; `event` is then the existing event and no runs were created.'}
         dedup_key: {type: string}
         flow_runs: {type: array, items: {$ref: '#/components/schemas/FlowRunBrief'}}
+    PollRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        rerun_seen: {type: boolean, default: false, description: 'Also replay items whose dedup key was already seen into each target flow. The dedup state is not changed.'}
+        flows:
+          type: array
+          items: {$ref: '#/components/schemas/Slug'}
+          description: 'Send new events and re-runs only to these flows. Each must subscribe to the sensor and may be disabled. Default: every enabled flow subscribed to the sensor.'
+    PollResult:
+      description: The SensorRun of the poll plus what the poll started.
+      allOf:
+        - $ref: '#/components/schemas/SensorRun'
+        - type: object
+          required: [new_events, rerun_events, flow_run_ids]
+          properties:
+            new_events: {type: integer, minimum: 0, description: 'Items that became events (and live runs).'}
+            rerun_events: {type: integer, minimum: 0, description: 'Already-seen items replayed into at least one flow (`rerun_seen`).'}
+            flow_run_ids:
+              type: array
+              items: {$ref: '#/components/schemas/Ulid'}
+              description: 'Every flow run the poll created: live runs of new events, then replay runs.'
+    SensorResetRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        run: {type: boolean, default: false, description: 'Run the sensor now right after the reset (a manual poll: it never baselines).'}
+        rerun_flows:
+          type: array
+          items: {$ref: '#/components/schemas/Slug'}
+          description: 'With `run`: send the run''s events only to these flows (as `flows` of the poll endpoint).'
+    SensorResetResult:
+      type: object
+      required: [sensor_id, reset_at, reset_by, keys_cleared, run]
+      properties:
+        sensor_id: {$ref: '#/components/schemas/Slug'}
+        reset_at: {$ref: '#/components/schemas/Timestamp'}
+        reset_by: {type: string, description: Principal that reset the sensor.}
+        keys_cleared: {type: integer, minimum: 0, description: Number of dedup keys that were forgotten.}
+        run:
+          oneOf: [{$ref: '#/components/schemas/PollResult'}, {type: 'null'}]
+          description: 'The poll started by `run: true`; null otherwise.'
+    FlowRunNowRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        rerun_seen: {type: boolean, default: false, description: 'Also replay items whose dedup key was already seen into the flow.'}
+    FlowRunNowSensorResult:
+      type: object
+      required: [sensor_id, run, new_events, rerun_events, flow_run_ids, error]
+      properties:
+        sensor_id: {$ref: '#/components/schemas/Slug'}
+        run: {oneOf: [{$ref: '#/components/schemas/SensorRun'}, {type: 'null'}], description: 'The sensor run; null when the poll could not be started.'}
+        new_events: {type: integer, minimum: 0}
+        rerun_events: {type: integer, minimum: 0}
+        flow_run_ids: {type: array, items: {$ref: '#/components/schemas/Ulid'}}
+        error: {type: [string, 'null'], description: 'Why the poll could not be started (sensor missing or invalid, or a poll of it already running).'}
+    FlowRunNowResult:
+      type: object
+      required: [flow_id, sensors, flow_run_ids]
+      properties:
+        flow_id: {$ref: '#/components/schemas/Slug'}
+        sensors: {type: array, items: {$ref: '#/components/schemas/FlowRunNowSensorResult'}, description: 'One per subscribed sensor, in the flow''s subscribe order.'}
+        flow_run_ids: {type: array, items: {$ref: '#/components/schemas/Ulid'}, description: 'Every flow run created, in sensor order.'}
     ReplayRequest:
       type: object
       additionalProperties: false

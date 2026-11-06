@@ -9,14 +9,19 @@ import (
 	"time"
 )
 
-// Schedule is when a sensor polls: a fixed interval or a cron expression.
+// Schedule is when a sensor polls: a fixed interval or a cron expression. The
+// zero Schedule (neither) is manual: the scheduler never polls the sensor and
+// only an explicit action ("Run now", `sensors poll`) does.
 type Schedule struct {
 	Interval time.Duration
 	Cron     *Cron
 }
 
-// Schedule returns the sensor's parsed schedule. Exactly one of interval and
-// cron must be set.
+// Manual reports whether the schedule never fires on its own.
+func (s Schedule) Manual() bool { return s.Interval == 0 && s.Cron == nil }
+
+// Schedule returns the sensor's parsed schedule. At most one of interval and
+// cron may be set; with neither, the sensor is manual-only.
 func (s *Sensor) Schedule() (Schedule, error) {
 	switch {
 	case s.Interval != 0 && s.Cron != "":
@@ -33,7 +38,7 @@ func (s *Sensor) Schedule() (Schedule, error) {
 		}
 		return Schedule{Cron: c}, nil
 	default:
-		return Schedule{}, errors.New("one of interval or cron is required")
+		return Schedule{}, nil
 	}
 }
 
