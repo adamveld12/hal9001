@@ -73,7 +73,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		Kind: tools.KindFlow, RunID: runID, Info: func() tools.RunInfo { return e.agentRunInfo(ne, runID) },
 		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
 		ReadOnly:        agent.PolicyFor(mode, style, phase) == agent.PolicyReadonly,
-		Sandbox:         node.Sandbox, Image: node.Image, Repo: node.Repo, Ref: node.Ref, Tools: node.Tools,
+		Sandbox:         node.Sandbox, Image: node.Image, Repo: node.Repo, Ref: node.Ref, Tools: toolIDs(node.Tools), ToolApprove: toolApprovals(node.Tools),
 	})
 	if err != nil {
 		return failure(errConfig, "hal tools: "+err.Error())
@@ -367,3 +367,26 @@ func (e *Engine) deniedPayload(ne *nodeEnv, run *store.AgentRun, ap *store.Appro
 }
 
 var errNoWaiter = errors.New("no agent process is waiting for this approval")
+
+// toolIDs lists the custom tool ids of an agent node.
+func toolIDs(refs []spec.ToolRef) []string {
+	ids := make([]string, len(refs))
+	for i, r := range refs {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// toolApprovals collects the per-node approval overrides of an agent node's custom tools.
+func toolApprovals(refs []spec.ToolRef) map[string]spec.ToolApprove {
+	var out map[string]spec.ToolApprove
+	for _, r := range refs {
+		if r.Approve != nil {
+			if out == nil {
+				out = map[string]spec.ToolApprove{}
+			}
+			out[r.ID] = *r.Approve
+		}
+	}
+	return out
+}

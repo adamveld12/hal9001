@@ -39,8 +39,11 @@ edges: []
 `
 
 func draftFileOf(kind string) string {
-	if kind == store.AssistTargetFlow {
+	switch kind {
+	case store.AssistTargetFlow:
 		return FlowDraftFile
+	case store.AssistTargetTool:
+		return ToolDraftFile
 	}
 	return SensorDraftFile
 }

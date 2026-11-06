@@ -153,7 +153,7 @@ const sensorYAML = "id: gh\nlang: bash\nscript: echo '[]'\n"
 
 func assistDraft() map[string]any {
 	return map[string]any{
-		"kind": "sensor", "yaml": sensorYAML, "hash": hash, "sensor_id": "gh", "flow_id": nil, "prompts": []any{},
+		"kind": "sensor", "yaml": sensorYAML, "hash": hash, "sensor_id": "gh", "flow_id": nil, "tool_id": nil, "prompts": []any{},
 		"diagnostics": []any{diagnostic("warning", "no-key", "key template missing")},
 		"updated_at":  ts, "updated_by": "agent",
 	}

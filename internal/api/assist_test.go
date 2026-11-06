@@ -317,3 +317,4 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 }
 
 func (d *assistDouble) FlowCreated(context.Context, string) error { return nil }
+func (d *assistDouble) ToolCreated(context.Context, string) error { return nil }

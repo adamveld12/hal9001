@@ -48,6 +48,7 @@ type apiParams struct {
 	MCP       api.MCPHub
 	Workspace func() *spec.Workspace
 	Reload    func()
+	BasePATH  string
 	Version   string
 	UI        http.Handler
 	Log       *slog.Logger

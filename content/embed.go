@@ -4,7 +4,7 @@ package content
 
 import "embed"
 
-// FS contains config.yaml, env.example, sensors/, flows/ and prompts/ at its root.
+// FS contains config.yaml, env.example, sensors/, tools/, flows/ and prompts/ at its root.
 //
-//go:embed config.yaml env.example sensors flows prompts
+//go:embed config.yaml env.example sensors tools flows prompts
 var FS embed.FS

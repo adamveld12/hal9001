@@ -284,6 +284,157 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/tools": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List custom tools
+     * @description Every tool file under `tools/`, including ones that fail validation.
+     */
+    get: operations["listTools"];
+    put?: never;
+    /**
+     * Create a custom tool
+     * @description Writes `tools/<id>.yaml`. Send either `yaml` (raw file text) or `tool` (JSON form). Rejected with 422 when
+     *     validation reports errors and 409 `already-exists` when the id is taken. Open assist sessions that were
+     *     authoring a new tool with this id become sessions on it (`target.id` is set).
+     */
+    post: operations["createTool"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/tools/validate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Validate a custom tool without saving
+     * @description Always 200 when the request itself is well formed; check `valid` and `diagnostics`.
+     */
+    post: operations["validateTool"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/tools/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    /** Get a custom tool */
+    get: operations["getTool"];
+    /**
+     * Replace a custom tool
+     * @description Send `expected_hash` (the `hash` from the last read) and either `yaml` or `tool`. 409 `conflict` when the file
+     *     changed on disk since.
+     */
+    put: operations["updateTool"];
+    post?: never;
+    /**
+     * Delete a custom tool
+     * @description Removes the file and the tool's own env file.
+     */
+    delete: operations["deleteTool"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/tools/{id}/test": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run a custom tool once
+     * @description Runs the saved tool locally with `args` (defaults filled in, checked against its parameters), waits for it to
+     *     finish and returns the result: stdout (structured when it is a JSON object or array), stderr, exit code and
+     *     duration. Secret env values are redacted. Nothing is recorded and no approval is asked: this is the owner
+     *     testing their own tool. A tool that fails is still a 200 with `ok: false`; 422 means the arguments do not fit
+     *     the parameters or the tool file is invalid. 423 `paused` while the kill switch is engaged.
+     */
+    post: operations["testTool"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/tools/{id}/env": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Environment keys of a custom tool
+     * @description Keys from the tool's own env file (`env.d/tools/<id>.env`) only. Secret values (the default) are write-only
+     *     and never returned by any endpoint; a key marked plain (`secret: false`) returns its `value` and is not
+     *     redacted from output. `overrides_global` tells whether the key also exists in the global `env` file.
+     */
+    get: operations["listToolEnv"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/tools/{id}/env/{key}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+        key: components["parameters"]["EnvKey"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Set an environment value on a custom tool
+     * @description Creates or replaces the key in the tool's own env file (git-ignored, not part of the tool YAML). The value is
+     *     injected into the tool's process on top of the global env (the tool's value wins) and, unless `secret` is
+     *     false, redacted from output. Takes effect on the next call. Omit `value` to change only the `secret` flag of
+     *     an existing key (404 when the key does not exist).
+     */
+    put: operations["setToolEnv"];
+    post?: never;
+    /** Remove an environment key from a custom tool */
+    delete: operations["deleteToolEnv"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/sensors": {
     parameters: {
       query?: never;
@@ -1493,7 +1644,7 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Run the draft once (a poll for a sensor, one input for a flow)
+     * Run the draft once (a poll for a sensor, one input for a flow, one call for a tool)
      * @description Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
      *     with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
      *     in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
@@ -1516,6 +1667,12 @@ export interface paths {
      *     `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
      *     the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
      *     (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
+     *
+     *     Tool sessions: calls the draft tool once with `args` (defaults filled in; 422 when they do not fit its
+     *     parameters) with the global env file overlaid by the target tool's `env.d/tools` file, and returns the `tool`
+     *     variant. Nothing is recorded and no approval of the call itself is asked. The same approval rule as for
+     *     sensors applies to the agent: the hash covers `lang`, `script`, `command` and the env names the code
+     *     references.
      */
     post: operations["testAssistDraft"];
     delete?: never;
@@ -2368,8 +2525,8 @@ export interface components {
       repo?: string;
       /** @description Git ref of `repo` (sandbox option). */
       ref?: string;
-      /** @description Custom tool ids made available to the agent through hal MCP. */
-      tools?: string[];
+      /** @description Custom tools made available to the agent through hal MCP. */
+      tools?: components["schemas"]["NodeToolRef"][];
       ui?: components["schemas"]["NodeUI"];
     };
     /** @description Writes an inbox item. Fields are Go templates over `{.event, .input, .flow, .run}`. Port `out` only. */
@@ -2815,6 +2972,165 @@ export interface components {
       /** @description Canonical YAML of the sensor, null when the input did not parse. */
       yaml: string | null;
       sensor: components["schemas"]["Sensor"] | null;
+    };
+    /** @enum {string} */
+    ToolLang: "bash" | "python" | "node" | "exec";
+    /** @enum {string} */
+    ToolParamType:
+      "string" | "number" | "integer" | "boolean" | "array" | "object";
+    ToolParam: {
+      type: components["schemas"]["ToolParamType"];
+      description?: string;
+      /** @default false */
+      required?: boolean;
+      /** @description Allowed values. */
+      enum?: components["schemas"]["JsonValue"][];
+      default?: components["schemas"]["JsonValue"];
+    };
+    /** @description A condition group over the tool's arguments (the Transform condition model; `field` is a path into the arguments object). */
+    ToolWhen: {
+      /**
+       * @default all
+       * @enum {string}
+       */
+      match?: "all" | "any";
+      conditions: components["schemas"]["TransformCondition"][];
+    };
+    /**
+     * @description A custom tool on an agent node: its id, or `{id, approve}` to override the tool's own approval setting for this
+     *     node. The tool is exposed to the agent as its id lowercased with `-` replaced by `_`.
+     */
+    NodeToolRef:
+      | string
+      | {
+          id: string;
+          approve?: components["schemas"]["ToolApprove"];
+        };
+    /**
+     * @description When a call needs approval: `never`, `always` (the default), or `{when: {match, conditions}}`, which asks only
+     *     when the conditions match the arguments (defaults filled in).
+     */
+    ToolApprove:
+      | ("never" | "always")
+      | {
+          when: components["schemas"]["ToolWhen"];
+        };
+    /**
+     * @description Custom tool (`tools/<id>.yaml`). Arguments are described by `params` or, as an override, by a raw JSON Schema
+     *     in `schema` (not both). A call passes the arguments as JSON on stdin and as `ARG_<UPPER_NAME>` variables
+     *     (strings as is, numbers and booleans as text, arrays and objects as JSON). Stdout is the result; a non-zero
+     *     exit is a tool error carrying the stderr tail. `exec` takes `command`; every other `lang` takes `script`.
+     */
+    Tool: {
+      id: components["schemas"]["Slug"];
+      /** @description What the tool does and when to use it; the agent reads this. */
+      description: string;
+      params?: {
+        [key: string]: components["schemas"]["ToolParam"];
+      };
+      /** @description Raw JSON Schema of the arguments (`type: object`). Replaces `params`. */
+      schema?: {
+        [key: string]: unknown;
+      };
+      lang: components["schemas"]["ToolLang"];
+      script?: string;
+      /** @description argv for `lang: exec`. */
+      command?: string[];
+      approve?: components["schemas"]["ToolApprove"];
+      timeout?: components["schemas"]["Duration"];
+      /**
+       * @description Run in the calling node sandbox instead of on the hal host.
+       * @default false
+       */
+      runs_in_sandbox?: boolean;
+    };
+    ToolSummary: {
+      id: components["schemas"]["Slug"];
+      /** @description Relative to the home dir, e.g. `tools/now.yaml`. */
+      path: string;
+      hash: components["schemas"]["Hash"];
+      /** @description Null when the YAML does not parse. */
+      tool: components["schemas"]["Tool"] | null;
+      /** @description The effective JSON Schema of the arguments (built from `params`, or the raw `schema`). Null when the YAML does not parse. */
+      schema: {
+        [key: string]: unknown;
+      } | null;
+      diagnostics: components["schemas"]["Diagnostic"][];
+    };
+    ToolDetail: components["schemas"]["ToolSummary"] & {
+      /** @description The file as on disk. */
+      yaml: string;
+    };
+    ToolList: {
+      items: components["schemas"]["ToolSummary"][];
+    };
+    /** @description Exactly one of `yaml` and `tool`. */
+    ToolCreateRequest: {
+      yaml?: string;
+      tool?: components["schemas"]["Tool"];
+    } & (unknown | unknown);
+    /** @description `expected_hash` plus exactly one of `yaml` and `tool`. */
+    ToolUpdateRequest: {
+      expected_hash: components["schemas"]["Hash"];
+      yaml?: string;
+      tool?: components["schemas"]["Tool"];
+    } & (unknown | unknown);
+    ToolValidateRequest: {
+      yaml?: string;
+      tool?: components["schemas"]["Tool"];
+    } & (unknown | unknown);
+    ToolValidation: {
+      /** @description True when there are no `error` diagnostics. */
+      valid: boolean;
+      diagnostics: components["schemas"]["Diagnostic"][];
+      /** @description Canonical YAML of the tool, null when the input did not parse. */
+      yaml: string | null;
+      tool: components["schemas"]["Tool"] | null;
+      /** @description The effective JSON Schema of the arguments. */
+      schema: {
+        [key: string]: unknown;
+      } | null;
+    };
+    ToolTestRequest: {
+      /** @description The arguments object; omitted means `{}`. */
+      args?: {
+        [key: string]: unknown;
+      };
+    };
+    ToolTestResult: {
+      /** @description Exit code 0 within the timeout. */
+      ok: boolean;
+      /** @description The arguments as passed to the tool, with defaults filled in. */
+      args: {
+        [key: string]: unknown;
+      };
+      /** @description Redacted standard output. */
+      stdout: string;
+      /** @description Stdout parsed when it is a JSON object or array; null otherwise. */
+      structured:
+        | {
+            [key: string]: unknown;
+          }
+        | unknown[]
+        | null;
+      /** @description Redacted standard error. */
+      stderr: string;
+      exit_code: number;
+      duration_ms: number;
+      timed_out: boolean;
+      /** @description The tool error message with the stderr tail; null when ok. */
+      error: string | null;
+    };
+    ToolEnvKeyList: {
+      items: {
+        key: components["schemas"]["EnvKeyName"];
+        /** @description Secret values are redacted from output and never returned. A key is secret unless marked plain. */
+        secret: boolean;
+        /** @description The value of a plain key (`secret: false`); null for a secret key. */
+        value: string | null;
+        /** @description The global `env` file has the same key; this tool sees its own value. */
+        overrides_global: boolean;
+      }[];
     };
     /** @description Run statistics over the last 7 days (bounded by retention). `live` and `replay` runs only. */
     FlowHealth: {
@@ -3701,7 +4017,7 @@ export interface components {
       allowed_logins: string[];
     };
     /** @enum {string} */
-    AssistTargetKind: "sensor" | "flow";
+    AssistTargetKind: "sensor" | "flow" | "tool";
     /**
      * @description `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
      *     approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
@@ -3716,7 +4032,7 @@ export interface components {
     AssistDraftAuthor: "agent" | "user";
     AssistTarget: {
       kind: components["schemas"]["AssistTargetKind"];
-      /** @description Sensor or flow id; null when the session authors a new sensor or flow. */
+      /** @description Sensor, flow or tool id; null when the session authors a new one. */
       id: components["schemas"]["Slug"] | null;
     };
     AssistTargetRequest: {
@@ -3732,17 +4048,19 @@ export interface components {
       exists: boolean;
     };
     /**
-     * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+     * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml`, `flow.yaml` or `tool.yaml`). Only the
      *     user's Save writes a real file.
      */
     AssistDraft: {
       kind: components["schemas"]["AssistTargetKind"];
       yaml: string;
       hash: components["schemas"]["Hash"];
-      /** @description Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows. */
+      /** @description Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows and tools. */
       sensor_id: components["schemas"]["Slug"] | null;
-      /** @description Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors. */
+      /** @description Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and tools. */
       flow_id: components["schemas"]["Slug"] | null;
+      /** @description Tool sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and flows. */
+      tool_id: components["schemas"]["Slug"] | null;
       /** @description Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`. */
       prompts: components["schemas"]["AssistDraftPrompt"][];
       /** @description Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts. */
@@ -3907,19 +4225,52 @@ export interface components {
       nodes: components["schemas"]["AssistFlowTestNode"][];
       edges_taken: components["schemas"]["AssistFlowTestEdge"][];
     };
-    /** @description The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`. */
+    /**
+     * @description Outcome of calling the draft tool once (tool sessions). Same fields as `ToolTestResult` plus `kind`. A failing
+     *     tool is still a result (`ok: false`, `error` carries the stderr tail).
+     */
+    AssistToolTestResult: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "tool";
+      ok: boolean;
+      args: {
+        [key: string]: unknown;
+      };
+      stdout: string;
+      structured:
+        | {
+            [key: string]: unknown;
+          }
+        | unknown[]
+        | null;
+      stderr: string;
+      exit_code: number;
+      duration_ms: number;
+      timed_out: boolean;
+      error: string | null;
+    };
+    /** @description The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`, tool sessions `tool`. */
     AssistTestResult:
       | components["schemas"]["AssistSensorTestResult"]
-      | components["schemas"]["AssistFlowTestResult"];
+      | components["schemas"]["AssistFlowTestResult"]
+      | components["schemas"]["AssistToolTestResult"];
     /**
-     * @description Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
-     *     none, the first sample is used (422 when there is none).
+     * @description Flow sessions: the input to run the draft flow on. At most one of `sample_index`, `event_id` and `input`; with
+     *     none, the first sample is used (422 when there is none). Tool sessions: `args`, the arguments object of the
+     *     call (default `{}`). Ignored for sensors.
      */
     AssistTestRequest: {
       /** @description Index into `GET /api/assist/sessions/{id}/samples`. */
       sample_index?: number;
       event_id?: components["schemas"]["Ulid"];
       input?: components["schemas"]["JsonValue"];
+      /** @description Tool sessions only. */
+      args?: {
+        [key: string]: unknown;
+      } | null;
     };
     AssistSample: {
       index: number;
@@ -4013,8 +4364,16 @@ export interface components {
     /** @description A file under the home dir changed on disk or through the API (hot reload). */
     ConfigChange: {
       /** @enum {string} */
-      kind: "sensor" | "flow" | "prompt" | "settings" | "env" | "sensor_env";
-      /** @description Sensor id, flow id, or prompt name; for `sensor_env` the sensor id; null for settings and env. */
+      kind:
+        | "sensor"
+        | "flow"
+        | "prompt"
+        | "settings"
+        | "env"
+        | "sensor_env"
+        | "tool"
+        | "tool_env";
+      /** @description Sensor id, flow id, tool id, or prompt name; for `sensor_env` and `tool_env` the owner id; null for settings and env. */
       id: string | null;
       hash: components["schemas"]["NullableHash"];
       deleted: boolean;
@@ -4086,7 +4445,7 @@ export interface components {
        */
       type: "sensor.changed";
     };
-    /** @description A sensor, flow, prompt, settings, env, or sensor env file changed. `data` is `ConfigChange`. */
+    /** @description A sensor, flow, tool, prompt, settings, env, sensor env or tool env file changed. `data` is `ConfigChange`. */
     ConfigChangedEvent: components["schemas"]["StreamEnvelope"] & {
       /** @enum {unknown} */
       type?: "config.changed";
@@ -4454,6 +4813,7 @@ export interface components {
     ExpectedHash: components["schemas"]["Hash"];
     HashPath: components["schemas"]["Hash"];
     SensorId: components["schemas"]["Slug"];
+    ToolId: components["schemas"]["Slug"];
     FlowId: components["schemas"]["Slug"];
     PromptName: components["schemas"]["Slug"];
     RuntimeName: components["schemas"]["Slug"];
@@ -4819,6 +5179,297 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listTools: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description All tools, ordered by id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  createTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ToolCreateRequest"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          Location: components["headers"]["Location"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  validateTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ToolValidateRequest"];
+      };
+    };
+    responses: {
+      /** @description Validation result. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolValidation"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Tool with raw YAML, parsed JSON, effective argument schema and diagnostics. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  updateTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ToolUpdateRequest"];
+      };
+    };
+    responses: {
+      /** @description Saved. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  deleteTool: {
+    parameters: {
+      query: {
+        /** @description Hash from the last read of the file. 409 `conflict` when the file differs. */
+        expected_hash: components["parameters"]["ExpectedHash"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  testTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ToolTestRequest"];
+      };
+    };
+    responses: {
+      /** @description The run. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolTestResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listToolEnv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Key names, sorted. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolEnvKeyList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  setToolEnv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+        key: components["parameters"]["EnvKey"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EnvSetRequest"];
+      };
+    };
+    responses: {
+      /** @description Stored. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  deleteToolEnv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+        key: components["parameters"]["EnvKey"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Removed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       415: components["responses"]["UnsupportedMediaType"];
       default: components["responses"]["Error"];
     };
@@ -6578,7 +7229,7 @@ export interface operations {
     parameters: {
       query?: {
         target_kind?: components["schemas"]["AssistTargetKind"];
-        /** @description Sensor or flow id. Only sessions that edit that target. */
+        /** @description Sensor, flow or tool id. Only sessions that edit that target. */
         target_id?: components["schemas"]["Slug"];
       };
       header?: never;

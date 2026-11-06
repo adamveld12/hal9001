@@ -39,6 +39,7 @@ const (
 	CodeUnreachable     = "unreachable"
 	CodeUnknownSensor   = "unknown_sensor"
 	CodeUnknownPrompt   = "unknown_prompt"
+	CodeUnknownTool     = "unknown_tool"
 	CodeUnknownRuntime  = "unknown_runtime"
 	CodeUnknownStack    = "unknown_stack"
 	CodeUnknownModule   = "unknown_module"

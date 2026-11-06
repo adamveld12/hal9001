@@ -41,8 +41,11 @@ type Workspace struct {
 	// the sensor id. A file does not need a matching sensor to be loaded.
 	SensorEnv []*File[Env]    `json:"sensor_env"`
 	Sensors   []*File[Sensor] `json:"sensors"`
-	Flows     []*File[Flow]   `json:"flows"`
-	Prompts   []*File[Prompt] `json:"prompts"`
+	// ToolEnv are the per-tool env files (env.d/tools/<id>.env); Name is the tool id.
+	ToolEnv []*File[Env]    `json:"tool_env"`
+	Tools   []*File[Tool]   `json:"tools"`
+	Flows   []*File[Flow]   `json:"flows"`
+	Prompts []*File[Prompt] `json:"prompts"`
 	// Diagnostics are findings not tied to one file, such as an unreadable
 	// directory.
 	Diagnostics []Diagnostic `json:"diagnostics"`
@@ -80,7 +83,10 @@ func find[T any](files []*File[T], name string) *File[T] {
 // Refs returns the references flows may use: every sensor and prompt file
 // present (valid or not) and the configured runtimes.
 func (w *Workspace) Refs() *Refs {
-	r := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, Runtimes: map[string]Runtime{}}
+	r := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, Runtimes: map[string]Runtime{}, Tools: map[string]bool{}}
+	for _, t := range w.Tools {
+		r.Tools[t.Name] = true
+	}
 	for _, s := range w.Sensors {
 		r.Sensors[s.Name] = true
 	}
@@ -103,7 +109,13 @@ func (w *Workspace) AllDiagnostics() []Diagnostic {
 	for _, f := range w.SensorEnv {
 		out = append(out, f.Diagnostics...)
 	}
+	for _, f := range w.ToolEnv {
+		out = append(out, f.Diagnostics...)
+	}
 	for _, f := range w.Sensors {
+		out = append(out, f.Diagnostics...)
+	}
+	for _, f := range w.Tools {
 		out = append(out, f.Diagnostics...)
 	}
 	for _, f := range w.Flows {
@@ -122,13 +134,17 @@ func Load(home string) *Workspace {
 	w.loadConfig()
 	w.loadEnv()
 	w.loadSensorEnv()
+	w.loadToolEnv()
 
 	sensorNames := w.listDir(DirSensors, ".yaml")
 	flowNames := w.listDir(DirFlows, ".yaml")
 	promptNames := w.listDir(DirPrompts, ".md")
 
 	// References use file names, so they exist before any file is validated.
-	refs := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, Runtimes: map[string]Runtime{}}
+	refs := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, Runtimes: map[string]Runtime{}, Tools: map[string]bool{}}
+	for _, n := range w.listDir(DirTools, ".yaml") {
+		refs.Tools[n] = true
+	}
 	for _, n := range sensorNames {
 		refs.Sensors[n] = true
 	}
@@ -141,6 +157,9 @@ func Load(home string) *Workspace {
 
 	for _, n := range sensorNames {
 		w.Sensors = append(w.Sensors, loadFile(home, KindSensor, n, func(b []byte) (*Sensor, []Diagnostic) { return CheckSensor(n, b) }))
+	}
+	for _, n := range w.listDir(DirTools, ".yaml") {
+		w.Tools = append(w.Tools, loadFile(home, KindTool, n, func(b []byte) (*Tool, []Diagnostic) { return CheckTool(n, b) }))
 	}
 	for _, n := range promptNames {
 		w.Prompts = append(w.Prompts, loadFile(home, KindPrompt, n, func(b []byte) (*Prompt, []Diagnostic) { return CheckPrompt(n, b) }))
@@ -223,6 +242,24 @@ func (w *Workspace) loadSensorEnv() {
 			f.Diagnostics = withFile(rel, f.Diagnostics)
 		}
 		w.SensorEnv = append(w.SensorEnv, f)
+	}
+}
+
+// loadToolEnv reads every env.d/tools/<id>.env.
+func (w *Workspace) loadToolEnv() {
+	for _, n := range w.listDir(DirToolEnv, ".env") {
+		rel := KindToolEnv.Rel(n)
+		f := &File[Env]{Name: n, Path: rel}
+		b, err := os.ReadFile(KindToolEnv.Path(w.Home, n)) //nolint:gosec // name comes from a directory listing under home
+		if err != nil {
+			f.Value = &Env{Vars: map[string]string{}}
+			f.Diagnostics = []Diagnostic{{File: rel, Severity: SeverityError, Code: CodeReadError, Message: err.Error()}}
+		} else {
+			f.Raw, f.Hash = b, Hash(b)
+			f.Value, f.Diagnostics = ParseEnv(b)
+			f.Diagnostics = withFile(rel, f.Diagnostics)
+		}
+		w.ToolEnv = append(w.ToolEnv, f)
 	}
 }
 

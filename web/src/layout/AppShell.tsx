@@ -67,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
         icon: "command",
         key: "m",
       },
+      { to: "/tools", label: "Tools", icon: "command", key: "o" },
       { to: "/settings/auth", label: "Auth", icon: "lock", key: "u" },
     ],
   },

@@ -198,7 +198,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
-		Workspace: d.workspace, Reload: d.reload,
+		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH,
 		Version: opts.Version, UI: ui, Log: log,
 	})
 	// The API server announces on-disk edits to SSE clients and owns the

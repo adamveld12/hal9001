@@ -18,6 +18,8 @@ type Refs struct {
 	Sensors  map[string]bool
 	Prompts  map[string]bool
 	Runtimes map[string]Runtime
+	// Tools are the custom tool ids (valid or not). Nil skips the check of an agent node's tools.
+	Tools map[string]bool
 }
 
 var (
@@ -485,6 +487,22 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 	c.positiveDuration(p+".approval_timeout", n.ApprovalTimeout, "approval_timeout")
 	if n.Allow != nil {
 		c.regexps(p+".allow.tools", n.Allow.Tools)
+	}
+	seenTools := map[string]bool{}
+	for i, t := range n.Tools {
+		tp := fmt.Sprintf("%s.tools[%d]", p, i)
+		switch {
+		case !ValidID(t.ID):
+			c.errorf(CodeInvalidID, tp, "tool id %q is invalid", t.ID)
+		case seenTools[t.ID]:
+			c.errorf(CodeDuplicateID, tp, "tool %q is listed twice", t.ID)
+		case refs.Tools != nil && !refs.Tools[t.ID]:
+			c.errorf(CodeUnknownTool, tp, "unknown tool %q%s", t.ID, availableList(keysOf(refs.Tools)))
+		}
+		seenTools[t.ID] = true
+		if m := t.Approve; m != nil && m.Mode != ToolApproveNever && m.Mode != ToolApproveAlways && m.Mode != ToolApproveWhen {
+			c.errorf(CodeInvalidEnum, tp+".approve", "approve must be never, always or {when: ...}")
+		}
 	}
 	seen := map[string]bool{}
 	for i, m := range n.MCPServers {

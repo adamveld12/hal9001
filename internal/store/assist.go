@@ -28,10 +28,11 @@ func (s AssistStatus) valid() bool {
 	return false
 }
 
-// Assist target kinds: a sensor or a flow definition.
+// Assist target kinds: a sensor, a flow or a custom tool definition.
 const (
 	AssistTargetSensor = "sensor"
 	AssistTargetFlow   = "flow"
+	AssistTargetTool   = "tool"
 )
 
 // Who last wrote an assist draft.
@@ -134,7 +135,7 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 
 func (a *AssistSession) validate() error {
 	switch {
-	case a.TargetKind != AssistTargetSensor && a.TargetKind != AssistTargetFlow:
+	case a.TargetKind != AssistTargetSensor && a.TargetKind != AssistTargetFlow && a.TargetKind != AssistTargetTool:
 		return fmt.Errorf("%w: assist target kind %q", ErrInvalid, a.TargetKind)
 	case a.Runtime == "":
 		return fmt.Errorf("%w: assist session runtime required", ErrInvalid)

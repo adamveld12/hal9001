@@ -1,3 +1,4 @@
+import type { NodeToolRef } from "./toolSelection";
 // Flow model: the JSON form of the YAML in REQUIREMENTS §6 (snake_case keys,
 // identical to the file on disk). The editor edits this model directly; the
 // canvas graph is derived from it (see graph.ts).
@@ -86,8 +87,8 @@ export interface AgentNode {
   image?: string;
   repo?: string;
   ref?: string;
-  /** Custom tool ids. */
-  tools?: string[];
+  /** Custom tools: an id, or an id with an approval override. */
+  tools?: NodeToolRef[];
   timeout?: string;
   approval_timeout?: string;
   ui?: UIPos;

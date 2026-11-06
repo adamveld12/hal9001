@@ -38,6 +38,7 @@ import { discoverFields } from "./transform/fields";
 import { useSampleInput } from "./transform/useSampleInput";
 import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
+import { ToolsSection } from "./ToolsSection";
 
 export interface InspectorProps {
   node: FlowNode;
@@ -579,6 +580,11 @@ function AgentForm({
           }
         />
       </Field>
+      <ToolsSection
+        value={node.tools}
+        error={msgs(diags, "tools")}
+        onChange={(v) => onChange((n) => setOpt(n, "tools", v))}
+      />
       <div className="grid grid-cols-2 gap-2">
         <Field
           label="Timeout"

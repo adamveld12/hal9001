@@ -149,7 +149,7 @@ func usesExpectedHash(op *openapi3.Operation) bool {
 // transform ones run jq, but only the program internal/transform generates (user text is JSON-encoded into it,
 // never spliced into jq syntax) on the posted sample, with a timeout.
 func TestServiceMapping(t *testing.T) {
-	computeOnly := []string{"validateSensor", "validateFlow", "renderPrompt", "previewTransform", "compileTransform"}
+	computeOnly := []string{"validateSensor", "validateTool", "validateFlow", "renderPrompt", "previewTransform", "compileTransform"}
 	operations(t, func(method, path string, op *openapi3.Operation) {
 		svc, _ := op.Extensions[ExtService].(string)
 		public, _ := op.Extensions[ExtPublic].(bool)

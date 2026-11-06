@@ -248,11 +248,11 @@ type Node struct {
 	// agent, hal-provided tools (docs/design/agent-access.md). Sandbox names a sandbox backend (adds fs and shell
 	// tools executed there); Image, Repo and Ref are sandbox options; Tools are custom tool ids. The engine passes them
 	// to internal/tools; validation against the configured sandboxes and tools happens where those are defined.
-	Sandbox string   `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
-	Image   string   `yaml:"image,omitempty" json:"image,omitempty"`
-	Repo    string   `yaml:"repo,omitempty" json:"repo,omitempty"`
-	Ref     string   `yaml:"ref,omitempty" json:"ref,omitempty"`
-	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Sandbox string    `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	Image   string    `yaml:"image,omitempty" json:"image,omitempty"`
+	Repo    string    `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Ref     string    `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Tools   []ToolRef `yaml:"tools,omitempty" json:"tools,omitempty"`
 
 	UI UI `yaml:"ui,omitempty" json:"ui"`
 }

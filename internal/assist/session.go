@@ -82,9 +82,12 @@ func (s *session) applyDraft(yaml, by string) {
 	row := &s.row
 	row.DraftYAML = yaml
 	row.DraftHash = spec.Hash([]byte(yaml))
-	if s.isFlow() {
+	switch {
+	case s.isFlow():
 		row.DraftID, row.DraftDiagnostics, row.DraftPrompts = s.m.evaluateFlow(yaml, row.TargetID, s.dir)
-	} else {
+	case s.isTool():
+		row.DraftID, row.DraftDiagnostics = evaluateTool(yaml, row.TargetID)
+	default:
 		row.DraftID, row.DraftDiagnostics = evaluate(yaml, row.TargetID)
 	}
 	row.DraftUpdatedAt, row.DraftUpdatedBy = s.m.st.Now(), by
@@ -222,9 +225,12 @@ func (s *session) adopt(id string) error {
 		return nil
 	}
 	s.row.TargetID = id
-	if s.isFlow() {
+	switch {
+	case s.isFlow():
 		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = s.m.evaluateFlow(s.row.DraftYAML, id, s.dir)
-	} else {
+	case s.isTool():
+		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, id)
+	default:
 		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id)
 	}
 	return s.saveLocked()
@@ -361,9 +367,13 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 	}
 	global, sensor := s.m.envNames(row.TargetID)
 	head := preamble(row.TargetID, global, sensor)
-	if row.TargetKind == store.AssistTargetFlow {
+	switch row.TargetKind {
+	case store.AssistTargetFlow:
 		global, _ = s.m.envNames("")
 		head = flowPreamble(row.TargetID, global)
+	case store.AssistTargetTool:
+		global, own := s.m.envNamesOf(row.TargetKind, row.TargetID)
+		head = toolPreamble(row.TargetID, global, own)
 	}
 	head = tools.Preamble(tools.PreambleData{
 		Info: tools.RunInfo{AgentRunID: t.runID, AssistSessionID: s.id}, Now: s.m.host.Clock().Now(), Tools: ht.Tools(),
@@ -544,6 +554,17 @@ func (m *Manager) savedScript(kind, target string, available []string) (scriptID
 		}
 		return scriptOfFlow(flow, available), true
 	}
+	if kind == store.AssistTargetTool {
+		raw, _, err := spec.ReadFile(m.opt.Home, spec.KindTool, target)
+		if err != nil {
+			return scriptID{}, false
+		}
+		tool, ds := spec.ParseTool(raw)
+		if tool == nil || spec.HasErrors(ds) {
+			return scriptID{}, false
+		}
+		return scriptOfTool(tool, available), true
+	}
 	raw, _, err := spec.ReadFile(m.opt.Home, spec.KindSensor, target)
 	if err != nil {
 		return scriptID{}, false
@@ -565,6 +586,14 @@ func (s *session) draftScriptLocked() (id scriptID, available []string, ok bool)
 		}
 		available = s.m.availableEnv("")
 		return scriptOfFlow(flow, available), available, true
+	}
+	if s.isTool() {
+		tool, ds := spec.CheckTool("", []byte(s.row.DraftYAML))
+		if tool == nil || spec.HasErrors(ds) {
+			return scriptID{}, nil, false
+		}
+		available = s.m.availableEnvOf(s.row.TargetKind, s.row.TargetID)
+		return scriptOfTool(tool, available), available, true
 	}
 	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
 	if sensor == nil || spec.HasErrors(ds) {

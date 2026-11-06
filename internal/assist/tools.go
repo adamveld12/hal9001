@@ -94,6 +94,10 @@ func (s *session) instructionsText() (string, error) {
 		global, _ := s.m.envNames("")
 		return flowInstructions(s.id, s.row.TargetID, global), nil
 	}
+	if s.isTool() {
+		global, own := s.m.envNamesOf(s.row.TargetKind, s.row.TargetID)
+		return toolInstructions(s.id, s.row.TargetID, global, own), nil
+	}
 	global, sensor := s.m.envNames(s.row.TargetID)
 	return instructions(s.id, s.row.TargetID, global, sensor), nil
 }

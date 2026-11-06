@@ -36,6 +36,7 @@ tags:
   - {name: meta, description: 'Health, version, status, SSE stream, UI shell'}
   - {name: killswitch, description: Pause and resume the daemon}
   - {name: sensors, description: Sensor definitions and polls}
+  - {name: tools, description: 'Custom tools agents can call: definitions, test runs, environment'}
   - {name: events, description: 'Events, injection, replay'}
   - {name: flows, description: 'Flow definitions, versions, validation, node test runs'}
   - {name: runs, description: Flow runs and node runs}
@@ -371,6 +372,230 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tools:
+    get:
+      operationId: listTools
+      tags: [tools]
+      summary: List custom tools
+      description: Every tool file under `tools/`, including ones that fail validation.
+      x-hal-service: api
+      responses:
+        '200':
+          description: All tools, ordered by id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createTool
+      tags: [tools]
+      summary: Create a custom tool
+      description: |
+        Writes `tools/<id>.yaml`. Send either `yaml` (raw file text) or `tool` (JSON form). Rejected with 422 when
+        validation reports errors and 409 `already-exists` when the id is taken. Open assist sessions that were
+        authoring a new tool with this id become sessions on it (`target.id` is set).
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolCreateRequest'}
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tools/validate:
+    post:
+      operationId: validateTool
+      tags: [tools]
+      summary: Validate a custom tool without saving
+      description: Always 200 when the request itself is well formed; check `valid` and `diagnostics`.
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolValidateRequest'}
+      responses:
+        '200':
+          description: Validation result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolValidation'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tools/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ToolId'}
+    get:
+      operationId: getTool
+      tags: [tools]
+      summary: Get a custom tool
+      x-hal-service: api
+      responses:
+        '200':
+          description: Tool with raw YAML, parsed JSON, effective argument schema and diagnostics.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateTool
+      tags: [tools]
+      summary: Replace a custom tool
+      description: |
+        Send `expected_hash` (the `hash` from the last read) and either `yaml` or `tool`. 409 `conflict` when the file
+        changed on disk since.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolUpdateRequest'}
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteTool
+      tags: [tools]
+      summary: Delete a custom tool
+      description: Removes the file and the tool's own env file.
+      x-hal-service: admin
+      parameters:
+        - {$ref: '#/components/parameters/ExpectedHash'}
+      responses:
+        '204': {description: Deleted.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tools/{id}/test:
+    parameters:
+      - {$ref: '#/components/parameters/ToolId'}
+    post:
+      operationId: testTool
+      tags: [tools]
+      summary: Run a custom tool once
+      description: |
+        Runs the saved tool locally with `args` (defaults filled in, checked against its parameters), waits for it to
+        finish and returns the result: stdout (structured when it is a JSON object or array), stderr, exit code and
+        duration. Secret env values are redacted. Nothing is recorded and no approval is asked: this is the owner
+        testing their own tool. A tool that fails is still a 200 with `ok: false`; 422 means the arguments do not fit
+        the parameters or the tool file is invalid. 423 `paused` while the kill switch is engaged.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolTestRequest'}
+      responses:
+        '200':
+          description: The run.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolTestResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tools/{id}/env:
+    parameters:
+      - {$ref: '#/components/parameters/ToolId'}
+    get:
+      operationId: listToolEnv
+      tags: [tools]
+      summary: Environment keys of a custom tool
+      description: |
+        Keys from the tool's own env file (`env.d/tools/<id>.env`) only. Secret values (the default) are write-only
+        and never returned by any endpoint; a key marked plain (`secret: false`) returns its `value` and is not
+        redacted from output. `overrides_global` tells whether the key also exists in the global `env` file.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Key names, sorted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolEnvKeyList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tools/{id}/env/{key}:
+    parameters:
+      - {$ref: '#/components/parameters/ToolId'}
+      - {$ref: '#/components/parameters/EnvKey'}
+    put:
+      operationId: setToolEnv
+      tags: [tools]
+      summary: Set an environment value on a custom tool
+      description: |
+        Creates or replaces the key in the tool's own env file (git-ignored, not part of the tool YAML). The value is
+        injected into the tool's process on top of the global env (the tool's value wins) and, unless `secret` is
+        false, redacted from output. Takes effect on the next call. Omit `value` to change only the `secret` flag of
+        an existing key (404 when the key does not exist).
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnvSetRequest'}
+      responses:
+        '204': {description: Stored.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deleteToolEnv
+      tags: [tools]
+      summary: Remove an environment key from a custom tool
+      x-hal-service: admin
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
   /api/sensors:
@@ -1869,7 +2094,7 @@ paths:
       x-hal-service: api
       parameters:
         - {name: target_kind, in: query, schema: {$ref: '#/components/schemas/AssistTargetKind'}}
-        - {name: target_id, in: query, description: 'Sensor or flow id. Only sessions that edit that target.', schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: target_id, in: query, description: 'Sensor, flow or tool id. Only sessions that edit that target.', schema: {$ref: '#/components/schemas/Slug'}}
       responses:
         '200':
           description: Sessions, newest first.
@@ -2014,7 +2239,7 @@ paths:
     post:
       operationId: testAssistDraft
       tags: [assist]
-      summary: Run the draft once (a poll for a sensor, one input for a flow)
+      summary: Run the draft once (a poll for a sensor, one input for a flow, one call for a tool)
       description: |
         Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
         with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
@@ -2038,6 +2263,12 @@ paths:
         `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
         the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
         (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
+
+        Tool sessions: calls the draft tool once with `args` (defaults filled in; 422 when they do not fit its
+        parameters) with the global env file overlaid by the target tool's `env.d/tools` file, and returns the `tool`
+        variant. Nothing is recorded and no approval of the call itself is asked. The same approval rule as for
+        sensors applies to the agent: the hash covers `lang`, `script`, `command` and the env names the code
+        references.
       x-hal-service: admin
       x-hal-paused: reject
       parameters:
@@ -2600,6 +2831,11 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/Slug'}
+    ToolId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Slug'}
     FlowId:
       name: id
       in: path
@@ -3124,7 +3360,7 @@ components:
         image: {type: string, description: 'Sandbox image (sandbox option).'}
         repo: {type: string, description: 'Repository to check out in the sandbox (sandbox option).'}
         ref: {type: string, description: 'Git ref of `repo` (sandbox option).'}
-        tools: {type: array, items: {type: string}, description: 'Custom tool ids made available to the agent through hal MCP.'}
+        tools: {type: array, items: {$ref: '#/components/schemas/NodeToolRef'}, description: 'Custom tools made available to the agent through hal MCP.'}
         ui: {$ref: '#/components/schemas/NodeUI'}
     InboxNode:
       type: object
@@ -3574,6 +3810,169 @@ components:
         diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
         yaml: {type: [string, 'null'], description: 'Canonical YAML of the sensor, null when the input did not parse.'}
         sensor: {oneOf: [{$ref: '#/components/schemas/Sensor'}, {type: 'null'}]}
+    # ---------------------------------------------------------------- custom tools (docs/design/agent-access.md)
+    ToolLang: {type: string, enum: [bash, python, node, exec]}
+    ToolParamType: {type: string, enum: [string, number, integer, boolean, array, object]}
+    ToolParam:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: {$ref: '#/components/schemas/ToolParamType'}
+        description: {type: string}
+        required: {type: boolean, default: false}
+        enum: {type: array, items: {$ref: '#/components/schemas/JsonValue'}, description: Allowed values.}
+        default: {$ref: '#/components/schemas/JsonValue'}
+    ToolWhen:
+      type: object
+      description: A condition group over the tool's arguments (the Transform condition model; `field` is a path into the arguments object).
+      additionalProperties: false
+      required: [conditions]
+      properties:
+        match: {type: string, enum: [all, any], default: all}
+        conditions: {type: array, minItems: 1, items: {$ref: '#/components/schemas/TransformCondition'}}
+    NodeToolRef:
+      description: |
+        A custom tool on an agent node: its id, or `{id, approve}` to override the tool's own approval setting for this
+        node. The tool is exposed to the agent as its id lowercased with `-` replaced by `_`.
+      oneOf:
+        - {type: string}
+        - type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: string}
+            approve: {$ref: '#/components/schemas/ToolApprove'}
+    ToolApprove:
+      description: |
+        When a call needs approval: `never`, `always` (the default), or `{when: {match, conditions}}`, which asks only
+        when the conditions match the arguments (defaults filled in).
+      oneOf:
+        - {type: string, enum: [never, always]}
+        - type: object
+          additionalProperties: false
+          required: [when]
+          properties:
+            when: {$ref: '#/components/schemas/ToolWhen'}
+    Tool:
+      type: object
+      description: |
+        Custom tool (`tools/<id>.yaml`). Arguments are described by `params` or, as an override, by a raw JSON Schema
+        in `schema` (not both). A call passes the arguments as JSON on stdin and as `ARG_<UPPER_NAME>` variables
+        (strings as is, numbers and booleans as text, arrays and objects as JSON). Stdout is the result; a non-zero
+        exit is a tool error carrying the stderr tail. `exec` takes `command`; every other `lang` takes `script`.
+      additionalProperties: false
+      required: [id, description, lang]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        description: {type: string, description: What the tool does and when to use it; the agent reads this.}
+        params:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/ToolParam'}
+        schema: {type: object, additionalProperties: true, description: 'Raw JSON Schema of the arguments (`type: object`). Replaces `params`.'}
+        lang: {$ref: '#/components/schemas/ToolLang'}
+        script: {type: string}
+        command: {type: array, items: {type: string}, description: 'argv for `lang: exec`.'}
+        approve: {$ref: '#/components/schemas/ToolApprove'}
+        timeout: {$ref: '#/components/schemas/Duration'}
+        runs_in_sandbox: {type: boolean, default: false, description: 'Run in the calling node sandbox instead of on the hal host.'}
+    ToolSummary:
+      type: object
+      required: [id, path, hash, tool, schema, diagnostics]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        path: {type: string, description: 'Relative to the home dir, e.g. `tools/now.yaml`.'}
+        hash: {$ref: '#/components/schemas/Hash'}
+        tool: {oneOf: [{$ref: '#/components/schemas/Tool'}, {type: 'null'}], description: Null when the YAML does not parse.}
+        schema:
+          type: [object, 'null']
+          additionalProperties: true
+          description: The effective JSON Schema of the arguments (built from `params`, or the raw `schema`). Null when the YAML does not parse.
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+    ToolDetail:
+      allOf:
+        - {$ref: '#/components/schemas/ToolSummary'}
+        - type: object
+          required: [yaml]
+          properties:
+            yaml: {type: string, description: The file as on disk.}
+    ToolList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ToolSummary'}}
+    ToolCreateRequest:
+      type: object
+      description: Exactly one of `yaml` and `tool`.
+      additionalProperties: false
+      properties:
+        yaml: {type: string}
+        tool: {$ref: '#/components/schemas/Tool'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [tool]}
+    ToolUpdateRequest:
+      type: object
+      description: '`expected_hash` plus exactly one of `yaml` and `tool`.'
+      additionalProperties: false
+      required: [expected_hash]
+      properties:
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        yaml: {type: string}
+        tool: {$ref: '#/components/schemas/Tool'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [tool]}
+    ToolValidateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        yaml: {type: string}
+        tool: {$ref: '#/components/schemas/Tool'}
+      oneOf:
+        - {required: [yaml]}
+        - {required: [tool]}
+    ToolValidation:
+      type: object
+      required: [valid, diagnostics, yaml, tool, schema]
+      properties:
+        valid: {type: boolean, description: 'True when there are no `error` diagnostics.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
+        yaml: {type: [string, 'null'], description: 'Canonical YAML of the tool, null when the input did not parse.'}
+        tool: {oneOf: [{$ref: '#/components/schemas/Tool'}, {type: 'null'}]}
+        schema: {type: [object, 'null'], additionalProperties: true, description: The effective JSON Schema of the arguments.}
+    ToolTestRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        args: {type: object, additionalProperties: true, description: 'The arguments object; omitted means `{}`.'}
+    ToolTestResult:
+      type: object
+      required: [ok, args, stdout, structured, stderr, exit_code, duration_ms, timed_out, error]
+      properties:
+        ok: {type: boolean, description: Exit code 0 within the timeout.}
+        args: {type: object, additionalProperties: true, description: 'The arguments as passed to the tool, with defaults filled in.'}
+        stdout: {type: string, description: Redacted standard output.}
+        structured: {description: 'Stdout parsed when it is a JSON object or array; null otherwise.', oneOf: [{type: object, additionalProperties: true}, {type: array, items: {}}, {type: 'null'}]}
+        stderr: {type: string, description: Redacted standard error.}
+        exit_code: {type: integer}
+        duration_ms: {type: integer}
+        timed_out: {type: boolean}
+        error: {type: [string, 'null'], description: 'The tool error message with the stderr tail; null when ok.'}
+    ToolEnvKeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [key, overrides_global, secret, value]
+            properties:
+              key: {$ref: '#/components/schemas/EnvKeyName'}
+              secret: {type: boolean, description: 'Secret values are redacted from output and never returned. A key is secret unless marked plain.'}
+              value: {type: [string, 'null'], description: 'The value of a plain key (`secret: false`); null for a secret key.'}
+              overrides_global: {type: boolean, description: 'The global `env` file has the same key; this tool sees its own value.'}
     FlowHealth:
       type: object
       description: Run statistics over the last 7 days (bounded by retention). `live` and `replay` runs only.
@@ -4582,7 +4981,7 @@ components:
         host_allowed: {type: boolean, description: '`hostname` is in `allowed_hosts`.'}
         allowed_logins: {type: array, items: {type: string}}
     # ---------------------------------------------------------------- assist (AI-assisted sensor authoring)
-    AssistTargetKind: {type: string, enum: [sensor, flow]}
+    AssistTargetKind: {type: string, enum: [sensor, flow, tool]}
     AssistStatus:
       type: string
       description: |
@@ -4597,7 +4996,7 @@ components:
       required: [kind, id]
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
-        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: Sensor or flow id; null when the session authors a new sensor or flow.}
+        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor, flow or tool id; null when the session authors a new one.'}
     AssistTargetRequest:
       type: object
       additionalProperties: false
@@ -4616,15 +5015,16 @@ components:
     AssistDraft:
       type: object
       description: |
-        The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+        The YAML the session works on, stored in the session's draft directory (`sensor.yaml`, `flow.yaml` or `tool.yaml`). Only the
         user's Save writes a real file.
-      required: [kind, yaml, hash, sensor_id, flow_id, prompts, diagnostics, updated_at, updated_by]
+      required: [kind, yaml, hash, sensor_id, flow_id, tool_id, prompts, diagnostics, updated_at, updated_by]
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
         yaml: {type: string}
         hash: {$ref: '#/components/schemas/Hash'}
-        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows.'}
-        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors.'}
+        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows and tools.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and tools.'}
+        tool_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Tool sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and flows.'}
         prompts: {type: array, items: {$ref: '#/components/schemas/AssistDraftPrompt'}, description: 'Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`.'}
         diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts.'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
@@ -4789,26 +5189,47 @@ components:
         input: {$ref: '#/components/schemas/JsonValue'}
         nodes: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestNode'}}
         edges_taken: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestEdge'}}
+    AssistToolTestResult:
+      type: object
+      description: |
+        Outcome of calling the draft tool once (tool sessions). Same fields as `ToolTestResult` plus `kind`. A failing
+        tool is still a result (`ok: false`, `error` carries the stderr tail).
+      required: [kind, ok, args, stdout, structured, stderr, exit_code, duration_ms, timed_out, error]
+      properties:
+        kind: {type: string, enum: [tool]}
+        ok: {type: boolean}
+        args: {type: object, additionalProperties: true}
+        stdout: {type: string}
+        structured: {oneOf: [{type: object, additionalProperties: true}, {type: array, items: {}}, {type: 'null'}]}
+        stderr: {type: string}
+        exit_code: {type: integer}
+        duration_ms: {type: integer}
+        timed_out: {type: boolean}
+        error: {type: [string, 'null']}
     AssistTestResult:
-      description: 'The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`.'
+      description: 'The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`, tool sessions `tool`.'
       oneOf:
         - {$ref: '#/components/schemas/AssistSensorTestResult'}
         - {$ref: '#/components/schemas/AssistFlowTestResult'}
+        - {$ref: '#/components/schemas/AssistToolTestResult'}
       discriminator:
         propertyName: kind
         mapping:
           sensor: '#/components/schemas/AssistSensorTestResult'
           flow: '#/components/schemas/AssistFlowTestResult'
+          tool: '#/components/schemas/AssistToolTestResult'
     AssistTestRequest:
       type: object
       additionalProperties: false
       description: |
-        Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
-        none, the first sample is used (422 when there is none).
+        Flow sessions: the input to run the draft flow on. At most one of `sample_index`, `event_id` and `input`; with
+        none, the first sample is used (422 when there is none). Tool sessions: `args`, the arguments object of the
+        call (default `{}`). Ignored for sensors.
       properties:
         sample_index: {type: integer, minimum: 0, description: 'Index into `GET /api/assist/sessions/{id}/samples`.'}
         event_id: {$ref: '#/components/schemas/Ulid'}
         input: {$ref: '#/components/schemas/JsonValue'}
+        args: {type: [object, 'null'], additionalProperties: true, description: Tool sessions only.}
     AssistSample:
       type: object
       required: [index, sensor_id, payload]
@@ -4940,8 +5361,8 @@ components:
       description: A file under the home dir changed on disk or through the API (hot reload).
       required: [kind, id, hash, deleted]
       properties:
-        kind: {type: string, enum: [sensor, flow, prompt, settings, env, sensor_env]}
-        id: {type: [string, 'null'], description: 'Sensor id, flow id, or prompt name; for `sensor_env` the sensor id; null for settings and env.'}
+        kind: {type: string, enum: [sensor, flow, prompt, settings, env, sensor_env, tool, tool_env]}
+        id: {type: [string, 'null'], description: 'Sensor id, flow id, tool id, or prompt name; for `sensor_env` and `tool_env` the owner id; null for settings and env.'}
         hash: {$ref: '#/components/schemas/NullableHash'}
         deleted: {type: boolean}
     SensorChange:
@@ -4993,7 +5414,7 @@ components:
             type: {enum: [sensor.changed]}
             data: {$ref: '#/components/schemas/SensorChange'}
     ConfigChangedEvent:
-      description: A sensor, flow, prompt, settings, env, or sensor env file changed. `data` is `ConfigChange`.
+      description: A sensor, flow, tool, prompt, settings, env, sensor env or tool env file changed. `data` is `ConfigChange`.
       allOf:
         - {$ref: '#/components/schemas/StreamEnvelope'}
         - type: object

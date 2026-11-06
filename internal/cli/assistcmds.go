@@ -23,10 +23,10 @@ func (c *call) sessionArg(name string) (string, error) {
 func assistCmds() []*command {
 	var listKind, listID string
 	list := &leaf{
-		usage: "[--target-kind sensor|flow] [--target-id ID]", maxArgs: 0,
+		usage: "[--target-kind sensor|flow|tool] [--target-id ID]", maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
-			fs.StringVar(&listKind, "target-kind", "", "only sessions of this target kind (sensor or flow)")
-			fs.StringVar(&listID, "target-id", "", "only sessions editing this sensor or flow id")
+			fs.StringVar(&listKind, "target-kind", "", "only sessions of this target kind (sensor, flow or tool)")
+			fs.StringVar(&listID, "target-id", "", "only sessions editing this sensor, flow or tool id")
 		},
 		run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodGet, "/api/assist/sessions", query("target_kind", listKind, "target_id", listID), nil,
@@ -34,14 +34,15 @@ func assistCmds() []*command {
 		},
 	}
 
-	var runtime, sensor, flowID, kind, model, createYAML string
+	var runtime, sensor, flowID, toolID, kind, model, createYAML string
 	create := &leaf{
-		usage: "--runtime NAME [--sensor ID|--flow ID|--kind sensor|flow] [--model M] [--yaml FILE|-]", maxArgs: 0,
+		usage: "--runtime NAME [--sensor ID|--flow ID|--tool ID|--kind sensor|flow|tool] [--model M] [--yaml FILE|-]", maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
 			fs.StringVar(&runtime, "runtime", "", "ACP runtime that runs the session (required)")
 			fs.StringVar(&sensor, "sensor", "", "sensor to edit (default: author a new sensor)")
 			fs.StringVar(&flowID, "flow", "", "flow to edit")
-			fs.StringVar(&kind, "kind", "", "what to author when no id is given: sensor (default) or flow")
+			fs.StringVar(&toolID, "tool", "", "custom tool to edit")
+			fs.StringVar(&kind, "kind", "", "what to author when no id is given: sensor (default), flow or tool")
 			fs.StringVar(&model, "model", "", "model for the runtime")
 			fs.StringVar(&createYAML, "yaml", "", "initial draft from this file, or - for stdin")
 		},
@@ -49,13 +50,15 @@ func assistCmds() []*command {
 			if runtime == "" {
 				return usagef("assist create: --runtime is required")
 			}
-			if sensor != "" && flowID != "" {
-				return usagef("assist create: --sensor and --flow are exclusive")
+			if n := countSet(sensor, flowID, toolID); n > 1 {
+				return usagef("assist create: --sensor, --flow and --tool are exclusive")
 			}
 			target := map[string]any{"kind": "sensor"}
 			switch {
 			case flowID != "":
 				target = map[string]any{"kind": "flow", "id": flowID}
+			case toolID != "":
+				target = map[string]any{"kind": "tool", "id": toolID}
 			case sensor != "":
 				target["id"] = sensor
 			case kind != "":
@@ -128,10 +131,11 @@ func assistCmds() []*command {
 	}}
 
 	var testSample int
-	var testEvent string
+	var testEvent, testArgs string
 	test := &leaf{
-		usage: "[--sample N|--event ID] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		usage: "[--sample N|--event ID|--args JSON] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
 		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&testArgs, "args", "", "tool sessions: the call's arguments as a JSON object (default {})")
 			fs.IntVar(&testSample, "sample", 0, "flow sessions: run the draft on sample N (see `assist samples`)")
 			fs.StringVar(&testEvent, "event", "", "flow sessions: run the draft on this stored event")
 		},
@@ -155,6 +159,13 @@ func assistCmds() []*command {
 			}
 			if testEvent != "" {
 				req["event_id"] = testEvent
+			}
+			if testArgs != "" {
+				var obj map[string]any
+				if err := json.Unmarshal([]byte(testArgs), &obj); err != nil || obj == nil {
+					return usagef("assist test: --args must be a JSON object")
+				}
+				req["args"] = obj
 			}
 			body, _ := jsonBody(req)
 			resp, err := cl.do(ctx, http.MethodPost, "/api/assist/sessions/"+esc(id)+"/test", nil, body)
@@ -201,15 +212,25 @@ func assistCmds() []*command {
 
 	return []*command{
 		cmd("list", "list assist sessions", list),
-		cmd("create", "start an assist session for a new or existing sensor or flow", create),
+		cmd("create", "start an assist session for a new or existing sensor, flow or tool", create),
 		cmd("get", "show a session with its draft and messages", idGet("/api/assist/sessions/%s")),
 		cmd("send", "send a message and start an agent turn", send),
 		cmd("cancel", "cancel the running turn", cancel),
 		cmd("close", "end a session and remove its draft directory", closeSession),
-		cmd("test", "run the session's draft (a poll for a sensor, one sample for a flow) and print the result", test),
+		cmd("test", "run the session's draft (a poll for a sensor, one sample for a flow, one call for a tool) and print the result", test),
 		cmd("samples", "list the sample inputs of a flow session", samples),
 		cmd("draft", "print the session's current draft (YAML, hash, diagnostics)", draft),
 	}
+}
+
+func countSet(vals ...string) int {
+	n := 0
+	for _, v := range vals {
+		if v != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func sensorValidateLeaf() *leaf {
@@ -236,6 +257,82 @@ func sensorValidateLeaf() *leaf {
 				Valid bool `json:"valid"`
 			}
 			if json.Unmarshal(resp.Body, &res) == nil && !res.Valid {
+				return &silentError{}
+			}
+			return nil
+		},
+	}
+}
+
+func toolValidateLeaf() *leaf {
+	return &leaf{
+		usage: "[file.yaml|-]", maxArgs: 1,
+		run: func(ctx context.Context, c *call) error {
+			file := ""
+			if len(c.args) > 0 {
+				file = c.args[0]
+			}
+			yamlText, err := c.readInput(file)
+			if err != nil {
+				return err
+			}
+			body, _ := jsonBody(map[string]string{"yaml": string(yamlText)})
+			resp, err := c.client().do(ctx, http.MethodPost, "/api/tools/validate", nil, body)
+			if err != nil {
+				return err
+			}
+			if err := c.emit(resp, "severity", "code", "message"); err != nil {
+				return err
+			}
+			var res struct {
+				Valid bool `json:"valid"`
+			}
+			if json.Unmarshal(resp.Body, &res) == nil && !res.Valid {
+				return &silentError{}
+			}
+			return nil
+		},
+	}
+}
+
+func toolTestLeaf() *leaf {
+	var args, argsFile string
+	return &leaf{
+		usage: "<id> [--args '{\"name\": \"value\"}' | --args-file file.json|-]", minArgs: 1, maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&args, "args", "", "the arguments as a JSON object (default: {})")
+			fs.StringVar(&argsFile, "args-file", "", "read the arguments JSON object from a file, or - for stdin")
+		},
+		run: func(ctx context.Context, c *call) error {
+			if args != "" && argsFile != "" {
+				return usagef("tools test: give --args or --args-file, not both")
+			}
+			raw := []byte(args)
+			if argsFile != "" {
+				data, err := c.readInput(argsFile)
+				if err != nil {
+					return err
+				}
+				raw = data
+			}
+			var obj map[string]any
+			if len(strings.TrimSpace(string(raw))) > 0 {
+				if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+					return usagef("tools test: the arguments must be a JSON object")
+				}
+			}
+			body, _ := jsonBody(map[string]any{"args": obj})
+			resp, err := c.client().do(ctx, http.MethodPost, "/api/tools/"+esc(c.args[0])+"/test", nil, body)
+			if err != nil {
+				return err
+			}
+			if err := c.emit(resp); err != nil {
+				return err
+			}
+			var res struct {
+				OK bool `json:"ok"`
+			}
+			if json.Unmarshal(resp.Body, &res) == nil && !res.OK {
 				return &silentError{}
 			}
 			return nil

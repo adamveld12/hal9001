@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"hal9001/internal/agent"
@@ -19,13 +21,40 @@ func (e *Engine) ToolHub() *tools.Hub { return e.tools }
 
 // newToolHub builds the hub over the engine's store and approval queue.
 func (e *Engine) newToolHub() (*tools.Hub, error) {
-	return tools.NewHub(tools.Options{
+	h, err := tools.NewHub(tools.Options{
 		Store: tokenStore{e.st},
 		Host:  halToolHost{e},
 		Clock: e.clock.Now,
 		GH:    tools.GHOptions{Path: e.opt.BasePATH},
 		Log:   e.log,
 	})
+	if err != nil {
+		return nil, err
+	}
+	h.AddProvider(tools.NewCustomProvider(tools.CustomOptions{
+		Lookup:    e.lookupCustomTool,
+		BasePATH:  e.opt.BasePATH,
+		StateRoot: filepath.Join(e.opt.Home, "data", "state", "_tools"),
+	}))
+	return h, nil
+}
+
+// lookupCustomTool resolves a custom tool of the current snapshot, so tool edits reach the next run.
+func (e *Engine) lookupCustomTool(id string) (tools.CustomTool, error) {
+	snap := e.snapshot()
+	f := snap.ws.Tool(id)
+	switch {
+	case f == nil:
+		return tools.CustomTool{}, errors.New("no such tool")
+	case !f.Valid():
+		return tools.CustomTool{}, errors.New("the tool has validation errors")
+	}
+	env := maps.Clone(snap.env)
+	if env == nil {
+		env = map[string]string{}
+	}
+	maps.Copy(env, snap.toolEnv[id])
+	return tools.CustomTool{Tool: f.Value, Env: env, Redactor: snap.red}, nil
 }
 
 // tokenStore adapts the store to tools.TokenStore.

@@ -65,6 +65,7 @@ const SensorsPage = page(
   () => import("./pages/sensors/SensorsPage"),
   "SensorsPage",
 );
+const ToolsPage = page(() => import("./pages/tools/ToolsPage"), "ToolsPage");
 const PromptsPage = page(
   () => import("./pages/prompts/PromptsPage"),
   "PromptsPage",
@@ -147,6 +148,8 @@ function AuthGate() {
           />
           <Route path="sensors" element={<SensorsPage />} />
           <Route path="sensors/:id" element={<SensorsPage />} />
+          <Route path="tools" element={<ToolsPage />} />
+          <Route path="tools/:id" element={<ToolsPage />} />
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="prompts/:name" element={<PromptsPage />} />
           <Route path="settings" element={<SettingsRedirect />} />

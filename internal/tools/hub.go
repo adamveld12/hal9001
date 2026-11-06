@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"hal9001/internal/spec"
 )
 
 // DefaultApprovalTimeout bounds an approval wait when the run sets none.
@@ -99,6 +101,8 @@ type RunSpec struct {
 	Repo    string
 	Ref     string
 	Tools   []string
+	// ToolApprove holds the per-node approval overrides of Tools, by tool id.
+	ToolApprove map[string]spec.ToolApprove
 }
 
 // Extension is what a Provider adds to one session.

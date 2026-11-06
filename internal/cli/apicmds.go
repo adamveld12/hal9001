@@ -109,6 +109,7 @@ func (a *app) tree() *command {
 			cmd("status", "report the Tailscale and allowed_hosts setup", apiGet("/api/auth/tailscale"))),
 		cmd("status", "daemon counters and kill switch state", apiGet("/api/status")),
 		group("sensors", "list, inspect and poll sensors", sensorCmds()...),
+		group("tools", "list, inspect and test custom tools", toolCmds()...),
 		group("events", "list, inject and replay events", eventCmds()...),
 		group("flows", "list, validate and test flows", flowCmds()...),
 		group("runs", "list and inspect flow runs", runCmds()...),
@@ -120,7 +121,7 @@ func (a *app) tree() *command {
 		group("killswitch", "pause and resume the daemon", killswitchCmds()...),
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
-		group("env", "list, set and unset env variables", envCmds(false)...),
+		group("env", "list, set and unset env variables", envCmds("")...),
 		group("assist", "AI-assisted sensor authoring: sessions, draft, test runs", assistCmds()...),
 	}}
 	return root
@@ -150,10 +151,20 @@ func sensorCmds() []*command {
 		cmd("resume", "resume scheduled polls of a paused sensor", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/resume", nil, nil)
 		}}),
-		group("env", "list, set and unset a sensor's own env variables (values are secret and write-only unless set with --plain)", envCmds(true)...),
+		group("env", "list, set and unset a sensor's own env variables (values are secret and write-only unless set with --plain)", envCmds("sensors")...),
 		cmd("poll", "run a sensor now (Run now); --rerun-seen also re-runs items already seen", sensorPollLeaf()),
 		cmd("reset", "forget a sensor's dedup keys and incremental state so its next run treats every item as new (history is kept)", sensorResetLeaf()),
 		cmd("validate", "validate sensor YAML from a file or stdin without saving", sensorValidateLeaf()),
+	}
+}
+
+func toolCmds() []*command {
+	return []*command{
+		cmd("list", "list custom tools", apiGet("/api/tools", "id", "tool.lang", "tool.approve", "tool.description")),
+		cmd("get", "show one custom tool: definition, effective argument schema, diagnostics", idGet("/api/tools/%s")),
+		cmd("test", "run a custom tool once with the given arguments (JSON object) and show its result; exits 1 when the tool fails", toolTestLeaf()),
+		cmd("validate", "validate tool YAML from a file or stdin without saving", toolValidateLeaf()),
+		group("env", "list, set and unset a tool's own env variables (values are secret and write-only unless set with --plain)", envCmds("tools")...),
 	}
 }
 
@@ -827,13 +838,17 @@ func runtimeCmds() []*command {
 // first argument and the paths are under /api/sensors/<id>/env. Values are
 // secret (write-only) unless set with --plain; the API returns only plain
 // values.
-func envCmds(perSensor bool) []*command {
+// envCmds builds list|set|unset for the global env (scope "") or one owner's own
+// env file (scope "sensors" or "tools", with the owner id as the first argument).
+func envCmds(scope string) []*command {
 	var fromStdin, plain, secret bool
 	name, who, idArg, n := "env", "", "", 0
 	base := func(c *call) (string, []string) { return "/api/env", c.args }
-	if perSensor {
-		name, who, idArg, n = "sensors env", " on a sensor", "<sensor-id> ", 1
-		base = func(c *call) (string, []string) { return "/api/sensors/" + esc(c.args[0]) + "/env", c.args[1:] }
+	perOwner := scope != ""
+	if perOwner {
+		owner := strings.TrimSuffix(scope, "s")
+		name, who, idArg, n = scope+" env", " on a "+owner, "<"+owner+"-id> ", 1
+		base = func(c *call) (string, []string) { return "/api/" + scope + "/" + esc(c.args[0]) + "/env", c.args[1:] }
 	}
 	set := &leaf{
 		usage: idArg + "<KEY> [value] [--stdin] [--plain|--secret]   (without a value or --stdin, and without --plain/--secret, the value is read from stdin;\n" +
@@ -871,8 +886,8 @@ func envCmds(perSensor bool) []*command {
 		},
 	}
 	list := apiGet("/api/env", "key", "secret", "value")
-	if perSensor {
-		list = &leaf{usage: "<sensor-id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
+	if perOwner {
+		list = &leaf{usage: strings.TrimSpace(idArg), minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			path, _ := base(c)
 			return c.doEmit(ctx, http.MethodGet, path, nil, nil, "key", "overrides_global", "secret", "value")
 		}}

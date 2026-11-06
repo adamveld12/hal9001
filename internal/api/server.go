@@ -49,8 +49,10 @@ type Options struct {
 	// Reload re-reads the home directory and applies it, synchronously. The
 	// API calls it after every file write so the engine sees the change
 	// before the response is sent. May be nil when nothing needs to react.
-	Reload  func()
-	Version string
+	Reload func()
+	// BasePATH is the PATH custom tools start with; empty means this process's PATH.
+	BasePATH string
+	Version  string
 	// UI serves the web UI for "/", "/assets/*" and every other GET outside
 	// /api/. Nil answers those routes with a problem saying the UI is not built.
 	UI  http.Handler
@@ -225,6 +227,16 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"resetSensor":     s.resetSensor,
 		"pauseSensor":     s.pauseSensor,
 		"resumeSensor":    s.resumeSensor,
+		"listTools":       s.listTools,
+		"createTool":      s.createTool,
+		"validateTool":    s.validateTool,
+		"getTool":         s.getTool,
+		"updateTool":      s.updateTool,
+		"deleteTool":      s.deleteTool,
+		"testTool":        s.testTool,
+		"listToolEnv":     s.listToolEnv,
+		"setToolEnv":      s.setToolEnvValue,
+		"deleteToolEnv":   s.deleteToolEnvValue,
 		"listSensorEnv":   s.listSensorEnv,
 		"setSensorEnv":    s.setSensorEnvValue,
 		"deleteSensorEnv": s.deleteSensorEnvValue,

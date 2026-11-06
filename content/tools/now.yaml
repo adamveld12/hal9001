@@ -1,0 +1,15 @@
+id: now
+description: Current date and time, optionally in a given IANA timezone (for example Europe/Berlin). Returns ISO 8601 text.
+params:
+  timezone:
+    type: string
+    description: IANA timezone name such as America/New_York. Defaults to the host timezone.
+lang: bash
+script: |
+  if [ -n "${ARG_TIMEZONE:-}" ]; then
+    TZ="$ARG_TIMEZONE" date +%Y-%m-%dT%H:%M:%S%z
+  else
+    date +%Y-%m-%dT%H:%M:%S%z
+  fi
+approve: never
+timeout: 10s
