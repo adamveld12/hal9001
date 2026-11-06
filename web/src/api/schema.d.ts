@@ -659,7 +659,9 @@ export interface paths {
      *     (no incoming edge) these are the payloads of recent events from the sensors the flow subscribes to. For a
      *     downstream node they are the payloads upstream nodes recently emitted into it, taken from this flow's stored
      *     node runs (stdout parsed as JSON or JSONL, routed by `_port` along the edges that lead to the node). Each
-     *     sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled.
+     *     sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled. A `node_id`
+     *     that is not in the saved flow (a node still being drawn) has no incoming edges there, so it is sampled like an
+     *     entry node.
      */
     get: operations["listFlowNodeSamples"];
     put?: never;

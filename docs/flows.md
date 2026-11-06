@@ -359,7 +359,7 @@ compiled program read-only; "Convert to code node" turns the node into an editab
 
 **API.** `POST /api/transform/preview` (`{steps, input}`: the compiled jq, a description per step, the outcome, per-step
 counts and diagnostics; nothing is stored), `POST /api/transform/compile` (`{steps}`: the jq and descriptions) and
-`GET /api/flows/{id}/samples?node_id=` (recent sample inputs for a node, with where each came from). Validation errors in
+`GET /api/flows/{id}/samples?node_id=` (recent sample inputs for a node, with where each came from; a node that is not saved yet is sampled like an entry node). Validation errors in
 a flow carry paths such as `nodes[2].steps[1].conditions[0].value`.
 
 ## Inbox nodes

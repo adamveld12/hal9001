@@ -29,14 +29,21 @@ describe("operatorsFor", () => {
       expect.arrayContaining(["is_true", "is_false"]),
     );
     expect(operatorsFor("boolean")).not.toContain("gt");
-    for (const t of ["array", "object"] as const) {
-      expect(operatorsFor(t)).toEqual([
-        "exists",
-        "not_exists",
-        "is_empty",
-        "is_not_empty",
-      ]);
-    }
+    expect(operatorsFor("object")).toEqual([
+      "exists",
+      "not_exists",
+      "is_empty",
+      "is_not_empty",
+    ]);
+    // A list can also be asked whether it holds a value.
+    expect(operatorsFor("array")).toEqual([
+      "contains",
+      "not_contains",
+      "exists",
+      "not_exists",
+      "is_empty",
+      "is_not_empty",
+    ]);
   });
 
   it("offers everything for unknown and null fields", () => {
@@ -190,6 +197,9 @@ describe("keeping a condition consistent", () => {
     ).toEqual({ field: "x", op: "gt", value: "3" });
     expect(
       reconcileCondition({ field: "x", op: "equals", value: true }, "array"),
+    ).toEqual({ field: "x", op: "contains", value: true });
+    expect(
+      reconcileCondition({ field: "x", op: "gt", value: 3 }, "object"),
     ).toEqual({ field: "x", op: "exists" });
   });
 });

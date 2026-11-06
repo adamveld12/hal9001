@@ -117,6 +117,7 @@ export function operatorsFor(type: FieldType): TransformOperator[] {
     case "boolean":
       return ["is_true", "is_false", "equals", "not_equals", ...PRESENCE];
     case "array":
+      return ["contains", "not_contains", ...PRESENCE, ...EMPTINESS];
     case "object":
       return [...PRESENCE, ...EMPTINESS];
     default:
