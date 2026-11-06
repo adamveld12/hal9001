@@ -57,3 +57,35 @@ func TestSandboxRoundTrip(t *testing.T) {
 		t.Fatalf("round trip lost data: %+v", got)
 	}
 }
+
+func TestAgentNodeSandboxRefs(t *testing.T) {
+	refs := &Refs{Sandboxes: map[string]Sandbox{
+		SandboxDocker: {Enabled: true, Images: []string{"alpine:3"}},
+		SandboxLocal:  {Enabled: true},
+	}}
+	for _, tc := range []struct{ name, node, want string }{
+		{"enabled backend and listed image", "sandbox: docker\n    image: alpine:3", ""},
+		{"local without image", "sandbox: local\n    repo: https://x/y\n    ref: main", ""},
+		{"disabled backend", "sandbox: ssh", "nodes[0].sandbox:unknown_sandbox"},
+		{"unknown backend", "sandbox: nope", "nodes[0].sandbox:invalid_enum"},
+		{"image not listed", "sandbox: docker\n    image: ubuntu", "nodes[0].image:invalid_enum"},
+		{"image on local", "sandbox: local\n    image: alpine:3", "nodes[0].image:field_not_allowed"},
+		{"image without sandbox", "image: alpine:3", "nodes[0].image:field_not_allowed"},
+		{"ref without repo", "sandbox: local\n    ref: main", "nodes[0].repo:required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			y := "id: f\nenabled: true\nsubscribe: [s]\nnodes:\n  - id: a\n    type: agent\n    runtime: r\n    mode: auto\n    instructions: hi\n    " + tc.node + "\n"
+			refs.Sensors, refs.Runtimes = map[string]bool{"s": true}, map[string]Runtime{"r": {}}
+			_, ds := CheckFlow("f", []byte(y), refs)
+			var got []string
+			for _, d := range ds {
+				if d.Severity == SeverityError {
+					got = append(got, d.Path+":"+d.Code)
+				}
+			}
+			if strings.Join(got, " ") != tc.want {
+				t.Fatalf("diagnostics = %v, want %q", ds, tc.want)
+			}
+		})
+	}
+}

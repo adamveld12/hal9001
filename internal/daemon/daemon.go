@@ -28,6 +28,7 @@ import (
 	"hal9001/internal/sandbox"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 	"hal9001/internal/webui"
 )
 
@@ -160,6 +161,7 @@ func Run(ctx context.Context, opts Options) error {
 		RetentionDays: func() int { return d.effective(d.workspace()).Config.Value.RetentionDays },
 	})
 	defer d.sandboxes.Close()
+	eng.ToolHub().AddProvider(tools.SandboxProvider(d.sandboxes, tools.SandboxOptions{}))
 
 	ui, err := webui.New(webui.Options{Dir: opts.WebDir})
 	if err != nil {

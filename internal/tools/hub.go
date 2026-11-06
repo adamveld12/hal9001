@@ -106,6 +106,9 @@ type Extension struct {
 	Tools []Tool
 	// Close is called once when the session closes. May be nil.
 	Close func()
+	// CloseWith is like Close but learns whether the run succeeded (Session.CloseWith; plain Close reports false).
+	// A sandbox keeps a failed run's workspace for debugging. May be nil.
+	CloseWith func(success bool)
 }
 
 // Provider contributes tools to a session (sandbox fs/shell, custom tools, assist draft tools).
@@ -166,7 +169,7 @@ type Session struct {
 	hash  string
 
 	mu      sync.Mutex
-	closers []func()
+	closers []func(success bool)
 	closed  bool
 }
 
@@ -195,26 +198,30 @@ func (h *Hub) Open(ctx context.Context, spec RunSpec) (*Session, error) {
 	for _, p := range providers {
 		ext, err := p(ctx, spec)
 		if ext.Close != nil {
-			s.closers = append(s.closers, ext.Close)
+			c := ext.Close
+			s.closers = append(s.closers, func(bool) { c() })
+		}
+		if ext.CloseWith != nil {
+			s.closers = append(s.closers, ext.CloseWith)
 		}
 		if err == nil {
 			err = s.reg.Register(ext.Tools...)
 		}
 		if err != nil {
-			s.release()
+			s.release(false)
 			return nil, err
 		}
 	}
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		s.release()
+		s.release(false)
 		return nil, err
 	}
 	s.token = TokenPrefix + base64.RawURLEncoding.EncodeToString(raw[:])
 	s.hash = HashToken(s.token)
 	if h.opt.Store != nil {
 		if err := h.opt.Store.CreateToken(ctx, s.hash, spec.RunID, spec.Kind); err != nil {
-			s.release()
+			s.release(false)
 			return nil, fmt.Errorf("tools: store token: %w", err)
 		}
 	}
@@ -241,8 +248,11 @@ func (s *Session) Token() string { return s.token }
 // Tools lists the session's tools.
 func (s *Session) Tools() []ToolInfo { return s.reg.List() }
 
-// Close revokes the token and releases the tool set. It is safe to call more than once.
-func (s *Session) Close() {
+// Close revokes the token and releases the tool set as a failed run. It is safe to call more than once.
+func (s *Session) Close() { s.CloseWith(false) }
+
+// CloseWith is Close that tells the tool set whether the run succeeded.
+func (s *Session) CloseWith(success bool) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -259,12 +269,12 @@ func (s *Session) Close() {
 			s.h.opt.Log.Warn("tools: revoke token", "run", s.spec.RunID, "err", err)
 		}
 	}
-	s.release()
+	s.release(success)
 }
 
-func (s *Session) release() {
+func (s *Session) release(success bool) {
 	for i := len(s.closers) - 1; i >= 0; i-- {
-		s.closers[i]()
+		s.closers[i](success)
 	}
 	s.closers = nil
 }

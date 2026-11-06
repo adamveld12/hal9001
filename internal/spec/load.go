@@ -92,7 +92,23 @@ func (w *Workspace) Refs() *Refs {
 			r.Runtimes[k] = v
 		}
 	}
+	r.Sandboxes = enabledSandboxes(w.Home)
 	return r
+}
+
+// enabledSandboxes reads sandboxes/*.yaml and returns the valid, enabled backends.
+func enabledSandboxes(home string) map[string]Sandbox {
+	out := map[string]Sandbox{}
+	for _, b := range SandboxBackends {
+		raw, _, err := ReadFile(home, KindSandbox, b)
+		if err != nil {
+			continue
+		}
+		if cfg, ds := CheckSandbox(b, raw); cfg != nil && !HasErrors(ds) && cfg.Enabled {
+			out[b] = *cfg
+		}
+	}
+	return out
 }
 
 // AllDiagnostics returns every diagnostic in the workspace, file by file.
@@ -138,6 +154,7 @@ func Load(home string) *Workspace {
 	for k, v := range w.Config.Value.Runtimes {
 		refs.Runtimes[k] = v
 	}
+	refs.Sandboxes = enabledSandboxes(home)
 
 	for _, n := range sensorNames {
 		w.Sensors = append(w.Sensors, loadFile(home, KindSensor, n, func(b []byte) (*Sensor, []Diagnostic) { return CheckSensor(n, b) }))
