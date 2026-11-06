@@ -250,12 +250,16 @@ skills:
   enabled: false
 mcp:
   enableProjectConfig: false
+  startupTimeoutMs: 30000
+tools:
+  xdev: false
 disabledProviders: [native, claude, claude-plugins, codex, gemini, github, opencode, cursor, windsurf, vscode, agents-md, agents, agent-plugins, omp-plugins, skillshare, mcp-json]
 `
 
 func lockOmp(cfg RuntimeConfig, opt LockdownOptions) (RuntimeConfig, error) {
 	cfg.Modes = ModeNames{}
 	cfg.Elicitation = false
+	cfg.Lockdown.WaitForMCP = true
 	overlay := filepath.Join(opt.Dir, "omp-lockdown.yml")
 	flags := []string{"--no-tools", "--no-extensions", "--no-skills", "--no-rules", "--no-context-files", "--no-lsp", "--no-pty", "--config", overlay}
 	at := len(cfg.Command)

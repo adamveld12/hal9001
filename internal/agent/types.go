@@ -6,6 +6,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -163,6 +164,9 @@ type Lockdown struct {
 	// RefuseCwdEntries are names that must not exist in a run's working directory (Codex trusts every cwd and would
 	// start the MCP servers of <cwd>/.codex/config.toml).
 	RefuseCwdEntries []string `json:"refuse_cwd_entries,omitempty"`
+	// WaitForMCP makes the first prompt of a process wait (RunRequest.ToolsReady) until the agent's MCP client has
+	// connected: omp starts its MCP servers asynchronously and answers a prompt that arrives first without their tools.
+	WaitForMCP bool `json:"wait_for_mcp,omitempty"`
 	// Err, when set, is why the lockdown could not be prepared; runs of the runtime fail with it instead of starting
 	// an agent that still has its built-in tools.
 	Err string `json:"err,omitempty"`
@@ -231,6 +235,9 @@ type RunRequest struct {
 	Env []string
 	// ExpectNote parses the final message as a structured note (§7.4).
 	ExpectNote bool
+	// ToolsReady, when set, is called after the session is set up and before the first prompt of a process, to wait
+	// until the agent can see the MCP tools hal injected (some runtimes do not wait for their MCP servers).
+	ToolsReady func(ctx context.Context)
 }
 
 func (r *RunRequest) style() ApproveStyle {

@@ -1388,6 +1388,29 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         default: {$ref: '#/components/responses/Error'}
+  /api/mcp/ready:
+    post:
+      operationId: markMcpReady
+      tags: [mcp]
+      summary: The agent's MCP client is connected (hal MCP backend)
+      description: |
+        `hal9001 mcp` calls this once the agent's MCP client has initialized against it, so hal can hold the first prompt
+        until the agent can see its tools (omp does not wait for its MCP servers). Authorized by the run capability token
+        like the other `/api/mcp/` operations.
+      x-hal-service: api
+      x-hal-public: true
+      security: []
+      responses:
+        '204': {description: Recorded.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '503':
+          description: The daemon has no tool hub (not expected in a normal daemon).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/Error'}
   /api/mcp/call:
     post:
       operationId: callMcpTool

@@ -75,7 +75,12 @@ func (p *mcpProxy) server(ctx context.Context) (*mcp.Server, error) {
 	if err := p.do(ctx, http.MethodGet, "/api/mcp/tools", nil, &list); err != nil {
 		return nil, fmt.Errorf("list tools: %w", err)
 	}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "hal", Version: "1"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "hal", Version: "1"}, &mcp.ServerOptions{
+		// Tell the daemon the agent's client is connected: it holds the first prompt until then.
+		InitializedHandler: func(ctx context.Context, _ *mcp.InitializedRequest) {
+			_ = p.do(ctx, http.MethodPost, "/api/mcp/ready", map[string]any{}, nil)
+		},
+	})
 	for _, t := range list.Tools {
 		srv.AddTool(&mcp.Tool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}, p.handler(t.Name))
 	}
@@ -143,6 +148,9 @@ func (p *mcpProxy) do(ctx context.Context, method, path string, body, out any) e
 			msg = strings.TrimSpace(string(data))
 		}
 		return errors.New("hal daemon: " + resp.Status + ": " + msg)
+	}
+	if out == nil || len(data) == 0 {
+		return nil
 	}
 	return json.Unmarshal(data, out)
 }

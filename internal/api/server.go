@@ -208,6 +208,7 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 
 		"listMcpTools": s.listMcpTools,
 		"callMcpTool":  s.callMcpTool,
+		"markMcpReady": s.markMcpReady,
 
 		"getKillSwitch":    s.getKillSwitch,
 		"pauseKillSwitch":  s.pauseKillSwitch,

@@ -289,3 +289,24 @@ func readFile(p string) string {
 	b, _ := os.ReadFile(p)
 	return string(b)
 }
+
+func TestWaitReadyReturnsWhenTheAgentConnectsOrTimesOut(t *testing.T) {
+	h, _ := newTestHub(t, &fakeHost{}, t.TempDir())
+	s := openSession(t, h)
+	if s.WaitReady(context.Background(), 20*time.Millisecond) {
+		t.Fatal("ready before the agent connected")
+	}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		s.MarkReady()
+	}()
+	if !s.WaitReady(context.Background(), 5*time.Second) {
+		t.Fatal("not ready after MarkReady")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s2 := openSession(t, h)
+	if s2.WaitReady(ctx, time.Minute) {
+		t.Fatal("a cancelled wait reported ready")
+	}
+}

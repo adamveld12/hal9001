@@ -34,6 +34,8 @@ type SessionRequest struct {
 	// Env is extra KEY=VALUE environment for the agent process.
 	Env        []string
 	MCPServers []MCPServer
+	// ToolsReady: see RunRequest.ToolsReady.
+	ToolsReady func(ctx context.Context)
 	// LoadSessionID is an ACP session id from an earlier process of the same
 	// conversation. The first start tries session/load for it (when the agent
 	// advertises loadSession) and falls back to session/new.
@@ -204,6 +206,7 @@ func (s *Session) beginTurn(ctx context.Context, req TurnRequest) (*run, func(),
 			Model:           s.req.Model,
 			Cwd:             s.req.Cwd,
 			MCPServers:      s.req.MCPServers,
+			ToolsReady:      s.req.ToolsReady,
 			Allow:           req.Allow,
 			Timeout:         req.Timeout,
 			ApprovalTimeout: req.ApprovalTimeout,
