@@ -56,12 +56,11 @@ pre-commit:
             run: mise exec -- pnpm test
 
 pre-push:
+  # Kept fast on purpose (this is a vibes project). The race detector is opt-in: `mise run race`.
   parallel: true
   commands:
-    race:
-      run: mise run race
-    e2e-race:
-      run: RACE=1 mise run e2e
+    e2e:
+      run: mise run e2e
     web-check:
       root: "web/"
       run: mise exec -- pnpm check
