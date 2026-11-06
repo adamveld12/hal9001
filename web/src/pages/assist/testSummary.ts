@@ -1,4 +1,4 @@
-import type { AssistTestResult } from "../../api/assist";
+import type { AssistSensorTestResult } from "../../api/assist";
 
 export interface TestSummary {
   /** Items listed in the result (the daemon lists at most the first 200). */
@@ -12,7 +12,7 @@ export interface TestSummary {
   outcome: "ok" | "failed" | "timed_out" | "parse_error";
 }
 
-export function summarizeTest(r: AssistTestResult): TestSummary {
+export function summarizeTest(r: AssistSensorTestResult): TestSummary {
   const seen = new Set<string>();
   let duplicateKeys = 0;
   let keyErrors = 0;

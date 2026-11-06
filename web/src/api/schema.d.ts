@@ -644,6 +644,77 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/flows/{id}/samples": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sample inputs for a node
+     * @description Recent real inputs a node would receive, newest first, for the form editors and previews. For an entry node
+     *     (no incoming edge) these are the payloads of recent events from the sensors the flow subscribes to. For a
+     *     downstream node they are the payloads upstream nodes recently emitted into it, taken from this flow's stored
+     *     node runs (stdout parsed as JSON or JSONL, routed by `_port` along the edges that lead to the node). Each
+     *     sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled.
+     */
+    get: operations["listFlowNodeSamples"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/transform/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run transform steps on a sample
+     * @description Compiles `steps` to jq and runs them on `input` (one JSON value), step by step, so the editor can show the
+     *     item count after each step. Compute only: nothing is stored and no flow is touched. Always 200 when the
+     *     request is well formed; invalid steps come back as `decision: error` with `diagnostics` (paths like
+     *     `steps[1].conditions[0].value`). A step that errors at run time (for example indexing a string) ends the run
+     *     with `decision: error`. The whole preview times out after 10 seconds.
+     */
+    post: operations["previewTransform"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/transform/compile": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Compile transform steps to jq
+     * @description Returns the jq program the engine would run for `steps` and one plain-language sentence per step. Used by
+     *     "Convert to code node". 422 with diagnostics when the steps are invalid.
+     */
+    post: operations["compileTransform"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/flows/{id}/versions": {
     parameters: {
       query?: never;
@@ -1082,7 +1153,7 @@ export interface paths {
     /**
      * List assist sessions
      * @description Recent and active AI-assisted authoring sessions, newest first. `target_kind` and `target_id` narrow the list
-     *     to the sessions of one target (for example the sensor an editor is open on). Closed sessions are not listed.
+     *     to the sessions of one target (for example the sensor or flow an editor is open on). Closed sessions are not listed.
      */
     get: operations["listAssistSessions"];
     put?: never;
@@ -1091,7 +1162,9 @@ export interface paths {
      * @description Creates a session and its draft. With `target.id` the draft starts from that sensor's file (or from `yaml` when
      *     given); without it the draft starts from `yaml` or a commented skeleton. No agent process starts until the
      *     first message. The sensor file is never touched: only the normal sensor create/update endpoints persist a
-     *     sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`.
+     *     sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`. `target.kind: flow` starts a flow
+     *     session in the same way (`flow.yaml`, a skeleton with `enabled: false` and `dry_run: true` for a new flow, read-only
+     *     reference material and `prompts/` for new prompts in the draft directory).
      */
     post: operations["createAssistSession"];
     delete?: never;
@@ -1188,8 +1261,8 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Run the draft like Poll now
-     * @description Runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
+     * Run the draft once (a poll for a sensor, one input for a flow)
+     * @description Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
      *     with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
      *     in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
      *     events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
@@ -1202,8 +1275,42 @@ export interface paths {
      *     meaning `lang`, `script`, `command`, `cwd` and the names of the env variables it references, equals the one the
      *     user last tested or approved, or the saved script of the target sensor; otherwise 409 `invalid-state`. The agent
      *     asks for that approval through its permission request for `hal9001 assist test` (a `tool_call` approval).
+     *
+     *     Flow sessions: the draft flow runs once on one input (`AssistTestRequest`) as a `kind: test` flow run with
+     *     `dry_run` forced, so `side_effect` command nodes are skipped. Transform and command nodes run for real and the
+     *     run follows the edges; agent nodes are not run (`skipped`, their branch ends there); inbox nodes record the item
+     *     they would create and create none. Command nodes run with the global env file like a real run, so an agent's
+     *     test needs the user's approval the same way: the hash covers every command node's `lang`, `script`, `command`,
+     *     `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
+     *     the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
+     *     (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
      */
     post: operations["testAssistDraft"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/assist/sessions/{id}/samples": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sample inputs of a flow session
+     * @description Flow sessions: the recent event payloads of the known sensors (up to 5 per sensor, redacted), in the order of
+     *     `reference/samples/` in the draft directory (sensor ids sorted, newest event first). `index` is what
+     *     `sample_index` of the test request and `hal9001 assist test --sample N` refer to. The list is refreshed at the
+     *     start of every turn. Empty for sensor sessions.
+     */
+    get: operations["listAssistSamples"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -2012,10 +2119,208 @@ export interface components {
       links?: components["schemas"]["NoteLink"][];
       ui?: components["schemas"]["NodeUI"];
     };
+    /**
+     * @description Tests one field of the item. `field` is a dot path (`author.login`); `[]` in a path means "any element"
+     *     (`labels[].name`); `.` is the item itself. Operators `not_*`, `is_not_empty` are the exact opposite of their
+     *     positive form, so with `[]` they mean "no element ...". Text operators ignore case unless `case_sensitive`.
+     *     `value` is required by `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`,
+     *     `matches` (a regular expression), `gt`, `gte`, `lt`, `lte` and `in` (a list), and not allowed by the others.
+     */
+    TransformCondition: {
+      field: string;
+      op: components["schemas"]["TransformOperator"];
+      value?: components["schemas"]["JsonValue"];
+      /** @default false */
+      case_sensitive?: boolean;
+    };
+    /** @enum {string} */
+    TransformOperator:
+      | "equals"
+      | "not_equals"
+      | "contains"
+      | "not_contains"
+      | "starts_with"
+      | "ends_with"
+      | "matches"
+      | "gt"
+      | "gte"
+      | "lt"
+      | "lte"
+      | "exists"
+      | "not_exists"
+      | "is_empty"
+      | "is_not_empty"
+      | "is_true"
+      | "is_false"
+      | "in";
+    /** @description One branch of a route step; items matching the conditions are sent to `port`. */
+    TransformRule: {
+      port: string;
+      match?: components["schemas"]["TransformMatch"];
+      conditions?: components["schemas"]["TransformCondition"][];
+    };
+    /**
+     * @default all
+     * @enum {string}
+     */
+    TransformMatch: "all" | "any";
+    /**
+     * @description What a `set` step writes. `constant` uses `value`; `field` copies `field`; `template` uses `template` (text with
+     *     `{field.path}` placeholders; `{{` and `}}` are literal braces); `function` applies `function` to `field`
+     *     (`join` and `split` take their separator in `arg`, `default` its fallback value).
+     */
+    TransformValue: {
+      /** @enum {string} */
+      kind: "constant" | "field" | "template" | "function";
+      value?: components["schemas"]["JsonValue"];
+      field?: string;
+      template?: string;
+      /** @enum {string} */
+      function?:
+        | "lowercase"
+        | "uppercase"
+        | "trim"
+        | "length"
+        | "join"
+        | "first"
+        | "last"
+        | "split"
+        | "to_number"
+        | "to_string"
+        | "default";
+      arg?: components["schemas"]["JsonValue"];
+    };
+    /**
+     * @description One plain-language step. `type` selects the fields that apply; validation rejects the others.
+     *     `filter`: `match`, `conditions`, `keep` (default true; false drops what matches).
+     *     `route`: `rules`, `default_port` (where unmatched items go; default `out`); must be the last step.
+     *     `pick`: `fields`, `rename` (path to new top-level name), `flatten` (nested fields become `a_b` keys).
+     *     `set`: `field`, `value`. `remove`: `fields`.
+     *     `split`: `field` (an array), `as`, `keep_parent`; emits one item per element.
+     *     `sort`: `field`, `by`, `order`. `limit`: `field`, `count`. `unique`: `field`, `by`.
+     *     `aggregate`: `field`, `into`, `op`, `of`, `group_by`. `filter_list`: `field`, `match`, `conditions`, `keep`;
+     *     conditions are relative to each element.
+     */
+    TransformStep: {
+      /** @enum {string} */
+      type:
+        | "filter"
+        | "route"
+        | "pick"
+        | "set"
+        | "remove"
+        | "split"
+        | "sort"
+        | "limit"
+        | "unique"
+        | "aggregate"
+        | "filter_list";
+      match?: components["schemas"]["TransformMatch"];
+      conditions?: components["schemas"]["TransformCondition"][];
+      /** @default true */
+      keep?: boolean;
+      rules?: components["schemas"]["TransformRule"][];
+      default_port?: string;
+      fields?: string[];
+      rename?: {
+        [key: string]: string;
+      };
+      flatten?: boolean;
+      field?: string;
+      value?: components["schemas"]["TransformValue"];
+      as?: string;
+      keep_parent?: boolean;
+      by?: string;
+      /**
+       * @default asc
+       * @enum {string}
+       */
+      order?: "asc" | "desc";
+      count?: number;
+      into?: string;
+      /** @enum {string} */
+      op?: "count" | "sum" | "avg" | "min" | "max" | "collect" | "group_count";
+      of?: string;
+      group_by?: string;
+    };
+    /**
+     * @description Reshapes the item with a list of plain-language steps (compiled to jq and run like a jq command node).
+     *     Ports: `out`, every port named by a route step (rules and `default_port`), and the implicit `error`.
+     */
+    TransformNode: {
+      id: components["schemas"]["Slug"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "transform";
+      steps?: components["schemas"]["TransformStep"][];
+      timeout?: components["schemas"]["Duration"];
+      ui?: components["schemas"]["NodeUI"];
+    };
+    TransformPreviewRequest: {
+      steps: components["schemas"]["TransformStep"][];
+      input: components["schemas"]["JsonValue"];
+    };
+    TransformCompileRequest: {
+      steps: components["schemas"]["TransformStep"][];
+    };
+    TransformCompiled: {
+      /** @description The jq program, with one `# step N:` comment per step. */
+      jq: string;
+      /** @description One plain-language sentence per step. */
+      description: string[];
+    };
+    TransformOutput: {
+      port: string;
+      payload: components["schemas"]["JsonValue"];
+    };
+    TransformStepResult: {
+      /** @description Index into `steps`. */
+      step: number;
+      description: string;
+      /** @description Items leaving this step when the steps up to and including it run on the input. */
+      outputs_count: number;
+      /** @description True for the step after which nothing is left. */
+      dropped: boolean;
+      /** @description The jq error when this step failed. */
+      error: string | null;
+    };
+    TransformPreview: {
+      /** @description The compiled program (empty when the steps are invalid). */
+      jq: string;
+      description: string[];
+      /** @enum {string} */
+      decision: "emitted" | "dropped" | "error";
+      outputs: components["schemas"]["TransformOutput"][];
+      /** @description Plain-language explanation: when `dropped`, which step and which condition; when `emitted`, why routed items went to their port. */
+      reason: string | null;
+      /** @description Set when `decision` is `error`. */
+      error: string | null;
+      step_results: components["schemas"]["TransformStepResult"][];
+      /** @description Problems with the steps; `path` is relative to the request, for example `steps[1].conditions[0].value`. */
+      diagnostics: components["schemas"]["Diagnostic"][];
+    };
+    FlowSample: {
+      /** @enum {string} */
+      source: "event" | "node_run";
+      event_id: components["schemas"]["NullableUlid"];
+      node_run_id: components["schemas"]["NullableUlid"];
+      /** @description The upstream node that emitted the payload (node samples). */
+      from_node_id: components["schemas"]["Slug"] | null;
+      /** @description The sensor of the event (event samples). */
+      sensor_id: components["schemas"]["Slug"] | null;
+      created_at: components["schemas"]["Timestamp"];
+      payload: components["schemas"]["JsonValue"];
+    };
+    FlowSamples: {
+      items: components["schemas"]["FlowSample"][];
+    };
     Node:
       | components["schemas"]["CommandNode"]
       | components["schemas"]["AgentNode"]
-      | components["schemas"]["InboxNode"];
+      | components["schemas"]["InboxNode"]
+      | components["schemas"]["TransformNode"];
     Edge: {
       /** @description Source node id. */
       from: string;
@@ -2601,6 +2906,8 @@ export interface components {
       node: components["schemas"]["Node"];
       /** @description Exact command line with secrets redacted. */
       argv: string[] | null;
+      /** @description The script the process ran, secrets redacted. For a transform node this is the compiled jq, so the trace shows what ran. Omitted when the node ran no script. */
+      script?: string;
       /** @description Names of the environment variables injected; values are never stored. */
       env_keys: string[];
       stdin: components["schemas"]["TextBlob"];
@@ -2976,7 +3283,7 @@ export interface components {
       allowed_logins: string[];
     };
     /** @enum {string} */
-    AssistTargetKind: "sensor";
+    AssistTargetKind: "sensor" | "flow";
     /**
      * @description `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
      *     approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
@@ -2991,23 +3298,36 @@ export interface components {
     AssistDraftAuthor: "agent" | "user";
     AssistTarget: {
       kind: components["schemas"]["AssistTargetKind"];
-      /** @description Sensor id; null when the session authors a new sensor. */
+      /** @description Sensor or flow id; null when the session authors a new sensor or flow. */
       id: components["schemas"]["Slug"] | null;
     };
     AssistTargetRequest: {
       kind: components["schemas"]["AssistTargetKind"];
       id?: components["schemas"]["Slug"];
     };
+    /** @description A prompt file the agent drafted under `prompts/`. Save creates it (`POST /api/prompts`) when `exists` is false. */
+    AssistDraftPrompt: {
+      name: components["schemas"]["Slug"];
+      /** @description The file as written (front matter and body). */
+      yaml: string;
+      /** @description A prompt of that name is already saved. Save never overwrites it. */
+      exists: boolean;
+    };
     /**
-     * @description The sensor YAML the session works on, stored in the session's draft directory (`sensor.yaml`). Only the user's
-     *     Save writes a real sensor file.
+     * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+     *     user's Save writes a real file.
      */
     AssistDraft: {
+      kind: components["schemas"]["AssistTargetKind"];
       yaml: string;
       hash: components["schemas"]["Hash"];
-      /** @description The `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. */
+      /** @description Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows. */
       sensor_id: components["schemas"]["Slug"] | null;
-      /** @description Findings of the sensor validator (the same checks as `POST /api/sensors/validate`). */
+      /** @description Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors. */
+      flow_id: components["schemas"]["Slug"] | null;
+      /** @description Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`. */
+      prompts: components["schemas"]["AssistDraftPrompt"][];
+      /** @description Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts. */
       diagnostics: components["schemas"]["Diagnostic"][];
       updated_at: components["schemas"]["Timestamp"];
       updated_by: components["schemas"]["AssistDraftAuthor"];
@@ -3088,10 +3408,15 @@ export interface components {
       item: components["schemas"]["JsonValue"];
     };
     /**
-     * @description Outcome of one test run of the draft, redacted: values of the global env file and of the target sensor's env
+     * @description Outcome of one test run of a sensor draft, redacted: values of the global env file and of the target sensor's env
      *     file are replaced by `«KEY»`. `items` lists at most the first 200 parsed items; `item_count` is the total.
      */
-    AssistTestResult: {
+    AssistSensorTestResult: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "sensor";
       /** @description -1 when the process was killed by a signal (for example on timeout). */
       exit_code: number;
       duration_ms: number;
@@ -3102,6 +3427,89 @@ export interface components {
       parse_error: string | null;
       stdout: components["schemas"]["TextBlob"];
       stderr: components["schemas"]["TextBlob"];
+    };
+    AssistFlowTestOutput: {
+      port: string;
+      payload: components["schemas"]["JsonValue"];
+    };
+    /**
+     * @description What one node did in a flow test, in the order the nodes ran. A node that did not run (a branch that was not
+     *     taken) is absent. Agent nodes are `skipped` with the reason `assist test: agent nodes are not run`, and
+     *     their branch ends there. An inbox node records the item it would create in `would_create` and creates nothing.
+     */
+    AssistFlowTestNode: {
+      node_id: components["schemas"]["Slug"];
+      node_run_id: components["schemas"]["Ulid"];
+      status: components["schemas"]["NodeRunStatus"];
+      decision: components["schemas"]["NodeRunDecision"] | null;
+      /** @description Why the node decided as it did: for a transform that dropped the item, the step and condition. */
+      reason: string | null;
+      /** @description Error class when the node failed. */
+      error: string | null;
+      /** @description Ports the node emitted on. */
+      ports: string[];
+      outputs: components["schemas"]["AssistFlowTestOutput"][];
+      /** @description Inbox nodes only: the item a real run would create. */
+      would_create: components["schemas"]["AssistInboxPreview"] | null;
+      /** @description Redacted, at most 4 KiB. */
+      stdout: string | null;
+      /** @description Redacted, at most 4 KiB. */
+      stderr: string | null;
+      exit_code: number | null;
+      duration_ms: number | null;
+    };
+    AssistInboxPreview: {
+      title: string;
+      priority: string;
+      summary_md: string;
+      suggested_reply: string;
+      links: {
+        label: string;
+        url: string;
+      }[];
+    };
+    AssistFlowTestEdge: {
+      from: components["schemas"]["Slug"];
+      to: components["schemas"]["Slug"];
+      port: string;
+    };
+    /**
+     * @description Outcome of running the draft flow once on one input as a `kind: test` flow run (hidden from the default
+     *     timelines; `GET /api/flow-runs/{id}` and its node runs show it). The run is forced `dry_run`.
+     */
+    AssistFlowTestResult: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "flow";
+      flow_run_id: components["schemas"]["Ulid"];
+      status: components["schemas"]["FlowRunStatus"];
+      input: components["schemas"]["JsonValue"];
+      nodes: components["schemas"]["AssistFlowTestNode"][];
+      edges_taken: components["schemas"]["AssistFlowTestEdge"][];
+    };
+    /** @description The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`. */
+    AssistTestResult:
+      | components["schemas"]["AssistSensorTestResult"]
+      | components["schemas"]["AssistFlowTestResult"];
+    /**
+     * @description Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
+     *     none, the first sample is used (422 when there is none).
+     */
+    AssistTestRequest: {
+      /** @description Index into `GET /api/assist/sessions/{id}/samples`. */
+      sample_index?: number;
+      event_id?: components["schemas"]["Ulid"];
+      input?: components["schemas"]["JsonValue"];
+    };
+    AssistSample: {
+      index: number;
+      sensor_id: components["schemas"]["Slug"];
+      payload: components["schemas"]["JsonValue"];
+    };
+    AssistSampleList: {
+      items: components["schemas"]["AssistSample"][];
     };
     /**
      * @description Value of the SSE `event:` field and of `StreamEvent.type`.
@@ -4689,6 +5097,95 @@ export interface operations {
       default: components["responses"]["Error"];
     };
   };
+  listFlowNodeSamples: {
+    parameters: {
+      query: {
+        node_id: components["schemas"]["Slug"];
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Samples, newest first. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FlowSamples"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  previewTransform: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TransformPreviewRequest"];
+      };
+    };
+    responses: {
+      /** @description Preview result. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TransformPreview"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  compileTransform: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TransformCompileRequest"];
+      };
+    };
+    responses: {
+      /** @description Compiled program. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TransformCompiled"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
   listFlowVersions: {
     parameters: {
       query?: {
@@ -5401,7 +5898,7 @@ export interface operations {
     parameters: {
       query?: {
         target_kind?: components["schemas"]["AssistTargetKind"];
-        /** @description Sensor id. Only sessions that edit that sensor. */
+        /** @description Sensor or flow id. Only sessions that edit that target. */
         target_id?: components["schemas"]["Slug"];
       };
       header?: never;
@@ -5587,7 +6084,11 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["AssistTestRequest"];
+      };
+    };
     responses: {
       /** @description The run finished (a failing script still answers 200; see `exit_code`). */
       200: {
@@ -5605,6 +6106,32 @@ export interface operations {
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listAssistSamples: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Samples. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistSampleList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       default: components["responses"]["Error"];
     };
   };

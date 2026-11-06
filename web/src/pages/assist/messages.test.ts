@@ -79,9 +79,12 @@ const session: AssistSession = {
   status: "idle",
   error: null,
   draft: {
+    kind: "sensor",
     yaml: "",
     hash: "h",
     sensor_id: null,
+    flow_id: null,
+    prompts: [],
     diagnostics: [],
     updated_at: "2026-11-05T10:00:00Z",
     updated_by: "user",

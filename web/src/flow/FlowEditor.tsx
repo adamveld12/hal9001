@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -21,6 +22,7 @@ import {
 import { FlowCanvas, type PaletteDrag } from "./FlowCanvas";
 import { Inspector } from "./Inspector";
 import { type Diagnostic, type Flow, type FlowNode, type UIPos } from "./model";
+import type { RunOverlay } from "./overlay";
 import { Palette } from "./Palette";
 import {
   cycleEdgeKeys,
@@ -46,6 +48,12 @@ export interface FlowEditorProps {
   onChange?: (flow: Flow, dirty: boolean) => void;
   /** Extra controls under the node form (e.g. "Run node on sample"). */
   nodeActions?: (node: FlowNode, flow: Flow) => ReactNode;
+  /** Replaces the editor's content whenever `rev` changes (a draft that arrived from outside); the selection is kept. */
+  external?: { flow: Flow; rev: number };
+  /** Marks nodes and edges with the outcome of a run, like the run page does. */
+  overlay?: RunOverlay;
+  /** The flow is saved elsewhere: no Save button, unsaved badge or leave warning here. */
+  saveHidden?: boolean;
 }
 
 function dedupe(diags: Diagnostic[]): Diagnostic[] {
@@ -60,6 +68,9 @@ function dedupe(diags: Diagnostic[]): Diagnostic[] {
 
 export function FlowEditor(props: FlowEditorProps) {
   const [state, dispatch] = useReducer(editorReducer, props.flow, initState);
+  const external = props.external;
+  const loadedRev = useRef(external?.rev);
+  const selectedId = useRef<string | null>(null);
   const [problemsOpen, setProblemsOpen] = useState(true);
 
   const flow = useMemo(() => serialize(state), [state]);
@@ -77,6 +88,10 @@ export function FlowEditor(props: FlowEditorProps) {
   const subscribed = useMemo(() => new Set(subscribedSensors(state)), [state]);
   const knownSensors = useMemo(() => new Set(props.sensors), [props.sensors]);
   const selected = selectedFlowNode(state);
+  const selectedNodeId = selected?.id ?? null;
+  useEffect(() => {
+    selectedId.current = selectedNodeId;
+  }, [selectedNodeId]);
   const blocked = hasErrors(clientDiagnostics);
 
   const { onChange } = props;
@@ -84,21 +99,37 @@ export function FlowEditor(props: FlowEditorProps) {
     onChange?.(flow, dirty);
   }, [flow, dirty, onChange]);
 
+  // A draft from outside replaces the content; the node that was open stays open.
+  useEffect(() => {
+    if (!external || external.rev === loadedRev.current) return;
+    loadedRev.current = external.rev;
+    dispatch({ type: "load", flow: external.flow });
+    const keep = selectedId.current;
+    if (keep !== null) {
+      dispatch({
+        type: "nodeChanges",
+        changes: [{ type: "select", id: keep, selected: true }],
+      });
+    }
+  }, [external]);
+
+  const { saveHidden } = props;
+
   const save = useCallback(() => {
-    if (blocked || !dirty || props.saving) return;
+    if (saveHidden || blocked || !dirty || props.saving) return;
     props.onSave(flow).then(
       () => dispatch({ type: "markSaved", flow }),
       () => undefined, // the caller surfaces the failure through `saveError`
     );
-  }, [blocked, dirty, flow, props]);
+  }, [saveHidden, blocked, dirty, flow, props]);
 
   // Warn before leaving with unsaved edits.
   useEffect(() => {
-    if (!dirty) return;
+    if (saveHidden || !dirty) return;
     const handler = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  }, [saveHidden, dirty]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -175,7 +206,7 @@ export function FlowEditor(props: FlowEditorProps) {
           />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          {dirty && <Badge tone="warn">unsaved</Badge>}
+          {dirty && !saveHidden && <Badge tone="warn">unsaved</Badge>}
           {props.saveError && (
             <span role="alert" className="text-xs text-bad">
               {props.saveError}
@@ -195,16 +226,18 @@ export function FlowEditor(props: FlowEditorProps) {
             disabled={state.future.length === 0}
             onClick={() => dispatch({ type: "redo" })}
           />
-          <Button
-            variant="primary"
-            icon="save"
-            disabled={!dirty || blocked || props.saving}
-            title={blocked ? "Fix the errors first" : "Save to YAML (⌘S)"}
-            onClick={save}
-          >
-            {props.saving ? "Saving…" : "Save"}
-            <Kbd>⌘S</Kbd>
-          </Button>
+          {!saveHidden && (
+            <Button
+              variant="primary"
+              icon="save"
+              disabled={!dirty || blocked || props.saving}
+              title={blocked ? "Fix the errors first" : "Save to YAML (⌘S)"}
+              onClick={save}
+            >
+              {props.saving ? "Saving…" : "Save"}
+              <Kbd>⌘S</Kbd>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -216,6 +249,7 @@ export function FlowEditor(props: FlowEditorProps) {
             diagnostics={diagIndex.byNode}
             knownSensors={knownSensors}
             cycleKeys={cycleKeys}
+            overlay={props.overlay}
             onNodesChange={(changes) =>
               dispatch({ type: "nodeChanges", changes })
             }

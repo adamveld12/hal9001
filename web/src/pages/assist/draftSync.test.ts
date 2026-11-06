@@ -18,9 +18,12 @@ function draft(
   by: AssistDraft["updated_by"] = "agent",
 ): AssistDraft {
   return {
+    kind: "sensor",
     yaml,
     hash,
     sensor_id: null,
+    flow_id: null,
+    prompts: [],
     diagnostics: [],
     updated_at: "2026-11-05T10:00:00Z",
     updated_by: by,
