@@ -85,3 +85,78 @@ func TestSandboxToolsApprovalAlways(t *testing.T) {
 		t.Errorf("per_run workspace kept after a successful run: %v", entries)
 	}
 }
+
+// A policy deny rule refuses the call: the agent gets a tool error, nothing runs, and the trace records a denied
+// permission request decided by policy (not an allowed one).
+func TestSandboxPolicyDenyIsRecordedAsDenied(t *testing.T) {
+	d := newDaemon(t)
+	root := filepath.Join(t.TempDir(), "sbx")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: persistent\napproval: rules\napproval_rules:\n  shell:\n    - {match: '^rm ', action: deny}\n    - {match: '^echo ', action: auto}\n")
+	d.IdleSensor("src")
+	d.Prompt("p", "none", "go")
+	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: []step{
+		mcp("c1", "shell", map[string]any{"command": "echo keep > keep.txt"}),
+		mcp("c2", "shell", map[string]any{"command": "rm -f keep.txt"}),
+		say("finished"),
+	}}}})
+	d.Flow("f", approvalFlow("per_tool", "    sandbox: local\n"))
+	d.Start()
+	done := d.WaitRun(d.InjectRun("src", map[string]any{"id": "3"}), "succeeded")
+	run := d.AgentRuns(d.Node(done, "work").ID)[0]
+	tr := d.Transcript(run.ID)
+	if !strings.Contains(tr, "mcp[c1] is_error=false") || !strings.Contains(tr, "mcp[c2] is_error=true") || !strings.Contains(tr, "denied by policy") {
+		t.Errorf("transcript:\n%s", tr)
+	}
+	if _, err := os.Stat(filepath.Join(root, "keep.txt")); err != nil {
+		t.Error("the denied rm ran")
+	}
+	var denied int
+	for _, p := range d.Permissions(run.ID) {
+		if p.Title == "hal tool: shell" && p.Decision == "reject" && p.DecidedBy == "policy" {
+			denied++
+		}
+	}
+	if denied != 1 {
+		t.Errorf("denied-by-policy records = %d, want 1: %+v", denied, d.Permissions(run.ID))
+	}
+}
+
+// The propose and execute phases of a proposal-style approve node share one per_run workspace, which is removed
+// only when the node run has finished successfully.
+func TestSandboxWorkspaceSurvivesProposalPhases(t *testing.T) {
+	d := newDaemon(t)
+	root := filepath.Join(t.TempDir(), "sbx")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: per_run\napproval: auto\n")
+	d.IdleSensor("src")
+	d.Prompt("p", "none", "Review {{.input.id}}")
+	d.Runtime("fake", script{LoadSession: true, Turns: []turn{
+		{When: inMode("default"), Steps: []step{
+			mcp("p1", "fs_write", map[string]any{"path": "plan.txt", "content": "from propose"}),
+			say(proposalPlan),
+		}},
+		{When: inMode("bypass"), Steps: []step{
+			mcp("e1", "shell", map[string]any{"command": "cat plan.txt"}),
+			say("executed"),
+		}},
+	}})
+	d.Flow("f", approvalFlow("proposal", "    sandbox: local\n"))
+	d.Start()
+
+	runID := d.InjectRun("src", map[string]any{"id": "4"})
+	parked := d.WaitRun(runID, "awaiting_approval")
+	if matches, _ := filepath.Glob(filepath.Join(root, "runs", "*", "plan.txt")); len(matches) != 1 {
+		t.Fatalf("the proposal phase's workspace was not kept: %v (%s)", matches, d.Transcript(d.AgentRuns(d.Node(parked, "work").ID)[0].ID))
+	}
+	d.Decide(d.WaitApproval("proposal").ID, true, nil)
+	done := d.WaitRun(runID, "succeeded")
+	var seen bool
+	for _, r := range d.AgentRuns(d.Node(done, "work").ID) {
+		seen = seen || strings.Contains(d.Transcript(r.ID), "stdout:\\nfrom propose")
+	}
+	if !seen {
+		t.Error("the execute phase did not see the file written in the propose phase")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(root, "runs")); len(entries) != 0 {
+		t.Errorf("workspace kept after the node run succeeded: %v", entries)
+	}
+}

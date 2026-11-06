@@ -58,8 +58,10 @@ type CallRecord struct {
 	NodeRunID string
 	Tool      string
 	Args      json.RawMessage
-	// Reason says why the call was allowed without approval.
+	// Reason says why the call was allowed without approval (or, when Denied, why it was refused).
 	Reason string
+	// Denied marks a call a tool policy refused; the host records it as denied by policy.
+	Denied bool
 }
 
 // Host is what the daemon supplies to the hub: the approval queue and the run trace.
@@ -311,7 +313,18 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 	}
 	info := s.spec.Info()
 	var recordID string
-	if needs, why := approval(t, args); needs {
+	verdict, why := approval(t, args)
+	if verdict == VerdictDeny {
+		if info.AgentRunID != "" {
+			id, err := s.h.opt.Host.Record(ctx, CallRecord{RunID: info.AgentRunID, NodeRunID: info.NodeRunID, Tool: name, Args: args, Reason: why, Denied: true})
+			if err != nil {
+				s.h.opt.Log.Warn("tools: record denied call", "tool", name, "err", err)
+			}
+			s.finish(id, "not run: denied by policy")
+		}
+		return Result{}, fmt.Errorf("tool %s was denied by policy: %s", name, why)
+	}
+	if verdict == VerdictApprove {
 		if s.spec.ReadOnly || info.DryRun {
 			return Result{}, fmt.Errorf("tool %s was not run: %s; this run is read-only", name, why)
 		}
@@ -352,11 +365,16 @@ func (s *Session) finish(recordID, outcome string) {
 	}
 }
 
-func approval(t Tool, args json.RawMessage) (bool, string) {
-	if t.Approval == nil {
-		return false, ""
+func approval(t Tool, args json.RawMessage) (Verdict, string) {
+	switch {
+	case t.Policy != nil:
+		return t.Policy(args)
+	case t.Approval != nil:
+		if needs, why := t.Approval(args); needs {
+			return VerdictApprove, why
+		}
 	}
-	return t.Approval(args)
+	return VerdictAllow, ""
 }
 
 // ServerName is the name of hal's MCP server in the agent's session.

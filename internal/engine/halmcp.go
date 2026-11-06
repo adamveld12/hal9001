@@ -61,6 +61,9 @@ func (h halToolHost) Record(ctx context.Context, c tools.CallRecord) (string, er
 	now := h.e.st.Now()
 	p.Decision, p.DecidedBy, p.DecidedAt = store.PermAllow, store.DecidedByPolicy, &now
 	p.MatchedRule, p.Reason = "hal:builtin", c.Reason
+	if c.Denied {
+		p.Decision, p.MatchedRule = store.PermReject, "hal:policy"
+	}
 	if err := h.e.st.CreatePermissionRequest(context.WithoutCancel(ctx), p); err != nil {
 		return "", err
 	}

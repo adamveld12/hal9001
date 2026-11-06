@@ -34,8 +34,14 @@ func SandboxProvider(m *sandbox.Manager, opt SandboxOptions) Provider {
 		if err != nil {
 			return Extension{}, err
 		}
-		rs := sandbox.RunSpec{RunID: spec.RunID, Image: spec.Image, Repo: spec.Repo, Ref: spec.Ref}
-		if info := spec.Info(); len(info.Input) > 0 {
+		info := spec.Info()
+		// The workspace is keyed by the node run, so the propose and execute phases of an approve node share it.
+		key := spec.RunID
+		if info.NodeRunID != "" {
+			key = info.NodeRunID
+		}
+		rs := sandbox.RunSpec{RunID: key, Image: spec.Image, Repo: spec.Repo, Ref: spec.Ref}
+		if len(info.Input) > 0 {
 			rs.Input = info.Input
 		}
 		if spec.Repo != "" {
@@ -93,8 +99,8 @@ func (s *sandboxTools) tools() []Tool {
 				"path":    str("File path relative to the workdir."),
 				"content": str("The complete new content of the file."),
 			}),
-			Approval: s.writeApproval,
-			Run:      s.write,
+			Policy: s.writePolicy,
+			Run:    s.write,
 		},
 		{
 			Name:        "fs_list",
@@ -123,8 +129,8 @@ func (s *sandboxTools) tools() []Tool {
 				"stdin":           str("Optional text sent to the command's standard input."),
 				"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "description": "Kill the command after this many seconds (default: the sandbox's command timeout)."},
 			}),
-			Approval: s.shellApproval,
-			Run:      s.shell,
+			Policy: s.shellPolicy,
+			Run:    s.shell,
 		},
 	}
 }
@@ -162,14 +168,18 @@ func (s *sandboxTools) read(ctx context.Context, c Call) (Result, error) {
 // diffSnippetLimit bounds the diff shown in an approval.
 const diffSnippetLimit = 16 << 10
 
-func (s *sandboxTools) writeApproval(raw json.RawMessage) (bool, string) {
+func (s *sandboxTools) writePolicy(raw json.RawMessage) (Verdict, string) {
 	var a struct{ Path, Content string }
 	if json.Unmarshal(raw, &a) != nil {
-		return false, ""
+		return VerdictAllow, ""
 	}
 	d := s.policy.Decide(sandbox.OpFSWrite, map[string]any{"path": a.Path})
-	if d.Action != "approve" {
-		return false, ""
+	switch d.Action {
+	case "deny":
+		return VerdictDeny, fmt.Sprintf("fs_write to %s is denied by the %s sandbox policy: %s", a.Path, s.name, d.Reason)
+	case "approve":
+	default:
+		return VerdictAllow, ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -185,16 +195,13 @@ func (s *sandboxTools) writeApproval(raw json.RawMessage) (bool, string) {
 	if len(diff) > diffSnippetLimit {
 		diff = diff[:diffSnippetLimit] + "\n[diff truncated]"
 	}
-	return true, fmt.Sprintf("sandbox %s: %s (%s)\n\n%s", s.name, label, d.Reason, diff)
+	return VerdictApprove, fmt.Sprintf("sandbox %s: %s (%s)\n\n%s", s.name, label, d.Reason, diff)
 }
 
 func (s *sandboxTools) write(ctx context.Context, c Call) (Result, error) {
 	var a struct{ Path, Content string }
 	if err := decode(c.Args, &a); err != nil {
 		return Result{}, err
-	}
-	if d := s.policy.Decide(sandbox.OpFSWrite, map[string]any{"path": a.Path}); d.Action == "deny" {
-		return Result{}, fmt.Errorf("fs_write denied by the %s sandbox policy: %s", s.name, d.Reason)
 	}
 	if err := s.sess.WriteFile(ctx, a.Path, []byte(a.Content)); err != nil {
 		return Result{}, err
@@ -248,16 +255,20 @@ func (s *sandboxTools) search(ctx context.Context, c Call) (Result, error) {
 	return Result{Text: b.String()}, nil
 }
 
-func (s *sandboxTools) shellApproval(raw json.RawMessage) (bool, string) {
+func (s *sandboxTools) shellPolicy(raw json.RawMessage) (Verdict, string) {
 	var a struct{ Command string }
 	if json.Unmarshal(raw, &a) != nil {
-		return false, ""
+		return VerdictAllow, ""
 	}
 	d := s.policy.Decide(sandbox.OpShell, map[string]any{"command": a.Command})
-	if d.Action != "approve" {
-		return false, ""
+	switch d.Action {
+	case "deny":
+		return VerdictDeny, fmt.Sprintf("shell command is denied by the %s sandbox policy: %s", s.name, d.Reason)
+	case "approve":
+	default:
+		return VerdictAllow, ""
 	}
-	return true, fmt.Sprintf("sandbox %s: run a shell command (%s):\n\n%s", s.name, d.Reason, a.Command)
+	return VerdictApprove, fmt.Sprintf("sandbox %s: run a shell command (%s):\n\n%s", s.name, d.Reason, a.Command)
 }
 
 func (s *sandboxTools) shell(ctx context.Context, c Call) (Result, error) {
@@ -271,9 +282,6 @@ func (s *sandboxTools) shell(ctx context.Context, c Call) (Result, error) {
 	}
 	if strings.TrimSpace(a.Command) == "" {
 		return Result{}, errors.New("command is empty")
-	}
-	if d := s.policy.Decide(sandbox.OpShell, map[string]any{"command": a.Command}); d.Action == "deny" {
-		return Result{}, fmt.Errorf("shell denied by the %s sandbox policy: %s", s.name, d.Reason)
 	}
 	var stdin []byte
 	if a.Stdin != "" {
