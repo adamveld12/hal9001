@@ -53,6 +53,8 @@ Every step has `op`:
 | `write_file` | `path`, `data` | Write a file; `path` is relative to the session cwd. Put it in `on_allow` so the effect only happens when permitted. |
 | `delete_file` | `path` | Remove a file. |
 | `exec` | `cmd` | Run a command in the session cwd; a non-zero exit fails the turn. |
+| `mcp_call` | `id`, `tool`, `args`, `name` (MCP server, default `hal`) | Acts like a runtime calling a tool of an MCP server the client injected in `session/new` (stdio only): emits the `tool_call` titled `mcp__<name>__<tool>` (kind `other`), asks `session/request_permission`, and on allow connects to the server, calls the tool and emits an agent message `mcp[<id>] is_error=<bool> <text>` with the result (on reject: `mcp[<id>] rejected by the client`). |
+| `mcp_invoke` | `id`, `tool`, `args`, `name` | The call without the permission request. |
 | `stderr` | `text` | Print to stderr. |
 | `error` | `text` | Fail the prompt with a JSON-RPC error. |
 

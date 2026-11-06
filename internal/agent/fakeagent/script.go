@@ -27,6 +27,8 @@ const (
 	OpExec         = "exec"
 	OpStderr       = "stderr"
 	OpError        = "error"
+	OpMCPCall      = "mcp_call"
+	OpMCPInvoke    = "mcp_invoke"
 )
 
 // Script drives one fake agent process. It is JSON.
@@ -139,6 +141,10 @@ type Step struct {
 	// rejects the call, as codex-acp does (its only reject option is "cancel").
 	CancelOnReject bool `json:"cancel_on_reject,omitempty"`
 
+	// mcp_call / mcp_invoke: Name is the MCP server (default "hal"), Tool the tool, Args its arguments, ID the tool call id.
+	Tool string `json:"tool,omitempty"`
+	Args any    `json:"args,omitempty"`
+
 	// plan
 	Entries []PlanEntry `json:"entries,omitempty"`
 
@@ -237,6 +243,10 @@ func validateSteps(where string, steps []Step) error {
 		case OpExec, OpSpawnChild:
 			if len(st.Cmd) == 0 {
 				return fmt.Errorf("%s: %s needs cmd", w, st.Op)
+			}
+		case OpMCPCall, OpMCPInvoke:
+			if st.ID == "" || st.Tool == "" {
+				return fmt.Errorf("%s: %s needs id and tool", w, st.Op)
 			}
 		case OpPlan, OpSleep, OpExit, OpHang, OpIgnoreSIGTRM, OpError:
 		default:

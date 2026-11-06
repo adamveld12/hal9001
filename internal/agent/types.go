@@ -151,6 +151,17 @@ type RuntimeConfig struct {
 	// {"claudeCode": {"options": {"settingSources": ["project"]}}} so the
 	// user's own allow rules cannot bypass the harness's policy.
 	SessionMeta map[string]any `json:"session_meta,omitempty"`
+	// Lockdown is the hook for runtime lockdown: the spawn arguments, environment and session meta that restrict an
+	// agent to hal's MCP tools (no native shell, file or network tools). It is not applied by the spawn path yet and
+	// not read from config.yaml; the lockdown work fills it per runtime and wires it in.
+	Lockdown Lockdown `json:"lockdown"`
+}
+
+// Lockdown is what a runtime needs to run without its native tools. The zero value means "no lockdown flags known".
+type Lockdown struct {
+	PolicySpawn
+	// SessionMeta is merged over RuntimeConfig.SessionMeta on session/new and session/load.
+	SessionMeta map[string]any `json:"session_meta,omitempty"`
 }
 
 // MCPServer is an MCP server handed to the agent in session/new. Type is

@@ -263,3 +263,29 @@ func TestPreambleAndRunTools(t *testing.T) {
 		t.Error("unknown timezone accepted")
 	}
 }
+
+func TestReadOnlyRunRefusesWritesWithoutAsking(t *testing.T) {
+	dir, log := fakeGH(t)
+	host := &fakeHost{decision: Decision{Allowed: true}}
+	h, _ := newTestHub(t, host, dir)
+	s, err := h.Open(context.Background(), RunSpec{RunID: "r", ReadOnly: true, Info: func() RunInfo { return RunInfo{AgentRunID: "r"} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, err = s.Call(context.Background(), "gh_api", json.RawMessage(`{"method":"DELETE","path":"/repos/o/r"}`))
+	if err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(host.approvals) != 0 || readFile(log) != "" {
+		t.Errorf("approvals=%d gh log=%q", len(host.approvals), readFile(log))
+	}
+	if _, err := s.Call(context.Background(), "gh_api", json.RawMessage(`{"path":"/user"}`)); err != nil {
+		t.Errorf("a GET must still run: %v", err)
+	}
+}
+
+func readFile(p string) string {
+	b, _ := os.ReadFile(p)
+	return string(b)
+}

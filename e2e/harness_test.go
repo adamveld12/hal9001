@@ -334,7 +334,7 @@ func (d *Daemon) Start() {
 	done := make(chan error, 1)
 	d.logOK.Store(true)
 	opts := daemon.Options{
-		Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0", AssistIdleTimeout: d.AssistIdle,
+		Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0", AssistIdleTimeout: d.AssistIdle, Executable: hal9001Bin,
 		Log:   slog.New(slog.NewTextHandler(logWriter{d}, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		Ready: func(a net.Addr) { ready <- a },
 	}
