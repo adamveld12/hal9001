@@ -13,6 +13,7 @@ import {
   ERROR_PORT,
   DENIED_PORT,
 } from "./model";
+import { validateSteps } from "./transform/validateSteps";
 
 type Pair = Pick<FlowEdge, "from" | "to">;
 
@@ -161,6 +162,16 @@ function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
     }
     case "inbox": {
       if (node.title.trim() === "") at("title", "an inbox note needs a title");
+      break;
+    }
+    case "transform": {
+      for (const d of validateSteps(node.steps)) {
+        out.push({
+          ...d,
+          path: `nodes[${index}].${d.path}`,
+          node_id: node.id,
+        });
+      }
       break;
     }
   }

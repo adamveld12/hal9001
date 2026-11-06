@@ -303,7 +303,10 @@ export function FlowEditor(props: FlowEditorProps) {
         </div>
 
         <aside
-          className="w-96 shrink-0 overflow-y-auto border-l border-line bg-panel"
+          className={cx(
+            "shrink-0 overflow-y-auto border-l border-line bg-panel",
+            selected?.type === "transform" ? "w-[30rem]" : "w-96",
+          )}
           aria-label="Node settings"
         >
           {selected ? (
@@ -315,8 +318,14 @@ export function FlowEditor(props: FlowEditorProps) {
                 prompts={props.prompts}
                 runtimes={props.runtimes}
                 idTaken={(id) => state.nodes.some((n) => n.id === id)}
-                onChange={(patch) =>
-                  dispatch({ type: "updateNode", id: selected.id, patch })
+                flowId={flow.id}
+                onChange={(patch, coalesce) =>
+                  dispatch({
+                    type: "updateNode",
+                    id: selected.id,
+                    patch,
+                    coalesce,
+                  })
                 }
                 onRename={(to) =>
                   dispatch({ type: "renameNode", id: selected.id, to })

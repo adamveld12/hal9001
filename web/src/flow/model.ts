@@ -2,6 +2,9 @@
 // identical to the file on disk). The editor edits this model directly; the
 // canvas graph is derived from it (see graph.ts).
 
+import { transformPorts } from "./transform/ports";
+import type { TransformNode } from "./transform/types";
+
 export type Lang = "bash" | "python" | "node" | "jq" | "exec";
 export const LANGS: readonly Lang[] = ["bash", "python", "node", "jq", "exec"];
 
@@ -89,7 +92,9 @@ export interface InboxNode {
   ui?: UIPos;
 }
 
-export type FlowNode = CommandNode | AgentNode | InboxNode;
+export type { TransformNode };
+
+export type FlowNode = CommandNode | AgentNode | InboxNode | TransformNode;
 export type NodeType = FlowNode["type"];
 
 export interface FlowEdge {
@@ -142,6 +147,8 @@ export function declaredPorts(node: FlowNode): string[] {
     case "agent":
     case "inbox":
       return [DEFAULT_PORT];
+    case "transform":
+      return transformPorts(node.steps);
   }
 }
 
@@ -192,6 +199,8 @@ export function newNode(type: NodeType, id: string, ui: UIPos): FlowNode {
       return { id, type, runtime: "claude", mode: "readonly", prompt: "", ui };
     case "inbox":
       return { id, type, title: "{{.input.title}}", priority: "normal", ui };
+    case "transform":
+      return { id, type, steps: [], ui };
   }
 }
 
