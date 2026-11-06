@@ -256,6 +256,7 @@ func (e *Engine) nodeRuns(flowRunID string) ([]store.NodeRun, error) {
 // route queues a node run for every edge leaving node on each output's port,
 // carrying that output's payload. A port without edges ends the branch.
 func (e *Engine) route(nr *store.NodeRun, flow *spec.Flow, outs []runner.Output) error {
+	at := e.assistTestOf(nr.FlowRunID)
 	for _, out := range outs {
 		for _, edge := range flow.Edges {
 			if edge.From != nr.NodeID || edge.Port != out.Port {
@@ -264,6 +265,9 @@ func (e *Engine) route(nr *store.NodeRun, flow *spec.Flow, outs []runner.Output)
 			target := flow.NodeByID(edge.To)
 			if target == nil {
 				return fmt.Errorf("edge to unknown node %q", edge.To)
+			}
+			if at != nil {
+				at.recordEdge(edge.From, edge.To, edge.Port)
 			}
 			child := &store.NodeRun{
 				FlowRunID: nr.FlowRunID, NodeID: target.ID, NodeType: nodeRunType(target),

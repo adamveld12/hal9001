@@ -2,6 +2,7 @@ package live
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -144,4 +145,121 @@ func TestLiveAssistClaudeAuthorsASensor(t *testing.T) {
 		t.Error("the turn ended without a summary")
 	}
 	t.Logf("agent summary: %s", summary)
+}
+
+// One real claude turn authors a flow on demo-ticker: "send urgent items to the inbox". Passes when the draft
+// validates without errors, the agent needed nobody (a transform-only flow asks for no approval), and the daemon's
+// own test of the draft routes the urgent sample to an inbox node (would_create) and not the normal one.
+func TestLiveAssistClaudeAuthorsAFlow(t *testing.T) {
+	requireLive(t)
+	rt := runtimesUnderTest[0]
+	if !rt.selected() {
+		t.Skip("claude not selected by HAL9001_LIVE_RUNTIMES")
+	}
+	bin := buildCLI(t)
+	s := startStack(t, stackOpts{binDir: bin, keepSensors: []string{"demo-ticker"}})
+
+	// No enabled flow subscribes to demo-ticker, so poll it once now: it fires its three items, which the session
+	// then offers as samples.
+	if run := s.pollSensor("demo-ticker"); run.Status != "succeeded" {
+		t.Fatalf("poll demo-ticker: %+v", run)
+	}
+
+	var created liveAssistSession
+	s.must(http.StatusCreated, http.MethodPost, "/api/assist/sessions", map[string]any{
+		"target": map[string]any{"kind": "flow"}, "runtime": rt.name, "model": rt.modelName(),
+	}, &created)
+	const ask = `Build a flow on demo-ticker that sends urgent items to the inbox. Drop items whose severity is noise, ` +
+		`and do nothing with the rest. Test it on a sample and tell me in one sentence what the test showed.`
+	s.must(http.StatusAccepted, http.MethodPost, "/api/assist/sessions/"+created.ID+"/messages", map[string]any{"text": ask}, nil)
+
+	var got liveAssistSession
+	deadline := time.Now().Add(8 * time.Minute)
+	for {
+		s.must(http.StatusOK, http.MethodGet, "/api/assist/sessions/"+created.ID, nil, &got)
+		if got.Status == "idle" || got.Status == "failed" {
+			break
+		}
+		if got.Status == "awaiting_approval" {
+			for _, ap := range s.approvals("status=pending") {
+				pr := ap.PermissionRequest
+				t.Errorf("the agent asked for approval of %+v (a transform-only flow needs none)", pr)
+				s.must(http.StatusOK, http.MethodPost, "/api/approvals/"+ap.ID+"/deny", map[string]any{}, nil)
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session still %q after 8m", got.Status)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	evidence(t, "assist-flow-session", got)
+	if got.Status != "idle" {
+		t.Fatalf("turn ended %q: %v", got.Status, got.Error)
+	}
+	var draft struct {
+		Draft struct {
+			Kind        string           `json:"kind"`
+			YAML        string           `json:"yaml"`
+			FlowID      *string          `json:"flow_id"`
+			Diagnostics []map[string]any `json:"diagnostics"`
+			UpdatedBy   string           `json:"updated_by"`
+		} `json:"draft"`
+	}
+	s.must(http.StatusOK, http.MethodGet, "/api/assist/sessions/"+created.ID, nil, &draft)
+	d := draft.Draft
+	t.Logf("draft:\n%s", d.YAML)
+	if d.Kind != "flow" || d.FlowID == nil || d.UpdatedBy != "agent" || strings.Contains(d.YAML, "enabled: true") {
+		t.Errorf("draft kind %q id %v by %q (must stay disabled)", d.Kind, d.FlowID, d.UpdatedBy)
+	}
+	for _, dg := range d.Diagnostics {
+		if dg["severity"] == "error" {
+			t.Errorf("the draft has an error diagnostic: %v", dg)
+		}
+	}
+
+	var samples struct {
+		Items []struct {
+			Index   int            `json:"index"`
+			Payload map[string]any `json:"payload"`
+		} `json:"items"`
+	}
+	s.must(http.StatusOK, http.MethodGet, "/api/assist/sessions/"+created.ID+"/samples", nil, &samples)
+	var urgent, normal = -1, -1
+	for _, it := range samples.Items {
+		switch it.Payload["severity"] {
+		case "urgent":
+			urgent = it.Index
+		case "normal":
+			normal = it.Index
+		}
+	}
+	if urgent < 0 || normal < 0 {
+		t.Fatalf("samples = %+v", samples.Items)
+	}
+	type testRes struct {
+		Kind  string `json:"kind"`
+		Nodes []struct {
+			NodeID      string          `json:"node_id"`
+			Status      string          `json:"status"`
+			WouldCreate json.RawMessage `json:"would_create"`
+		} `json:"nodes"`
+	}
+	inboxPreviews := func(idx int) int {
+		var res testRes
+		s.must(http.StatusOK, http.MethodPost, "/api/assist/sessions/"+created.ID+"/test", map[string]any{"sample_index": idx}, &res)
+		evidence(t, "assist-flow-test", res)
+		n := 0
+		for _, nd := range res.Nodes {
+			if len(nd.WouldCreate) > 0 && string(nd.WouldCreate) != "null" {
+				n++
+			}
+		}
+		return n
+	}
+	if n := inboxPreviews(urgent); n != 1 {
+		t.Errorf("the urgent sample reached %d inbox nodes, want 1", n)
+	}
+	if n := inboxPreviews(normal); n != 0 {
+		t.Errorf("the normal sample reached %d inbox nodes, want 0", n)
+	}
 }

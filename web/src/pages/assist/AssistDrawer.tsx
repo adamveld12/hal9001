@@ -10,6 +10,7 @@ import {
   type AssistMessage,
   type AssistSession,
   type AssistStatus,
+  type AssistTargetKind,
 } from "../../api/assist";
 import { ApiError } from "../../api/client";
 import { useRuntimes } from "../../api/settings";
@@ -27,15 +28,17 @@ import type { Tone } from "../../lib/status";
 import { ConfirmButton } from "../files/ConfirmButton";
 import { Composer } from "./Composer";
 import { useAssistPage } from "./context";
+import { FlowSavePanel } from "./FlowSavePanel";
+import { FlowTestPanel } from "./FlowTestPanel";
 import { MessageView } from "./MessageView";
 import { traceLinks } from "./messages";
 import {
+  bindSession,
   clampDrawerWidth,
   isBusy,
   parseStoredWidth,
-  selectResumable,
-  starterPrompts,
 } from "./sessions";
+import { selectResumable, starterPrompts, targetConfig } from "./targets";
 import { TestResultView } from "./TestResultView";
 import { useAssistLive } from "./useAssistLive";
 import { useTestDraft } from "./useTestDraft";
@@ -213,9 +216,11 @@ function RuntimeControls({
 }
 
 function StarterPrompts({
+  kind,
   targetId,
   onPick,
 }: {
+  kind: AssistTargetKind;
   targetId: string | null;
   onPick: (text: string) => void;
 }) {
@@ -223,7 +228,7 @@ function StarterPrompts({
     <div className="space-y-1.5">
       <div className="text-[11px] font-medium text-muted">Try asking</div>
       <div className="flex flex-wrap gap-1.5">
-        {starterPrompts(targetId).map((p) => (
+        {starterPrompts(kind, targetId).map((p) => (
           <button
             key={p}
             type="button"
@@ -241,9 +246,10 @@ function StarterPrompts({
 /** Before a session exists: pick runtime and model, resume an earlier session, or send the first message. */
 function StartView() {
   const page = useAssistPage();
-  const { sensorId } = page;
+  const { kind, targetId } = page;
+  const cfg = targetConfig(kind);
   const runtimes = useRuntimes();
-  const sessions = useAssistSessions(sensorId);
+  const sessions = useAssistSessions(kind, targetId);
   const create = useCreateAssistSession();
   const send = useSendAssistMessage();
   const [runtimeChoice, setRuntime] = useState<string | null>(null);
@@ -252,17 +258,14 @@ function StartView() {
     null,
   );
   const runtime = runtimeChoice ?? runtimes.data?.[0]?.name ?? "";
-  const resumable = selectResumable(sessions.data ?? [], sensorId);
+  const resumable = selectResumable(sessions.data ?? [], kind, targetId);
 
   const start = async (text: string) => {
     const session = await create.mutateAsync({
-      target:
-        sensorId === null
-          ? { kind: "sensor" }
-          : { kind: "sensor", id: sensorId },
+      target: targetId === null ? { kind } : { kind, id: targetId },
       runtime,
       model: model.trim() === "" ? undefined : model.trim(),
-      yaml: page.editor()?.getText(),
+      yaml: await page.editor()?.getText(),
     });
     page.bind(session.id);
     await send.mutateAsync({ id: session.id, text });
@@ -271,11 +274,7 @@ function StartView() {
   return (
     <>
       <Header
-        title={
-          sensorId === null
-            ? "Create a sensor with AI"
-            : `Ask AI about ${sensorId}`
-        }
+        title={targetId === null ? cfg.newTitle : cfg.existingTitle(targetId)}
       >
         <RuntimeControls
           runtime={runtime}
@@ -286,11 +285,7 @@ function StartView() {
         />
       </Header>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-3">
-        <p className="m-0 text-xs text-muted">
-          The agent edits a draft of the sensor, which appears in the editor.
-          Nothing is saved until you press Save. It never sees your secrets; it
-          tests the draft through the daemon.
-        </p>
+        <p className="m-0 text-xs text-muted">{cfg.intro}</p>
         {runtimes.isSuccess && runtimes.data.length === 0 && (
           <div role="alert" className="text-xs text-bad">
             No ACP runtimes are configured. Add one under <code>runtimes</code>{" "}
@@ -312,7 +307,8 @@ function StartView() {
           </div>
         )}
         <StarterPrompts
-          targetId={sensorId}
+          kind={kind}
+          targetId={targetId}
           onPick={(text) => setPrefill((p) => ({ text, n: (p?.n ?? 0) + 1 }))}
         />
       </div>
@@ -320,9 +316,9 @@ function StartView() {
         <Composer
           disabled={runtime === ""}
           placeholder={
-            sensorId === null
-              ? "Describe the sensor you want…"
-              : "What should change?"
+            targetId === null
+              ? cfg.composerPlaceholder.new
+              : cfg.composerPlaceholder.existing
           }
           prefill={prefill}
           onSend={start}
@@ -433,7 +429,7 @@ function TestPanel({ sessionId }: { sessionId: string }) {
           {test.error.message}
         </div>
       )}
-      {test.result && (
+      {test.result?.kind === "sensor" && (
         <details open className="rounded-md border border-line">
           <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium">
             Last test
@@ -483,17 +479,19 @@ function SessionView({ id }: { id: string }) {
 
   const busy = isBusy(s.status);
   const closed = s.status === "closed";
-  const otherTarget =
-    s.target.id !== null && s.target.id !== page.sensorId ? s.target.id : null;
+  const cfg = targetConfig(s.target.kind);
+  const binding = bindSession(s, page.kind, page.targetId);
+  const elsewhere =
+    s.target.kind !== page.kind
+      ? cfg.draftPath(id)
+      : binding.otherTarget !== null
+        ? cfg.editorPath(binding.otherTarget, id)
+        : null;
 
   return (
     <>
       <Header
-        title={
-          (s.target.id ?? page.sensorId)
-            ? `Sensor ${s.target.id ?? page.sensorId}`
-            : "New sensor"
-        }
+        title={cfg.sessionTitle(s.target.id ?? page.targetId)}
         badge={<StatusPill status={s.status} />}
         actions={
           <>
@@ -520,17 +518,17 @@ function SessionView({ id }: { id: string }) {
       >
         <RuntimeControls runtime={s.runtime} model={s.model ?? ""} locked />
       </Header>
-      {otherTarget !== null && (
+      {elsewhere !== null && (
         <div
           role="status"
           className="border-b border-line bg-raised px-3 py-1.5 text-xs"
         >
-          This session edits sensor{" "}
-          <Link
-            className="text-accent underline"
-            to={`/sensors/${otherTarget}?assist=${id}`}
-          >
-            {otherTarget}
+          This session edits{" "}
+          {binding.otherTarget !== null
+            ? `${cfg.noun} `
+            : `a ${cfg.noun} elsewhere `}
+          <Link className="text-accent underline" to={elsewhere}>
+            {binding.otherTarget ?? "open it"}
           </Link>
           , not the one open here, so the editor is not synced with it.
         </div>
@@ -539,6 +537,7 @@ function SessionView({ id }: { id: string }) {
       {s.messages.length === 0 && !closed && (
         <div className="px-3 pb-3">
           <StarterPrompts
+            kind={s.target.kind}
             targetId={s.target.id}
             onPick={(text) => setPrefill((p) => ({ text, n: (p?.n ?? 0) + 1 }))}
           />
@@ -561,7 +560,14 @@ function SessionView({ id }: { id: string }) {
         </div>
       ) : (
         <>
-          <TestPanel sessionId={id} />
+          {s.target.kind === "flow" ? (
+            <>
+              <FlowTestPanel sessionId={id} />
+              <FlowSavePanel sessionId={id} />
+            </>
+          ) : (
+            <TestPanel sessionId={id} />
+          )}
           <div className="border-t border-line p-3">
             <Composer
               disabled={busy}
@@ -574,7 +580,7 @@ function SessionView({ id }: { id: string }) {
                 await send.mutateAsync({
                   id,
                   text,
-                  yaml: page.editor()?.getText(),
+                  yaml: await page.editor()?.getText(),
                 });
               }}
             />

@@ -1,42 +1,42 @@
-import type { AssistSession } from "../../api/assist";
+import type { AssistSession, AssistTargetKind } from "../../api/assist";
 
-/**
- * Sessions of the same target that can be picked up again, newest first.
- * `targetId` null is a new sensor that has no file yet.
- */
-export function selectResumable(
-  sessions: readonly AssistSession[],
-  targetId: string | null,
-): AssistSession[] {
-  return sessions
-    .filter(
-      (s) =>
-        s.status !== "closed" &&
-        s.target.kind === "sensor" &&
-        s.target.id === targetId,
-    )
-    .toSorted((a, b) =>
-      a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0,
-    );
+export interface SessionBinding {
+  /** The session the open editor shows and feeds; null when it belongs to the editor of another target. */
+  sessionId: string | null;
+  /** Id of the other target when the session edits one. */
+  otherTarget: string | null;
 }
 
-const NEW_SENSOR_PROMPTS = [
-  "Poll my GitHub review requests",
-  "Watch a Linear project for new issues",
-  "Check an RSS feed for new posts",
-  "Poll a JSON API I describe",
-];
-
-const EXISTING_SENSOR_PROMPTS = [
-  "Explain what this sensor does",
-  "Make the dedup key more stable",
-  "Add error handling to the script",
-  "Reduce the polling frequency",
-];
-
-/** Suggested first messages for a session on a new sensor (`targetId` null) or an existing one. */
-export function starterPrompts(targetId: string | null): string[] {
-  return targetId === null ? NEW_SENSOR_PROMPTS : EXISTING_SENSOR_PROMPTS;
+/**
+ * Whether `session` belongs to the editor of the target `targetId` (null: the
+ * page for a new target) of `kind`. A session started for a new target stays
+ * attached after its first Save, when the page moves to the saved target. A
+ * sensor session is matched on the target alone; a flow draft names its own
+ * id, so a new-flow session belongs to the flow page of that id only. Closed
+ * sessions and sessions of another kind leave the editor on its own.
+ */
+export function bindSession(
+  session:
+    Pick<AssistSession, "id" | "status" | "target" | "draft"> | undefined,
+  kind: AssistTargetKind,
+  targetId: string | null,
+): SessionBinding {
+  const none: SessionBinding = { sessionId: null, otherTarget: null };
+  if (!session || session.status === "closed" || session.target.kind !== kind) {
+    return none;
+  }
+  const t = session.target.id;
+  const bound: SessionBinding = { sessionId: session.id, otherTarget: null };
+  if (kind === "sensor") {
+    return t === null || t === targetId
+      ? bound
+      : { sessionId: null, otherTarget: t };
+  }
+  if (t === targetId) return bound;
+  if (t === null && targetId !== null && session.draft.flow_id === targetId) {
+    return bound;
+  }
+  return { sessionId: null, otherTarget: t ?? session.draft.flow_id };
 }
 
 export const DEFAULT_DRAWER_WIDTH = 420;

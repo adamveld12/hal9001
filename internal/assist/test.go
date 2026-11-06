@@ -29,15 +29,30 @@ const (
 // The script runs with those credentials, so who asks matters. The user's test always runs and marks the script
 // approved; the agent's runs only while the script is one the user has tested or approved (or the target sensor's
 // saved script), else core.ErrInvalidState: the agent has to ask through its permission request first.
-func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool) (core.AssistTestResult, error) {
-	var zero core.AssistTestResult
+func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error) {
 	if m.host.Paused() {
-		return zero, fmt.Errorf("%w: draft tests are rejected while the kill switch is engaged", core.ErrPaused)
+		return core.AssistTestOutcome{}, fmt.Errorf("%w: draft tests are rejected while the kill switch is engaged", core.ErrPaused)
 	}
 	s, err := m.session(ctx, sessionID)
 	if err != nil {
-		return zero, err
+		return core.AssistTestOutcome{}, err
 	}
+	if s.isFlow() {
+		res, err := m.testFlow(ctx, s, byAgent, req)
+		if err != nil {
+			return core.AssistTestOutcome{}, err
+		}
+		return core.AssistTestOutcome{Flow: &res}, nil
+	}
+	res, err := m.testSensor(ctx, s, byAgent)
+	if err != nil {
+		return core.AssistTestOutcome{}, err
+	}
+	return core.AssistTestOutcome{Sensor: &res}, nil
+}
+
+func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (core.AssistTestResult, error) {
+	var zero core.AssistTestResult
 	s.mu.Lock()
 	if err := s.usableLocked(); err != nil {
 		s.mu.Unlock()
@@ -52,7 +67,7 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool)
 	if sensor == nil || spec.HasErrors(ds) {
 		s.mu.Unlock()
 		for i := range ds {
-			ds[i].File = DraftFile
+			ds[i].File = SensorDraftFile
 		}
 		return zero, &core.ValidationError{Diagnostics: ds}
 	}
@@ -119,7 +134,7 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool)
 		if berr != nil {
 			return zero, berr
 		}
-		return core.AssistTestResult{ExitCode: -1, Items: []core.AssistTestItem{}, Stdout: core.AssistText{}, Stderr: stderr}, nil
+		return core.AssistTestResult{Kind: "sensor", ExitCode: -1, Items: []core.AssistTestItem{}, Stdout: core.AssistText{}, Stderr: stderr}, nil
 	}
 	if res.Killed && !res.TimedOut {
 		if errors.Is(context.Cause(runCtx), agent.ErrKilled) {
@@ -130,7 +145,7 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool)
 	res = red.Result(res)
 
 	out := core.AssistTestResult{
-		ExitCode: res.ExitCode, DurationMS: res.Duration.Milliseconds(), TimedOut: res.TimedOut,
+		Kind: "sensor", ExitCode: res.ExitCode, DurationMS: res.Duration.Milliseconds(), TimedOut: res.TimedOut,
 		Items: []core.AssistTestItem{},
 	}
 	if out.Stdout, err = m.textBlob(res.Stdout, res.StdoutBytes); err != nil {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError, errorMessage } from "../../api/client";
 import {
+  renderFlowYaml,
   useFlow,
   useUpdateFlow,
   useValidateFlow,
@@ -24,7 +25,12 @@ import { FlowEditor } from "../../flow/FlowEditor";
 import type { Diagnostic, Flow } from "../../flow/model";
 import { RunNowPanel } from "../../components/RunNowPanel";
 import { FlowRunNow } from "./FlowRunNow";
+import { AssistDrawer } from "../assist/AssistDrawer";
+import { AssistPageContext, useAssistPage } from "../assist/context";
+import { useBoundSession } from "../assist/useDraftSync";
+import { FlowDraftView } from "./FlowDraftView";
 import { TestNodePanel } from "./TestNodePanel";
+import { useFlowAssistPage } from "./useFlowAssistPage";
 
 type View = "visual" | "yaml";
 
@@ -77,6 +83,29 @@ function Loaded({
     initial.diagnostics,
   );
   const [current, setCurrent] = useState<Flow | undefined>();
+
+  // With the assistant open, edits the canvas holds travel with the first message.
+  const assist = useAssistPage();
+  const edits = useRef<{ flow: Flow | undefined; dirty: boolean }>({
+    flow: undefined,
+    dirty: false,
+  });
+  useEffect(() => {
+    edits.current = { flow: current, dirty };
+  });
+  const { registerEditor } = assist;
+  useEffect(() => {
+    registerEditor({
+      flush: async () => undefined,
+      getText: async () => {
+        const { flow, dirty: unsaved } = edits.current;
+        return unsaved && flow
+          ? ((await renderFlowYaml(flow)) ?? undefined)
+          : undefined;
+      },
+    });
+    return () => registerEditor(null);
+  }, [registerEditor]);
   const [previewYaml, setPreviewYaml] = useState<string | undefined>();
   const [runNow, setRunNow] = useState<{
     result: FlowRunNowResult;
@@ -195,6 +224,14 @@ function Loaded({
             <Link to="/flows" className="text-xs text-muted underline">
               All flows
             </Link>
+            <Button
+              icon="agent"
+              disabled={assist.param !== null}
+              title="Chat with an AI agent that edits this flow's draft"
+              onClick={assist.open}
+            >
+              Ask AI
+            </Button>
           </>
         }
       />
@@ -314,11 +351,63 @@ function Loaded({
   );
 }
 
-export function FlowEditorPage() {
-  const { id = "" } = useParams();
+/** The flow under an open session: its canvas shows the session's draft. */
+function DraftEditor({
+  detail,
+  sessionId,
+}: {
+  detail: FlowDetail;
+  sessionId: string;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        title={detail.id}
+        subtitle={`${detail.path} · draft`}
+        actions={
+          <>
+            <Link
+              to={`/timeline?flow=${detail.id}`}
+              className="text-xs text-accent underline"
+            >
+              Timeline
+            </Link>
+            <Link to="/flows" className="text-xs text-muted underline">
+              All flows
+            </Link>
+          </>
+        }
+      />
+      <div className="min-h-0 flex-1">
+        <FlowDraftView sessionId={sessionId} />
+      </div>
+    </div>
+  );
+}
+
+function FlowEditorBody({ id }: { id: string }) {
   const q = useFlow(id);
+  const bound = useBoundSession(id);
   if (q.isPending) return <LoadingState label="Loading flow" />;
   if (q.isError)
     return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (bound.sessionId !== null) {
+    return <DraftEditor detail={q.data} sessionId={bound.sessionId} />;
+  }
   return <Loaded key={id} initial={q.data} refetched={q.data} />;
+}
+
+export function FlowEditorPage() {
+  const { id = "" } = useParams();
+  const assist = useFlowAssistPage(id);
+  return (
+    <AssistPageContext.Provider value={assist}>
+      <div className="flex h-full min-h-0">
+        <div className="min-w-0 flex-1">
+          <FlowEditorBody id={id} />
+        </div>
+        {assist.param !== null && <AssistDrawer />}
+      </div>
+    </AssistPageContext.Provider>
+  );
 }

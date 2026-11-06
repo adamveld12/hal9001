@@ -274,6 +274,7 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"sendAssistMessage":   s.sendAssistMessage,
 		"updateAssistDraft":   s.updateAssistDraft,
 		"testAssistDraft":     s.testAssistDraft,
+		"listAssistSamples":   s.listAssistSamples,
 		"cancelAssistSession": s.cancelAssistSession,
 
 		"listRuntimes": s.listRuntimes,

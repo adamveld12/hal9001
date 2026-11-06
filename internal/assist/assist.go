@@ -65,6 +65,8 @@ type Host interface {
 	// Broker is the approval queue.
 	Broker() agent.ApprovalBroker
 	Clock() agent.Clock
+	// TestFlow runs a validated flow draft once on one input as a dry-run test run and returns what every node did.
+	TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error)
 }
 
 // Options configures New.
@@ -201,8 +203,8 @@ func (m *Manager) session(ctx context.Context, id string) (*session, error) {
 
 // CreateSession starts a session: its draft directory and draft, no agent process yet.
 func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
-	if req.TargetKind != store.AssistTargetSensor {
-		return nil, invalid("target.kind", "target.kind must be sensor")
+	if req.TargetKind != store.AssistTargetSensor && req.TargetKind != store.AssistTargetFlow {
+		return nil, invalid("target.kind", "target.kind must be sensor or flow")
 	}
 	if _, ok := m.host.Runtime(req.Runtime); !ok {
 		return nil, &core.ValidationError{Diagnostics: []spec.Diagnostic{{
@@ -214,14 +216,20 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 	case req.YAML != nil:
 		yaml = *req.YAML
 	case req.TargetID != "":
-		raw, _, err := spec.ReadFile(m.opt.Home, spec.KindSensor, req.TargetID)
+		kind := spec.KindSensor
+		if req.TargetKind == store.AssistTargetFlow {
+			kind = spec.KindFlow
+		}
+		raw, _, err := spec.ReadFile(m.opt.Home, kind, req.TargetID)
 		if err != nil {
 			if errors.Is(err, spec.ErrNotFound) {
-				return nil, fmt.Errorf("%w: sensor %q", store.ErrNotFound, req.TargetID)
+				return nil, fmt.Errorf("%w: %s %q", store.ErrNotFound, req.TargetKind, req.TargetID)
 			}
 			return nil, err
 		}
 		yaml = string(raw)
+	case req.TargetKind == store.AssistTargetFlow:
+		yaml = flowSkeleton
 	default:
 		yaml = skeleton
 	}
@@ -233,8 +241,8 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 	row := store.AssistSession{
 		ID: id, TargetKind: req.TargetKind, TargetID: req.TargetID, Runtime: req.Runtime, Model: req.Model, Status: store.AssistIdle,
 	}
-	applyDraft(&row, yaml, store.DraftByUser, m.st.Now())
 	s := newSession(m, row)
+	s.applyDraft(yaml, store.DraftByUser)
 	if err := s.initDir(); err != nil {
 		return nil, err
 	}
@@ -303,15 +311,23 @@ func (m *Manager) Close(ctx context.Context, sessionID string) error {
 // SensorCreated makes the open sessions that were authoring a new sensor with this id sessions on it, so their
 // tests and instructions use the sensor's own env keys and its saved script.
 func (m *Manager) SensorCreated(ctx context.Context, sensorID string) error {
-	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{
-		TargetKind: store.AssistTargetSensor, ListOpts: store.ListOpts{Limit: 500},
-	})
+	return m.attachNew(ctx, store.AssistTargetSensor, sensorID)
+}
+
+// FlowCreated does the same for flow sessions that were authoring a new flow with this id: the saved flow's code
+// becomes the base of the approval diff and the instructions say the session edits it.
+func (m *Manager) FlowCreated(ctx context.Context, flowID string) error {
+	return m.attachNew(ctx, store.AssistTargetFlow, flowID)
+}
+
+func (m *Manager) attachNew(ctx context.Context, kind, id string) error {
+	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{TargetKind: kind, ListOpts: store.ListOpts{Limit: 500}})
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, row := range page.Items {
-		if row.TargetID != "" || row.DraftSensorID != sensorID {
+		if row.TargetID != "" || row.DraftID != id {
 			continue
 		}
 		s, err := m.session(ctx, row.ID)
@@ -319,7 +335,7 @@ func (m *Manager) SensorCreated(ctx context.Context, sensorID string) error {
 			errs = append(errs, err)
 			continue
 		}
-		if err := s.adopt(sensorID); err != nil {
+		if err := s.adopt(id); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -369,16 +385,20 @@ func (m *Manager) agentEnv(sessionID string) []string {
 // approved), files holding secrets are protected, and everything else goes to the approval queue.
 func (s *session) allowRules() agent.AllowRules {
 	m, sessionID, dir := s.m, s.id, s.dir
+	testArgs, validateCmd := "", "sensors validate"
+	if s.isFlow() {
+		testArgs, validateCmd = `(?: --sample [0-9]+| --event [0-9A-HJKMNP-TV-Z]{26})?`, "flows validate"
+	}
 	bin := `(?:hal9001|` + regexp.QuoteMeta(m.opt.Executable) + `)`
 	home := m.home
 	data := filepath.Join(home, "data")
-	return agent.AllowRules{
-		// Rule 0 runs the draft with the user's credentials: it is vetoed unless the script is one the user has
+	rules := agent.AllowRules{
+		// Rule 0 runs the draft with the user's credentials: it is vetoed unless the code is what the user has
 		// tested or approved (see vetoTest).
 		Commands: []string{
-			`^` + bin + ` assist test(?: ` + sessionID + `)?$`,
+			`^` + bin + ` assist test(?: ` + sessionID + `)?` + testArgs + `$`,
 			`^` + bin + ` assist draft(?: ` + sessionID + `)?$`,
-			`^` + bin + ` sensors validate (?:\./)?` + regexp.QuoteMeta(DraftFile) + `$`,
+			`^` + bin + ` ` + validateCmd + ` (?:\./)?` + regexp.QuoteMeta(s.draftFile()) + `$`,
 		},
 		CommandVeto: s.vetoTest,
 		EditUnder:   []string{dir},
@@ -389,6 +409,10 @@ func (s *session) allowRules() agent.AllowRules {
 			filepath.Join(data, "blobs"), filepath.Join(data, "runtimes"),
 		},
 	}
+	if s.isFlow() {
+		rules.EditDeny = []string{filepath.Join(dir, ReferenceDir)}
+	}
+	return rules
 }
 
 // redactBytes masks every workspace secret in b.

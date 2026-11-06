@@ -13,6 +13,7 @@ type pathRules struct {
 	base      string
 	editUnder []resolvedPath // allow.edit_under
 	prot      []resolvedPath // protected
+	editDeny  []resolvedPath // edit_deny
 }
 
 // resolvedPath keeps a configured path as written (cleaned, absolute) and with
@@ -30,6 +31,9 @@ func newPathRules(a AllowRules) pathRules {
 	}
 	for _, p := range a.Protected {
 		r.prot = append(r.prot, r.resolve(p))
+	}
+	for _, p := range a.EditDeny {
+		r.editDeny = append(r.editDeny, r.resolve(p))
 	}
 	return r
 }
@@ -114,6 +118,19 @@ func (r pathRules) editAllowed(paths []string) (idx int, dir string, ok bool) {
 		}
 	}
 	return idx, dir, true
+}
+
+// denied returns the first edit_deny path (as configured) that contains a path of the call.
+func (r pathRules) denied(paths []string) (string, bool) {
+	for _, raw := range paths {
+		p := r.resolve(raw)
+		for _, d := range r.editDeny {
+			if within(d.lexical, p.lexical) || within(d.real, p.real) {
+				return d.lexical, true
+			}
+		}
+	}
+	return "", false
 }
 
 // protected returns the first protected path (as configured) that contains a

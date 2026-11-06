@@ -7,6 +7,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/assist"
+	"hal9001/internal/core"
 	"hal9001/internal/runner"
 )
 
@@ -85,3 +86,7 @@ func (h assistHost) Recorder(assistSessionID, model string) agent.Recorder {
 func (h assistHost) Broker() agent.ApprovalBroker { return h.e.broker }
 
 func (h assistHost) Clock() agent.Clock { return h.e.clock }
+
+func (h assistHost) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error) {
+	return h.e.TestFlow(ctx, req)
+}

@@ -1,4 +1,4 @@
-import type { AssistTestResult } from "../../api/assist";
+import type { AssistSensorTestResult } from "../../api/assist";
 import { BlobView } from "../../components/BlobView";
 import { SensorItemsTable } from "../../components/SensorItemsTable";
 import { Badge } from "../../components/ui";
@@ -14,7 +14,7 @@ const OUTCOME: Record<TestSummary["outcome"], { label: string; tone: Tone }> = {
 };
 
 /** Outcome of a draft test: exit code, duration, the parsed items with their dedup keys, and captured output. */
-export function TestResultView({ result }: { result: AssistTestResult }) {
+export function TestResultView({ result }: { result: AssistSensorTestResult }) {
   const s = summarizeTest(result);
   const outcome = OUTCOME[s.outcome];
   return (

@@ -180,8 +180,8 @@ type Notifier interface {
 
 // AssistCreateRequest is POST /api/assist/sessions.
 type AssistCreateRequest struct {
-	TargetKind string // "sensor"
-	// TargetID is the sensor to edit; empty authors a new sensor.
+	TargetKind string // "sensor" | "flow"
+	// TargetID is the sensor or flow to edit; empty authors a new one.
 	TargetID string
 	Runtime  string
 	Model    string
@@ -206,8 +206,9 @@ type AssistText struct {
 	Blob      *string `json:"blob"`
 }
 
-// AssistTestResult is the outcome of POST /api/assist/sessions/{id}/test.
+// AssistTestResult is the sensor variant of the outcome of POST /api/assist/sessions/{id}/test.
 type AssistTestResult struct {
+	Kind       string           `json:"kind"`
 	ExitCode   int              `json:"exit_code"`
 	DurationMS int64            `json:"duration_ms"`
 	TimedOut   bool             `json:"timed_out"`
@@ -216,6 +217,99 @@ type AssistTestResult struct {
 	ParseError *string          `json:"parse_error"`
 	Stdout     AssistText       `json:"stdout"`
 	Stderr     AssistText       `json:"stderr"`
+}
+
+// AssistTestRequest is the optional body of POST /api/assist/sessions/{id}/test (flow sessions).
+// At most one field is set.
+type AssistTestRequest struct {
+	SampleIndex *int
+	EventID     string
+	Input       json.RawMessage
+}
+
+// AssistSample is one sample input of a flow session.
+type AssistSample struct {
+	Index    int             `json:"index"`
+	SensorID string          `json:"sensor_id"`
+	Payload  json.RawMessage `json:"payload"`
+}
+
+// AssistTestOutcome is the result of a draft test: exactly one of Sensor and Flow is set.
+type AssistTestOutcome struct {
+	Sensor *AssistTestResult
+	Flow   *AssistFlowTestResult
+}
+
+// MarshalJSON writes the variant that is set.
+func (o AssistTestOutcome) MarshalJSON() ([]byte, error) {
+	if o.Flow != nil {
+		return json.Marshal(o.Flow)
+	}
+	return json.Marshal(o.Sensor)
+}
+
+// FlowTestRequest asks the engine to run a flow draft once on one input as a test run (see Engine.TestFlow).
+// Flow is already parsed and validated by the caller.
+type FlowTestRequest struct {
+	Flow *spec.Flow
+	// Input is the JSON input of the entry nodes; EventID optionally names the stored event it came from.
+	Input   json.RawMessage
+	EventID string
+}
+
+// AssistFlowTestOutput is one payload a node emitted.
+type AssistFlowTestOutput struct {
+	Port    string          `json:"port"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// AssistInboxPreview is the inbox item an inbox node would create.
+type AssistInboxPreview struct {
+	Title          string                   `json:"title"`
+	Priority       string                   `json:"priority"`
+	SummaryMD      string                   `json:"summary_md"`
+	SuggestedReply string                   `json:"suggested_reply"`
+	Links          []AssistInboxPreviewLink `json:"links"`
+}
+
+// AssistInboxPreviewLink is a link of an AssistInboxPreview.
+type AssistInboxPreviewLink struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+// AssistFlowTestNode is what one node did in a flow test.
+type AssistFlowTestNode struct {
+	NodeID      string                 `json:"node_id"`
+	NodeRunID   string                 `json:"node_run_id"`
+	Status      string                 `json:"status"`
+	Decision    *string                `json:"decision"`
+	Reason      *string                `json:"reason"`
+	Error       *string                `json:"error"`
+	Ports       []string               `json:"ports"`
+	Outputs     []AssistFlowTestOutput `json:"outputs"`
+	WouldCreate *AssistInboxPreview    `json:"would_create"`
+	Stdout      *string                `json:"stdout"`
+	Stderr      *string                `json:"stderr"`
+	ExitCode    *int                   `json:"exit_code"`
+	DurationMS  *int64                 `json:"duration_ms"`
+}
+
+// AssistFlowTestEdge is an edge a payload travelled along in a flow test.
+type AssistFlowTestEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	Port string `json:"port"`
+}
+
+// AssistFlowTestResult is the flow variant of the outcome of POST /api/assist/sessions/{id}/test.
+type AssistFlowTestResult struct {
+	Kind       string               `json:"kind"`
+	FlowRunID  string               `json:"flow_run_id"`
+	Status     string               `json:"status"`
+	Input      json.RawMessage      `json:"input"`
+	Nodes      []AssistFlowTestNode `json:"nodes"`
+	EdgesTaken []AssistFlowTestEdge `json:"edges_taken"`
 }
 
 // Assist is the AI-assisted sensor authoring service, implemented by
@@ -231,10 +325,13 @@ type Assist interface {
 	// UpdateDraft replaces the draft (updated_by user). expectedHash, when non-empty, must equal
 	// the current draft hash, else *DraftConflictError.
 	UpdateDraft(ctx context.Context, sessionID, yaml, expectedHash string) (*store.AssistSession, error)
-	// TestDraft runs the draft like Poll now and returns the redacted result without recording anything.
-	// The script runs with real credentials: a test by the user always runs and marks the script approved; a
-	// test byAgent runs only while the script equals the approved one (else ErrInvalidState).
-	TestDraft(ctx context.Context, sessionID string, byAgent bool) (AssistTestResult, error)
+	// TestDraft runs the draft and returns the redacted result without recording anything a user would see.
+	// Sensor sessions run it like Poll now; flow sessions run it once on the sample req names. The code runs
+	// with real credentials: a test by the user always runs and marks the script approved; a test byAgent runs
+	// only while the script equals the approved one (else ErrInvalidState).
+	TestDraft(ctx context.Context, sessionID string, byAgent bool, req AssistTestRequest) (AssistTestOutcome, error)
+	// Samples lists the sample inputs of a flow session (empty for a sensor session).
+	Samples(ctx context.Context, sessionID string) ([]AssistSample, error)
 	// Cancel cancels the running turn; without one it returns the session unchanged.
 	Cancel(ctx context.Context, sessionID string) (*store.AssistSession, error)
 	// Close ends the session: stops the agent, removes the draft directory, marks it closed.
@@ -242,6 +339,8 @@ type Assist interface {
 	// SensorCreated tells the service that sensor sensorID now exists. Open sessions that were authoring a new
 	// sensor with that id become sessions on it (their target id is set), so they use its env keys and saved script.
 	SensorCreated(ctx context.Context, sensorID string) error
+	// FlowCreated is SensorCreated for flow sessions authoring a new flow.
+	FlowCreated(ctx context.Context, flowID string) error
 }
 
 // DraftConflictError is UpdateDraft's hash mismatch (409 conflict).

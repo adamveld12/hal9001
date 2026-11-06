@@ -96,6 +96,12 @@ func (e *Engine) Decide(r ToolRequest) Decision {
 		protected = "protected:" + p
 	}
 
+	if editKinds[r.Kind] {
+		if d, hit := e.paths.denied(r.Paths); hit {
+			return Decision{Action: ActionReject, Rule: "edit_deny:" + d, Reason: "the " + r.Kind + " call names " + d + ", which is read-only"}
+		}
+	}
+
 	var editNote string
 	if editKinds[r.Kind] && len(e.paths.editUnder) > 0 {
 		if i, dir, ok := e.paths.editAllowed(r.Paths); ok {

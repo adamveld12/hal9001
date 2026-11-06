@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { AssistSession } from "../../api/assist";
 import {
   clampDrawerWidth,
   DEFAULT_DRAWER_WIDTH,
@@ -7,71 +6,7 @@ import {
   MAX_DRAWER_WIDTH,
   MIN_DRAWER_WIDTH,
   parseStoredWidth,
-  selectResumable,
-  starterPrompts,
 } from "./sessions";
-
-function session(
-  id: string,
-  targetId: string | null,
-  status: AssistSession["status"],
-  updated: string,
-): AssistSession {
-  return {
-    id,
-    target: { kind: "sensor", id: targetId },
-    runtime: "claude",
-    model: null,
-    status,
-    error: null,
-    draft: {
-      yaml: "",
-      hash: "h",
-      sensor_id: null,
-      diagnostics: [],
-      updated_at: updated,
-      updated_by: "user",
-    },
-    last_agent_run_id: null,
-    created_at: updated,
-    updated_at: updated,
-  };
-}
-
-describe("selectResumable", () => {
-  const all = [
-    session("old", "gh", "idle", "2026-11-05T09:00:00Z"),
-    session("new", "gh", "running", "2026-11-05T11:00:00Z"),
-    session("ended", "gh", "closed", "2026-11-05T12:00:00Z"),
-    session("other", "linear", "idle", "2026-11-05T12:30:00Z"),
-    session("draft", null, "idle", "2026-11-05T10:00:00Z"),
-    session("failed", "gh", "failed", "2026-11-05T10:30:00Z"),
-  ];
-
-  it("offers open sessions of the same sensor, newest first, failed ones included", () => {
-    expect(selectResumable(all, "gh").map((s) => s.id)).toEqual([
-      "new",
-      "failed",
-      "old",
-    ]);
-  });
-
-  it("offers sessions of a not-yet-existing sensor only to the new-sensor page", () => {
-    expect(selectResumable(all, null).map((s) => s.id)).toEqual(["draft"]);
-  });
-
-  it("offers nothing for a sensor without sessions", () => {
-    expect(selectResumable(all, "nope")).toEqual([]);
-  });
-});
-
-describe("starterPrompts", () => {
-  it("suggests sources to watch for a new sensor and edits for an existing one", () => {
-    expect(starterPrompts(null).join(" ")).toMatch(/GitHub review requests/);
-    expect(starterPrompts(null).join(" ")).toMatch(/Linear/);
-    expect(starterPrompts("gh")).not.toEqual(starterPrompts(null));
-  });
-});
 
 describe("drawer width", () => {
   it("stays within its limits", () => {

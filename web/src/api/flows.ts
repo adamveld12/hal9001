@@ -1,4 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { flowFromApi, flowToApi } from "../flow/apiAdapter";
+import type { Flow } from "../flow/model";
 import { api, unwrap, unwrapVoid, type Schemas } from "./client";
 import { qk } from "./keys";
 import { invalidateRunNow } from "./sensors";
@@ -10,6 +17,53 @@ export type TestNodeResult = Schemas["TestNodeResult"];
 export type TestNodeRequest = Schemas["TestNodeRequest"];
 export type ApiFlow = Schemas["Flow"];
 export type FlowRunNowResult = Schemas["FlowRunNowResult"];
+
+/** The flow the daemon reads from `yaml`, with the editor's defaults; null when the YAML does not parse. */
+export async function parseFlowYaml(yaml: string): Promise<Flow | null> {
+  const v = await unwrap(api.POST("/api/flows/validate", { body: { yaml } }));
+  return v.flow ? flowFromApi(v.flow) : null;
+}
+
+/** The parse of a draft's YAML, cached by the draft's hash (the same text always parses the same). */
+export function flowDraftParseQuery(hash: string, yaml: string) {
+  return queryOptions({
+    queryKey: qk("flow", "draft-parse", hash),
+    staleTime: Infinity,
+    queryFn: async () => ({ flow: await parseFlowYaml(yaml) }),
+  });
+}
+
+/** The saved flow with its current hash, read fresh. */
+export async function fetchFlow(id: string): Promise<FlowDetail> {
+  return unwrap(api.GET("/api/flows/{id}", { params: { path: { id } } }));
+}
+
+/** The canonical YAML the daemon writes for `flow`. */
+export async function renderFlowYaml(flow: Flow): Promise<string | null> {
+  const v = await unwrap(
+    api.POST("/api/flows/validate", { body: { flow: flowToApi(flow) } }),
+  );
+  return v.yaml;
+}
+
+/** Creates flows/<id>.yaml from the draft's YAML text. */
+export async function createFlowFromYaml(yaml: string): Promise<FlowDetail> {
+  return unwrap(api.POST("/api/flows", { body: { yaml } }));
+}
+
+/** Replaces flows/<id>.yaml; conflict when the file's hash is not `expectedHash`. */
+export async function updateFlowFromYaml(
+  id: string,
+  expectedHash: string,
+  yaml: string,
+): Promise<FlowDetail> {
+  return unwrap(
+    api.PUT("/api/flows/{id}", {
+      params: { path: { id } },
+      body: { expected_hash: expectedHash, yaml },
+    }),
+  );
+}
 
 export function useFlows() {
   return useQuery({

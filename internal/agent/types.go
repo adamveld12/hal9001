@@ -175,6 +175,9 @@ type AllowRules struct {
 	// edit, delete, move) are allowed without approval, provided the call
 	// names at least one target path and every path lies inside one of them.
 	EditUnder []string `json:"edit_under,omitempty"`
+	// EditDeny are files or directories an edit-class call (kinds edit, delete, move) may never touch: a call
+	// naming a path inside one is rejected outright, even under a gated policy and even inside EditUnder.
+	EditDeny []string `json:"edit_deny,omitempty"`
 	// Protected are files or directories whose reading needs approval: a
 	// read-class call naming a path inside one is not allowed by its kind.
 	Protected []string `json:"protected,omitempty"`

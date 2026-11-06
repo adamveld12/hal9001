@@ -80,6 +80,8 @@ type Engine struct {
 
 	broker   *storeBroker
 	observer observerSlot
+
+	assistTests sync.Map // flow run id -> *assistTest, for the runs of TestFlow
 }
 
 // New returns an engine over opt.Store. Call Apply with the loaded workspace,

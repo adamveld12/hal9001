@@ -8,8 +8,10 @@ import (
 
 // Files of a session's draft directory.
 const (
-	// DraftFile is the draft sensor, the only file the agent edits.
-	DraftFile = "sensor.yaml"
+	// SensorDraftFile is the draft sensor, the only file the agent edits in a sensor session.
+	SensorDraftFile = "sensor.yaml"
+	// FlowDraftFile is the draft flow of a flow session; the agent also writes new prompts under PromptsDir.
+	FlowDraftFile = "flow.yaml"
 	// instructionFiles carry the same text under the names the supported agents read (Codex and omp
 	// read AGENTS.md, Claude Code reads CLAUDE.md).
 	instructionFile  = "AGENTS.md"
@@ -40,7 +42,7 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("# Sensor authoring: instructions for the assistant\n\n")
 	w("You help the user write or change ONE hal9001 sensor. hal9001 is a local daemon that polls systems on a schedule, ")
 	w("turns what they return into events, and runs flows over those events. This directory is a private draft ")
-	w("directory (session %s). Your whole job is the file `%s` in it.\n\n", sessionID, DraftFile)
+	w("directory (session %s). Your whole job is the file `%s` in it.\n\n", sessionID, SensorDraftFile)
 
 	if targetID != "" {
 		w("You are EDITING the existing sensor `%s`. Keep `id: %s` unchanged: the user saves the draft over that sensor.\n\n", targetID, targetID)
@@ -49,10 +51,10 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	}
 
 	w("## Rules\n\n")
-	w("- Edit only `%s`. Do not create or change other files. The user's own sensor files, flows and settings are not here and must not be touched.\n", DraftFile)
+	w("- Edit only `%s`. Do not create or change other files. The user's own sensor files, flows and settings are not here and must not be touched.\n", SensorDraftFile)
 	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords), and do not try to read `env` files or `~/.hal9001`. ")
 	w("The script reads credentials from the environment variables listed below; you only ever see their names.\n")
-	w("- Use only the tools you need. Reading, searching and editing `%s` are allowed. Running anything else asks the user for approval each time.\n", DraftFile)
+	w("- Use only the tools you need. Reading, searching and editing `%s` are allowed. Running anything else asks the user for approval each time.\n", SensorDraftFile)
 	w("- Run the two helper commands below exactly as written, one per call: no pipes, redirects, `&&`, `;` or `cd` (you are already in the right directory).\n")
 	w("- Test the draft with `hal9001 assist test` before you say it is done, and fix what it reports.\n")
 	w("- A test runs the script with the user's real credentials, so the first test after you change the script (`lang`, `script`, `command`, `cwd`, or the credentials it mentions) asks the user to approve it: they see the script and a diff against the last approved version. ")

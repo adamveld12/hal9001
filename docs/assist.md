@@ -207,3 +207,57 @@ edits reaching the agent, cancel, delete (including the agent's process group), 
 changed scripts (a new script's first test asks and shows the script, an allowed script runs unasked, a changed or denied
 one asks again, your own test approves, the daemon refuses an agent test of an unapproved script). The live smoke
 `TestLiveAssistClaudeAuthorsASensor` ([live-smoke.md](live-smoke.md)) runs one real claude turn.
+
+## Flows
+
+The same drawer and session machinery author **flows**: **Create with AI** on the Flows page, **Ask AI** in the flow
+editor. A session has `target: {kind: "flow", id?}`. The canvas shows the **draft**: agent updates re-render the graph,
+your canvas and inspector edits are pushed to `PUT .../draft` (debounced, `expected_hash`, the same *Take AI / Keep mine*
+conflict banner as for sensors). Save creates any **new prompt** the agent drafted (`POST /api/prompts`; an existing
+prompt is never overwritten) and then creates or updates the flow through the normal flow endpoints.
+
+```
+hal9001 assist create --runtime claude [--flow ID | --kind flow]
+hal9001 assist test [--sample N | --event ID] [<session>]    # runs the draft flow once; the AssistTestResult (kind flow)
+hal9001 assist samples [<session>]                           # the sample inputs, with their index
+hal9001 flows validate [file.yaml|-]
+```
+
+**Draft directory of a flow session.**
+
+| Path | Purpose |
+|---|---|
+| `flow.yaml` | The draft: the flow's file, or a skeleton with `enabled: false` and `dry_run: true`. The agent keeps the id stable and never enables a flow; you enable it. |
+| `prompts/<name>.md` | New prompt files the agent drafts. They are validated like prompt files and listed in `draft.prompts` (`{name, yaml, exists}`); they do not change `draft.hash`. A name that is already saved is flagged: Save never overwrites it. |
+| `reference/` | **Read-only** material: `sensors/<id>.yaml` (definitions, no env values), `prompts/<name>.md` (existing prompts), `runtimes.txt` (names only), `samples/<sensor>.jsonl` (up to 5 recent event payloads per sensor, redacted) with `samples/index.txt`, and `docs/flows.md` (the formats). Rebuilt every turn. The policy rejects edits under `reference/` outright (rule `edit_deny:`), not just asks. |
+| `AGENTS.md`, `CLAUDE.md` | The instructions: the flow format, the node types, **prefer `transform` nodes** for filtering, routing and reshaping (steps compile to jq; no code, no credentials, no approval), agent nodes (default `mode: readonly`; for inbox triage a prompt with `output: note`), inbox nodes, keep the id, never enable, how to test, and end each turn with a plain summary. |
+
+The agent's commands: `hal9001 assist draft`, `hal9001 assist test` (optionally `--sample N` or `--event ID`) and
+`hal9001 flows validate flow.yaml` are allowed (the test with the same approval rule as below); edits are allowed inside
+the draft directory except `reference/`.
+
+**Testing a flow** (`POST /api/assist/sessions/{id}/test`, body `{sample_index | event_id | input}`, none: the first
+sample). The draft is validated first (diagnostics, including `prompts/` files, are a 422). It then runs once as a
+`kind: test` flow run (hidden from the default timelines; `GET /api/flow-runs/{id}` shows it) with `dry_run` forced, and
+follows the edges:
+
+- `transform` and `command` nodes run for real (dry run skips `side_effect` commands). A dropped item carries the
+  transform's plain-language reason.
+- **Agent nodes are not run**: they are `skipped` with the reason `assist test: agent nodes are not run`, and their branch
+  ends there.
+- **Inbox nodes create nothing**: the result carries the item they would create (`would_create`).
+
+The result is `{kind: "flow", flow_run_id, status, input, nodes: [{node_id, status, decision, reason, ports, outputs,
+would_create, stdout, stderr, exit_code, ...}], edges_taken}`. `GET /api/assist/sessions/{id}/samples` lists the sample
+inputs (`index` is what `sample_index` and `--sample` mean); the UI offers them, recent events and pasted JSON.
+
+**Secrets.** `command` nodes run with the global env file like real runs, so the approval rule for sensors applies to the
+agent's flow tests: the identity is, per command node, `lang`, `script`, `command`, `cwd` and the credential names it
+mentions (generated transform jq does not count, and renaming a node does not change it). An unapproved change asks you
+(the description lists every command node and a diff against the last approved version); your own Test, an allowed agent
+test, or the saved flow's code approves it. A flow without command nodes needs no approval. Results are redacted.
+
+`e2e/assist_flow_test.go` covers it with the fake agent: a draft with a transform filter and route, an inbox node and a new
+prompt, the `reference/` rejection, tests on samples (decisions, inbox preview, skipped agent node, nothing created),
+approval for command nodes and none for a transform-only flow, Save through the normal endpoints, and an existing flow left
+untouched until Save.

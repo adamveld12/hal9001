@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { AssistTestResult } from "../../api/assist";
+import type { AssistSensorTestResult } from "../../api/assist";
 import { summarizeTest } from "./testSummary";
 
 const blob = { text: "", size: 0, truncated: false, blob: null };
 
-function result(over: Partial<AssistTestResult>): AssistTestResult {
+function result(over: Partial<AssistSensorTestResult>): AssistSensorTestResult {
   return {
+    kind: "sensor",
     exit_code: 0,
     duration_ms: 10,
     timed_out: false,
