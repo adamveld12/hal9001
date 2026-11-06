@@ -28,11 +28,13 @@ import { FlowRunNow } from "./FlowRunNow";
 import { AssistDrawer } from "../assist/AssistDrawer";
 import { AssistPageContext, useAssistPage } from "../assist/context";
 import { useBoundSession } from "../assist/useDraftSync";
+import { FlowRunsList } from "../runs/FlowRunsList";
+import { NO_FLOW_RUN_FILTERS } from "../runs/runList";
 import { FlowDraftView } from "./FlowDraftView";
 import { TestNodePanel } from "./TestNodePanel";
 import { useFlowAssistPage } from "./useFlowAssistPage";
 
-type View = "visual" | "yaml";
+type View = "visual" | "yaml" | "runs";
 
 function problemDiagnostics(e: unknown): Diagnostic[] | undefined {
   if (e instanceof ApiError && e.kind === "validation-failed") {
@@ -78,6 +80,7 @@ function Loaded({
   const [generation, setGeneration] = useState(0);
   const [view, setView] = useState<View>(initial.flow ? "visual" : "yaml");
   const [dirty, setDirty] = useState(false);
+  const [runFilters, setRunFilters] = useState(NO_FLOW_RUN_FILTERS);
   const [yamlText, setYamlText] = useState(initial.yaml);
   const [serverDiags, setServerDiags] = useState<Diagnostic[]>(
     initial.diagnostics,
@@ -257,6 +260,7 @@ function Loaded({
         tabs={[
           { key: "visual", label: "Visual" },
           { key: "yaml", label: "YAML" },
+          { key: "runs", label: "Runs" },
         ]}
         active={view}
         onChange={(v) => (v === "visual" && !flow ? undefined : setView(v))}
@@ -278,6 +282,15 @@ function Loaded({
               <TestNodePanel flowId={loaded.id} node={node} flow={f} />
             )}
           />
+        )}
+        {view === "runs" && (
+          <div className="flex h-full flex-col">
+            <FlowRunsList
+              flowId={loaded.id}
+              filters={runFilters}
+              onChange={setRunFilters}
+            />
+          </div>
         )}
         {view === "yaml" && (
           <div className="flex h-full flex-col overflow-auto">

@@ -21,6 +21,7 @@ const NAV: NavItem[] = [
   { to: "/inbox", label: "Inbox", icon: "inbox", key: "i" },
   { to: "/approvals", label: "Approvals", icon: "approvals", key: "a" },
   { to: "/flows", label: "Flows", icon: "flows", key: "f" },
+  { to: "/agent-runs", label: "Agent runs", icon: "agent", key: "r" },
   { to: "/sensors", label: "Sensors", icon: "sensors", key: "s" },
   { to: "/prompts", label: "Prompts", icon: "prompts", key: "p" },
   { to: "/settings", label: "Settings", icon: "settings", key: "," },
@@ -120,7 +121,7 @@ export function AppShell() {
         </ul>
         <div className="border-t border-line p-3 text-[11px] text-muted">
           <Kbd>g</Kbd> then <Kbd>t</Kbd> <Kbd>i</Kbd> <Kbd>a</Kbd> <Kbd>f</Kbd>{" "}
-          <Kbd>s</Kbd> <Kbd>p</Kbd> to jump
+          <Kbd>r</Kbd> <Kbd>s</Kbd> <Kbd>p</Kbd> to jump
         </div>
       </nav>
 

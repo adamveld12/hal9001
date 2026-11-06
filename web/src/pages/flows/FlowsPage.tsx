@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { useAssistSession } from "../../api/assist";
 import { ApiError, errorMessage } from "../../api/client";
 import {
@@ -8,6 +8,7 @@ import {
   useFlows,
   type FlowRunNowResult,
 } from "../../api/flows";
+import { Tabs } from "../../components/Tabs";
 import { RunNowPanel } from "../../components/RunNowPanel";
 import { Time } from "../../components/Time";
 import {
@@ -30,6 +31,12 @@ import { AssistDrawer } from "../assist/AssistDrawer";
 import { AssistPageContext, useAssistPage } from "../assist/context";
 import { targetConfig } from "../assist/targets";
 import { useBoundSession } from "../assist/useDraftSync";
+import { FlowRunsList } from "../runs/FlowRunsList";
+import {
+  filtersToParams,
+  flowRunFiltersFromParams,
+  type FlowRunFilters,
+} from "../runs/runList";
 import { FlowDraftView } from "./FlowDraftView";
 import { FlowRunNow } from "./FlowRunNow";
 import { useFlowAssistPage } from "./useFlowAssistPage";
@@ -120,6 +127,23 @@ function FlowsPageBody() {
   const assist = useAssistPage();
   const navigate = useNavigate();
   const drafting = assist.param !== null;
+  const [params, setParams] = useSearchParams();
+  const view: "flows" | "runs" =
+    params.get("view") === "runs" ? "runs" : "flows";
+  const runFilters = flowRunFiltersFromParams(params);
+  const setView = (v: "flows" | "runs") => {
+    const next = new URLSearchParams(params);
+    if (v === "runs") next.set("view", "runs");
+    else {
+      next.delete("view");
+      for (const k of ["flow", "status", "kind"]) next.delete(k);
+    }
+    setParams(next, { replace: true });
+  };
+  const setRunFilters = (f: FlowRunFilters) =>
+    setParams(filtersToParams(f, params), { replace: true });
+  const showRuns = !drafting && view === "runs";
+  const showFlows = !drafting && view === "flows";
 
   // A link to a session (an agent run, an approval) names no page: go to the one for its target.
   const linked = useAssistSession(assist.sessionId);
@@ -166,21 +190,34 @@ function FlowsPageBody() {
             onClose={() => setRunNow(null)}
           />
         )}
+        {!drafting && (
+          <Tabs
+            tabs={[
+              { key: "flows", label: "Flows" },
+              { key: "runs", label: "Runs" },
+            ]}
+            active={view}
+            onChange={setView}
+          />
+        )}
         {drafting && <DraftPane />}
-        {!drafting && flows.isPending && <LoadingState />}
-        {!drafting && flows.isError && (
+        {showRuns && (
+          <FlowRunsList filters={runFilters} onChange={setRunFilters} />
+        )}
+        {showFlows && flows.isPending && <LoadingState />}
+        {showFlows && flows.isError && (
           <ErrorState
             error={flows.error}
             onRetry={() => void flows.refetch()}
           />
         )}
-        {!drafting && flows.data?.length === 0 && (
+        {showFlows && flows.data?.length === 0 && (
           <EmptyState
             title="No flows yet"
             hint="Create one above, then drag sensors and nodes onto the canvas."
           />
         )}
-        {!drafting && flows.data && flows.data.length > 0 && (
+        {showFlows && flows.data && flows.data.length > 0 && (
           <div className="overflow-auto">
             <Table>
               <thead>

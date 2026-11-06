@@ -37,6 +37,10 @@ const AgentRunPage = page(
   () => import("./pages/runs/AgentRunPage"),
   "AgentRunPage",
 );
+const AgentRunsPage = page(
+  () => import("./pages/runs/AgentRunsPage"),
+  "AgentRunsPage",
+);
 const FlowVersionPage = page(
   () => import("./pages/runs/FlowVersionPage"),
   "FlowVersionPage",
@@ -100,6 +104,7 @@ function AuthGate() {
           <Route path="timeline" element={<TimelinePage />} />
           <Route path="events/:id" element={<EventDetailPage />} />
           <Route path="runs/:id" element={<RunDetailPage />} />
+          <Route path="agent-runs" element={<AgentRunsPage />} />
           <Route path="agent-runs/:id" element={<AgentRunPage />} />
           <Route path="inbox" element={<InboxPage />} />
           <Route path="inbox/:id" element={<InboxPage />} />

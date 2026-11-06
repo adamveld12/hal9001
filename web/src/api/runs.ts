@@ -206,3 +206,48 @@ export function useEventSensor(eventId: string | null) {
     select: (d) => d.event.sensor_id,
   });
 }
+
+const LIST_PAGE = 50;
+
+export interface FlowRunsQuery {
+  flow_id?: string;
+  status?: Schemas["FlowRunStatus"];
+  kind?: Schemas["FlowRunKind"];
+}
+
+/** Newest-first flow runs; `flow_run.*` stream events refetch it via the `flow-runs` root. */
+export function useFlowRunList(query: FlowRunsQuery) {
+  return useInfiniteQuery({
+    queryKey: qk("flow-runs", "list", query),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) =>
+      unwrap(
+        api.GET("/api/flow-runs", {
+          params: { query: { ...query, cursor: pageParam, limit: LIST_PAGE } },
+          signal,
+        }),
+      ),
+    getNextPageParam: (p) => p.next_cursor ?? undefined,
+  });
+}
+
+export interface AgentRunsQuery {
+  status?: Schemas["AgentRunStatus"];
+  runtime?: string;
+}
+
+/** Newest-first agent runs; `agent_run.*` stream events refetch it via the `agent-runs` root. */
+export function useAgentRunList(query: AgentRunsQuery) {
+  return useInfiniteQuery({
+    queryKey: qk("agent-runs", "list", query),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) =>
+      unwrap(
+        api.GET("/api/agent-runs", {
+          params: { query: { ...query, cursor: pageParam, limit: LIST_PAGE } },
+          signal,
+        }),
+      ),
+    getNextPageParam: (p) => p.next_cursor ?? undefined,
+  });
+}
