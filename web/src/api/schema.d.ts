@@ -2624,6 +2624,8 @@ export interface components {
       kill_switch: components["schemas"]["KillSwitch"];
       running_flow_runs: number;
       queued_flow_runs: number;
+      /** @description Runs in the queue; equals `total` of `GET /api/queue`. */
+      queue_total: number;
       running_agent_runs: number;
       queued_agent_runs: number;
       pending_approvals: number;

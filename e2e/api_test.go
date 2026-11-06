@@ -224,6 +224,7 @@ type Status struct {
 	KillSwitch       KillSwitch `json:"kill_switch"`
 	RunningFlowRuns  int        `json:"running_flow_runs"`
 	QueuedFlowRuns   int        `json:"queued_flow_runs"`
+	QueueTotal       int        `json:"queue_total"`
 	RunningAgentRuns int        `json:"running_agent_runs"`
 	QueuedAgentRuns  int        `json:"queued_agent_runs"`
 	PendingApprovals int        `json:"pending_approvals"`

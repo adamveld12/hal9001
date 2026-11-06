@@ -3333,11 +3333,12 @@ components:
     Status:
       type: object
       description: Counters for the UI header.
-      required: [kill_switch, running_flow_runs, queued_flow_runs, running_agent_runs, queued_agent_runs, pending_approvals, unread_inbox]
+      required: [kill_switch, running_flow_runs, queued_flow_runs, queue_total, running_agent_runs, queued_agent_runs, pending_approvals, unread_inbox]
       properties:
         kill_switch: {$ref: '#/components/schemas/KillSwitch'}
         running_flow_runs: {type: integer, minimum: 0}
         queued_flow_runs: {type: integer, minimum: 0}
+        queue_total: {type: integer, minimum: 0, description: 'Runs in the queue; equals `total` of `GET /api/queue`.'}
         running_agent_runs: {type: integer, minimum: 0}
         queued_agent_runs: {type: integer, minimum: 0}
         pending_approvals: {type: integer, minimum: 0}

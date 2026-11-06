@@ -851,6 +851,7 @@ type statusView struct {
 	KillSwitch       killSwitchView `json:"kill_switch"`
 	RunningFlowRuns  int            `json:"running_flow_runs"`
 	QueuedFlowRuns   int            `json:"queued_flow_runs"`
+	QueueTotal       int            `json:"queue_total"`
 	RunningAgentRuns int            `json:"running_agent_runs"`
 	QueuedAgentRuns  int            `json:"queued_agent_runs"`
 	PendingApprovals int            `json:"pending_approvals"`
@@ -866,8 +867,13 @@ func (s *Server) statusView(ctx context.Context) (statusView, error) {
 	if err != nil {
 		return statusView{}, err
 	}
+	// The same rule as GET /api/queue: one definition, Store.ListQueue.
+	q, err := s.opts.Store.ListQueue(ctx, "")
+	if err != nil {
+		return statusView{}, err
+	}
 	return statusView{
-		KillSwitch: ks, RunningFlowRuns: c.FlowRunsRunning, QueuedFlowRuns: c.FlowRunsQueued,
+		QueueTotal: len(q.Items), KillSwitch: ks, RunningFlowRuns: c.FlowRunsRunning, QueuedFlowRuns: c.FlowRunsQueued,
 		RunningAgentRuns: c.AgentRunsRunning, QueuedAgentRuns: c.AgentRunsQueued,
 		PendingApprovals: c.PendingApprovals, UnreadInbox: c.UnreadInbox,
 	}, nil

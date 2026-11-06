@@ -82,7 +82,7 @@ export function AppShell() {
   const theme = useTheme();
   const s = status.data;
   const running = (s?.running_flow_runs ?? 0) + (s?.running_agent_runs ?? 0);
-  const queued = (s?.queued_flow_runs ?? 0) + (s?.queued_agent_runs ?? 0);
+  const queued = s?.queue_total ?? 0;
 
   return (
     <div className="flex h-full">

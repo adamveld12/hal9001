@@ -12,7 +12,7 @@ func killSwitch(paused bool) map[string]any {
 
 func statusBody() map[string]any {
 	return map[string]any{
-		"kill_switch": killSwitch(false), "running_flow_runs": 1, "queued_flow_runs": 2,
+		"kill_switch": killSwitch(false), "running_flow_runs": 1, "queued_flow_runs": 2, "queue_total": 2,
 		"running_agent_runs": 0, "queued_agent_runs": 0, "pending_approvals": 3, "unread_inbox": 4,
 	}
 }

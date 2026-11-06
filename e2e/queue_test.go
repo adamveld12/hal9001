@@ -119,6 +119,9 @@ edges:
 func TestQueueListOrderAndWaitingFor(t *testing.T) {
 	f := newQueueFixture(t)
 	q := f.queue("")
+	if s := f.GetStatus(); s.QueueTotal != q.Total {
+		t.Errorf("status queue_total = %d, queue total = %d", s.QueueTotal, q.Total)
+	}
 	if got, want := q.ids(), []string{f.c2, f.c3, f.s1, f.s2}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("queue order = %v, want %v (c1 holds the slot and is not queued)", got, want)
 	}
@@ -327,4 +330,31 @@ func TestQueueCLI(t *testing.T) {
 	if q := f.queue(""); q.Total != 0 {
 		t.Errorf("queue after clear = %v", q.ids())
 	}
+}
+
+// The header count (status.queue_total) is the queue's total, including runs
+// that wait for a command slot.
+func TestQueueStatusCountIncludesCommandSlotWaiters(t *testing.T) {
+	d := newDaemon(t)
+	d.IdleSensor("src")
+	d.Config("max_command_runs: 1\n")
+	gate := d.Path("gate")
+	d.Flow("cmd", `id: cmd
+enabled: true
+max_concurrent: 5
+subscribe: [src]
+nodes:
+  - {id: hold, type: command, lang: bash, script: "while [ ! -f `+shq(gate)+` ]; do sleep 0.05; done"}
+`)
+	d.Start()
+	t.Cleanup(func() { _ = os.WriteFile(gate, nil, 0o600) })
+	first := d.InjectRun("src", map[string]any{"id": "1"})
+	d.Eventually("the first run to hold the command slot", func() bool {
+		return d.Node(d.GetRun(first, 0), "hold").Status == "running"
+	})
+	d.InjectRun("src", map[string]any{"id": "2"})
+	d.Eventually("the second run to wait for a command slot", func() bool {
+		q := d.queue("")
+		return q.Total == 1 && q.WaitingForCommandSlot == 1 && d.GetStatus().QueueTotal == q.Total
+	})
 }
