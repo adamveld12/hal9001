@@ -35,6 +35,12 @@ const PATHS = {
   pause: "M8 5v14M16 5v14",
   refresh: "M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 005.6 8M5.5 15a7 7 0 0012.9 1",
   save: "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6",
+  transform: "M4 7h9M17 7h3M13 5v4M4 17h3M11 17h9M7 15v4",
+  up: "M6 14l6-6 6 6",
+  down: "M6 10l6 6 6-6",
+  chevronRight: "M9 6l6 6-6 6",
+  grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+  code: "M9 7l-5 5 5 5M15 7l5 5-5 5",
 } as const;
 
 export type IconName = keyof typeof PATHS;

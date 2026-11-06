@@ -16,6 +16,7 @@ import (
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/transform"
 )
 
 // Error classes recorded in NodeRun.Error (api/openapi.yaml NodeRun.error).
@@ -102,6 +103,8 @@ func (e *Engine) execNode(parent context.Context, nr *store.NodeRun) {
 		out = cancelledOutcome(ctx) // cancelled between claim and start
 	case ne.node.Type == spec.NodeCommand:
 		out = e.runCommand(ctx, ne)
+	case ne.node.Type == spec.NodeTransform:
+		out = e.runTransform(ctx, ne)
 	case ne.node.Type == spec.NodeInbox:
 		out = e.runInbox(ne)
 	case ne.node.Type == spec.NodeAgent:
@@ -239,6 +242,39 @@ func (e *Engine) runCommand(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		out.status, out.decision = store.NodeDone, store.DecisionEmitted
 		out.outputs = oc.Outputs
 		out.reason = joinReasons(oc.Outputs)
+	}
+	return out
+}
+
+// nodeRunType is the type recorded on a node's runs. Transform nodes run as
+// jq command nodes (same pool, same record), so they are stored as commands.
+func nodeRunType(n *spec.Node) store.NodeType {
+	if n.Type == spec.NodeTransform {
+		return store.NodeCommand
+	}
+	return store.NodeType(n.Type)
+}
+
+// runTransform compiles a transform node's steps to jq and runs the program
+// exactly like a jq command node, so timeouts, redaction and the NodeRun
+// record (script snapshot = the compiled jq) are the same. A dropped item
+// gets a plain-language reason naming the step and condition.
+func (e *Engine) runTransform(ctx context.Context, ne *nodeEnv) nodeOutcome {
+	prog, err := transform.Compile(ne.node.Steps)
+	if err != nil {
+		return failure(errConfig, err.Error())
+	}
+	cmd := *ne.node
+	cmd.Type, cmd.Lang, cmd.Script, cmd.Steps = spec.NodeCommand, spec.LangJQ, prog, nil
+	cmd.Ports = transform.Ports(ne.node.Steps)
+	sub := *ne
+	sub.node = &cmd
+	out := e.runCommand(ctx, &sub)
+	if out.decision == store.DecisionDropped {
+		run := transform.NewRunner(e.opt.BasePATH, ne.node.Timeout.Std())
+		if reason := transform.DropReason(ctx, ne.node.Steps, ne.input, run); reason != "" {
+			out.reason = reason
+		}
 	}
 	return out
 }

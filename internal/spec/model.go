@@ -1,6 +1,10 @@
 package spec
 
-import "time"
+import (
+	"time"
+
+	"hal9001/internal/transform"
+)
 
 // Enum values. The wire format is the plain string, so fields below use
 // string rather than a named type; these constants are the only legal values.
@@ -8,6 +12,8 @@ const (
 	NodeCommand = "command"
 	NodeAgent   = "agent"
 	NodeInbox   = "inbox"
+
+	NodeTransform = "transform"
 
 	LangBash   = "bash"
 	LangPython = "python"
@@ -194,9 +200,13 @@ type Flow struct {
 //	agent:   runtime, mode, approve, prompt, extra_prompt, model, cwd, timeout,
 //	         approval_timeout, allow, mcp_servers
 //	inbox:   title, priority, summary_md, suggested_reply, links
+//	transform: steps, timeout
 type Node struct {
 	ID   string `yaml:"id" json:"id"`
 	Type string `yaml:"type" json:"type"`
+
+	// transform
+	Steps []transform.Step `yaml:"steps,omitempty" json:"steps,omitempty"`
 
 	// command
 	Lang    string   `yaml:"lang,omitempty" json:"lang,omitempty"`

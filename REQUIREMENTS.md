@@ -43,7 +43,7 @@ flowchart LR
 | Item / Event | One item from a sensor that passes dedup. Immutable, stored. |
 | Flow | DAG of nodes subscribed to 1+ sensors. YAML file. |
 | FlowRun | One execution of one flow for one event (or replay / manual test). |
-| Node | `command`, `agent`, or `inbox`. Has named output ports. |
+| Node | `command`, `agent`, `inbox`, or `transform` (plain-language steps compiled to jq, for people who do not write code). Has named output ports. |
 | NodeRun | One execution of a node within a FlowRun. |
 | AgentRun | Agent CLI session(s) behind an agent NodeRun, incl. full transcript. |
 | Prompt | Reusable prompt template file selected by agent nodes. |
@@ -493,7 +493,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 | Agent run | Agent info and capabilities, rendered prompt, argv, cwd, phase timeline (propose → approval → execute), streaming transcript (messages, thoughts, plan, tool calls with input/output/diffs, collapsible), every permission request with its decision, who made it, and the matched rule, final result JSON, raw JSON-RPC download. |
 | Inbox | Notes sorted by priority/time; read/star/archive; copy suggested reply; links; "open trace". |
 | Approvals | Pending queue of both types. Proposal: proposal markdown, originating event, agent context, Approve / Deny with comment. Tool call: tool title, kind, input or diff, time left until `approval_timeout`, Allow / Deny / Deny + cancel run. History tab. |
-| Flows | List (enabled, dry-run, last run, error rate; "Run now"). Editor: canvas with node palette (command, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; "Run now" (saved version; disabled with unsaved changes or without subscribed sensors); save writes YAML. |
+| Flows | List (enabled, dry-run, last run, error rate; "Run now"). Editor: canvas with node palette (command, transform, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; "Run now" (saved version; disabled with unsaved changes or without subscribed sensors); save writes YAML. |
 | Sensors | List with status (incl. manual), last poll, new items, errors; edit (same code editor), "Run now" with "Re-run items already seen", "Reset dedup state…", recent SensorRuns. |
 | Prompts | List / edit prompt files with preview rendered against a sample event. |
 | Settings | Concurrency, retention, notification threshold, env file keys (names and secret flag; secret values masked, plain values shown, per-key Secret toggle), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |

@@ -48,6 +48,8 @@ export interface EditorState extends Snapshot {
   dragging: boolean;
   /** JSON of the last loaded/saved flow, for dirty detection. */
   baseline: string;
+  /** Key of the field edited by the last `updateNode`, while that run continues. */
+  coalesce?: string;
 }
 
 const HISTORY_LIMIT = 100;
@@ -59,7 +61,13 @@ export type EditorAction =
   | { type: "connect"; connection: Connection }
   | { type: "addNode"; nodeType: NodeType; position: UIPos }
   | { type: "addSensor"; sensor: string; position: UIPos }
-  | { type: "updateNode"; id: string; patch: (n: FlowNode) => FlowNode }
+  | {
+      type: "updateNode";
+      id: string;
+      patch: (n: FlowNode) => FlowNode;
+      /** Edits with the same key in a row (typing in one field) form one undo step. */
+      coalesce?: string;
+    }
   | { type: "renameNode"; id: string; to: string }
   | { type: "updateMeta"; patch: Partial<FlowMeta> & { subscribe?: never } }
   | { type: "markSaved"; flow: Flow }
@@ -148,7 +156,7 @@ function allIds(nodes: GraphNode[]): string[] {
   return nodes.filter(isFlowNode).map((n) => n.id);
 }
 
-export function editorReducer(s: EditorState, a: EditorAction): EditorState {
+function reduce(s: EditorState, a: EditorAction): EditorState {
   switch (a.type) {
     case "load":
       return initState(a.flow);
@@ -252,7 +260,12 @@ export function editorReducer(s: EditorState, a: EditorAction): EditorState {
           data: { ...n.data, node },
         } as FlowGraphNode;
       });
-      return changed ? withHistory(s, { nodes }) : s;
+      if (!changed) return s;
+      // Keystrokes in one field share a history entry.
+      const key =
+        a.coalesce === undefined ? undefined : `${a.id}:${a.coalesce}`;
+      if (key !== undefined && key === s.coalesce) return { ...s, nodes };
+      return { ...withHistory(s, { nodes }), coalesce: key };
     }
 
     case "renameNode": {
@@ -305,6 +318,20 @@ export function editorReducer(s: EditorState, a: EditorAction): EditorState {
       };
     }
   }
+}
+
+/**
+ * Reducer entry point. Any action other than a node edit (or a canvas size
+ * measurement) ends a run of coalesced edits.
+ */
+export function editorReducer(s: EditorState, a: EditorAction): EditorState {
+  const next = reduce(s, a);
+  const measureOnly =
+    a.type === "nodeChanges" && a.changes.every((c) => c.type === "dimensions");
+  if (next.coalesce === undefined || a.type === "updateNode" || measureOnly) {
+    return next;
+  }
+  return { ...next, coalesce: undefined };
 }
 
 /** Edges as drawn: model edges (minus dangling ones) plus derived sensor edges. */

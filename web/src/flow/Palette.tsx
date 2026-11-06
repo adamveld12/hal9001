@@ -18,6 +18,12 @@ const NODE_ITEMS: {
     hint: "Run a script on the payload",
   },
   {
+    type: "transform",
+    label: "Transform",
+    icon: "transform",
+    hint: "Filter, reshape or route the payload without writing code",
+  },
+  {
     type: "agent",
     label: "Agent",
     icon: "agent",

@@ -25,7 +25,7 @@ Each operation declares its service in `x-hal-service`:
 | Service | Operations |
 |---|---|
 | `ui` | The login, logout, and whoami calls. The UI shell and its assets are public (they hold no data and contain the login page); every `/api/` route is guarded. |
-| `api` | Reads, the event stream, and the compute-only POSTs (`/api/flows/validate`, `/api/sensors/validate`, `/api/prompts/render`). |
+| `api` | Reads, the event stream, and the compute-only POSTs (`/api/flows/validate`, `/api/sensors/validate`, `/api/prompts/render`, `/api/transform/preview`, `/api/transform/compile`). |
 | `approve` | `POST /api/approvals/{id}/approve` and `/deny`. |
 | `admin` | Everything that writes files, runs code, or changes state: flows, sensors, prompts, env, settings, kill switch, event injection, replay, test-node, runtime probes, inbox flags, session and passkey management. Auth reads that expose security data (sessions, auth events, passkeys, Tailscale status) are also `admin`. |
 
@@ -61,6 +61,7 @@ data: {"type":"flow_run.updated","id":"1042","ts":"2026-11-05T10:00:00.123456789
 ```
 
 - `types` is a comma-separated subset of `StreamEventType`; omit it for everything. `sensor_id`, `flow_id`, `flow_run_id`, `agent_run_id`, and `assist_session_id` narrow the types that carry that resource.
+- Ordering: messages are delivered in the order the daemon committed the changes they announce, one at a time, so for one record (an assist session, its messages) updates never arrive out of order. The hub reads the record when it handles a change, so a message carries the record's state at that moment, which can already include a later change (an `assist.updated` for two quick updates may show the second state twice). A change committed just before a client connects can still be delivered after `stream.ready`, for example the `assist.updated` of a session created a moment earlier. Clients must treat events as "this record changed", not as a log to replay: match on the record id, expect an event for a record they already fetched, and refetch on `stream.resync`.
 - `stream.ready` is the first message. `Last-Event-ID` resumes from the server's buffer; when the gap is too large the server sends `stream.resync` and the client must refetch what it shows.
 - Payloads are the same records the REST endpoints return, with text previews cut to 4 KiB. The envelope schema of every type is listed under `x-hal-sse-events` on the stream operation.
 - Types: `status.changed`, `killswitch.changed`, `config.changed`, `sensor_run.{created,updated}`, `event.created`, `flow_run.{created,updated}`, `node_run.{created,updated}`, `agent_run.{created,updated}`, `agent_event.appended`, `permission_request.{created,updated}`, `approval.{created,updated}`, `inbox.{created,updated}`, `auth_event.created`, `assist.updated`, `assist.message` (see [assist.md](assist.md)).

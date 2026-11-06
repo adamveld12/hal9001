@@ -1023,6 +1023,95 @@ paths:
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '423': {$ref: '#/components/responses/Paused'}
         default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}/samples:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+    get:
+      operationId: listFlowNodeSamples
+      tags: [flows]
+      summary: Sample inputs for a node
+      description: |
+        Recent real inputs a node would receive, newest first, for the form editors and previews. For an entry node
+        (no incoming edge) these are the payloads of recent events from the sensors the flow subscribes to. For a
+        downstream node they are the payloads upstream nodes recently emitted into it, taken from this flow's stored
+        node runs (stdout parsed as JSON or JSONL, routed by `_port` along the edges that lead to the node). Each
+        sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled. A `node_id`
+        that is not in the saved flow (a node still being drawn) has no incoming edges there, so it is sampled like an
+        entry node.
+      x-hal-service: api
+      parameters:
+        - name: node_id
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/Slug'}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 10}
+      responses:
+        '200':
+          description: Samples, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowSamples'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/transform/preview:
+    post:
+      operationId: previewTransform
+      tags: [flows]
+      summary: Run transform steps on a sample
+      description: |
+        Compiles `steps` to jq and runs them on `input` (one JSON value), step by step, so the editor can show the
+        item count after each step. Compute only: nothing is stored and no flow is touched. Always 200 when the
+        request is well formed; invalid steps come back as `decision: error` with `diagnostics` (paths like
+        `steps[1].conditions[0].value`). A step that errors at run time (for example indexing a string) ends the run
+        with `decision: error`. The whole preview times out after 10 seconds.
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TransformPreviewRequest'}
+      responses:
+        '200':
+          description: Preview result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TransformPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/transform/compile:
+    post:
+      operationId: compileTransform
+      tags: [flows]
+      summary: Compile transform steps to jq
+      description: |
+        Returns the jq program the engine would run for `steps` and one plain-language sentence per step. Used by
+        "Convert to code node". 422 with diagnostics when the steps are invalid.
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TransformCompileRequest'}
+      responses:
+        '200':
+          description: Compiled program.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TransformCompiled'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
   /api/flows/{id}/versions:
     parameters:
       - {$ref: '#/components/parameters/FlowId'}
@@ -2794,17 +2883,175 @@ components:
         suggested_reply: {type: string}
         links: {type: array, items: {$ref: '#/components/schemas/NoteLink'}}
         ui: {$ref: '#/components/schemas/NodeUI'}
+    TransformCondition:
+      type: object
+      description: |
+        Tests one field of the item. `field` is a dot path (`author.login`); `[]` in a path means "any element"
+        (`labels[].name`); `.` is the item itself. Operators `not_*`, `is_not_empty` are the exact opposite of their
+        positive form, so with `[]` they mean "no element ...". Text operators ignore case unless `case_sensitive`.
+        `value` is required by `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`,
+        `matches` (a regular expression), `gt`, `gte`, `lt`, `lte` and `in` (a list), and not allowed by the others.
+      additionalProperties: false
+      required: [field, op]
+      properties:
+        field: {type: string}
+        op: {$ref: '#/components/schemas/TransformOperator'}
+        value: {$ref: '#/components/schemas/JsonValue'}
+        case_sensitive: {type: boolean, default: false}
+    TransformOperator:
+      type: string
+      enum: [equals, not_equals, contains, not_contains, starts_with, ends_with, matches, gt, gte, lt, lte, exists, not_exists, is_empty, is_not_empty, is_true, is_false, in]
+    TransformRule:
+      type: object
+      description: One branch of a route step; items matching the conditions are sent to `port`.
+      additionalProperties: false
+      required: [port]
+      properties:
+        port: {type: string}
+        match: {$ref: '#/components/schemas/TransformMatch'}
+        conditions: {type: array, items: {$ref: '#/components/schemas/TransformCondition'}}
+    TransformMatch:
+      type: string
+      enum: [all, any]
+      default: all
+    TransformValue:
+      type: object
+      description: |
+        What a `set` step writes. `constant` uses `value`; `field` copies `field`; `template` uses `template` (text with
+        `{field.path}` placeholders; `{{` and `}}` are literal braces); `function` applies `function` to `field`
+        (`join` and `split` take their separator in `arg`, `default` its fallback value).
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: {type: string, enum: [constant, field, template, function]}
+        value: {$ref: '#/components/schemas/JsonValue'}
+        field: {type: string}
+        template: {type: string}
+        function: {type: string, enum: [lowercase, uppercase, trim, length, join, first, last, split, to_number, to_string, default]}
+        arg: {$ref: '#/components/schemas/JsonValue'}
+    TransformStep:
+      type: object
+      description: |
+        One plain-language step. `type` selects the fields that apply; validation rejects the others.
+        `filter`: `match`, `conditions`, `keep` (default true; false drops what matches).
+        `route`: `rules`, `default_port` (where unmatched items go; default `out`); must be the last step.
+        `pick`: `fields`, `rename` (path to new top-level name), `flatten` (nested fields become `a_b` keys).
+        `set`: `field`, `value`. `remove`: `fields`.
+        `split`: `field` (an array), `as`, `keep_parent`; emits one item per element.
+        `sort`: `field`, `by`, `order`. `limit`: `field`, `count`. `unique`: `field`, `by`.
+        `aggregate`: `field`, `into`, `op`, `of`, `group_by`. `filter_list`: `field`, `match`, `conditions`, `keep`;
+        conditions are relative to each element.
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: {type: string, enum: [filter, route, pick, set, remove, split, sort, limit, unique, aggregate, filter_list]}
+        match: {$ref: '#/components/schemas/TransformMatch'}
+        conditions: {type: array, items: {$ref: '#/components/schemas/TransformCondition'}}
+        keep: {type: boolean, default: true}
+        rules: {type: array, items: {$ref: '#/components/schemas/TransformRule'}}
+        default_port: {type: string}
+        fields: {type: array, items: {type: string}}
+        rename: {type: object, additionalProperties: {type: string}}
+        flatten: {type: boolean}
+        field: {type: string}
+        value: {$ref: '#/components/schemas/TransformValue'}
+        as: {type: string}
+        keep_parent: {type: boolean}
+        by: {type: string}
+        order: {type: string, enum: [asc, desc], default: asc}
+        count: {type: integer, minimum: 0}
+        into: {type: string}
+        op: {type: string, enum: [count, sum, avg, min, max, collect, group_count]}
+        of: {type: string}
+        group_by: {type: string}
+    TransformNode:
+      type: object
+      description: |
+        Reshapes the item with a list of plain-language steps (compiled to jq and run like a jq command node).
+        Ports: `out`, every port named by a route step (rules and `default_port`), and the implicit `error`.
+      additionalProperties: false
+      required: [id, type]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        type: {type: string, enum: [transform]}
+        steps: {type: array, items: {$ref: '#/components/schemas/TransformStep'}}
+        timeout: {$ref: '#/components/schemas/Duration'}
+        ui: {$ref: '#/components/schemas/NodeUI'}
+    TransformPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [steps, input]
+      properties:
+        steps: {type: array, items: {$ref: '#/components/schemas/TransformStep'}}
+        input: {$ref: '#/components/schemas/JsonValue'}
+    TransformCompileRequest:
+      type: object
+      additionalProperties: false
+      required: [steps]
+      properties:
+        steps: {type: array, items: {$ref: '#/components/schemas/TransformStep'}}
+    TransformCompiled:
+      type: object
+      required: [jq, description]
+      properties:
+        jq: {type: string, description: 'The jq program, with one `# step N:` comment per step.'}
+        description: {type: array, items: {type: string}, description: One plain-language sentence per step.}
+    TransformOutput:
+      type: object
+      required: [port, payload]
+      properties:
+        port: {type: string}
+        payload: {$ref: '#/components/schemas/JsonValue'}
+    TransformStepResult:
+      type: object
+      required: [step, description, outputs_count, dropped, error]
+      properties:
+        step: {type: integer, minimum: 0, description: Index into `steps`.}
+        description: {type: string}
+        outputs_count: {type: integer, minimum: 0, description: Items leaving this step when the steps up to and including it run on the input.}
+        dropped: {type: boolean, description: True for the step after which nothing is left.}
+        error: {type: [string, 'null'], description: The jq error when this step failed.}
+    TransformPreview:
+      type: object
+      required: [jq, description, decision, outputs, reason, error, step_results, diagnostics]
+      properties:
+        jq: {type: string, description: The compiled program (empty when the steps are invalid).}
+        description: {type: array, items: {type: string}}
+        decision: {type: string, enum: [emitted, dropped, error]}
+        outputs: {type: array, items: {$ref: '#/components/schemas/TransformOutput'}}
+        reason: {type: [string, 'null'], description: 'Plain-language explanation: when `dropped`, which step and which condition; when `emitted`, why routed items went to their port.'}
+        error: {type: [string, 'null'], description: Set when `decision` is `error`.}
+        step_results: {type: array, items: {$ref: '#/components/schemas/TransformStepResult'}}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Problems with the steps; `path` is relative to the request, for example `steps[1].conditions[0].value`.'}
+    FlowSample:
+      type: object
+      required: [source, event_id, node_run_id, from_node_id, sensor_id, created_at, payload]
+      properties:
+        source: {type: string, enum: [event, node_run]}
+        event_id: {$ref: '#/components/schemas/NullableUlid'}
+        node_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        from_node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: The upstream node that emitted the payload (node samples).}
+        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: The sensor of the event (event samples).}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        payload: {$ref: '#/components/schemas/JsonValue'}
+    FlowSamples:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/FlowSample'}}
     Node:
       oneOf:
         - {$ref: '#/components/schemas/CommandNode'}
         - {$ref: '#/components/schemas/AgentNode'}
         - {$ref: '#/components/schemas/InboxNode'}
+        - {$ref: '#/components/schemas/TransformNode'}
       discriminator:
         propertyName: type
         mapping:
           command: '#/components/schemas/CommandNode'
           agent: '#/components/schemas/AgentNode'
           inbox: '#/components/schemas/InboxNode'
+          transform: '#/components/schemas/TransformNode'
     Edge:
       type: object
       additionalProperties: false
@@ -3595,6 +3842,7 @@ components:
         emitted_count: {type: integer, minimum: 0, description: Number of payloads emitted.}
         node: {$ref: '#/components/schemas/Node'}
         argv: {type: [array, 'null'], items: {type: string}, description: Exact command line with secrets redacted.}
+        script: {type: string, description: 'The script the process ran, secrets redacted. For a transform node this is the compiled jq, so the trace shows what ran. Omitted when the node ran no script.'}
         env_keys: {type: array, items: {type: string}, description: Names of the environment variables injected; values are never stored.}
         stdin: {$ref: '#/components/schemas/TextBlob'}
         stdout: {$ref: '#/components/schemas/TextBlob'}

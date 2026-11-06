@@ -427,6 +427,7 @@ type nodeRunView struct {
 	EmittedCount    int          `json:"emitted_count"`
 	Node            spec.Node    `json:"node"`
 	Argv            []string     `json:"argv"`
+	Script          string       `json:"script,omitempty"`
 	EnvKeys         []string     `json:"env_keys"`
 	Stdin           textBlobView `json:"stdin"`
 	Stdout          textBlobView `json:"stdout"`
@@ -463,7 +464,7 @@ func (rv *resolver) nodeRunView(nr store.NodeRun, preview bool) nodeRunView {
 	v := nodeRunView{
 		ID: nr.ID, FlowRunID: nr.FlowRunID, NodeID: nr.NodeID, NodeType: string(nr.NodeType),
 		ParentNodeRunID: nonEmpty(nr.ParentNodeRunID), Status: string(nr.Status), Reason: nonEmpty(nr.Reason),
-		Error: nonEmpty(nr.Error), Ports: nonNil(nr.Ports), EmittedCount: nr.OutputCount, Node: rv.nodeSnapshot(nr),
+		Error: nonEmpty(nr.Error), Ports: nonNil(nr.Ports), EmittedCount: nr.OutputCount, Node: rv.nodeSnapshot(nr), Script: nr.Script,
 		EnvKeys: nonNil(nr.EnvKeys), Stdin: rv.s.blob(nr.Stdin, preview), Stdout: rv.s.blob(nr.Stdout, preview),
 		Stderr: rv.s.blob(nr.Stderr, preview), ExitCode: nr.ExitCode, DurationMS: nr.DurationMS,
 		CreatedAt: utc(nr.QueuedAt), StartedAt: utcPtr(nr.StartedAt), EndedAt: utcPtr(nr.EndedAt),

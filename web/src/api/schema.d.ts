@@ -722,6 +722,79 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/flows/{id}/samples": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sample inputs for a node
+     * @description Recent real inputs a node would receive, newest first, for the form editors and previews. For an entry node
+     *     (no incoming edge) these are the payloads of recent events from the sensors the flow subscribes to. For a
+     *     downstream node they are the payloads upstream nodes recently emitted into it, taken from this flow's stored
+     *     node runs (stdout parsed as JSON or JSONL, routed by `_port` along the edges that lead to the node). Each
+     *     sample says where it came from. The list is empty when nothing has run yet. Test runs are not sampled. A `node_id`
+     *     that is not in the saved flow (a node still being drawn) has no incoming edges there, so it is sampled like an
+     *     entry node.
+     */
+    get: operations["listFlowNodeSamples"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/transform/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run transform steps on a sample
+     * @description Compiles `steps` to jq and runs them on `input` (one JSON value), step by step, so the editor can show the
+     *     item count after each step. Compute only: nothing is stored and no flow is touched. Always 200 when the
+     *     request is well formed; invalid steps come back as `decision: error` with `diagnostics` (paths like
+     *     `steps[1].conditions[0].value`). A step that errors at run time (for example indexing a string) ends the run
+     *     with `decision: error`. The whole preview times out after 10 seconds.
+     */
+    post: operations["previewTransform"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/transform/compile": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Compile transform steps to jq
+     * @description Returns the jq program the engine would run for `steps` and one plain-language sentence per step. Used by
+     *     "Convert to code node". 422 with diagnostics when the steps are invalid.
+     */
+    post: operations["compileTransform"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/flows/{id}/versions": {
     parameters: {
       query?: never;
@@ -2090,10 +2163,208 @@ export interface components {
       links?: components["schemas"]["NoteLink"][];
       ui?: components["schemas"]["NodeUI"];
     };
+    /**
+     * @description Tests one field of the item. `field` is a dot path (`author.login`); `[]` in a path means "any element"
+     *     (`labels[].name`); `.` is the item itself. Operators `not_*`, `is_not_empty` are the exact opposite of their
+     *     positive form, so with `[]` they mean "no element ...". Text operators ignore case unless `case_sensitive`.
+     *     `value` is required by `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`,
+     *     `matches` (a regular expression), `gt`, `gte`, `lt`, `lte` and `in` (a list), and not allowed by the others.
+     */
+    TransformCondition: {
+      field: string;
+      op: components["schemas"]["TransformOperator"];
+      value?: components["schemas"]["JsonValue"];
+      /** @default false */
+      case_sensitive?: boolean;
+    };
+    /** @enum {string} */
+    TransformOperator:
+      | "equals"
+      | "not_equals"
+      | "contains"
+      | "not_contains"
+      | "starts_with"
+      | "ends_with"
+      | "matches"
+      | "gt"
+      | "gte"
+      | "lt"
+      | "lte"
+      | "exists"
+      | "not_exists"
+      | "is_empty"
+      | "is_not_empty"
+      | "is_true"
+      | "is_false"
+      | "in";
+    /** @description One branch of a route step; items matching the conditions are sent to `port`. */
+    TransformRule: {
+      port: string;
+      match?: components["schemas"]["TransformMatch"];
+      conditions?: components["schemas"]["TransformCondition"][];
+    };
+    /**
+     * @default all
+     * @enum {string}
+     */
+    TransformMatch: "all" | "any";
+    /**
+     * @description What a `set` step writes. `constant` uses `value`; `field` copies `field`; `template` uses `template` (text with
+     *     `{field.path}` placeholders; `{{` and `}}` are literal braces); `function` applies `function` to `field`
+     *     (`join` and `split` take their separator in `arg`, `default` its fallback value).
+     */
+    TransformValue: {
+      /** @enum {string} */
+      kind: "constant" | "field" | "template" | "function";
+      value?: components["schemas"]["JsonValue"];
+      field?: string;
+      template?: string;
+      /** @enum {string} */
+      function?:
+        | "lowercase"
+        | "uppercase"
+        | "trim"
+        | "length"
+        | "join"
+        | "first"
+        | "last"
+        | "split"
+        | "to_number"
+        | "to_string"
+        | "default";
+      arg?: components["schemas"]["JsonValue"];
+    };
+    /**
+     * @description One plain-language step. `type` selects the fields that apply; validation rejects the others.
+     *     `filter`: `match`, `conditions`, `keep` (default true; false drops what matches).
+     *     `route`: `rules`, `default_port` (where unmatched items go; default `out`); must be the last step.
+     *     `pick`: `fields`, `rename` (path to new top-level name), `flatten` (nested fields become `a_b` keys).
+     *     `set`: `field`, `value`. `remove`: `fields`.
+     *     `split`: `field` (an array), `as`, `keep_parent`; emits one item per element.
+     *     `sort`: `field`, `by`, `order`. `limit`: `field`, `count`. `unique`: `field`, `by`.
+     *     `aggregate`: `field`, `into`, `op`, `of`, `group_by`. `filter_list`: `field`, `match`, `conditions`, `keep`;
+     *     conditions are relative to each element.
+     */
+    TransformStep: {
+      /** @enum {string} */
+      type:
+        | "filter"
+        | "route"
+        | "pick"
+        | "set"
+        | "remove"
+        | "split"
+        | "sort"
+        | "limit"
+        | "unique"
+        | "aggregate"
+        | "filter_list";
+      match?: components["schemas"]["TransformMatch"];
+      conditions?: components["schemas"]["TransformCondition"][];
+      /** @default true */
+      keep?: boolean;
+      rules?: components["schemas"]["TransformRule"][];
+      default_port?: string;
+      fields?: string[];
+      rename?: {
+        [key: string]: string;
+      };
+      flatten?: boolean;
+      field?: string;
+      value?: components["schemas"]["TransformValue"];
+      as?: string;
+      keep_parent?: boolean;
+      by?: string;
+      /**
+       * @default asc
+       * @enum {string}
+       */
+      order?: "asc" | "desc";
+      count?: number;
+      into?: string;
+      /** @enum {string} */
+      op?: "count" | "sum" | "avg" | "min" | "max" | "collect" | "group_count";
+      of?: string;
+      group_by?: string;
+    };
+    /**
+     * @description Reshapes the item with a list of plain-language steps (compiled to jq and run like a jq command node).
+     *     Ports: `out`, every port named by a route step (rules and `default_port`), and the implicit `error`.
+     */
+    TransformNode: {
+      id: components["schemas"]["Slug"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "transform";
+      steps?: components["schemas"]["TransformStep"][];
+      timeout?: components["schemas"]["Duration"];
+      ui?: components["schemas"]["NodeUI"];
+    };
+    TransformPreviewRequest: {
+      steps: components["schemas"]["TransformStep"][];
+      input: components["schemas"]["JsonValue"];
+    };
+    TransformCompileRequest: {
+      steps: components["schemas"]["TransformStep"][];
+    };
+    TransformCompiled: {
+      /** @description The jq program, with one `# step N:` comment per step. */
+      jq: string;
+      /** @description One plain-language sentence per step. */
+      description: string[];
+    };
+    TransformOutput: {
+      port: string;
+      payload: components["schemas"]["JsonValue"];
+    };
+    TransformStepResult: {
+      /** @description Index into `steps`. */
+      step: number;
+      description: string;
+      /** @description Items leaving this step when the steps up to and including it run on the input. */
+      outputs_count: number;
+      /** @description True for the step after which nothing is left. */
+      dropped: boolean;
+      /** @description The jq error when this step failed. */
+      error: string | null;
+    };
+    TransformPreview: {
+      /** @description The compiled program (empty when the steps are invalid). */
+      jq: string;
+      description: string[];
+      /** @enum {string} */
+      decision: "emitted" | "dropped" | "error";
+      outputs: components["schemas"]["TransformOutput"][];
+      /** @description Plain-language explanation: when `dropped`, which step and which condition; when `emitted`, why routed items went to their port. */
+      reason: string | null;
+      /** @description Set when `decision` is `error`. */
+      error: string | null;
+      step_results: components["schemas"]["TransformStepResult"][];
+      /** @description Problems with the steps; `path` is relative to the request, for example `steps[1].conditions[0].value`. */
+      diagnostics: components["schemas"]["Diagnostic"][];
+    };
+    FlowSample: {
+      /** @enum {string} */
+      source: "event" | "node_run";
+      event_id: components["schemas"]["NullableUlid"];
+      node_run_id: components["schemas"]["NullableUlid"];
+      /** @description The upstream node that emitted the payload (node samples). */
+      from_node_id: components["schemas"]["Slug"] | null;
+      /** @description The sensor of the event (event samples). */
+      sensor_id: components["schemas"]["Slug"] | null;
+      created_at: components["schemas"]["Timestamp"];
+      payload: components["schemas"]["JsonValue"];
+    };
+    FlowSamples: {
+      items: components["schemas"]["FlowSample"][];
+    };
     Node:
       | components["schemas"]["CommandNode"]
       | components["schemas"]["AgentNode"]
-      | components["schemas"]["InboxNode"];
+      | components["schemas"]["InboxNode"]
+      | components["schemas"]["TransformNode"];
     Edge: {
       /** @description Source node id. */
       from: string;
@@ -2746,6 +3017,8 @@ export interface components {
       node: components["schemas"]["Node"];
       /** @description Exact command line with secrets redacted. */
       argv: string[] | null;
+      /** @description The script the process ran, secrets redacted. For a transform node this is the compiled jq, so the trace shows what ran. Omitted when the node ran no script. */
+      script?: string;
       /** @description Names of the environment variables injected; values are never stored. */
       env_keys: string[];
       stdin: components["schemas"]["TextBlob"];
@@ -4907,6 +5180,95 @@ export interface operations {
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       423: components["responses"]["Paused"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listFlowNodeSamples: {
+    parameters: {
+      query: {
+        node_id: components["schemas"]["Slug"];
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Samples, newest first. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FlowSamples"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  previewTransform: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TransformPreviewRequest"];
+      };
+    };
+    responses: {
+      /** @description Preview result. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TransformPreview"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  compileTransform: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TransformCompileRequest"];
+      };
+    };
+    responses: {
+      /** @description Compiled program. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TransformCompiled"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };
