@@ -23,6 +23,10 @@ const (
 	// KindSensorEnv is a sensor's own env file, env.d/sensors/<id>.env. It
 	// holds secrets, so it lives outside the git-versioned sensor YAML.
 	KindSensorEnv Kind = "sensor_env"
+	// KindTool is tools/<id>.yaml, a user-defined agent tool.
+	KindTool Kind = "tool"
+	// KindToolEnv is a tool's own env file, env.d/tools/<id>.env.
+	KindToolEnv Kind = "tool_env"
 )
 
 // Directory names under the home dir (REQUIREMENTS §3).
@@ -32,6 +36,8 @@ const (
 	DirPrompts   = "prompts"
 	DirEnvD      = "env.d"
 	DirSensorEnv = "env.d/sensors"
+	DirTools     = "tools"
+	DirToolEnv   = "env.d/tools"
 	DirData      = "data"
 	DirBlobs     = "data/blobs"
 	DirState     = "data/state"
@@ -57,6 +63,10 @@ func (k Kind) Rel(id string) string {
 		return idPath(DirPrompts, id, ".md")
 	case KindSensorEnv:
 		return idPath(DirSensorEnv, id, ".env")
+	case KindTool:
+		return idPath(DirTools, id, ".yaml")
+	case KindToolEnv:
+		return idPath(DirToolEnv, id, ".env")
 	}
 	return ""
 }
@@ -72,7 +82,7 @@ func idPath(dir, id, ext string) string {
 func (k Kind) Path(home, id string) string { return filepath.Join(home, filepath.FromSlash(k.Rel(id))) }
 
 func (k Kind) needsID() bool {
-	return k == KindSensor || k == KindFlow || k == KindPrompt || k == KindSensorEnv
+	return k == KindSensor || k == KindFlow || k == KindPrompt || k == KindSensorEnv || k == KindTool || k == KindToolEnv
 }
 
 // Errors returned by the file functions.
@@ -141,7 +151,7 @@ func WriteFile(home string, k Kind, id string, data []byte, expectedHash string)
 	if err != nil {
 		return "", err
 	}
-	if k == KindSensorEnv {
+	if k == KindSensorEnv || k == KindToolEnv {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return "", err
 		}

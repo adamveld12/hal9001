@@ -27,7 +27,7 @@ var ignoredLines = []string{"data/", "env", "env.d/"}
 //
 // Init returns the home-relative paths of the files it created.
 func Init(home string, seed fs.FS) ([]string, error) {
-	for _, d := range []string{"", DirSensors, DirFlows, DirPrompts, DirBlobs, DirState, DirWorktrees} {
+	for _, d := range []string{"", DirSensors, DirTools, DirFlows, DirPrompts, DirBlobs, DirState, DirWorktrees} {
 		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(d)), 0o750); err != nil {
 			return nil, fmt.Errorf("init %s: %w", home, err)
 		}
@@ -62,6 +62,9 @@ func Init(home string, seed fs.FS) ([]string, error) {
 		}
 	}
 	if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(DirSensorEnv)), 0o700); err != nil {
+		return nil, fmt.Errorf("init %s: %w", home, err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(DirToolEnv)), 0o700); err != nil {
 		return nil, fmt.Errorf("init %s: %w", home, err)
 	}
 	made, err := createIfMissing(home, ".gitignore", []byte(gitignoreContent))

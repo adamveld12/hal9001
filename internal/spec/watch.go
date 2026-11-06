@@ -45,11 +45,16 @@ func ClassifyPath(rel string) (k Kind, id string, ok bool) {
 	case FileEnv:
 		return KindEnv, "", true
 	}
-	if name, ok := strings.CutPrefix(rel, DirSensorEnv+"/"); ok {
-		if !strings.Contains(name, "/") && !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".env") {
-			return KindSensorEnv, strings.TrimSuffix(name, ".env"), true
+	for _, e := range []struct {
+		dir  string
+		kind Kind
+	}{{DirSensorEnv, KindSensorEnv}, {DirToolEnv, KindToolEnv}} {
+		if name, ok := strings.CutPrefix(rel, e.dir+"/"); ok {
+			if !strings.Contains(name, "/") && !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".env") {
+				return e.kind, strings.TrimSuffix(name, ".env"), true
+			}
+			return "", "", false
 		}
-		return "", "", false
 	}
 	dir, name, found := strings.Cut(rel, "/")
 	if !found || strings.Contains(name, "/") {
@@ -61,6 +66,7 @@ func ClassifyPath(rel string) (k Kind, id string, ok bool) {
 		exts []string
 	}{
 		{DirSensors, KindSensor, []string{".yaml", ".yml"}},
+		{DirTools, KindTool, []string{".yaml", ".yml"}},
 		{DirFlows, KindFlow, []string{".yaml", ".yml"}},
 		{DirPrompts, KindPrompt, []string{".md"}},
 	} {
@@ -77,7 +83,7 @@ func ClassifyPath(rel string) (k Kind, id string, ok bool) {
 	return "", "", false
 }
 
-var watchedDirs = []string{DirSensors, DirFlows, DirPrompts, DirSensorEnv}
+var watchedDirs = []string{DirSensors, DirTools, DirFlows, DirPrompts, DirSensorEnv, DirToolEnv}
 
 // Watch watches config.yaml, env, sensors/, flows/ and prompts/ under home and
 // delivers debounced Reload notifications until ctx is done, when the
