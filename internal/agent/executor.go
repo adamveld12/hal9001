@@ -48,7 +48,7 @@ func (e *Executor) clock() Clock {
 	if e.Clock != nil {
 		return e.Clock
 	}
-	return realClock{}
+	return WallClock{}
 }
 
 func (e *Executor) log() *slog.Logger {

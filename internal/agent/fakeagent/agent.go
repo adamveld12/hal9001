@@ -96,7 +96,7 @@ func (a *Agent) logCall(entry map[string]any) {
 }
 
 func (a *Agent) Initialize(_ context.Context, p acp.InitializeRequest) (acp.InitializeResponse, error) {
-	a.logCall(map[string]any{"method": "initialize", "client_capabilities": p.ClientCapabilities, "client_info": p.ClientInfo})
+	a.logCall(map[string]any{"method": "initialize", "pid": os.Getpid(), "client_capabilities": p.ClientCapabilities, "client_info": p.ClientInfo})
 	a.capsMu.Lock()
 	a.elicitation = p.ClientCapabilities.Elicitation != nil && p.ClientCapabilities.Elicitation.Form != nil
 	a.capsMu.Unlock()

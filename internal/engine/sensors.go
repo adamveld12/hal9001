@@ -78,12 +78,12 @@ func (e *Engine) stopLoops() {
 func (e *Engine) sensorLoop(ctx context.Context, id string, sched spec.Schedule) {
 	next := e.firstDue(ctx, id, sched)
 	for {
-		t := time.NewTimer(time.Until(next))
+		t := e.clock.NewTimer(next.Sub(e.scheduleNow()))
 		select {
 		case <-ctx.Done():
 			t.Stop()
 			return
-		case <-t.C:
+		case <-t.C():
 		}
 		if !e.isPaused() && !e.sensorPaused(ctx, id) {
 			_, done, err := e.startPoll(id, store.OriginSchedule, core.PollOptions{})
@@ -98,7 +98,7 @@ func (e *Engine) sensorLoop(ctx context.Context, id string, sched spec.Schedule)
 				e.log.Warn("engine: scheduled poll", "sensor", id, "err", err)
 			}
 		}
-		if next = sched.Next(time.Now()); next.IsZero() {
+		if next = sched.Next(e.scheduleNow()); next.IsZero() {
 			return
 		}
 	}
@@ -141,10 +141,14 @@ func (e *Engine) ResumeSensor(ctx context.Context, sensorID string) (store.Senso
 	return st, nil
 }
 
+// scheduleNow is the engine clock's time in the local zone: cron expressions
+// are evaluated in the zone of the time they are given.
+func (e *Engine) scheduleNow() time.Time { return e.clock.Now().Local() }
+
 // firstDue is when a (re)started scheduler first polls: an interval sensor
 // polls at once if it is overdue, a cron sensor waits for its next match.
 func (e *Engine) firstDue(ctx context.Context, id string, sched spec.Schedule) time.Time {
-	now := time.Now()
+	now := e.scheduleNow()
 	if sched.Cron != nil {
 		return sched.Next(now)
 	}

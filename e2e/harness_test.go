@@ -92,6 +92,11 @@ type Daemon struct {
 
 	// AssistIdle is the assist idle timeout (the daemon default when zero).
 	AssistIdle time.Duration
+
+	// Clock, when set by withClock, drives the daemon's sensor schedules and
+	// agent timeouts; advance it with Tick. It starts at the wall-clock time and
+	// keeps its value across Restart.
+	Clock *agenttest.ManualClock
 }
 
 // Option configures newDaemon.
@@ -100,6 +105,13 @@ type Option func(*Daemon)
 // withDemo keeps the seeded demo sensor and flow (every other starter sensor
 // and flow is neutralized, because they need credentials and the network).
 func withDemo() Option { return func(d *Daemon) { d.demo = true } }
+
+// withClock gives the daemon a manual clock for its schedulers and timeouts
+// instead of the wall clock. Interval sensors then poll once at start (they
+// are overdue) and again only when the test calls Tick.
+func withClock() Option {
+	return func(d *Daemon) { d.Clock = agenttest.NewManualClockAt(time.Now()) }
+}
 
 func skipShort(t *testing.T) {
 	t.Helper()
@@ -321,13 +333,15 @@ func (d *Daemon) Start() {
 	ready := make(chan net.Addr, 1)
 	done := make(chan error, 1)
 	d.logOK.Store(true)
-	go func() {
-		done <- daemon.Run(ctx, daemon.Options{
-			Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0", AssistIdleTimeout: d.AssistIdle,
-			Log:   slog.New(slog.NewTextHandler(logWriter{d}, &slog.HandlerOptions{Level: slog.LevelWarn})),
-			Ready: func(a net.Addr) { ready <- a },
-		})
-	}()
+	opts := daemon.Options{
+		Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0", AssistIdleTimeout: d.AssistIdle,
+		Log:   slog.New(slog.NewTextHandler(logWriter{d}, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Ready: func(a net.Addr) { ready <- a },
+	}
+	if d.Clock != nil { // a nil *ManualClock in the interface would not mean "wall clock"
+		opts.Clock = d.Clock
+	}
+	go func() { done <- daemon.Run(ctx, opts) }()
 	select {
 	case d.addr = <-ready:
 	case err := <-done:
@@ -544,6 +558,20 @@ func (d *Daemon) CLI(stdin string, args ...string) (stdout, stderr string, code 
 		},
 	})
 	return out.String(), errb.String(), code
+}
+
+// Tick advances the daemon's manual clock by dur and returns once every
+// scheduler timer it fired has handled its tick (polled, or skipped because the
+// sensor or the daemon is paused) and armed the next one. Tests that Tick do
+// not run agents on the clock. It fails if no scheduler timer is pending.
+func (d *Daemon) Tick(dur time.Duration) {
+	d.t.Helper()
+	if d.Clock == nil {
+		d.t.Fatal("Tick needs a daemon created withClock()")
+	}
+	if !d.Clock.Tick(dur, 30*time.Second) {
+		d.t.Fatal("the scheduler timers did not re-arm after the tick")
+	}
 }
 
 // Eventually polls cond every 20ms until it holds, failing with what after 30s.

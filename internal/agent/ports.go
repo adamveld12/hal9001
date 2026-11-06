@@ -6,17 +6,34 @@ import (
 	"time"
 )
 
-// Clock abstracts time so approval and run timeouts are testable.
+// Clock abstracts time so approval, run and sensor-schedule timeouts are testable.
 type Clock interface {
 	Now() time.Time
 	// After returns a channel that receives once d has elapsed.
 	After(d time.Duration) <-chan time.Time
+	// NewTimer returns a timer that fires once d has elapsed; stop it when it is no longer needed.
+	NewTimer(d time.Duration) Timer
 }
 
-type realClock struct{}
+// Timer is a one-shot timer of a Clock.
+type Timer interface {
+	// C receives once when the timer fires.
+	C() <-chan time.Time
+	// Stop cancels the timer; it reports whether it was still pending.
+	Stop() bool
+}
 
-func (realClock) Now() time.Time                         { return time.Now().UTC() }
-func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+// WallClock is the Clock of production: the system clock, in UTC.
+type WallClock struct{}
+
+func (WallClock) Now() time.Time                         { return time.Now().UTC() }
+func (WallClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+func (WallClock) NewTimer(d time.Duration) Timer         { return wallTimer{time.NewTimer(d)} }
+
+type wallTimer struct{ t *time.Timer }
+
+func (w wallTimer) C() <-chan time.Time { return w.t.C }
+func (w wallTimer) Stop() bool          { return w.t.Stop() }
 
 // Event is one row of agent_events: a session/update the agent streamed.
 type Event struct {

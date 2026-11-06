@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"hal9001/internal/agent"
 	"hal9001/internal/core"
@@ -30,7 +29,7 @@ type Options struct {
 	Log      *slog.Logger
 	// UIBaseURL is the origin of notification deep links, e.g. "http://localhost:9001".
 	UIBaseURL string
-	// Clock drives agent run and approval timeouts; nil means the wall clock.
+	// Clock drives sensor schedules and agent run and approval timeouts; nil means the wall clock.
 	Clock agent.Clock
 }
 
@@ -103,7 +102,7 @@ func New(opt Options) (*Engine, error) {
 	}
 	clock := opt.Clock
 	if clock == nil {
-		clock = wallClock{}
+		clock = agent.WallClock{}
 	}
 	data := filepath.Join(home, "data")
 	e := &Engine{
@@ -128,11 +127,6 @@ func New(opt Options) (*Engine, error) {
 }
 
 var _ core.Engine = (*Engine)(nil)
-
-type wallClock struct{}
-
-func (wallClock) Now() time.Time                         { return time.Now().UTC() }
-func (wallClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 // Start reconciles state left by a previous process (running work becomes
 // interrupted, per-tool approvals expire), then starts the dispatcher, the

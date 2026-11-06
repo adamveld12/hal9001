@@ -291,9 +291,9 @@ func perToolScript() script {
 	}}}}
 }
 
-func perToolDaemon(t *testing.T, extra string) *Daemon {
+func perToolDaemon(t *testing.T, extra string, opts ...Option) *Daemon {
 	t.Helper()
-	d := newDaemon(t)
+	d := newDaemon(t, opts...)
 	d.IdleSensor("src")
 	d.Prompt("p", "none", "go")
 	d.Runtime("fake", perToolScript())
@@ -421,9 +421,14 @@ func TestScenario07aPerToolDeny(t *testing.T) {
 // Scenario 7a: an approval left undecided past approval_timeout rejects the
 // request, expires the approval and fails the run with `approval_timeout`.
 func TestScenario07aApprovalTimeout(t *testing.T) {
-	d := perToolDaemon(t, "    timeout: 1h\n    approval_timeout: 1s\n")
+	d := perToolDaemon(t, "    timeout: 1h\n    approval_timeout: 1s\n", withClock())
 	runID := d.InjectRun("src", map[string]any{"id": "3"})
 	ap := d.WaitApproval("tool_call")
+	// Pending: the src sensor's schedule (1h), the run timeout and the approval timeout.
+	if !d.Clock.WaitTimers(3, 30*time.Second) {
+		t.Fatal("the schedule, run and approval timers were not registered")
+	}
+	d.Clock.Advance(2 * time.Second)
 	failed := d.WaitRun(runID, "failed")
 
 	n := d.Node(failed, "work")

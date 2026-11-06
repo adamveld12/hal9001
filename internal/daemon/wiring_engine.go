@@ -15,6 +15,7 @@ func newEngine(p engineParams) (*engine.Engine, error) {
 		Notifier:  p.Notifier,
 		Log:       p.Log,
 		UIBaseURL: p.UIBaseURL,
+		Clock:     p.Clock,
 	})
 }
 

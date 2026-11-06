@@ -120,8 +120,10 @@ func (c *sseClient) expectUntil(typ string) sseMsg {
 	return sseMsg{}
 }
 
-// quiet fails if anything arrives within the window.
-func (c *sseClient) quiet(d time.Duration) {
+// quiet fails if anything arrives within a short window. The messages that could arrive are
+// ordered behind the ones the test already received, so the window only has to cover delivery.
+func (c *sseClient) quiet() {
+	const d = 50 * time.Millisecond
 	c.t.Helper()
 	select {
 	case m := <-c.msgs:
@@ -161,7 +163,7 @@ func TestStreamDeliversChangesAndFiltersByType(t *testing.T) {
 	if inbox.data()["title"] != "hello" || inbox.data()["flow_id"] != "demo" {
 		t.Errorf("inbox = %v", inbox.Data)
 	}
-	c.quiet(200 * time.Millisecond)
+	c.quiet()
 
 	a, _ := strconv.ParseUint(created.ID, 10, 64)
 	b, _ := strconv.ParseUint(updated.ID, 10, 64)
@@ -247,7 +249,7 @@ func TestStreamResourceFiltersLeaveOtherTypesAlone(t *testing.T) {
 	ts := e.listen()
 	mine := e.flowRun("demo", "", store.KindLive, store.FlowRunQueued)
 	other := e.flowRun("demo", "", store.KindLive, store.FlowRunQueued)
-	time.Sleep(150 * time.Millisecond) // let the hub finish with the setup changes
+	e.settleHub() // the setup changes must not reach the stream opened next
 	c := e.openStream(ts, "?flow_run_id="+mine.ID+"&sensor_id=gh", nil)
 	c.expect("stream.ready")
 
@@ -282,7 +284,7 @@ func TestStreamResumeReplaysOrResyncs(t *testing.T) {
 
 	e2 := e.event("gh", "2", `{}`)
 	e3 := e.event("gh", "3", `{}`)
-	time.Sleep(100 * time.Millisecond) // the hub reads the changes asynchronously
+	e.settleHub() // the hub reads the changes asynchronously
 
 	c = e.openStream(ts, "?types=event.created", map[string]string{"Last-Event-ID": first.ID})
 	ready := c.expect("stream.ready")
@@ -295,7 +297,7 @@ func TestStreamResumeReplaysOrResyncs(t *testing.T) {
 	if m := c.expect("event.created"); m.data()["id"] != e3.ID {
 		t.Errorf("replay continued with %v", m.data()["id"])
 	}
-	c.quiet(150 * time.Millisecond)
+	c.quiet()
 
 	// An id from a previous daemon run cannot be replayed.
 	c = e.openStream(ts, "", map[string]string{"Last-Event-ID": "5"})
@@ -393,7 +395,7 @@ func TestAuthEventsReachOnlyCallersGrantedAdmin(t *testing.T) {
 	if m := c.expect("event.created"); m.data()["sensor_id"] != "gh" {
 		t.Errorf("got %v", m.Data)
 	}
-	c.quiet(150 * time.Millisecond)
+	c.quiet()
 
 	// With localhost-trust on the admin stack the same caller sees them.
 	e2 := newEnv(t)

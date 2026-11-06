@@ -55,11 +55,17 @@ func countTrigger(runs []SensorRun, trigger string) int {
 // as paused, and still answers Poll now and event injection. Resume schedules
 // polls again.
 func TestSensorPauseStopsScheduledPolls(t *testing.T) {
-	d := newDaemon(t)
+	d := newDaemon(t, withClock())
 	d.Sensor("tick", "id: tick\ninterval: 1s\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n")
 	d.Flow("watch", "id: watch\nenabled: true\nsubscribe: [tick]\nnodes:\n  - {id: note, type: inbox, title: \"item {{.input.id}}\"}\n")
 	d.Start()
 
+	d.Eventually("the first scheduled poll", func() bool {
+		var l sensorRunList
+		d.Get("/api/sensors/tick/runs?limit=200").Want(200).JSON(&l)
+		return countTrigger(l.Items, "scheduled") >= 1
+	})
+	d.Tick(time.Second)
 	d.Eventually("two scheduled polls", func() bool {
 		var l sensorRunList
 		d.Get("/api/sensors/tick/runs?limit=200").Want(200).JSON(&l)
@@ -97,9 +103,11 @@ func TestSensorPauseStopsScheduledPolls(t *testing.T) {
 	d.Post("/api/sensors/nope/resume", nil).Want(404)
 
 	before := len(d.settledRuns())
-	time.Sleep(3500 * time.Millisecond) // three intervals
+	for range 3 {
+		d.Tick(time.Second) // each tick is handled (and skipped) before Tick returns
+	}
 	if after := len(d.settledRuns()); after != before {
-		t.Fatalf("a paused sensor was polled: %d runs before, %d after 3.5s", before, after)
+		t.Fatalf("a paused sensor was polled: %d runs before, %d after three intervals", before, after)
 	}
 
 	// Explicit actions still work while paused.
@@ -114,7 +122,9 @@ func TestSensorPauseStopsScheduledPolls(t *testing.T) {
 	if s := d.sensorStatus("tick"); !s.Status.Paused || s.Status.State != "paused" || s.Status.NextPollAt != nil {
 		t.Fatalf("after restart: %+v", s.Status)
 	}
-	time.Sleep(2500 * time.Millisecond)
+	for range 2 {
+		d.Tick(time.Second)
+	}
 	if n := len(d.settledRuns()); n != paused2 {
 		t.Fatalf("a paused sensor polled after a restart: %d runs, want %d", n, paused2)
 	}
@@ -125,6 +135,7 @@ func TestSensorPauseStopsScheduledPolls(t *testing.T) {
 		t.Fatalf("resume response status: %+v", resumed.Status)
 	}
 	d.Post("/api/sensors/tick/resume", nil).Want(200) // idempotent
+	d.Tick(time.Hour)                                 // the restarted scheduler polls at once if overdue, else at last run + 1s (wall-clock time)
 	d.Eventually("a scheduled poll after resume", func() bool {
 		var l sensorRunList
 		d.Get("/api/sensors/tick/runs?limit=200").Want(200).JSON(&l)

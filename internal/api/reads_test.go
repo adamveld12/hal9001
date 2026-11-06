@@ -185,9 +185,8 @@ func TestFlowRunLongPollWakesOnChangeAndTimesOut(t *testing.T) {
 
 	// Wakes when the run reaches a terminal status, long before the wait ends.
 	wait := e.async(path + "?wait=1m")
-	time.Sleep(100 * time.Millisecond)
+	e.waitForWaiter()
 	setStatus(store.FlowRunRunning) // not settled: keeps waiting
-	time.Sleep(100 * time.Millisecond)
 	start := time.Now()
 	setStatus(store.FlowRunSucceeded)
 	r := wait().want(200)
@@ -201,7 +200,7 @@ func TestFlowRunLongPollWakesOnChangeAndTimesOut(t *testing.T) {
 	// awaiting_approval also ends the wait.
 	fr2 := e.flowRun("A", "", store.KindLive, store.FlowRunRunning)
 	wait = e.async("/api/flow-runs/" + fr2.ID + "?wait=1m")
-	time.Sleep(100 * time.Millisecond)
+	e.waitForWaiter()
 	fr2.Status = store.FlowRunAwaitingApproval
 	must(t, e.st.UpdateFlowRun(ctx(), fr2))
 	if got := status(wait().want(200)); got != "awaiting_approval" {
@@ -234,7 +233,7 @@ func TestNodeRunAndSensorRunWait(t *testing.T) {
 	fr := e.flowRun("A", "", store.KindLive, store.FlowRunRunning)
 	nr := e.nodeRun(fr.ID, "filter", store.NodeRunning, nil)
 	wait := e.async("/api/node-runs/" + nr.ID + "?wait=1m")
-	time.Sleep(100 * time.Millisecond)
+	e.waitForWaiter()
 	nr.Status, nr.Decision = store.NodeDone, store.DecisionEmitted
 	must(t, e.st.UpdateNodeRun(ctx(), nr))
 	if got := wait().want(200).json()["status"]; got != "done" {
@@ -244,7 +243,7 @@ func TestNodeRunAndSensorRunWait(t *testing.T) {
 	run := &store.SensorRun{SensorID: "demo-ticker", Origin: store.OriginManual}
 	must(t, e.st.CreateSensorRun(ctx(), run))
 	wait = e.async("/api/sensor-runs/" + run.ID + "?wait=1m")
-	time.Sleep(100 * time.Millisecond)
+	e.waitForWaiter()
 	run.Status = store.SensorSucceeded
 	end := time.Now()
 	run.EndedAt = &end

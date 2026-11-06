@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"hal9001/content"
+	"hal9001/internal/agent"
 	"hal9001/internal/assist"
 	"hal9001/internal/auth"
 	"hal9001/internal/authstore"
@@ -58,6 +59,8 @@ type Options struct {
 
 	// ListenAddr overrides ListenAddr. Tests only (e.g. 127.0.0.1:0).
 	ListenAddr string
+	// Clock drives the engine's sensor schedules and agent timeouts; nil means the wall clock. Tests only.
+	Clock agent.Clock
 	// Ready, when set, is called once the daemon is serving, with the bound address. Tests only.
 	Ready func(addr net.Addr)
 }
@@ -127,6 +130,7 @@ func Run(ctx context.Context, opts Options) error {
 		Store: st, Home: home, BasePATH: basePATH, Log: log,
 		Notifier:  notify.New(notify.WithLogger(log)),
 		UIBaseURL: "http://localhost:" + strconv.Itoa(port),
+		Clock:     opts.Clock,
 	})
 	if err != nil {
 		return fmt.Errorf("daemon: engine: %w", err)

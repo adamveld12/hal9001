@@ -214,21 +214,28 @@ func (b *Broker) Decide(permissionRequestID string, d agent.ToolDecision) bool {
 
 // ManualClock is a Clock the test advances by hand.
 type ManualClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	timers []*timer
+	mu      sync.Mutex
+	now     time.Time
+	timers  []*manualTimer
+	created int
 }
 
-type timer struct {
+type manualTimer struct {
+	c  *ManualClock
 	at time.Time
 	ch chan time.Time
 }
 
 var _ agent.Clock = (*ManualClock)(nil)
 
+// NewManualClock starts at a fixed instant.
 func NewManualClock() *ManualClock {
-	return &ManualClock{now: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)}
+	return NewManualClockAt(time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC))
 }
+
+// NewManualClockAt starts at start. Use time.Now() when the clock must agree
+// with timestamps the store records from the wall clock.
+func NewManualClockAt(start time.Time) *ManualClock { return &ManualClock{now: start} }
 
 func (c *ManualClock) Now() time.Time {
 	c.mu.Lock()
@@ -236,41 +243,99 @@ func (c *ManualClock) Now() time.Time {
 	return c.now
 }
 
-func (c *ManualClock) After(d time.Duration) <-chan time.Time {
+// After fires when the clock reaches now+d; at once if d <= 0.
+func (c *ManualClock) After(d time.Duration) <-chan time.Time { return c.NewTimer(d).C() }
+
+// NewTimer returns a timer that fires when the clock reaches now+d; at once if d <= 0.
+func (c *ManualClock) NewTimer(d time.Duration) agent.Timer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	t := &timer{at: c.now.Add(d), ch: make(chan time.Time, 1)}
-	c.timers = append(c.timers, t)
-	return t.ch
+	t := &manualTimer{c: c, at: c.now.Add(d), ch: make(chan time.Time, 1)}
+	c.created++
+	if d <= 0 {
+		t.ch <- c.now
+	} else {
+		c.timers = append(c.timers, t)
+	}
+	return t
 }
 
-// Advance moves time forward and fires every timer that became due.
-func (c *ManualClock) Advance(d time.Duration) {
+func (t *manualTimer) C() <-chan time.Time { return t.ch }
+
+func (t *manualTimer) Stop() bool {
+	t.c.mu.Lock()
+	defer t.c.mu.Unlock()
+	for i, o := range t.c.timers {
+		if o == t {
+			t.c.timers = append(t.c.timers[:i], t.c.timers[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// Advance moves time forward and fires every timer that became due. It
+// returns how many fired.
+func (c *ManualClock) Advance(d time.Duration) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
+	fired := 0
 	rest := c.timers[:0]
 	for _, t := range c.timers {
 		if !t.at.After(c.now) {
 			t.ch <- c.now
+			fired++
 		} else {
 			rest = append(rest, t)
 		}
 	}
 	c.timers = rest
+	return fired
+}
+
+// Tick advances the clock by d for a scheduler that re-arms a timer after every
+// firing (the engine's sensor loops): it waits until a timer is pending, advances,
+// and returns once as many new timers exist as fired, that is, once every fired
+// timer's owner handled its tick and armed the next. It reports false if that
+// does not happen within timeout. It is wrong for clocks that also time agent
+// runs, whose timers do not re-arm.
+func (c *ManualClock) Tick(d, timeout time.Duration) bool {
+	if !c.WaitTimers(1, timeout) {
+		return false
+	}
+	created := c.Created()
+	fired := c.Advance(d)
+	return c.WaitCreated(created+fired, timeout)
+}
+
+// Created is how many timers were ever created (fired, stopped or pending).
+func (c *ManualClock) Created() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.created
 }
 
 // WaitTimers blocks until at least n timers are registered and unfired.
 func (c *ManualClock) WaitTimers(n int, timeout time.Duration) bool {
+	return c.waitFor(timeout, func() bool { return len(c.timers) >= n })
+}
+
+// WaitCreated blocks until at least n timers were ever created.
+func (c *ManualClock) WaitCreated(n int, timeout time.Duration) bool {
+	return c.waitFor(timeout, func() bool { return c.created >= n })
+}
+
+func (c *ManualClock) waitFor(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		c.mu.Lock()
-		have := len(c.timers)
+		ok := cond()
 		c.mu.Unlock()
-		if have >= n {
+		if ok {
 			return true
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 	return false
 }

@@ -460,7 +460,7 @@ edges:
 // sensor does not poll, a manual poll is 423 `paused`, an injected event is
 // accepted but its run stays queued, and after resume everything runs.
 func TestScenario14aPausedStopsSensorsAndQueuesRuns(t *testing.T) {
-	d := newDaemon(t)
+	d := newDaemon(t, withClock())
 	d.IdleSensor("src")
 	counter := d.Path("polls.log")
 	d.Sensor("tick", "id: tick\ninterval: 1s\nlang: bash\nscript: echo x >> "+shq(counter)+"\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n")
@@ -475,6 +475,8 @@ func TestScenario14aPausedStopsSensorsAndQueuesRuns(t *testing.T) {
 		}
 		return strings.Count(string(b), "x")
 	}
+	d.Eventually("the sensor's first scheduled poll", func() bool { return polls() >= 1 })
+	d.Tick(time.Second)
 	d.Eventually("the sensor to poll on schedule", func() bool { return polls() >= 2 })
 
 	var ks KillSwitch
@@ -497,9 +499,11 @@ func TestScenario14aPausedStopsSensorsAndQueuesRuns(t *testing.T) {
 		return true
 	})
 	before := polls()
-	time.Sleep(2500 * time.Millisecond) // more than two 1s intervals
+	for range 3 {
+		d.Tick(time.Second) // each tick is handled (and skipped) before Tick returns
+	}
 	if after := polls(); after != before {
-		t.Errorf("sensor polled while paused: %d polls before, %d after 2.5s", before, after)
+		t.Errorf("sensor polled while paused: %d polls before, %d after three intervals", before, after)
 	}
 
 	r := d.Post("/api/sensors/tick/poll", nil).Want(423)
@@ -511,7 +515,7 @@ func TestScenario14aPausedStopsSensorsAndQueuesRuns(t *testing.T) {
 	}
 
 	runID := d.InjectRun("src", map[string]any{"id": "held"})
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the run must not start
 	if det := d.GetRun(runID, 0); det.FlowRun.Status != "queued" || len(det.NodeRuns) != 0 {
 		t.Errorf("run injected while paused:\n%s", describeRun(det))
 	}
@@ -527,6 +531,7 @@ func TestScenario14aPausedStopsSensorsAndQueuesRuns(t *testing.T) {
 	if d.Node(det, "note").Status != "done" {
 		t.Errorf("held run after resume:\n%s", describeRun(det))
 	}
+	d.Tick(time.Second)
 	d.Eventually("the sensor to poll again after resume", func() bool { return polls() > before })
 }
 
@@ -607,7 +612,7 @@ func TestScenario14bPauseAndKillTerminatesAgent(t *testing.T) {
 	}
 	// Still paused: a new event does not start.
 	next := d.InjectRun("src", map[string]any{"id": "2"})
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the run must not start
 	if st := d.GetRun(next, 0).FlowRun.Status; st != "queued" {
 		t.Errorf("run injected after pause+kill is %s, want queued", st)
 	}
@@ -639,7 +644,7 @@ func TestScenario14cKillSwitchSurvivesRestart(t *testing.T) {
 		t.Errorf("killed run after restart is %s", st)
 	}
 	d.Post("/api/sensors/src/poll", nil).Want(423)
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the run must not start
 	if st := d.GetRun(queued, 0).FlowRun.Status; st != "queued" {
 		t.Errorf("queued run after restart while paused is %s, want queued", st)
 	}

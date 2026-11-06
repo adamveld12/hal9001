@@ -182,8 +182,10 @@ func TestRunNowRerunSeenReplaysSeenItems(t *testing.T) {
 	d.Post("/api/sensors/ticker/poll", map[string]any{"flows": []string{"ghost"}}).Want(404)
 	d.Flow("elsewhere", inboxFlow("elsewhere", true, "other"))
 	d.IdleSensor("other")
-	time.Sleep(300 * time.Millisecond) // let the file watcher load the new files
-	d.Post("/api/sensors/ticker/poll", map[string]any{"flows": []string{"elsewhere"}}).Want(422)
+	// 404 until the file watcher has loaded the new flow, then 422: it does not subscribe to ticker.
+	d.Eventually("the file watcher to load the new files", func() bool {
+		return d.Post("/api/sensors/ticker/poll", map[string]any{"flows": []string{"elsewhere"}}).Status == 422
+	})
 	d.Post("/api/sensors/ticker/poll", map[string]any{"rerun": true}).Want(400)
 }
 
@@ -290,13 +292,17 @@ func TestRunNowFlowPollsItsSensorsAndRunsOnlyThatFlow(t *testing.T) {
 // A sensor with neither interval nor cron is valid, never scheduled, and runs
 // on request.
 func TestManualOnlySensorIsNeverScheduled(t *testing.T) {
-	d := newDaemon(t)
+	d := newDaemon(t, withClock())
 	d.Write("items.jsonl", abcItems)
 	manualSensor(d, "hand", "fire", "items.jsonl")
 	d.Flow("watch", inboxFlow("watch", true, "hand"))
+	// A scheduled sensor next to it shows that the scheduler is up and has had its ticks.
+	d.Sensor("beat", "id: beat\ninterval: 1s\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n")
+	d.Flow("beat-watch", inboxFlow("beat-watch", true, "beat"))
 	d.Start()
 
-	time.Sleep(700 * time.Millisecond)
+	d.firstSensorRun("beat")
+	d.Tick(time.Second)
 	var runs sensorRunList
 	d.Get("/api/sensors/hand/runs").Want(200).JSON(&runs)
 	if len(runs.Items) != 0 {
@@ -434,7 +440,7 @@ func TestResetSensorThenRunMakesEveryItemNew(t *testing.T) {
 func TestResetSensorWithoutRunAppliesFirstRunToTheNextScheduledPoll(t *testing.T) {
 	for _, firstRun := range []string{"baseline", "fire"} {
 		t.Run(firstRun, func(t *testing.T) {
-			d := newDaemon(t)
+			d := newDaemon(t, withClock())
 			d.Write("items.jsonl", abcItems)
 			d.Sensor("tick", "id: tick\ninterval: 1s\nlang: bash\nscript: cat "+shq(d.Path("items.jsonl"))+"\nkey: \"{{.id}}\"\nfirst_run: "+firstRun+"\ntimeout: 10s\n")
 			d.Flow("watch", inboxFlow("watch", true, "tick"))
@@ -468,6 +474,7 @@ func TestResetSensorWithoutRunAppliesFirstRunToTheNextScheduledPoll(t *testing.T
 
 			d.Write("items.jsonl", abcItems+`{"id":"d"}`+"\n")
 			d.Post("/api/sensors/tick/resume", nil).Want(200)
+			d.Tick(time.Hour) // past the restarted scheduler's first due time (last run + 1s, in wall-clock time)
 			var next SensorRun
 			d.Eventually("the scheduled poll after the reset", func() bool {
 				var l sensorRunList

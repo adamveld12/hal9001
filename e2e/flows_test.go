@@ -264,7 +264,7 @@ nodes:
 	}
 }
 
-// Scenario 13: `sleep 999` with timeout: 2s ends with error `timeout` and the
+// Scenario 13: `sleep 999` with timeout: 1s ends with error `timeout` and the
 // process (and what it spawned) is gone.
 func TestScenario13CommandTimeoutKillsProcessGroup(t *testing.T) {
 	d := newDaemon(t)
@@ -277,7 +277,7 @@ nodes:
   - id: sleeper
     type: command
     lang: bash
-    timeout: 2s
+    timeout: 1s
     script: |
       echo $$ > `+pids+`.main
       sleep 999 &
@@ -292,7 +292,7 @@ edges:
 	start := time.Now()
 	run := d.WaitRun(d.InjectRun("src", map[string]any{"id": "1"}), "failed")
 	if took := time.Since(start); took > 15*time.Second {
-		t.Errorf("a 2s timeout took %s", took)
+		t.Errorf("a 1s timeout took %s", took)
 	}
 	n := d.Node(run, "sleeper")
 	if n.Status != "failed" || n.Decision != "error" || n.Error != "timeout" {

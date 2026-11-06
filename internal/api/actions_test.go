@@ -452,7 +452,7 @@ func TestTestNodeStillRunningReturns202WithTheRecordedRun(t *testing.T) {
 	select {
 	case <-done:
 		t.Fatal("the engine call was cancelled with the response")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond):
 	}
 	close(release)
 	<-done

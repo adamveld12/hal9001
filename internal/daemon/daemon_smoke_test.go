@@ -143,6 +143,6 @@ func TestEditingConfigOnDiskIsHotReloaded(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("allowed_hosts edit was not picked up")
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }

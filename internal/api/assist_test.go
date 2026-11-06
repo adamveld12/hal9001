@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"hal9001/internal/core"
 	"hal9001/internal/store"
@@ -314,7 +313,7 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 	if m["id"] != msg.ID || m["session_id"] != mine.ID || m["text"] != "hello" {
 		t.Errorf("assist.message = %v", m)
 	}
-	c.quiet(150 * time.Millisecond) // nothing from the other session
+	c.quiet() // nothing from the other session
 }
 
 func (d *assistDouble) FlowCreated(context.Context, string) error { return nil }

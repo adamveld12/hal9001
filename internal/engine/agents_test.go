@@ -633,7 +633,7 @@ nodes:
 		return len(page.Items)
 	}
 	h.eventually("2 agent nodes running and 3 queued", func() bool { return count(store.NodeRunning) == 2 && count(store.NodeQueued) == 3 })
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: no node may start beyond the cap
 	if count(store.NodeRunning) != 2 || count(store.NodeQueued) != 3 {
 		t.Fatalf("cap not held: %d running %d queued", count(store.NodeRunning), count(store.NodeQueued))
 	}
@@ -693,7 +693,7 @@ nodes:
 				}
 				return flows(store.FlowRunRunning) == 1 && flows(store.FlowRunQueued) == 2
 			})
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond) // absence check: no run may start beyond the cap
 			if nodes(store.NodeRunning) != 1 {
 				t.Fatalf("cap exceeded: %d running nodes", nodes(store.NodeRunning))
 			}

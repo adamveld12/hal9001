@@ -284,6 +284,15 @@ func (h *harness) injectRun(item string) string {
 
 const waitFor = 30 * time.Second
 
+// tick advances a manual clock the harness was built with (withClock) and returns once the
+// sensor schedulers have handled the tick.
+func (h *harness) tick(clock *agenttest.ManualClock, d time.Duration) {
+	h.t.Helper()
+	if !clock.Tick(d, waitFor) {
+		h.t.Fatalf("the sensor schedulers did not re-arm after the tick\n%s", h.dump())
+	}
+}
+
 // eventually polls cond until it holds or the test times out.
 func (h *harness) eventually(what string, cond func() bool) {
 	h.t.Helper()

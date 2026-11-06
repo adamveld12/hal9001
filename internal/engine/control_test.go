@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"hal9001/internal/agent/agenttest"
 	"hal9001/internal/agent/fakeagent"
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
@@ -24,10 +25,8 @@ func countLines(path string) int {
 // rejected, injected events and replays are accepted but stay queued until the
 // switch is released.
 func TestScenario14PauseStopsSensorsAndQueuesWork(t *testing.T) {
-	if testing.Short() {
-		t.Skip("waits for a 1s sensor schedule")
-	}
-	h := newHarness(t)
+	clock := agenttest.NewManualClockAt(time.Now())
+	h := newHarness(t, withClock(clock))
 	polls := filepath.Join(t.TempDir(), "polls")
 	h.sensor("src", "id: src\ninterval: 1s\nlang: bash\nscript: echo p >> "+polls+"\nkey: \"{{.id}}\"\ntimeout: 10s\n")
 	h.flow("f", flowYAML("f", "src"))
@@ -41,9 +40,11 @@ func TestScenario14PauseStopsSensorsAndQueuesWork(t *testing.T) {
 	if persisted, err := h.st.GetKillSwitch(t.Context()); err != nil || !persisted.Paused || persisted.By != "tester" {
 		t.Fatalf("persisted state: %+v %v", persisted, err)
 	}
-	time.Sleep(300 * time.Millisecond) // a poll that was already running finishes
+	h.tick(clock, time.Second) // a poll that was already running finishes before the scheduler re-arms
 	before := countLines(polls)
-	time.Sleep(2500 * time.Millisecond)
+	for range 3 {
+		h.tick(clock, time.Second) // each tick is handled, and skipped, before tick returns
+	}
 	if after := countLines(polls); after != before {
 		t.Fatalf("sensor polled while paused: %d -> %d", before, after)
 	}
@@ -63,7 +64,7 @@ func TestScenario14PauseStopsSensorsAndQueuesWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the run must not start
 	for _, id := range []string{res.FlowRunIDs[0], rp.ID} {
 		if st := h.run(id).Status; st != store.FlowRunQueued {
 			t.Fatalf("run %s is %s while paused, want queued", id, st)
@@ -75,6 +76,7 @@ func TestScenario14PauseStopsSensorsAndQueuesWork(t *testing.T) {
 	}
 	h.waitRun(res.FlowRunIDs[0], store.FlowRunSucceeded)
 	h.waitRun(rp.ID, store.FlowRunSucceeded)
+	h.tick(clock, time.Second)
 	h.eventually("polling to resume", func() bool { return countLines(polls) > before })
 }
 
@@ -107,7 +109,7 @@ edges:
 		t.Fatal(err)
 	}
 	h.eventually("slow node to finish", func() bool { return h.node(runID, "slow").Status == store.NodeDone })
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the node must not start
 	if got := len(h.nodeRuns(runID)); got != 2 || h.node(runID, "after").Status != store.NodeQueued {
 		t.Fatalf("a new node started while paused:\n%s", h.dumpRun(runID))
 	}
@@ -189,7 +191,7 @@ nodes:
 	if err != nil || !ks.Paused || !ks.KillRunning {
 		t.Fatalf("kill switch after restart: %+v %v", ks, err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the run must not start
 	for _, id := range queued.FlowRunIDs {
 		if st := h.run(id).Status; st != store.FlowRunQueued {
 			t.Fatalf("run %s is %s after restart while paused, want queued", id, st)
@@ -266,7 +268,7 @@ nodes:
 		pid, _ := strconv.Atoi(f)
 		h.eventually("sleeper to be gone", func() bool { return !pidAlive(pid) })
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // absence check: the node must not be retried
 	if got := countLines(pids); got != 1 {
 		t.Errorf("an interrupted node was retried: %d starts", got)
 	}

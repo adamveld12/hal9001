@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"hal9001/internal/agent"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
@@ -30,6 +31,7 @@ type engineParams struct {
 	Notifier  core.Notifier
 	Log       *slog.Logger
 	UIBaseURL string
+	Clock     agent.Clock
 }
 
 // apiParams are the inputs of api.New (see wiring_engine.go).

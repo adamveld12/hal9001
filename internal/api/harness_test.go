@@ -359,6 +359,52 @@ edges:
   - {from: review, to: note}
 `
 
+// eventually polls cond until it holds, failing the test after 5s.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitForWaiter blocks until a long-poll request is subscribed to the change
+// bus, so that the next store change reaches it.
+func (e *env) waitForWaiter() {
+	e.t.Helper()
+	eventually(e.t, "long-poll requests to subscribe", func() bool {
+		e.srv.bus.mu.Lock()
+		defer e.srv.bus.mu.Unlock()
+		return len(e.srv.bus.subs) > 0
+	})
+}
+
+// settleHub blocks until the hub has published every store change reported so
+// far, including the status.changed that follows them. It queues a marker change
+// behind them and waits for the marker's message; a second marker, handled in a
+// later pass of the hub loop, proves the first pass (and its status message) is over.
+func (e *env) settleHub() {
+	e.t.Helper()
+	h := e.srv.hub
+	for range 2 {
+		before, _ := h.snapshot()
+		h.enqueue(store.Change{Resource: store.ResSetting, ID: store.KillSwitchKey})
+		eventually(e.t, "the hub to publish the marker change", func() bool {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			for _, m := range h.ring {
+				if m.seq > before && m.typ == "killswitch.changed" {
+					return true
+				}
+			}
+			return false
+		})
+	}
+}
+
 func (e *env) event(sensor, key, payload string) *store.Event {
 	e.t.Helper()
 	ev := &store.Event{SensorID: sensor, DedupKey: key, Payload: store.Inline(payload)}

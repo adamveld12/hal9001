@@ -673,11 +673,27 @@ func countCalls(d *Daemon, method string) int {
 	return n
 }
 
+// waitAgentSuspended waits until the agent process of the latest initialize call has exited: the idle timeout
+// suspended it.
+func waitAgentSuspended(d *Daemon) {
+	d.t.Helper()
+	pid := 0
+	for _, c := range d.AgentCalls("fake") {
+		if c["method"] == "initialize" {
+			pid = int(c["pid"].(float64))
+		}
+	}
+	if pid == 0 {
+		d.t.Fatal("no initialize call with a pid in the agent call log")
+	}
+	d.Eventually("the idle agent process to be suspended", func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
+}
+
 // The agent process is kept between turns; after the idle timeout it is suspended and the next message resumes the
 // same ACP session with session/load.
 func TestAssistKeepsTheProcessThenResumesWithSessionLoad(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
-		d.AssistIdle = 400 * time.Millisecond
+		d.AssistIdle = 250 * time.Millisecond
 		d.assistRuntime(true,
 			turn{When: when("first$"), Steps: []step{say("one")}},
 			turn{When: when("second$"), Steps: []step{say("two")}},
@@ -691,7 +707,7 @@ func TestAssistKeepsTheProcessThenResumesWithSessionLoad(t *testing.T) {
 		t.Fatalf("%d agent processes served two quick turns, want 1", n)
 	}
 
-	time.Sleep(1500 * time.Millisecond) // longer than the idle timeout: the process is suspended
+	waitAgentSuspended(d)
 	got := d.assistTurn(s.ID, "third")
 	if got.Status != "idle" || got.Messages[len(got.Messages)-1].text() != "three" {
 		t.Fatalf("after idle: %+v", got)
@@ -719,7 +735,7 @@ func TestAssistKeepsTheProcessThenResumesWithSessionLoad(t *testing.T) {
 // An agent that cannot load sessions gets a new one with a recap of the conversation, recorded on the run.
 func TestAssistResumeFallsBackToANewSessionWithARecap(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
-		d.AssistIdle = 400 * time.Millisecond
+		d.AssistIdle = 250 * time.Millisecond
 		d.assistRuntime(false,
 			turn{When: when("first message$"), Steps: []step{say("one")}},
 			turn{When: when("third message$"), Steps: []step{say("three")}},
@@ -727,7 +743,7 @@ func TestAssistResumeFallsBackToANewSessionWithARecap(t *testing.T) {
 	})
 	s := d.assistCreate("")
 	d.assistTurn(s.ID, "first message")
-	time.Sleep(1500 * time.Millisecond)
+	waitAgentSuspended(d)
 	got := d.assistTurn(s.ID, "third message")
 	if got.Status != "idle" {
 		t.Fatalf("status %q error %v", got.Status, got.Error)
