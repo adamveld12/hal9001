@@ -2,6 +2,7 @@
 // identical to the file on disk). The editor edits this model directly; the
 // canvas graph is derived from it (see graph.ts).
 
+import { DEFAULT_INSTRUCTIONS } from "./agentPrompt";
 import { transformPorts } from "./transform/ports";
 import type { TransformNode } from "./transform/types";
 
@@ -70,7 +71,12 @@ export interface AgentNode {
   runtime: string;
   mode: AgentMode;
   approve?: ApproveStyle;
-  prompt: string;
+  /** Library prompt name; exactly one of `prompt` and `instructions` is set. */
+  prompt?: string;
+  /** Inline prompt template. */
+  instructions?: string;
+  /** Inline instructions only: `note` (default) or `none`. */
+  output?: "note" | "none";
   extra_prompt?: string;
   model?: string;
   cwd?: AgentCwd;
@@ -196,7 +202,15 @@ export function newNode(type: NodeType, id: string, ui: UIPos): FlowNode {
     case "command":
       return { id, type, lang: "bash", script: "cat\n", ui };
     case "agent":
-      return { id, type, runtime: "claude", mode: "readonly", prompt: "", ui };
+      return {
+        id,
+        type,
+        runtime: "claude",
+        mode: "readonly",
+        instructions: DEFAULT_INSTRUCTIONS,
+        output: "note",
+        ui,
+      };
     case "inbox":
       return { id, type, title: "{{.input.title}}", priority: "normal", ui };
     case "transform":

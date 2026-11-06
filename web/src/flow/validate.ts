@@ -150,8 +150,12 @@ function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
     }
     case "agent": {
       if (node.runtime.trim() === "") at("runtime", "an agent needs a runtime");
-      if (node.prompt.trim() === "")
-        at("prompt", "choose a prompt from the library");
+      const hasPrompt = (node.prompt ?? "").trim() !== "";
+      const hasInstructions = (node.instructions ?? "").trim() !== "";
+      if (hasPrompt && hasInstructions)
+        at("instructions", "set either a saved prompt or inline instructions");
+      else if (!hasPrompt && !hasInstructions)
+        at("instructions", "write instructions or choose a saved prompt");
       if (
         node.cwd?.mode === "worktree" &&
         (!node.cwd.repo || node.cwd.repo.trim() === "")

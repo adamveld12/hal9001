@@ -197,7 +197,7 @@ type Flow struct {
 // validation rejects fields that do not belong to the node's type.
 //
 //	command: lang, script|command, ports, cwd (dir only), timeout, side_effect
-//	agent:   runtime, mode, approve, prompt, extra_prompt, model, cwd, timeout,
+//	agent:   runtime, mode, approve, prompt|instructions, output, extra_prompt, model, cwd, timeout,
 //	         approval_timeout, allow, mcp_servers
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
@@ -220,7 +220,11 @@ type Node struct {
 	Approve     string `yaml:"approve,omitempty" json:"approve,omitempty"`
 	Prompt      string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 	ExtraPrompt string `yaml:"extra_prompt,omitempty" json:"extra_prompt,omitempty"`
-	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
+	// Instructions is an inline prompt template (alternative to Prompt);
+	// Output (note|none, default note) applies only to inline instructions.
+	Instructions string `yaml:"instructions,omitempty" json:"instructions,omitempty"`
+	Output       string `yaml:"output,omitempty" json:"output,omitempty"`
+	Model        string `yaml:"model,omitempty" json:"model,omitempty"`
 
 	// inbox
 	Title          string `yaml:"title,omitempty" json:"title,omitempty"`

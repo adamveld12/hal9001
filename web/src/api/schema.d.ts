@@ -2270,6 +2270,8 @@ export interface components {
     /**
      * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
      *     `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
+     *     Exactly one of `prompt` (a library prompt name) or `instructions` (inline prompt template) is required.
+     *     `output` (`note` default, or `none`) applies to inline `instructions` only.
      */
     AgentNode: {
       id: components["schemas"]["Slug"];
@@ -2281,7 +2283,10 @@ export interface components {
       runtime: components["schemas"]["Slug"];
       mode: components["schemas"]["AgentMode"];
       approve?: components["schemas"]["ApproveStyle"];
-      prompt: components["schemas"]["Slug"];
+      prompt?: components["schemas"]["Slug"];
+      instructions?: string;
+      /** @enum {string} */
+      output?: "note" | "none";
       extra_prompt?: string;
       model?: string;
       cwd?: components["schemas"]["Cwd"];

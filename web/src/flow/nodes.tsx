@@ -45,7 +45,7 @@ function summary(node: FlowNode): string {
         node.mode === "approve"
           ? `approve/${node.approve ?? "proposal"}`
           : node.mode,
-        node.prompt,
+        node.prompt ?? "inline prompt",
       ]
         .filter(Boolean)
         .join(" · ");
