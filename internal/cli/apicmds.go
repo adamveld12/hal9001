@@ -102,6 +102,7 @@ func (a *app) tree() *command {
 		cmd("open", "open the web UI in the browser", openLeaf()),
 		cmd("validate", "check sensors, flows, prompts and config offline", validateLeaf()),
 		cmd("version", "print the version", versionLeaf()),
+		cmd("mcp", "run hal's stdio MCP server for one agent run (spawned by the agent)", mcpLeaf()),
 		group("auth", "authentication helpers",
 			cmd("set-password", "set the password for the password auth module", setPasswordLeaf())),
 		group("tailscale", "Tailscale exposure",

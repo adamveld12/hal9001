@@ -820,6 +820,53 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/mcp/tools": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Tools of one agent run (hal MCP backend)
+     * @description Backend of `hal9001 mcp`, the stdio MCP server hal injects into every agent session. Not for general use: it is
+     *     authorized by the per-run capability token in `Authorization: Bearer <token>` instead of the auth stack. The token
+     *     is random, stored hashed, scoped to one run's tool set, and revoked when the run ends; a missing, unknown or
+     *     revoked token is 401.
+     */
+    get: operations["listMcpTools"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp/call": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Call a tool of one agent run (hal MCP backend)
+     * @description Runs one tool for the run the capability token belongs to (`Authorization: Bearer <token>`). A call that needs
+     *     approval (for example a `gh_api` POST) creates a `tool_call` approval and blocks until it is decided or the
+     *     run's approval timeout passes. A tool failure, a denial and an unknown tool are 200 with `is_error: true` and the
+     *     reason in `text`, so the agent sees them as a tool error. Every call is recorded as a permission request of the
+     *     agent run.
+     */
+    post: operations["callMcpTool"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/transform/preview": {
     parameters: {
       query?: never;
@@ -2266,6 +2313,27 @@ export interface components {
       /** @description Skipped in dry-run, recorded as decision `skipped` with reason `dry_run`. */
       side_effect?: boolean;
       ui?: components["schemas"]["NodeUI"];
+    };
+    McpToolList: {
+      tools: {
+        name: string;
+        description: string;
+        /** @description JSON Schema of the arguments. */
+        input_schema: {
+          [key: string]: unknown;
+        };
+      }[];
+    };
+    McpCallRequest: {
+      name: string;
+      arguments?: {
+        [key: string]: unknown;
+      };
+    };
+    McpCallResult: {
+      /** @description The tool output, or the error message when `is_error` is true. */
+      text: string;
+      is_error: boolean;
     };
     /**
      * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
@@ -5631,6 +5699,76 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listMcpTools: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The tools of the run the token belongs to. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["McpToolList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      /** @description The daemon has no tool hub (not expected in a normal daemon). */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      default: components["responses"]["Error"];
+    };
+  };
+  callMcpTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["McpCallRequest"];
+      };
+    };
+    responses: {
+      /** @description The tool's result or error. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["McpCallResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      /** @description The daemon has no tool hub (not expected in a normal daemon). */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       default: components["responses"]["Error"];
     };
   };

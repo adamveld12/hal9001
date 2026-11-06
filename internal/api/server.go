@@ -42,6 +42,8 @@ type Options struct {
 	// run drafts. Optional: without it those endpoints answer 503 unavailable.
 	Assist core.Assist
 	Auth   *auth.Manager
+	// MCP serves the /api/mcp/ operations (hal's per-run MCP server backend). Optional: without it they answer 503.
+	MCP MCPHub
 	// Workspace returns the currently loaded configuration.
 	Workspace func() *spec.Workspace
 	// Reload re-reads the home directory and applies it, synchronously. The
@@ -201,6 +203,9 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"getStatus":    s.getStatus,
 		"streamEvents": s.streamEvents,
 		"getBlob":      s.getBlob,
+
+		"listMcpTools": s.listMcpTools,
+		"callMcpTool":  s.callMcpTool,
 
 		"getKillSwitch":    s.getKillSwitch,
 		"pauseKillSwitch":  s.pauseKillSwitch,
