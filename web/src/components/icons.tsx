@@ -41,6 +41,7 @@ const PATHS = {
   chevronRight: "M9 6l6 6-6 6",
   grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
   code: "M9 7l-5 5 5 5M15 7l5 5-5 5",
+  sidebar: "M4 5h16v14H4zM9 5v14",
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -39,6 +39,11 @@ import {
   parseStoredWidth,
 } from "./sessions";
 import { selectResumable, starterPrompts, targetConfig } from "./targets";
+import {
+  pendingApprovalMessage,
+  isBelowView,
+  shouldFollow,
+} from "./scrollFollow";
 import { TestResultView } from "./TestResultView";
 import { useAssistLive } from "./useAssistLive";
 import { useTestDraft } from "./useTestDraft";
@@ -351,65 +356,113 @@ function ResumeRow({
 }
 
 /**
- * Messages, scrolled to the end unless the user has scrolled up. The content
- * also grows without a new message (a pending approval loads its prompt after
- * the tool call appeared) and the box shrinks when the test panel opens, so
- * the end is followed by observing both sizes.
+ * Messages, scrolled to the end while the user is near it. The content also
+ * grows without a new message (a pending approval loads its prompt after the
+ * tool call appeared, a test result arrives), so the end is followed by
+ * observing both sizes. Approvals render inline; when one is out of view a
+ * pill jumps to it. `tail` renders after the last message (test cards).
  */
 function MessageList({
   messages,
   runtime,
+  tail,
 }: {
   messages: readonly AssistMessage[];
   runtime: string;
+  tail: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const [pillVisible, setPillVisible] = useState(false);
+  const pendingId = pendingApprovalMessage(messages)?.id ?? null;
+
+  const updatePill = () => {
+    const el = box.current;
+    const target = el?.querySelector("[data-pending-approval]");
+    setPillVisible(
+      !!el &&
+        !!target &&
+        isBelowView(
+          target.getBoundingClientRect().top,
+          el.getBoundingClientRect().bottom,
+        ),
+    );
+  };
+
   useEffect(() => {
     const el = box.current;
     const inner = content.current;
     if (!el || !inner) return;
     const follow = () => {
       if (atBottom.current) el.scrollTop = el.scrollHeight;
+      updatePill();
     };
     const ro = new ResizeObserver(follow);
     ro.observe(inner);
-    ro.observe(el); // the panel under the list can shrink it
+    ro.observe(el);
     follow();
     return () => ro.disconnect();
   }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(updatePill, [pendingId]);
+
   const traces = traceLinks(messages);
   return (
-    <div
-      ref={box}
-      role="log"
-      aria-label="Conversation"
-      className="min-h-0 flex-1 overflow-auto p-3"
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        atBottom.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      }}
-    >
-      <div ref={content} className="space-y-3">
-        {messages.map((m) => (
-          <MessageView
-            key={m.id}
-            message={m}
-            runtime={runtime}
-            traceRunId={traces.get(m.id)}
-          />
-        ))}
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={box}
+        role="log"
+        aria-label="Conversation"
+        className="min-h-0 flex-1 overflow-auto p-3"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atBottom.current = shouldFollow(
+            el.scrollHeight,
+            el.scrollTop,
+            el.clientHeight,
+          );
+          updatePill();
+        }}
+      >
+        <div ref={content} className="space-y-3">
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              data-pending-approval={m.id === pendingId ? "" : undefined}
+            >
+              <MessageView
+                message={m}
+                runtime={runtime}
+                traceRunId={traces.get(m.id)}
+              />
+            </div>
+          ))}
+          {tail}
+        </div>
       </div>
+      {pillVisible && (
+        <button
+          type="button"
+          className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-warn/50 bg-panel px-3 py-1 text-xs font-medium text-warn shadow-md hover:bg-raised"
+          onClick={() =>
+            box.current
+              ?.querySelector("[data-pending-approval]")
+              ?.scrollIntoView({ block: "center", behavior: "smooth" })
+          }
+        >
+          Pending approval ↓
+        </button>
+      )}
     </div>
   );
 }
 
+/** "Test draft" as a card at the end of the conversation; the result opens under the button. */
 function TestPanel({ sessionId }: { sessionId: string }) {
   const test = useTestDraft(sessionId);
   return (
-    <div className="space-y-2 border-t border-line px-3 py-2">
+    <div className="space-y-2 rounded-md border border-line bg-panel p-2 text-xs">
       <div className="flex items-center gap-2">
         <Button
           icon="play"
@@ -425,16 +478,16 @@ function TestPanel({ sessionId }: { sessionId: string }) {
         </span>
       </div>
       {test.error && (
-        <div role="alert" className="text-xs text-bad">
+        <div role="alert" className="text-bad">
           {test.error.message}
         </div>
       )}
       {test.result?.kind === "sensor" && (
         <details open className="rounded-md border border-line">
-          <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium">
+          <summary className="cursor-pointer select-none px-2 py-1.5 font-medium">
             Last test
           </summary>
-          <div className="max-h-[45vh] overflow-auto border-t border-line p-2">
+          <div className="border-t border-line p-2">
             <TestResultView result={test.result} />
           </div>
         </details>
@@ -533,7 +586,17 @@ function SessionView({ id }: { id: string }) {
           , not the one open here, so the editor is not synced with it.
         </div>
       )}
-      <MessageList messages={s.messages} runtime={s.runtime} />
+      <MessageList
+        messages={s.messages}
+        runtime={s.runtime}
+        tail={
+          closed ? null : s.target.kind === "flow" ? (
+            <FlowTestPanel sessionId={id} />
+          ) : (
+            <TestPanel sessionId={id} />
+          )
+        }
+      />
       {s.messages.length === 0 && !closed && (
         <div className="px-3 pb-3">
           <StarterPrompts
@@ -560,13 +623,10 @@ function SessionView({ id }: { id: string }) {
         </div>
       ) : (
         <>
-          {s.target.kind === "flow" ? (
-            <>
-              <FlowTestPanel sessionId={id} />
+          {s.target.kind === "flow" && (
+            <div className="max-h-32 overflow-auto">
               <FlowSavePanel sessionId={id} />
-            </>
-          ) : (
-            <TestPanel sessionId={id} />
+            </div>
           )}
           <div className="border-t border-line p-3">
             <Composer

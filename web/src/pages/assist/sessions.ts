@@ -41,15 +41,14 @@ export function bindSession(
 
 export const DEFAULT_DRAWER_WIDTH = 420;
 export const MIN_DRAWER_WIDTH = 320;
-export const MAX_DRAWER_WIDTH = 720;
-/** Room that always stays for the editor beside the drawer. */
-const EDITOR_MIN = 400;
+/** The drawer may take up to this share of the viewport. */
+const MAX_DRAWER_SHARE = 0.5;
 
-/** Drawer width within its own limits and leaving the editor room in a viewport of `viewport` px. */
+/** Drawer width between its minimum and half the viewport (the minimum wins in a viewport too narrow for both). */
 export function clampDrawerWidth(width: number, viewport: number): number {
   const max = Math.max(
     MIN_DRAWER_WIDTH,
-    Math.min(MAX_DRAWER_WIDTH, viewport - EDITOR_MIN),
+    Math.floor(viewport * MAX_DRAWER_SHARE),
   );
   return Math.round(Math.min(max, Math.max(MIN_DRAWER_WIDTH, width)));
 }

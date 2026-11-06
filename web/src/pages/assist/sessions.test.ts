@@ -3,19 +3,19 @@ import {
   clampDrawerWidth,
   DEFAULT_DRAWER_WIDTH,
   isBusy,
-  MAX_DRAWER_WIDTH,
   MIN_DRAWER_WIDTH,
   parseStoredWidth,
 } from "./sessions";
 
 describe("drawer width", () => {
-  it("stays within its limits", () => {
+  it("stays between the minimum and half the viewport", () => {
     expect(clampDrawerWidth(100, 1600)).toBe(MIN_DRAWER_WIDTH);
-    expect(clampDrawerWidth(5000, 3000)).toBe(MAX_DRAWER_WIDTH);
+    expect(clampDrawerWidth(5000, 3000)).toBe(1500);
+    expect(clampDrawerWidth(700, 1000)).toBe(500);
   });
 
-  it("leaves room for the editor on a narrower window", () => {
-    expect(clampDrawerWidth(700, 1000)).toBe(600);
+  it("keeps the minimum in a viewport too narrow for half of it", () => {
+    expect(clampDrawerWidth(500, 500)).toBe(MIN_DRAWER_WIDTH);
   });
 
   it("falls back to the default for missing or unusable stored values", () => {

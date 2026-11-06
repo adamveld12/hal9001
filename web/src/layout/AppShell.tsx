@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router";
 import { useStatus } from "../api/status";
 import { useStreamState } from "../api/streamHooks";
@@ -59,6 +59,47 @@ function useGoToShortcuts() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate]);
 }
+const NAV_COLLAPSED_ITEM = "hal9001.nav.collapsed";
+
+/** Whether the left nav is an icon rail; persisted, toggled with `[` (ignored while typing). */
+function useNavCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(NAV_COLLAPSED_ITEM) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = useCallback(() => {
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(NAV_COLLAPSED_ITEM, c ? "0" : "1");
+      } catch {
+        // not persisted
+      }
+      return !c;
+    });
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "[" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.isContentEditable ||
+          t.closest(".cm-editor") ||
+          /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+      ) {
+        return;
+      }
+      e.preventDefault();
+      toggle();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggle]);
+  return [collapsed, toggle];
+}
 
 function Count({
   n,
@@ -77,6 +118,7 @@ function Count({
 
 export function AppShell() {
   useGoToShortcuts();
+  const [collapsed, toggle] = useNavCollapsed();
   const status = useStatus();
   const stream = useStreamState();
   const theme = useTheme();
@@ -88,40 +130,91 @@ export function AppShell() {
     <div className="flex h-full">
       <nav
         aria-label="Main"
-        className="flex w-52 shrink-0 flex-col border-r border-line bg-panel"
+        className={cx(
+          "flex shrink-0 flex-col border-r border-line bg-panel",
+          collapsed ? "w-14" : "w-52",
+        )}
       >
-        <div className="flex h-12 items-center gap-2 border-b border-line px-4 font-semibold tracking-wide">
-          <span className="size-2.5 rounded-full bg-bad shadow-[0_0_8px_var(--bad)]" />
-          hal9001
+        <div
+          className={cx(
+            "flex h-12 items-center gap-2 border-b border-line font-semibold tracking-wide",
+            collapsed ? "justify-center" : "px-4",
+          )}
+        >
+          <span
+            className="size-2.5 shrink-0 rounded-full bg-bad shadow-[0_0_8px_var(--bad)]"
+            title="hal9001"
+          />
+          {!collapsed && "hal9001"}
         </div>
         <ul className="flex-1 space-y-0.5 p-2">
-          {NAV.map((n) => (
-            <li key={n.to}>
-              <NavLink
-                to={n.to}
-                title={`Go to ${n.label} (g ${n.key})`}
-                className={({ isActive }) =>
-                  cx(
-                    "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]",
-                    isActive
-                      ? "bg-raised font-medium"
-                      : "text-muted hover:bg-raised hover:text-fg",
-                  )
-                }
-              >
-                <Icon name={n.icon} size={15} />
-                {n.label}
-                {n.to === "/inbox" && <Count n={s?.unread_inbox} tone="info" />}
-                {n.to === "/approvals" && (
-                  <Count n={s?.pending_approvals} tone="warn" />
-                )}
-              </NavLink>
-            </li>
-          ))}
+          {NAV.map((n) => {
+            const count =
+              n.to === "/inbox"
+                ? s?.unread_inbox
+                : n.to === "/approvals"
+                  ? s?.pending_approvals
+                  : undefined;
+            const tone = n.to === "/inbox" ? "info" : "warn";
+            return (
+              <li key={n.to}>
+                <NavLink
+                  to={n.to}
+                  title={`${n.label} (g ${n.key})`}
+                  aria-label={collapsed ? n.label : undefined}
+                  className={({ isActive }) =>
+                    cx(
+                      "relative flex items-center gap-2 rounded-md py-1.5 text-[13px]",
+                      collapsed ? "justify-center px-0" : "px-2",
+                      isActive
+                        ? "bg-raised font-medium"
+                        : "text-muted hover:bg-raised hover:text-fg",
+                    )
+                  }
+                >
+                  <Icon name={n.icon} size={15} />
+                  {!collapsed && n.label}
+                  {collapsed ? (
+                    count ? (
+                      <span
+                        className={cx(
+                          "absolute right-1 top-0.5 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 tabular-nums text-white",
+                          tone === "info" ? "bg-info" : "bg-warn",
+                        )}
+                      >
+                        {count > 99 ? "99+" : count}
+                      </span>
+                    ) : null
+                  ) : (
+                    <Count n={count} tone={tone} />
+                  )}
+                </NavLink>
+              </li>
+            );
+          })}
         </ul>
-        <div className="border-t border-line p-3 text-[11px] text-muted">
-          <Kbd>g</Kbd> then <Kbd>t</Kbd> <Kbd>i</Kbd> <Kbd>a</Kbd> <Kbd>f</Kbd>{" "}
-          <Kbd>r</Kbd> <Kbd>s</Kbd> <Kbd>p</Kbd> to jump
+        <div
+          className={cx(
+            "flex items-center border-t border-line p-2 text-[11px] text-muted",
+            collapsed ? "justify-center" : "gap-2",
+          )}
+        >
+          <button
+            type="button"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+            title={`${collapsed ? "Expand" : "Collapse"} sidebar ([)`}
+            className="rounded-md p-1.5 hover:bg-raised hover:text-fg"
+            onClick={toggle}
+          >
+            <Icon name="sidebar" size={15} />
+          </button>
+          {!collapsed && (
+            <span>
+              <Kbd>g</Kbd> then <Kbd>t</Kbd> <Kbd>i</Kbd> <Kbd>a</Kbd>{" "}
+              <Kbd>f</Kbd> <Kbd>r</Kbd> <Kbd>s</Kbd> <Kbd>p</Kbd> to jump
+            </span>
+          )}
         </div>
       </nav>
 
