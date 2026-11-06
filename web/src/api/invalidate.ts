@@ -12,7 +12,7 @@ export type DataStreamType = Exclude<StreamType, ControlType>;
  */
 const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "status.changed": [],
-  "killswitch.changed": ["killswitch", "status", "sensors"],
+  "killswitch.changed": ["killswitch", "status", "sensors", "queue"],
   "sensor.changed": ["sensors", "sensor"],
   "config.changed": [
     "sensors",
@@ -25,14 +25,15 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
     "runtimes",
     "settings",
     "env",
+    "queue",
   ],
   "sensor_run.created": ["sensors", "sensor", "sensor-runs"],
   "sensor_run.updated": ["sensors", "sensor", "sensor-runs"],
   "event.created": ["events", "sensors", "flow-samples"],
-  "flow_run.created": ["flow-runs", "flow-run", "event", "flows"],
-  "flow_run.updated": ["flow-runs", "flow-run", "event", "flows"],
-  "node_run.created": ["flow-run", "node-run", "flow-samples"],
-  "node_run.updated": ["flow-run", "node-run", "flow-samples"],
+  "flow_run.created": ["flow-runs", "flow-run", "event", "flows", "queue"],
+  "flow_run.updated": ["flow-runs", "flow-run", "event", "flows", "queue"],
+  "node_run.created": ["flow-run", "node-run", "flow-samples", "queue"],
+  "node_run.updated": ["flow-run", "node-run", "flow-samples", "queue"],
   "agent_run.created": ["agent-runs", "agent-run", "node-run"],
   "agent_run.updated": ["agent-runs", "agent-run", "node-run"],
   "agent_event.appended": ["agent-events"],

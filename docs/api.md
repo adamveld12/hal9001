@@ -27,7 +27,7 @@ Each operation declares its service in `x-hal-service`:
 | `ui` | The login, logout, and whoami calls. The UI shell and its assets are public (they hold no data and contain the login page); every `/api/` route is guarded. |
 | `api` | Reads, the event stream, and the compute-only POSTs (`/api/flows/validate`, `/api/sensors/validate`, `/api/prompts/render`, `/api/transform/preview`, `/api/transform/compile`). |
 | `approve` | `POST /api/approvals/{id}/approve` and `/deny`. |
-| `admin` | Everything that writes files, runs code, or changes state: flows, sensors, prompts, env, settings, kill switch, event injection, replay, test-node, runtime probes, inbox flags, session and passkey management. Auth reads that expose security data (sessions, auth events, passkeys, Tailscale status) are also `admin`. |
+| `admin` | Everything that writes files, runs code, or changes state: flows, sensors, prompts, env, settings, kill switch, queue removal and clearing, event injection, replay, test-node, runtime probes, inbox flags, session and passkey management. Auth reads that expose security data (sessions, auth events, passkeys, Tailscale status) are also `admin`. |
 
 The `config.yaml` stack for the service decides who gets in (REQUIREMENTS §10.4). With the default config a local `curl` passes through `localhost-trust` and needs no credentials. When the stack does not admit you:
 
@@ -48,7 +48,7 @@ Files that live under the home dir (sensors, flows, prompts, settings) carry a `
 
 ## Long polling
 
-`GET /api/flow-runs/{id}?wait=30s` returns as soon as the run is terminal (`succeeded`, `failed`, `killed`, `interrupted`) or `awaiting_approval`, or when the wait elapses (cap 5 minutes). It always answers 200 with the current state, so check `flow_run.status` rather than the HTTP status. The same `wait` parameter works on `GET /api/sensor-runs/{id}` (until not `running`), `GET /api/node-runs/{id}`, and `POST /api/flows/{id}/test-node` (default 30s; 202 when the node is still running).
+`GET /api/flow-runs/{id}?wait=30s` returns as soon as the run is terminal (`succeeded`, `failed`, `killed`, `interrupted`, `cancelled`) or `awaiting_approval`, or when the wait elapses (cap 5 minutes). It always answers 200 with the current state, so check `flow_run.status` rather than the HTTP status. The same `wait` parameter works on `GET /api/sensor-runs/{id}` (until not `running`), `GET /api/node-runs/{id}`, and `POST /api/flows/{id}/test-node` (default 30s; 202 when the node is still running).
 
 ## Event stream
 
@@ -157,6 +157,12 @@ curl -sS -X POST -H "$H" "$API/events/$EVENT_ID/replay" -d '{"flow": "triage-git
 # Kill switch.
 curl -sS -X POST -H "$H" "$API/killswitch/pause" -d '{"kill_running": true, "reason": "maintenance"}'
 curl -sS -X POST -H "$H" "$API/killswitch/resume"
+
+# The queue: runs waiting for a flow, agent or command slot, in claim order.
+curl -sS "$API/queue" | jq '{total, items: [.items[] | {position, run: .flow_run.id, waiting_for}]}'
+# Remove one (the run ends `cancelled` and stays in history; 409 once it runs a node), or clear them all.
+curl -sS -X DELETE -H "$H" "$API/queue/$RUN" | jq '{status, error, cancelled_by}'
+curl -sS -X POST -H "$H" "$API/queue/clear" -d '{"flow_id": "triage-github"}'   # flow_id is optional
 
 # Watch everything live.
 curl -sS -N "$API/stream?types=flow_run.updated,approval.created,inbox.created"

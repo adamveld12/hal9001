@@ -10,18 +10,33 @@ pnpm = "11.28.8"
 
 [tasks.setup]
 description = "Install git hooks and web dependencies"
-run = ["lefthook install", "pnpm --dir web install --frozen-lockfile"]
+run = [
+  "lefthook install",
+  "pnpm --dir web install --frozen-lockfile",
+  "git config merge.keepours.driver true",
+]
 
 [tasks.check]
-description = "Run every check the hooks run, on the whole tree"
+description = "Every check the hooks run, on the whole tree (static, race, sharded e2e and web in parallel)"
+depends = ["check:static", "race", "e2e", "check:web"]
+
+[tasks."check:static"]
+description = "gitleaks, format, go.mod tidy, lint"
 run = [
   "gitleaks git --redact --no-banner",
   "golangci-lint fmt --diff ./...",
   "go mod tidy -diff",
   "golangci-lint run ./...",
-  "go test -race ./...",
-  "pnpm --dir web check",
 ]
+
+[tasks."check:web"]
+description = "Web format, lint, typecheck, tests"
+run = "pnpm --dir web check"
+
+[tasks.race]
+description = "Race detector on every package except e2e (e2e runs sharded: RACE=1 mise run e2e)"
+env = { GORACE = "atexit_sleep_ms=0" }
+run = "go test -race -count=1 $(go list ./... | grep -v '/e2e$')"
 
 [tasks.build]
 description = "Build the web UI and a hal9001 binary with the UI embedded (bin/hal9001)"
@@ -31,5 +46,10 @@ run = [
 ]
 
 [tasks.e2e]
-description = "API-driven end-to-end suite (real daemon, fake ACP agent), with -race"
-run = "go test -race -count=1 ./e2e/..."
+description = "API-driven e2e suite (real daemon, fake ACP agent) in E2E_SHARDS parallel shards (default 4); RACE=1 adds -race"
+env = { GORACE = "atexit_sleep_ms=0" }
+run = "scripts/e2e.sh"
+
+[tasks.sandbox]
+description = "Throwaway daemon on a free port with a fake agent runtime (--port, --script, --web-dir, --keep)"
+run = "go run ./cmd/hal9001-sandbox"

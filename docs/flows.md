@@ -558,6 +558,14 @@ Downstream nodes receive `{"input": <the agent node's input>, "agent": {"run_id"
   engaged. In the UI this is "Run node on sample" in the flow editor.
 - **Follow a run.** `hal9001 runs get <id> --wait` blocks until the run finishes or awaits approval. `runs list --kind
   live|replay|test` filters by kind.
+- **Queue.** A run waits in the queue when its flow is at `max_concurrent` (`waiting_for: flow_slot`), or when it is
+  running but its only unfinished nodes wait for `max_agent_runs` or `max_command_runs` (`agent_slot`, `command_slot`);
+  while the kill switch is engaged every item waits for it. Runs awaiting approval are not queued (see Approvals).
+  `hal9001 queue list` shows them in claim order, `queue remove <run-id>` removes one, `queue clear [--flow ID] [--yes]`
+  removes all (the CLI asks for confirmation on a terminal). Removing never deletes history: the run and its queued
+  nodes end `cancelled` with the reason `removed from queue` and who removed it. A run that already started a node is
+  refused with 409 (use the kill switch or wait). `cancelled` counts as finished, not failed, in flow health. In the UI
+  this is the Queue tab on the Flows page; the "queued" count in the header links to it.
 - **Kill switch.** `hal9001 killswitch pause` pauses sensors and stops starting nodes; `--kill` also terminates running
   nodes (SIGTERM, then SIGKILL after 10s; runs are marked `killed`). `killswitch resume` undoes it. The state survives a
   restart.

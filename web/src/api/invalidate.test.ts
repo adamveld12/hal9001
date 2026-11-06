@@ -35,7 +35,15 @@ describe("stream invalidation", () => {
       "inbox.created",
     ]);
     expect([...roots].sort()).toEqual(
-      ["event", "flow-run", "flow-runs", "flows", "inbox", "inbox-item"].sort(),
+      [
+        "event",
+        "flow-run",
+        "flow-runs",
+        "flows",
+        "inbox",
+        "inbox-item",
+        "queue",
+      ].sort(),
     );
   });
 });

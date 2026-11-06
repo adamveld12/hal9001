@@ -24,8 +24,8 @@ func (s *Store) CountEvents(ctx context.Context, sensorID string, since time.Tim
 // LastRun* describe the newest run of any age.
 type FlowRunStats struct {
 	Runs             int
-	Finished         int // succeeded, failed, killed or interrupted
-	Failed           int // failed, killed or interrupted
+	Finished         int // succeeded, failed, killed, interrupted or cancelled
+	Failed           int // failed, killed or interrupted (not cancelled)
 	Running          int
 	Queued           int
 	AwaitingApproval int
@@ -63,7 +63,7 @@ func (s *Store) FlowRunStats(ctx context.Context, since time.Time) (map[string]F
 		st := out[flow]
 		st.Runs += n
 		switch FlowRunStatus(status) {
-		case FlowRunSucceeded:
+		case FlowRunSucceeded, FlowRunCancelled:
 			st.Finished += n
 		case FlowRunFailed, FlowRunKilled, FlowRunInterrupted:
 			st.Finished += n

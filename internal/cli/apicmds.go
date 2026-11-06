@@ -115,6 +115,7 @@ func (a *app) tree() *command {
 		group("agent-runs", "list and inspect agent runs and transcripts", agentRunCmds()...),
 		group("approvals", "list, approve and deny approvals", approvalCmds()...),
 		group("inbox", "list items; mark read, starred, archived", inboxCmds()...),
+		group("queue", "list the run queue; remove runs from it", queueCmds()...),
 		group("killswitch", "pause and resume the daemon", killswitchCmds()...),
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
@@ -503,7 +504,7 @@ func flowRunDone(body []byte) bool {
 		return true
 	}
 	switch d.FlowRun.Status {
-	case "succeeded", "failed", "killed", "interrupted", "awaiting_approval":
+	case "succeeded", "failed", "killed", "interrupted", "cancelled", "awaiting_approval":
 		return true
 	}
 	return false
@@ -517,7 +518,7 @@ func nodeRunDone(body []byte) bool {
 		return true
 	}
 	switch d.Status {
-	case "done", "failed", "killed", "interrupted", "skipped", "awaiting_approval":
+	case "done", "failed", "killed", "interrupted", "skipped", "cancelled", "awaiting_approval":
 		return true
 	}
 	return false
@@ -742,6 +743,44 @@ func inboxFlag(field, offFlag, offHelp string) *leaf {
 			body, _ := jsonBody(map[string]bool{field: !off})
 			return c.doEmit(ctx, http.MethodPatch, "/api/inbox/"+esc(c.args[0]), nil, body)
 		},
+	}
+}
+
+func queueCmds() []*command {
+	var flow string
+	var yes bool
+	clear := &leaf{
+		usage: "[--flow <flow-id>] [--yes]",
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&flow, "flow", "", "only clear the queued runs of this flow")
+			fs.BoolVar(&yes, "yes", false, "do not ask for confirmation")
+		},
+		run: func(ctx context.Context, c *call) error {
+			if !yes && isTerminal(c.env.Stdin) {
+				what := "every run in the queue"
+				if flow != "" {
+					what = "every queued run of flow " + flow
+				}
+				_, _ = fmt.Fprintf(c.stderr(), "Remove %s? The runs are cancelled and kept in history. [y/N] ", what)
+				line, _ := bufio.NewReader(c.env.Stdin).ReadString('\n')
+				if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+					return usagef("queue clear: cancelled")
+				}
+			}
+			req := map[string]any{}
+			if flow != "" {
+				req["flow_id"] = flow
+			}
+			body, _ := jsonBody(req)
+			return c.doEmit(ctx, http.MethodPost, "/api/queue/clear", nil, body)
+		},
+	}
+	return []*command{
+		cmd("list", "list runs waiting for a slot, in claim order", apiGet("/api/queue", "position", "flow_run.id", "flow_run.flow_id", "waiting_for", "queued_at")),
+		cmd("remove", "remove one run from the queue (it ends cancelled)", &leaf{usage: "<run-id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
+			return c.doEmit(ctx, http.MethodDelete, "/api/queue/"+esc(c.args[0]), nil, nil)
+		}}),
+		cmd("clear", "remove every queued run (or those of one flow)", clear),
 	}
 }
 

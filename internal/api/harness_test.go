@@ -90,6 +90,14 @@ func (d *engineDouble) Replay(ctx context.Context, eventID, flowID string, dryRu
 	return d.replay(ctx, eventID, flowID, dryRun)
 }
 
+func (d *engineDouble) RemoveQueued(context.Context, string, string) (*store.FlowRun, error) {
+	return nil, errUnscripted
+}
+
+func (d *engineDouble) ClearQueue(context.Context, string, string) ([]string, error) {
+	return nil, errUnscripted
+}
+
 func (d *engineDouble) TestNode(ctx context.Context, req core.TestNodeRequest) (*store.FlowRun, *store.NodeRun, error) {
 	if d.testNode == nil {
 		return nil, nil, errUnscripted

@@ -81,6 +81,7 @@ export function nodeVisual(
     case "failed":
       return "error";
     case "skipped":
+    case "cancelled":
       return "skipped";
     default:
       break;

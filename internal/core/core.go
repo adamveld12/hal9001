@@ -160,6 +160,11 @@ type Engine interface {
 	Pause(ctx context.Context, killRunning bool, principal string) (store.KillSwitch, error)
 	Resume(ctx context.Context, principal string) (store.KillSwitch, error)
 	ProbeRuntime(ctx context.Context, name string) (ProbeResult, error)
+	// RemoveQueued ends a flow run waiting in the queue as cancelled and records
+	// principal. A run that already runs a node fails with ErrInvalidState.
+	RemoveQueued(ctx context.Context, flowRunID, principal string) (*store.FlowRun, error)
+	// ClearQueue removes every queued run (of one flow when flowID is set) and returns their ids.
+	ClearQueue(ctx context.Context, flowID, principal string) ([]string, error)
 	// Apply hands the engine a freshly loaded workspace (startup and hot reload).
 	Apply(ws *spec.Workspace)
 }
