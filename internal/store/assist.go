@@ -28,8 +28,11 @@ func (s AssistStatus) valid() bool {
 	return false
 }
 
-// AssistTargetSensor is the only assist target kind: a sensor definition.
-const AssistTargetSensor = "sensor"
+// Assist target kinds: a sensor or a flow definition.
+const (
+	AssistTargetSensor = "sensor"
+	AssistTargetFlow   = "flow"
+)
 
 // Who last wrote an assist draft.
 const (
@@ -44,18 +47,21 @@ const (
 type AssistSession struct {
 	ID         string       `json:"id"`
 	TargetKind string       `json:"target_kind"`
-	TargetID   string       `json:"target_id,omitempty"` // empty: a new sensor
+	TargetID   string       `json:"target_id,omitempty"` // empty: a new sensor or flow
 	Runtime    string       `json:"runtime"`
 	Model      string       `json:"model,omitempty"`
 	Status     AssistStatus `json:"status"`
 	Error      string       `json:"error,omitempty"`
 
-	DraftYAML        string          `json:"draft_yaml"`
-	DraftHash        string          `json:"draft_hash"`
-	DraftSensorID    string          `json:"draft_sensor_id,omitempty"`
+	DraftYAML string `json:"draft_yaml"`
+	DraftHash string `json:"draft_hash"`
+	// DraftID is the id parsed from the draft: a sensor id or, for a flow session, a flow id.
+	DraftID          string          `json:"draft_id,omitempty"`
 	DraftDiagnostics json.RawMessage `json:"draft_diagnostics,omitempty"` // JSON array of diagnostics
-	DraftUpdatedAt   time.Time       `json:"draft_updated_at"`
-	DraftUpdatedBy   string          `json:"draft_updated_by"`
+	// DraftPrompts is a JSON array of the prompt files drafted for a flow ({name, yaml, exists}).
+	DraftPrompts   json.RawMessage `json:"draft_prompts,omitempty"`
+	DraftUpdatedAt time.Time       `json:"draft_updated_at"`
+	DraftUpdatedBy string          `json:"draft_updated_by"`
 
 	// ApprovedScript is the canonical text of the script the user last tested or approved, and
 	// ApprovedScriptHash its identity; both are empty until then.
@@ -94,22 +100,22 @@ func validAssistRole(r string) bool {
 	return false
 }
 
-const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_sensor_id, draft_diagnostics,
+const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_id, draft_diagnostics, draft_prompts,
 	draft_updated_at, draft_updated_by, last_agent_run_id, acp_session_id, created_at, updated_at, closed_at,
 	approved_script, approved_script_hash`
 
 func scanAssistSession(r rowScanner) (AssistSession, error) {
 	var (
 		a                         AssistSession
-		status, diags             string
+		status, diags, prompts    string
 		draftAt, created, updated string
 		closed                    sql.NullString
 	)
-	if err := r.Scan(&a.ID, &a.TargetKind, &a.TargetID, &a.Runtime, &a.Model, &status, &a.Error, &a.DraftYAML, &a.DraftHash, &a.DraftSensorID,
-		&diags, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash); err != nil {
+	if err := r.Scan(&a.ID, &a.TargetKind, &a.TargetID, &a.Runtime, &a.Model, &status, &a.Error, &a.DraftYAML, &a.DraftHash, &a.DraftID,
+		&diags, &prompts, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash); err != nil {
 		return AssistSession{}, scanErr(err)
 	}
-	a.Status, a.DraftDiagnostics = AssistStatus(status), parseRaw(diags)
+	a.Status, a.DraftDiagnostics, a.DraftPrompts = AssistStatus(status), parseRaw(diags), parseRaw(prompts)
 	var err error
 	if a.DraftUpdatedAt, err = parseTS(draftAt); err != nil {
 		return AssistSession{}, err
@@ -128,7 +134,7 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 
 func (a *AssistSession) validate() error {
 	switch {
-	case a.TargetKind != AssistTargetSensor:
+	case a.TargetKind != AssistTargetSensor && a.TargetKind != AssistTargetFlow:
 		return fmt.Errorf("%w: assist target kind %q", ErrInvalid, a.TargetKind)
 	case a.Runtime == "":
 		return fmt.Errorf("%w: assist session runtime required", ErrInvalid)
@@ -165,9 +171,13 @@ func (s *Store) CreateAssistSession(ctx context.Context, a *AssistSession) error
 	if err != nil {
 		return err
 	}
+	prompts, err := rawJSONArray(a.DraftPrompts)
+	if err != nil {
+		return err
+	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftSensorID, diags,
+		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts,
 			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash)
 		if err != nil {
 			return fmt.Errorf("store: insert assist_session: %w", err)
@@ -198,12 +208,16 @@ func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error
 	if err != nil {
 		return err
 	}
+	prompts, err := rawJSONArray(a.DraftPrompts)
+	if err != nil {
+		return err
+	}
 	a.UpdatedAt = s.Now()
 	return s.write(ctx, func(t *txn) error {
-		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_sensor_id=?, draft_diagnostics=?,
+		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?,
 			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=?,
 			approved_script=?, approved_script_hash=? WHERE id=?`,
-			a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftSensorID, diags,
+			a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts,
 			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.ID)
 		if err != nil {
 			return fmt.Errorf("store: update assist_session: %w", err)

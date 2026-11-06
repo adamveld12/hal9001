@@ -1581,11 +1581,11 @@ paths:
       summary: List assist sessions
       description: |
         Recent and active AI-assisted authoring sessions, newest first. `target_kind` and `target_id` narrow the list
-        to the sessions of one target (for example the sensor an editor is open on). Closed sessions are not listed.
+        to the sessions of one target (for example the sensor or flow an editor is open on). Closed sessions are not listed.
       x-hal-service: api
       parameters:
         - {name: target_kind, in: query, schema: {$ref: '#/components/schemas/AssistTargetKind'}}
-        - {name: target_id, in: query, description: 'Sensor id. Only sessions that edit that sensor.', schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: target_id, in: query, description: 'Sensor or flow id. Only sessions that edit that target.', schema: {$ref: '#/components/schemas/Slug'}}
       responses:
         '200':
           description: Sessions, newest first.
@@ -1604,7 +1604,9 @@ paths:
         Creates a session and its draft. With `target.id` the draft starts from that sensor's file (or from `yaml` when
         given); without it the draft starts from `yaml` or a commented skeleton. No agent process starts until the
         first message. The sensor file is never touched: only the normal sensor create/update endpoints persist a
-        sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`.
+        sensor. 422 `validation-failed` for an unknown `runtime`; 404 for an unknown `target.id`. `target.kind: flow` starts a flow
+        session in the same way (`flow.yaml`, a skeleton with `enabled: false` and `dry_run: true` for a new flow, read-only
+        reference material and `prompts/` for new prompts in the draft directory).
       x-hal-service: admin
       requestBody:
         required: true
@@ -1728,9 +1730,9 @@ paths:
     post:
       operationId: testAssistDraft
       tags: [assist]
-      summary: Run the draft like Poll now
+      summary: Run the draft once (a poll for a sensor, one input for a flow)
       description: |
-        Runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
+        Sensor sessions: runs the draft's script exactly as a poll would (`lang`, `script`/`command`, `timeout`, the `HAL_*` variables
         with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
         in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
         events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
@@ -1743,6 +1745,15 @@ paths:
         meaning `lang`, `script`, `command`, `cwd` and the names of the env variables it references, equals the one the
         user last tested or approved, or the saved script of the target sensor; otherwise 409 `invalid-state`. The agent
         asks for that approval through its permission request for `hal9001 assist test` (a `tool_call` approval).
+
+        Flow sessions: the draft flow runs once on one input (`AssistTestRequest`) as a `kind: test` flow run with
+        `dry_run` forced, so `side_effect` command nodes are skipped. Transform and command nodes run for real and the
+        run follows the edges; agent nodes are not run (`skipped`, their branch ends there); inbox nodes record the item
+        they would create and create none. Command nodes run with the global env file like a real run, so an agent's
+        test needs the user's approval the same way: the hash covers every command node's `lang`, `script`, `command`,
+        `cwd` and the env names they reference (generated transform jq does not count), and is compared with the one
+        the user last tested or approved or the saved flow's. 422 `validation-failed` when the draft does not validate
+        (including `prompts/` files) or no input is available. The result is the `flow` variant of `AssistTestResult`.
       x-hal-service: admin
       x-hal-paused: reject
       parameters:
@@ -1751,12 +1762,18 @@ paths:
           required: false
           description: Set by the CLI when it runs inside an assist session. Any non-empty value marks the caller as the agent.
           schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssistTestRequest'}
       responses:
         '200':
           description: The run finished (a failing script still answers 200; see `exit_code`).
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AssistTestResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -1764,6 +1781,29 @@ paths:
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         '423': {$ref: '#/components/responses/Paused'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/assist/sessions/{id}/samples:
+    parameters:
+      - {$ref: '#/components/parameters/AssistSessionId'}
+    get:
+      operationId: listAssistSamples
+      tags: [assist]
+      summary: Sample inputs of a flow session
+      description: |
+        Flow sessions: the recent event payloads of the known sensors (up to 5 per sensor, redacted), in the order of
+        `reference/samples/` in the draft directory (sensor ids sorted, newest event first). `index` is what
+        `sample_index` of the test request and `hal9001 assist test --sample N` refer to. The list is refreshed at the
+        start of every turn. Empty for sensor sessions.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Samples.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistSampleList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
         default: {$ref: '#/components/responses/Error'}
   /api/assist/sessions/{id}/cancel:
     parameters:
@@ -4059,7 +4099,7 @@ components:
         host_allowed: {type: boolean, description: '`hostname` is in `allowed_hosts`.'}
         allowed_logins: {type: array, items: {type: string}}
     # ---------------------------------------------------------------- assist (AI-assisted sensor authoring)
-    AssistTargetKind: {type: string, enum: [sensor]}
+    AssistTargetKind: {type: string, enum: [sensor, flow]}
     AssistStatus:
       type: string
       description: |
@@ -4074,7 +4114,7 @@ components:
       required: [kind, id]
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
-        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: Sensor id; null when the session authors a new sensor.}
+        id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: Sensor or flow id; null when the session authors a new sensor or flow.}
     AssistTargetRequest:
       type: object
       additionalProperties: false
@@ -4082,17 +4122,28 @@ components:
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
         id: {$ref: '#/components/schemas/Slug'}
+    AssistDraftPrompt:
+      type: object
+      description: A prompt file the agent drafted under `prompts/`. Save creates it (`POST /api/prompts`) when `exists` is false.
+      required: [name, yaml, exists]
+      properties:
+        name: {$ref: '#/components/schemas/Slug'}
+        yaml: {type: string, description: 'The file as written (front matter and body).'}
+        exists: {type: boolean, description: 'A prompt of that name is already saved. Save never overwrites it.'}
     AssistDraft:
       type: object
       description: |
-        The sensor YAML the session works on, stored in the session's draft directory (`sensor.yaml`). Only the user's
-        Save writes a real sensor file.
-      required: [yaml, hash, sensor_id, diagnostics, updated_at, updated_by]
+        The YAML the session works on, stored in the session's draft directory (`sensor.yaml` or `flow.yaml`). Only the
+        user's Save writes a real file.
+      required: [kind, yaml, hash, sensor_id, flow_id, prompts, diagnostics, updated_at, updated_by]
       properties:
+        kind: {$ref: '#/components/schemas/AssistTargetKind'}
         yaml: {type: string}
         hash: {$ref: '#/components/schemas/Hash'}
-        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'The `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet.'}
-        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the sensor validator (the same checks as `POST /api/sensors/validate`).'}
+        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Sensor sessions: the `id` parsed from the YAML; null when it has none or does not parse. For a new sensor it need not exist yet. Null for flows.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors.'}
+        prompts: {type: array, items: {$ref: '#/components/schemas/AssistDraftPrompt'}, description: 'Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts.'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
         updated_by: {$ref: '#/components/schemas/AssistDraftAuthor'}
     AssistSession:
@@ -4183,13 +4234,14 @@ components:
         dedup_key: {type: [string, 'null'], description: 'The draft''s `key` template rendered over the item; null when it failed.'}
         key_error: {type: [string, 'null'], description: Why the key template failed on this item.}
         item: {$ref: '#/components/schemas/JsonValue'}
-    AssistTestResult:
+    AssistSensorTestResult:
       type: object
       description: |
-        Outcome of one test run of the draft, redacted: values of the global env file and of the target sensor's env
+        Outcome of one test run of a sensor draft, redacted: values of the global env file and of the target sensor's env
         file are replaced by `«KEY»`. `items` lists at most the first 200 parsed items; `item_count` is the total.
-      required: [exit_code, duration_ms, timed_out, items, item_count, parse_error, stdout, stderr]
+      required: [kind, exit_code, duration_ms, timed_out, items, item_count, parse_error, stdout, stderr]
       properties:
+        kind: {type: string, enum: [sensor]}
         exit_code: {type: integer, description: '-1 when the process was killed by a signal (for example on timeout).'}
         duration_ms: {type: integer, minimum: 0}
         timed_out: {type: boolean}
@@ -4198,6 +4250,94 @@ components:
         parse_error: {type: [string, 'null'], description: 'Why stdout is not a JSON array or JSONL of items (items is then empty).'}
         stdout: {$ref: '#/components/schemas/TextBlob'}
         stderr: {$ref: '#/components/schemas/TextBlob'}
+    AssistFlowTestOutput:
+      type: object
+      required: [port, payload]
+      properties:
+        port: {type: string}
+        payload: {$ref: '#/components/schemas/JsonValue'}
+    AssistFlowTestNode:
+      type: object
+      description: |
+        What one node did in a flow test, in the order the nodes ran. A node that did not run (a branch that was not
+        taken) is absent. Agent nodes are `skipped` with the reason `assist test: agent nodes are not run`, and
+        their branch ends there. An inbox node records the item it would create in `would_create` and creates nothing.
+      required: [node_id, node_run_id, status, decision, reason, error, ports, outputs, would_create, stdout, stderr, exit_code, duration_ms]
+      properties:
+        node_id: {$ref: '#/components/schemas/Slug'}
+        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        status: {$ref: '#/components/schemas/NodeRunStatus'}
+        decision: {oneOf: [{$ref: '#/components/schemas/NodeRunDecision'}, {type: 'null'}]}
+        reason: {type: [string, 'null'], description: 'Why the node decided as it did: for a transform that dropped the item, the step and condition.'}
+        error: {type: [string, 'null'], description: 'Error class when the node failed.'}
+        ports: {type: array, items: {type: string}, description: 'Ports the node emitted on.'}
+        outputs: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestOutput'}}
+        would_create: {oneOf: [{$ref: '#/components/schemas/AssistInboxPreview'}, {type: 'null'}], description: 'Inbox nodes only: the item a real run would create.'}
+        stdout: {type: [string, 'null'], description: 'Redacted, at most 4 KiB.'}
+        stderr: {type: [string, 'null'], description: 'Redacted, at most 4 KiB.'}
+        exit_code: {type: [integer, 'null']}
+        duration_ms: {type: [integer, 'null'], minimum: 0}
+    AssistInboxPreview:
+      type: object
+      required: [title, priority, summary_md, suggested_reply, links]
+      properties:
+        title: {type: string}
+        priority: {type: string}
+        summary_md: {type: string}
+        suggested_reply: {type: string}
+        links: {type: array, items: {type: object, required: [label, url], properties: {label: {type: string}, url: {type: string}}}}
+    AssistFlowTestEdge:
+      type: object
+      required: [from, to, port]
+      properties:
+        from: {$ref: '#/components/schemas/Slug'}
+        to: {$ref: '#/components/schemas/Slug'}
+        port: {type: string}
+    AssistFlowTestResult:
+      type: object
+      description: |
+        Outcome of running the draft flow once on one input as a `kind: test` flow run (hidden from the default
+        timelines; `GET /api/flow-runs/{id}` and its node runs show it). The run is forced `dry_run`.
+      required: [kind, flow_run_id, status, input, nodes, edges_taken]
+      properties:
+        kind: {type: string, enum: [flow]}
+        flow_run_id: {$ref: '#/components/schemas/Ulid'}
+        status: {$ref: '#/components/schemas/FlowRunStatus'}
+        input: {$ref: '#/components/schemas/JsonValue'}
+        nodes: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestNode'}}
+        edges_taken: {type: array, items: {$ref: '#/components/schemas/AssistFlowTestEdge'}}
+    AssistTestResult:
+      description: 'The result of a draft test; `kind` says which. Sensor sessions answer `sensor`, flow sessions `flow`.'
+      oneOf:
+        - {$ref: '#/components/schemas/AssistSensorTestResult'}
+        - {$ref: '#/components/schemas/AssistFlowTestResult'}
+      discriminator:
+        propertyName: kind
+        mapping:
+          sensor: '#/components/schemas/AssistSensorTestResult'
+          flow: '#/components/schemas/AssistFlowTestResult'
+    AssistTestRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Flow sessions only (ignored for sensors): the input to run the draft flow on. At most one of the three; with
+        none, the first sample is used (422 when there is none).
+      properties:
+        sample_index: {type: integer, minimum: 0, description: 'Index into `GET /api/assist/sessions/{id}/samples`.'}
+        event_id: {$ref: '#/components/schemas/Ulid'}
+        input: {$ref: '#/components/schemas/JsonValue'}
+    AssistSample:
+      type: object
+      required: [index, sensor_id, payload]
+      properties:
+        index: {type: integer, minimum: 0}
+        sensor_id: {$ref: '#/components/schemas/Slug'}
+        payload: {$ref: '#/components/schemas/JsonValue'}
+    AssistSampleList:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AssistSample'}}
     # ---------------------------------------------------------------- SSE envelopes (GET /api/stream)
     StreamEventType:
       type: string

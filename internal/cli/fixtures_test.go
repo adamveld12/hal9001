@@ -130,7 +130,7 @@ const sensorYAML = "id: gh\nlang: bash\nscript: echo '[]'\n"
 
 func assistDraft() map[string]any {
 	return map[string]any{
-		"yaml": sensorYAML, "hash": hash, "sensor_id": "gh",
+		"kind": "sensor", "yaml": sensorYAML, "hash": hash, "sensor_id": "gh", "flow_id": nil, "prompts": []any{},
 		"diagnostics": []any{diagnostic("warning", "no-key", "key template missing")},
 		"updated_at":  ts, "updated_by": "agent",
 	}
@@ -154,7 +154,7 @@ func assistSessionDetail() map[string]any {
 
 func assistTestResult(exitCode int) map[string]any {
 	return map[string]any{
-		"exit_code": exitCode, "duration_ms": 42, "timed_out": false,
+		"kind": "sensor", "exit_code": exitCode, "duration_ms": 42, "timed_out": false,
 		"items":      []any{map[string]any{"dedup_key": "1", "key_error": nil, "item": map[string]any{"id": 1}}},
 		"item_count": 1, "parse_error": nil, "stdout": blob(`[{"id":1}]`), "stderr": blob("boom"),
 	}

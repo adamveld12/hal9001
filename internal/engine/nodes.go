@@ -107,6 +107,8 @@ func (e *Engine) execNode(parent context.Context, nr *store.NodeRun) {
 		out = e.runTransform(ctx, ne)
 	case ne.node.Type == spec.NodeInbox:
 		out = e.runInbox(ne)
+	case ne.node.Type == spec.NodeAgent && e.assistTestOf(fr.ID) != nil:
+		out = nodeOutcome{status: store.NodeSkipped, decision: store.DecisionSkipped, reason: assistTestAgentSkip}
 	case ne.node.Type == spec.NodeAgent:
 		out = e.runAgent(ctx, ne)
 	default:
@@ -364,7 +366,10 @@ func (e *Engine) runInbox(ne *nodeEnv) nodeOutcome {
 	if strings.TrimSpace(it.Title) == "" {
 		return failure(errTemplate, "title rendered empty")
 	}
-	if err := e.addInbox(ne.snap, it); err != nil {
+	at := e.assistTestOf(ne.fr.ID)
+	if at != nil {
+		at.recordInbox(ne.nr.ID, it)
+	} else if err := e.addInbox(ne.snap, it); err != nil {
 		return failure(errConfig, "create inbox item: "+err.Error())
 	}
 	payload := ne.input
@@ -372,7 +377,7 @@ func (e *Engine) runInbox(ne *nodeEnv) nodeOutcome {
 		payload = []byte("null")
 	}
 	return nodeOutcome{
-		status: store.NodeDone, decision: store.DecisionEmitted, reason: "inbox item " + it.ID,
+		status: store.NodeDone, decision: store.DecisionEmitted, reason: inboxReason(at != nil, it),
 		outputs: []runner.Output{{Port: spec.PortOut, Payload: payload}},
 	}
 }
@@ -402,7 +407,8 @@ func priorityRank(p string) int {
 // (after they are persisted) and updates the flow run.
 func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 	nr, fr := ne.nr, ne.fr
-	if out.routableFailure && out.status == store.NodeFailed && fr.Kind != store.KindTest && hasEdge(ne.flow, nr.NodeID, spec.PortError) {
+	at := e.assistTestOf(fr.ID)
+	if out.routableFailure && out.status == store.NodeFailed && routes(fr, at) && hasEdge(ne.flow, nr.NodeID, spec.PortError) {
 		payload, _ := json.Marshal(map[string]any{
 			"input": json.RawMessage(nonEmptyJSON(ne.input)), "error": out.class, "reason": out.reason,
 			"exit_code": out.exit, "stderr": truncate(out.stderr, 4000),
@@ -416,6 +422,9 @@ func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 	if out.stdout != "" || out.stderr != "" {
 		nr.Stdout, nr.Stderr = store.Inline(out.stdout), store.Inline(out.stderr)
 	}
+	if at != nil {
+		at.recordOutputs(nr.ID, out.outputs)
+	}
 	nr.OutputCount = len(out.outputs)
 	nr.Ports = distinctPorts(out.outputs)
 	if out.status != store.NodeAwaitingApproval {
@@ -428,7 +437,7 @@ func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 	if err := e.st.UpdateNodeRun(e.dbCtx, nr); err != nil {
 		e.log.Error("engine: record node run", "node_run", nr.ID, "err", err)
 	}
-	if out.status == store.NodeDone && fr.Kind != store.KindTest && len(out.outputs) > 0 {
+	if out.status == store.NodeDone && routes(fr, at) && len(out.outputs) > 0 {
 		if err := e.route(nr, ne.flow, out.outputs); err != nil {
 			e.log.Error("engine: route node outputs", "node_run", nr.ID, "err", err)
 			e.failNodeRun(nr, "route outputs: "+err.Error())

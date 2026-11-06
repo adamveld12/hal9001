@@ -27,9 +27,12 @@ type assistTargetView struct {
 }
 
 type assistDraftView struct {
+	Kind        string          `json:"kind"`
 	YAML        string          `json:"yaml"`
 	Hash        string          `json:"hash"`
 	SensorID    *string         `json:"sensor_id"`
+	FlowID      *string         `json:"flow_id"`
+	Prompts     json.RawMessage `json:"prompts"`
 	Diagnostics json.RawMessage `json:"diagnostics"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 	UpdatedBy   string          `json:"updated_by"`
@@ -70,10 +73,16 @@ type assistSessionDetailView struct {
 }
 
 func assistDraft(a store.AssistSession) assistDraftView {
-	return assistDraftView{
-		YAML: a.DraftYAML, Hash: a.DraftHash, SensorID: nonEmpty(a.DraftSensorID), Diagnostics: rawArray(a.DraftDiagnostics),
+	v := assistDraftView{
+		Kind: a.TargetKind, YAML: a.DraftYAML, Hash: a.DraftHash, Prompts: rawArray(a.DraftPrompts), Diagnostics: rawArray(a.DraftDiagnostics),
 		UpdatedAt: utc(a.DraftUpdatedAt), UpdatedBy: a.DraftUpdatedBy,
 	}
+	if a.TargetKind == store.AssistTargetFlow {
+		v.FlowID = nonEmpty(a.DraftID)
+	} else {
+		v.SensorID = nonEmpty(a.DraftID)
+	}
+	return v
 }
 
 // rawArray returns raw as a JSON array, "[]" when empty.
@@ -110,7 +119,7 @@ func (s *Server) assist(w http.ResponseWriter) (core.Assist, bool) {
 
 func (s *Server) listAssistSessions(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	kind := q.enum("target_kind", store.AssistTargetSensor)
+	kind := q.enum("target_kind", store.AssistTargetSensor, store.AssistTargetFlow)
 	targetID := q.slug("target_id")
 	if !q.ok(w) {
 		return
@@ -145,19 +154,26 @@ func (s *Server) createAssistSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case req.Target.Kind != store.AssistTargetSensor:
-		fieldProblem(w, "target.kind", "target.kind must be sensor")
+	case req.Target.Kind != store.AssistTargetSensor && req.Target.Kind != store.AssistTargetFlow:
+		fieldProblem(w, "target.kind", "target.kind must be sensor or flow")
 		return
 	case req.Target.ID != "" && !spec.ValidID(req.Target.ID):
-		fieldProblem(w, "target.id", "target.id must be a sensor id")
+		fieldProblem(w, "target.id", "target.id must be a sensor or flow id")
 		return
 	case !spec.ValidID(req.Runtime):
 		fieldProblem(w, "runtime", "runtime must be the name of a configured runtime")
 		return
 	}
-	if req.Target.ID != "" && s.opts.Workspace().Sensor(req.Target.ID) == nil {
-		notFound(w, "no sensor %q", req.Target.ID)
-		return
+	if req.Target.ID != "" {
+		ws := s.opts.Workspace()
+		if req.Target.Kind == store.AssistTargetFlow && ws.Flow(req.Target.ID) == nil {
+			notFound(w, "no flow %q", req.Target.ID)
+			return
+		}
+		if req.Target.Kind == store.AssistTargetSensor && ws.Sensor(req.Target.ID) == nil {
+			notFound(w, "no sensor %q", req.Target.ID)
+			return
+		}
 	}
 	svc, ok := s.assist(w)
 	if !ok {
@@ -257,19 +273,54 @@ func (s *Server) updateAssistDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SampleIndex *int            `json:"sample_index"`
+		EventID     string          `json:"event_id"`
+		Input       json.RawMessage `json:"input"`
+	}
+	if !decodeJSON(w, r, &req, true) {
+		return
+	}
+	if req.SampleIndex != nil && *req.SampleIndex < 0 {
+		fieldProblem(w, "sample_index", "sample_index must not be negative")
+		return
+	}
+	if req.EventID != "" && !ulidRE.MatchString(req.EventID) {
+		fieldProblem(w, "event_id", "event_id must be a ULID")
+		return
+	}
+	if string(req.Input) == "null" {
+		req.Input = nil
+	}
 	svc, ok := s.assist(w)
 	if !ok {
 		return
 	}
-	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "")
+	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "",
+		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input})
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
-	if res.Items == nil {
-		res.Items = []core.AssistTestItem{}
+	if res.Sensor != nil && res.Sensor.Items == nil {
+		res.Sensor.Items = []core.AssistTestItem{}
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) listAssistSamples(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.assist(w)
+	if !ok {
+		return
+	}
+	items, err := svc.Samples(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items []core.AssistSample `json:"items"`
+	}{items})
 }
 
 func (s *Server) cancelAssistSession(w http.ResponseWriter, r *http.Request) {
