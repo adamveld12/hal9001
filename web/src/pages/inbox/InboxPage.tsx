@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import {
   mergeInboxPages,
+  useBulkInbox,
   useInboxItem,
   useInboxList,
   useUpdateInbox,
+  type InboxBulkAction,
+  type InboxBulkFilter,
+  type InboxBulkResult,
   type InboxItem,
   type InboxPatch,
 } from "../../api/inbox";
@@ -18,7 +22,20 @@ import {
   PageHeader,
 } from "../../components/ui";
 import { errorMessage } from "../../api/client";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { cx } from "../../lib/cx";
+import { BulkBar } from "./BulkBar";
+import {
+  CLEAR_PRESETS,
+  confirmText,
+  pageSelection,
+  presetFilter,
+  pruneSelection,
+  toggleAllOnPage,
+  toggleSelected,
+  type ClearPreset,
+  type ClearPresetId,
+} from "./bulk";
 import {
   activeFilterCount,
   DEFAULT_FILTERS,
@@ -39,6 +56,31 @@ interface Position {
   index: number;
   /** Filters in effect when the position was recorded. */
   search: string;
+}
+
+const TOAST_MS = 10_000;
+
+interface Toast {
+  message: string;
+  /** Items to unarchive when the user presses Undo. */
+  undoIds?: string[];
+}
+
+function bulkMessage(action: InboxBulkAction, r: InboxBulkResult): string {
+  const n = `${r.changed} ${r.changed === 1 ? "item" : "items"}`;
+  const verb: Record<InboxBulkAction, string> = {
+    archive: "Archived",
+    unarchive: "Restored",
+    mark_read: "Marked read:",
+    mark_unread: "Marked unread:",
+    delete: "Deleted",
+  };
+  let text = `${verb[action]} ${n}.`;
+  if (r.skipped_starred > 0) text += ` ${r.skipped_starred} starred kept.`;
+  if (r.skipped_not_archived > 0) {
+    text += ` ${r.skipped_not_archived} not archived, skipped.`;
+  }
+  return text;
 }
 
 const SHORTCUTS: [string, string][] = [
@@ -180,6 +222,71 @@ export function InboxPage() {
     u: () => cursorItem && patch(cursorItem, { read: !cursorItem.read }),
   });
 
+  // Bulk selection and the "Clear…" presets.
+  const bulk = useBulkInbox();
+  const counter = useBulkInbox();
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const sel = pruneSelection(selected, ids);
+  const [clearing, setClearing] = useState<{
+    preset: ClearPreset;
+    filter: InboxBulkFilter;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), TOAST_MS);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const runBulk = (
+    action: InboxBulkAction,
+    target: { ids: string[] } | { filter: InboxBulkFilter },
+    done?: () => void,
+  ) => {
+    setBulkError(null);
+    bulk.mutate(
+      { action, ...target },
+      {
+        onSuccess: (r) => {
+          setSelected(new Set());
+          done?.();
+          setToast({
+            message: bulkMessage(action, r),
+            undoIds:
+              action === "archive" && r.changed > 0 ? r.changed_ids : undefined,
+          });
+        },
+        onError: (e) => {
+          done?.();
+          setBulkError(errorMessage(e));
+        },
+      },
+    );
+  };
+  const openPreset = (id: ClearPresetId) => {
+    const preset = CLEAR_PRESETS.find((p) => p.id === id)!;
+    const filter = presetFilter(id, filters);
+    setClearing({ preset, filter });
+    counter.reset();
+    counter.mutate({ action: "archive", filter, dry_run: true });
+  };
+  const closePreset = () => {
+    setClearing(null);
+    counter.reset();
+  };
+  const undo = (ids: string[]) => {
+    setToast(null);
+    bulk.mutate(
+      { action: "unarchive", ids },
+      {
+        onSuccess: (r) => setToast({ message: bulkMessage("unarchive", r) }),
+        onError: (e) => setBulkError(errorMessage(e)),
+      },
+    );
+  };
+
   const filtered = activeFilterCount(filters) > 0;
   const unread = status.data?.unread_inbox;
 
@@ -199,6 +306,21 @@ export function InboxPage() {
         }
       />
       <InboxFilterBar filters={filters} onChange={setFilters} />
+      {bulkError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-bad/40 bg-bad/10 px-4 py-1.5 text-xs text-bad"
+        >
+          Bulk action failed: {bulkError}
+          <Button
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => setBulkError(null)}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
       {update.isError && (
         <div
           role="alert"
@@ -218,60 +340,76 @@ export function InboxPage() {
         <section
           aria-label="Notes"
           className={cx(
-            "min-h-0 w-full shrink-0 flex-col overflow-auto border-r border-line md:flex md:w-[26rem]",
+            "min-h-0 w-full shrink-0 flex-col overflow-hidden border-r border-line md:flex md:w-[26rem]",
             openId ? "hidden" : "flex",
           )}
         >
-          {list.isPending ? (
-            <LoadingState label="Loading notes" />
-          ) : list.isError && !list.data ? (
-            <ErrorState
-              error={list.error}
-              onRetry={() => void list.refetch()}
+          {items.length > 0 && (
+            <BulkBar
+              selection={pageSelection(sel, ids)}
+              count={sel.size}
+              archivedView={filters.archived}
+              busy={bulk.isPending}
+              onToggleAll={() => setSelected(toggleAllOnPage(sel, ids))}
+              onAction={(a) => runBulk(a, { ids: [...sel] })}
+              onDelete={() => setDeleting(true)}
+              onPreset={openPreset}
             />
-          ) : items.length === 0 ? (
-            <EmptyState
-              title={
-                filtered ? "No notes match these filters" : "Inbox is empty"
-              }
-              hint={
-                filtered
-                  ? undefined
-                  : "Notes written by inbox nodes and agent runs show up here."
-              }
-              action={
-                filtered && (
-                  <Button
-                    onClick={() =>
-                      setFilters({ ...DEFAULT_FILTERS, sort: filters.sort })
-                    }
-                  >
-                    Clear filters
-                  </Button>
-                )
-              }
-            />
-          ) : (
-            <>
-              <InboxList
-                items={items}
-                grouped={filters.sort === "priority"}
-                openId={openId}
-                cursorId={cursorId}
-                search={search}
-              />
-              {list.hasNextPage && (
-                <div className="p-3">
-                  <Button
-                    disabled={list.isFetchingNextPage}
-                    onClick={() => void list.fetchNextPage()}
-                  >
-                    {list.isFetchingNextPage ? "Loading…" : "Load more"}
-                  </Button>
-                </div>
-              )}
-            </>
           )}
+          <div className="min-h-0 flex-1 overflow-auto">
+            {list.isPending ? (
+              <LoadingState label="Loading notes" />
+            ) : list.isError && !list.data ? (
+              <ErrorState
+                error={list.error}
+                onRetry={() => void list.refetch()}
+              />
+            ) : items.length === 0 ? (
+              <EmptyState
+                title={
+                  filtered ? "No notes match these filters" : "Inbox is empty"
+                }
+                hint={
+                  filtered
+                    ? undefined
+                    : "Notes written by inbox nodes and agent runs show up here."
+                }
+                action={
+                  filtered && (
+                    <Button
+                      onClick={() =>
+                        setFilters({ ...DEFAULT_FILTERS, sort: filters.sort })
+                      }
+                    >
+                      Clear filters
+                    </Button>
+                  )
+                }
+              />
+            ) : (
+              <>
+                <InboxList
+                  items={items}
+                  grouped={filters.sort === "priority"}
+                  openId={openId}
+                  cursorId={cursorId}
+                  selected={sel}
+                  onToggle={(id) => setSelected(toggleSelected(sel, id))}
+                  search={search}
+                />
+                {list.hasNextPage && (
+                  <div className="p-3">
+                    <Button
+                      disabled={list.isFetchingNextPage}
+                      onClick={() => void list.fetchNextPage()}
+                    >
+                      {list.isFetchingNextPage ? "Loading…" : "Load more"}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </section>
         <section
           aria-label="Note"
@@ -302,6 +440,61 @@ export function InboxPage() {
           )}
         </section>
       </div>
+      <ConfirmDialog
+        open={clearing !== null}
+        title={clearing?.preset.label ?? "Clear"}
+        confirmLabel={
+          counter.data ? `Archive ${counter.data.changed}` : "Archive"
+        }
+        busy={bulk.isPending}
+        confirmDisabled={!counter.data || counter.data.changed === 0}
+        onCancel={closePreset}
+        onConfirm={() => {
+          if (clearing) {
+            runBulk("archive", { filter: clearing.filter }, closePreset);
+          }
+        }}
+      >
+        {counter.isPending || counter.isIdle
+          ? "Counting…"
+          : counter.isError
+            ? `Could not count: ${errorMessage(counter.error)}`
+            : clearing &&
+              counter.data &&
+              confirmText(
+                clearing.preset,
+                counter.data.changed,
+                counter.data.skipped_starred,
+              )}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={deleting}
+        title="Delete archived items"
+        confirmLabel={`Delete ${sel.size}`}
+        busy={bulk.isPending}
+        onCancel={() => setDeleting(false)}
+        onConfirm={() =>
+          runBulk("delete", { ids: [...sel] }, () => setDeleting(false))
+        }
+      >
+        Permanently delete {sel.size} selected{" "}
+        {sel.size === 1 ? "item" : "items"}? This cannot be undone. Starred
+        items are kept.
+      </ConfirmDialog>
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-md border border-line bg-panel px-3 py-2 text-xs shadow-lg"
+        >
+          {toast.message}
+          {toast.undoIds && (
+            <Button onClick={() => undo(toast.undoIds!)}>Undo</Button>
+          )}
+          <Button variant="ghost" onClick={() => setToast(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
