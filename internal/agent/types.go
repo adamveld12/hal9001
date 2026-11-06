@@ -104,7 +104,8 @@ var (
 
 	errTimeout         = errors.New("agent run timed out")
 	errApprovalTimeout = errors.New("approval timed out")
-	errDeniedCancel    = errors.New("tool call denied and run cancelled")
+	// ErrDeniedCancel is the cause of a run cancelled because the user denied a tool call and chose to stop the run.
+	ErrDeniedCancel = errors.New("tool call denied and run cancelled")
 )
 
 // Defaults.
@@ -151,6 +152,20 @@ type RuntimeConfig struct {
 	// {"claudeCode": {"options": {"settingSources": ["project"]}}} so the
 	// user's own allow rules cannot bypass the harness's policy.
 	SessionMeta map[string]any `json:"session_meta,omitempty"`
+	// Lockdown is set by ApplyLockdown: what the run must check before it starts.
+	Lockdown Lockdown `json:"lockdown"`
+}
+
+// Lockdown is the part of a runtime lockdown (docs/acp-lockdown.md) that is enforced when a run starts.
+type Lockdown struct {
+	// Kind is the runtime family the lockdown was applied for ("claude", "codex", "omp"); empty: none applied.
+	Kind string `json:"kind,omitempty"`
+	// RefuseCwdEntries are names that must not exist in a run's working directory (Codex trusts every cwd and would
+	// start the MCP servers of <cwd>/.codex/config.toml).
+	RefuseCwdEntries []string `json:"refuse_cwd_entries,omitempty"`
+	// Err, when set, is why the lockdown could not be prepared; runs of the runtime fail with it instead of starting
+	// an agent that still has its built-in tools.
+	Err string `json:"err,omitempty"`
 }
 
 // MCPServer is an MCP server handed to the agent in session/new. Type is
@@ -165,30 +180,10 @@ type MCPServer struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// AllowRules extend the read-only permission set (§7.2).
+// AllowRules name the tools beyond hal's own that the agent may use.
 type AllowRules struct {
-	// Tools are regexes matched against the tool title and name.
+	// Tools are regexes matched against the tool title and name: the tools of MCP servers the node declared.
 	Tools []string `json:"tools,omitempty"`
-	// Commands are regexes matched against the command of execute-kind tools.
-	Commands []string `json:"commands,omitempty"`
-	// EditUnder are directories inside which edit-class tool calls (kinds
-	// edit, delete, move) are allowed without approval, provided the call
-	// names at least one target path and every path lies inside one of them.
-	EditUnder []string `json:"edit_under,omitempty"`
-	// EditDeny are files or directories an edit-class call (kinds edit, delete, move) may never touch: a call
-	// naming a path inside one is rejected outright, even under a gated policy and even inside EditUnder.
-	EditDeny []string `json:"edit_deny,omitempty"`
-	// Protected are files or directories whose reading needs approval: a
-	// read-class call naming a path inside one is not allowed by its kind.
-	Protected []string `json:"protected,omitempty"`
-	// CommandVeto, when set, is asked about a command that matched allow.commands[i] before the rule allows it:
-	// a non-empty answer is the reason the command is not allowed automatically after all, and it is decided like
-	// any other call that no rule allows (approval queue when gated, rejected when read-only). It lets a caller
-	// make a rule depend on state the static patterns cannot see.
-	CommandVeto func(req ToolRequest, rule int) string `json:"-"`
-	// Base resolves relative paths of EditUnder, Protected and tool calls. It
-	// defaults to the run's working directory.
-	Base string `json:"base,omitempty"`
 }
 
 // PolicyFor is the permission policy of a node's phase (§7.2). Proposal

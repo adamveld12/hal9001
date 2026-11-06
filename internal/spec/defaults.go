@@ -212,12 +212,13 @@ func (n Node) clone() Node {
 	n.Command = slices.Clone(n.Command)
 	n.Links = slices.Clone(n.Links)
 	n.MCPServers = slices.Clone(n.MCPServers)
+	n.Tools = slices.Clone(n.Tools)
 	if n.Cwd != nil {
 		c := *n.Cwd
 		n.Cwd = &c
 	}
 	if n.Allow != nil {
-		a := Allow{Tools: slices.Clone(n.Allow.Tools), Commands: slices.Clone(n.Allow.Commands)}
+		a := Allow{Tools: slices.Clone(n.Allow.Tools)}
 		n.Allow = &a
 	}
 	return n

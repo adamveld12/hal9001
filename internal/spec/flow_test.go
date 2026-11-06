@@ -263,8 +263,8 @@ func TestFlowValidationErrors(t *testing.T) {
 		},
 		{
 			name: "invalid allow regex",
-			yaml: flowWith("  - id: a\n    type: agent\n    runtime: claude\n    mode: readonly\n    prompt: pr-review\n    allow:\n      tools: ['ok']\n      commands: ['^gh (pr', '^git']\n", "  []\n"),
-			code: CodeInvalidRegex, path: "nodes[0].allow.commands[0]", node: "a", msg: "missing closing )",
+			yaml: flowWith("  - id: a\n    type: agent\n    runtime: claude\n    mode: readonly\n    prompt: pr-review\n    allow:\n      tools: ['ok', '^gh (pr']\n", "  []\n"),
+			code: CodeInvalidRegex, path: "nodes[0].allow.tools[1]", node: "a", msg: "missing closing )",
 		},
 		{
 			name: "template syntax error in inbox title",

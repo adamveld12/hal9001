@@ -8,14 +8,10 @@ import (
 
 // Files of a session's draft directory.
 const (
-	// SensorDraftFile is the draft sensor, the only file the agent edits in a sensor session.
+	// SensorDraftFile is the draft sensor, the only thing the agent changes in a sensor session (draft_write).
 	SensorDraftFile = "sensor.yaml"
 	// FlowDraftFile is the draft flow of a flow session; the agent also writes new prompts under PromptsDir.
 	FlowDraftFile = "flow.yaml"
-	// instructionFiles carry the same text under the names the supported agents read (Codex and omp
-	// read AGENTS.md, Claude Code reads CLAUDE.md).
-	instructionFile  = "AGENTS.md"
-	instructionFile2 = "CLAUDE.md"
 )
 
 // skeleton is the draft of a new sensor when the request carries no YAML.
@@ -31,7 +27,7 @@ first_run: baseline
 timeout: 60s
 `
 
-// instructions is the text of AGENTS.md / CLAUDE.md for one session.
+// instructions is the authoring guide of one session; the agent reads it with draft_read path `instructions`.
 //
 // targetID is the sensor being edited ("" for a new sensor); globalEnv and sensorEnv are env variable
 // NAMES only. The values never reach the agent.
@@ -41,8 +37,8 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 
 	w("# Sensor authoring: instructions for the assistant\n\n")
 	w("You help the user write or change ONE hal9001 sensor. hal9001 is a local daemon that polls systems on a schedule, ")
-	w("turns what they return into events, and runs flows over those events. This directory is a private draft ")
-	w("directory (session %s). Your whole job is the file `%s` in it.\n\n", sessionID, SensorDraftFile)
+	w("turns what they return into events, and runs flows over those events. This is a private draft ")
+	w("draft (session %s). You have no file or shell access: you work only through the hal tools draft_read, draft_write, draft_test and validate. Your whole job is the draft `%s`.\n\n", sessionID, SensorDraftFile)
 
 	if targetID != "" {
 		w("You are EDITING the existing sensor `%s`. Keep `id: %s` unchanged: the user saves the draft over that sensor.\n\n", targetID, targetID)
@@ -51,23 +47,22 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	}
 
 	w("## Rules\n\n")
-	w("- Edit only `%s`. Do not create or change other files. The user's own sensor files, flows and settings are not here and must not be touched.\n", SensorDraftFile)
-	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords), and do not try to read `env` files or `~/.hal9001`. ")
+	w("- Change only the draft, with draft_write (the complete new file each time). The user's own sensor files, flows and settings are not reachable and must not be touched.\n")
+	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords). ")
 	w("The script reads credentials from the environment variables listed below; you only ever see their names.\n")
-	w("- Use only the tools you need. Reading, searching and editing `%s` are allowed. Running anything else asks the user for approval each time.\n", SensorDraftFile)
-	w("- Run the two helper commands below exactly as written, one per call: no pipes, redirects, `&&`, `;` or `cd` (you are already in the right directory).\n")
-	w("- Test the draft with `hal9001 assist test` before you say it is done, and fix what it reports.\n")
+	w("- Reading and writing the draft and validating it never ask the user. Testing it asks only when the script changed (below).\n")
+	w("- Test the draft with draft_test before you say it is done, and fix what it reports.\n")
 	w("- A test runs the script with the user's real credentials, so the first test after you change the script (`lang`, `script`, `command`, `cwd`, or the credentials it mentions) asks the user to approve it: they see the script and a diff against the last approved version. ")
 	w("Before you run it, say in a sentence what the script does and which credentials it uses. Once the user allowed a version, testing the same script again does not ask. ")
 	w("Changing only `interval`, `key`, `first_run` or `timeout` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
 
-	w("## Helper commands\n\n")
-	w("- `hal9001 assist draft` prints the current draft with its validation diagnostics as JSON.\n")
-	w("- `hal9001 assist test` runs the draft the way a poll would (with the real credentials, which you cannot see) and prints JSON: ")
+	w("## Tools\n\n")
+	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it and returns the same.\n")
+	w("- `validate` checks the draft against the sensor format and returns the diagnostics.\n")
+	w("- `draft_test` runs the draft the way a poll would (with the real credentials, which you cannot see) and returns JSON: ")
 	w("`exit_code`, `timed_out`, `parse_error`, `item_count`, `items` (each with its rendered `dedup_key` or a `key_error`), and the redacted `stdout` and `stderr`. ")
-	w("Nothing is recorded: no sensor run, no events. Values of the credentials appear as `«NAME»`. It refuses (and asks the user first) when the script changed since the user last tested or approved it.\n")
-	w("- `hal9001 sensors validate sensor.yaml` checks the file against the sensor format only.\n\n")
+	w("Nothing is recorded: no sensor run, no events. Values of the credentials appear as `«NAME»`. It asks the user first when the script changed since the user last tested or approved it.\n\n")
 
 	w("## The sensor file\n\n")
 	w("```yaml\nid: github-notifications\ninterval: 2m            # or: cron: \"*/5 9-18 * * 1-5\"  (at most one of the two)\nlang: bash\nscript: |\n  gh api notifications --paginate -q '.[]'\nkey: \"{{.id}}:{{.updated_at}}\"\nfirst_run: baseline\ntimeout: 60s\n```\n\n")
@@ -95,7 +90,7 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("- The template sees the item as `.` (fields as `{{.field}}`, nested `{{.a.b}}`). A missing field is an error, not an empty string.\n")
 	w("- Helpers: `{{.title | trunc 80}}` (first N characters), `{{default \"n/a\" (index . \"maybe\")}}` (fallback for an optional or empty field), `{{json .nested}}` (compact JSON).\n")
 	w("- Numbers keep their literal text, so large ids render unchanged.\n")
-	w("- `hal9001 assist test` renders the key for every item (`dedup_key`) or reports a `key_error`. Make sure keys are present and distinct across items.\n\n")
+	w("- `draft_test` renders the key for every item (`dedup_key`) or reports a `key_error`. Make sure keys are present and distinct across items.\n\n")
 
 	w("## Environment\n\n")
 	w("The script runs with a small base environment (`HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TZ`, `SSH_AUTH_SOCK`, `XDG_*`, `PATH`), then the variables below, then:\n\n")

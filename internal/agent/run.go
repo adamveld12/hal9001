@@ -549,7 +549,7 @@ func (r *run) finish() {
 		r.end(StatusTimeout, ReasonTimeout, "run exceeded its timeout")
 	case errors.Is(cause, errApprovalTimeout):
 		r.end(StatusFailed, ReasonApprovalTimeout, "a tool approval was not decided in time")
-	case errors.Is(cause, errDeniedCancel):
+	case errors.Is(cause, ErrDeniedCancel):
 		r.end(StatusDenied, ReasonDenied, "a tool call was denied and the run cancelled")
 	case errors.Is(cause, ErrInterrupted):
 		r.end(StatusInterrupted, ReasonInterrupted, "run interrupted")

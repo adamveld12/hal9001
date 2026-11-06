@@ -268,7 +268,7 @@ Permission policy (harness side, applied to every `session/request_permission`):
 | gated (`per_tool`) | same as read-only | sent to the approval queue |
 | auto | all | n/a |
 
-Node `allow` rules extend the read-only set: `allow: {tools: [<regex on tool title/name>], commands: [<regex on execute-kind command>]}`. Example: `commands: ['^gh (pr|issue) (view|diff|list)\b', '^git (log|diff|show)\b']` lets a triage agent use `gh` without being able to post. MCP tools (kind `other`) are rejected unless listed in `allow.tools`.
+Agents run locked down (docs/acp-lockdown.md): no native shell, file or web tools; they act through hal's MCP server, which approves inside itself (docs/design/agent-access.md). Node `allow: {tools: [<regex on tool title/name>]}` lets an agent call tools of MCP servers declared on the node; every other permission request is rejected.
 
 Limit: a permission request only reaches the client when the agent's own session mode asks for permission. Tools the agent auto-approves, such as an allow-list in the user's Claude `settings.json` or a bypass mode, never reach the harness. Each run must therefore set the agent's most restrictive "ask" mode for read-only/gated policies and must not inherit auto-allow settings. The adapter gate (§13) verifies this per runtime; a runtime that fails it cannot run `readonly` or `approve` nodes until fixed.
 
@@ -508,7 +508,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 6. Readonly Claude agent produces an inbox item with title/priority and a macOS notification that deep-links to it; transcript visible in agent run page.
 7. Approve-mode agent with `approve: proposal` (each of claude, codex, omp): proposal appears in Approvals + notification; Approve resumes the same session (`resumed_via: load`, or `new_session` with the fallback recorded) and executes; Deny ends with port `denied`; both decisions in trace.
 7a. Approve-mode agent with `approve: per_tool`: a read is allowed by policy without asking; a file edit appears in Approvals with its diff; Allow applies it; Deny rejects it and the agent continues; letting `approval_timeout` (set to 1m) expire fails the run.
-7b. Readonly agent asked to edit a file or post via an MCP tool: the request is rejected by policy and recorded with the reason; the file is unchanged. With `allow.commands: ['^gh pr view']`, `gh pr view` is allowed and `gh pr comment` is rejected.
+7b. Readonly agent asked for a native tool (edit, shell, an undeclared MCP tool): the request is rejected by policy and recorded with the reason; a `gh_api` POST through hal's server fails without asking. With `allow.tools` naming a declared MCP server's tool, that call is allowed.
 8. Auto-mode agent in `worktree` cwd makes a change in an isolated worktree, not the source repo.
 9. Dry-run flow: agent forced readonly, `side_effect` node shown `skipped:dry_run`, inbox item tagged.
 10. Replay an old event into an edited flow → new run linked to original, shows new flow hash.

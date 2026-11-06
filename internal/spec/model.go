@@ -121,6 +121,9 @@ const DataPlaceholder = "{{data}}"
 // beyond Command and Modes are what the ACP gate (docs/acp-gate.md) found
 // necessary to run a runtime restrictively.
 type Runtime struct {
+	// Kind names the runtime family (claude, codex, omp) so hal can lock it down to hal's MCP tools
+	// (docs/acp-lockdown.md). Empty: detected from the command; an unknown runtime runs without lockdown.
+	Kind    string            `yaml:"kind,omitempty" json:"kind,omitempty"`
 	Command []string          `yaml:"command" json:"command"`
 	Modes   RuntimeModes      `yaml:"modes,omitempty" json:"modes"`
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
@@ -198,7 +201,7 @@ type Flow struct {
 //
 //	command: lang, script|command, ports, cwd (dir only), timeout, side_effect
 //	agent:   runtime, mode, approve, prompt|instructions, output, extra_prompt, model, cwd, timeout,
-//	         approval_timeout, allow, mcp_servers
+//	         approval_timeout, allow, mcp_servers, sandbox, image, repo, ref, tools
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
 type Node struct {
@@ -242,6 +245,15 @@ type Node struct {
 	Allow      *Allow      `yaml:"allow,omitempty" json:"allow,omitempty"`
 	MCPServers []MCPServer `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 
+	// agent, hal-provided tools (docs/design/agent-access.md). Sandbox names a sandbox backend (adds fs and shell
+	// tools executed there); Image, Repo and Ref are sandbox options; Tools are custom tool ids. The engine passes them
+	// to internal/tools; validation against the configured sandboxes and tools happens where those are defined.
+	Sandbox string   `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	Image   string   `yaml:"image,omitempty" json:"image,omitempty"`
+	Repo    string   `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Ref     string   `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+
 	UI UI `yaml:"ui,omitempty" json:"ui"`
 }
 
@@ -255,11 +267,11 @@ type Cwd struct {
 	Ref  string `yaml:"ref,omitempty" json:"ref,omitempty"`
 }
 
-// Allow extends the read-only permission policy of an agent node (§7.2). Each
-// entry is a regular expression.
+// Allow names tools beyond hal's own that an agent node may call: each entry is a
+// regular expression over the tool title or name (tools of the node's mcp_servers).
+// Agents have no shell or file tools, so nothing else is matched.
 type Allow struct {
-	Tools    []string `yaml:"tools,omitempty" json:"tools,omitempty"`
-	Commands []string `yaml:"commands,omitempty" json:"commands,omitempty"`
+	Tools []string `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
 
 // Link is an inbox link; both fields are templates on inbox nodes.

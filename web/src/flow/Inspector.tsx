@@ -568,27 +568,13 @@ function AgentForm({
       <Field
         label="Allow: tools (regex, one per line)"
         error={msgs(diags, "tools")}
-        hint="Extends the read-only set; matched on tool title/name."
+        hint="Tools of this node's MCP servers the agent may call; matched on tool title/name. hal's own tools are always allowed."
       >
         <LinesInput
           value={node.allow?.tools ?? []}
           onCommit={(v) =>
             onChange((n) =>
               setOpt(n, "allow", compactAllow({ ...n.allow, tools: v })),
-            )
-          }
-        />
-      </Field>
-      <Field
-        label="Allow: commands (regex, one per line)"
-        error={msgs(diags, "commands")}
-        hint="Matched on execute-kind commands, e.g. ^gh pr (view|diff)\b"
-      >
-        <LinesInput
-          value={node.allow?.commands ?? []}
-          onCommit={(v) =>
-            onChange((n) =>
-              setOpt(n, "allow", compactAllow({ ...n.allow, commands: v })),
             )
           }
         />
@@ -607,30 +593,27 @@ function AgentForm({
             }
           />
         </Field>
-        {node.mode === "approve" && node.approve === "per_tool" && (
-          <Field
-            label="Approval timeout"
-            error={msgs(diags, "approval_timeout")}
-            hint="Default 1h"
-          >
-            <TextInput
-              value={node.approval_timeout ?? ""}
-              placeholder="1h"
-              onChange={(e) =>
-                onChange((n) => setOpt(n, "approval_timeout", e.target.value))
-              }
-            />
-          </Field>
-        )}
+        <Field
+          label="Approval timeout"
+          error={msgs(diags, "approval_timeout")}
+          hint="Default 1h"
+        >
+          <TextInput
+            value={node.approval_timeout ?? ""}
+            placeholder="1h"
+            onChange={(e) =>
+              onChange((n) => setOpt(n, "approval_timeout", e.target.value))
+            }
+          />
+        </Field>
       </div>
     </>
   );
 }
 
-function compactAllow(a: { tools?: string[]; commands?: string[] }) {
-  const out: { tools?: string[]; commands?: string[] } = {};
+function compactAllow(a: { tools?: string[] }) {
+  const out: { tools?: string[] } = {};
   if (a.tools && a.tools.length > 0) out.tools = a.tools;
-  if (a.commands && a.commands.length > 0) out.commands = a.commands;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

@@ -5,20 +5,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"hal9001/internal/agent"
 	"hal9001/internal/agent/fakeagent"
 )
 
-// proposalScript: phase 1 (ask mode) tries to edit, which the read-only
-// policy must reject, then proposes; phase 2 (full mode) performs the edit.
+// helloAllow lets the scripted edit of hello.txt through the lockdown policy (allow.tools matches the tool title); the
+// sneaky.txt edit of phase 1 matches nothing and is rejected, as every agent-side tool call is.
+var helloAllow = agent.AllowRules{Tools: []string{`hello\.txt`}}
+
+// proposalScript: phase 1 (ask mode) tries to edit, which the policy must reject, then proposes; phase 2 (full mode)
+// performs the allowed edit.
 func proposalScript(load bool) fakeagent.Script {
 	return fakeagent.Script{
 		LoadSession: load,
 		Turns: []fakeagent.Turn{
 			{When: &fakeagent.When{Mode: "default"}, Steps: []fakeagent.Step{
-				editStep("try-1", "hello.txt", "sneaky\n"),
+				editStep("try-1", "sneaky.txt", "sneaky\n"),
 				msg("Plan: create hello.txt with a greeting."),
 			}},
 			{When: &fakeagent.When{Mode: "bypass"}, Steps: []fakeagent.Step{
@@ -34,6 +37,7 @@ func proposalScript(load bool) fakeagent.Script {
 func TestProposalApproveResumesSameSession(t *testing.T) {
 	e := newEnv(t, proposalScript(true))
 	req := e.req(agent.ModeApprove, agent.ApproveProposal)
+	req.Allow = helloAllow
 
 	p1 := e.run(req)
 	if p1.Status != agent.StatusAwaitingApproval || p1.Phase != agent.PhasePropose || p1.Policy != agent.PolicyReadonly {
@@ -48,11 +52,11 @@ func TestProposalApproveResumesSameSession(t *testing.T) {
 	if props := e.broker.Proposals(); len(props) != 1 || props[0].SessionID != p1.SessionID || props[0].RunID != p1.ID {
 		t.Errorf("broker proposals = %+v", props)
 	}
-	if _, ok := e.file("hello.txt"); ok {
+	if _, ok := e.file("sneaky.txt"); ok {
 		t.Fatal("phase 1 changed the working tree")
 	}
 	pr := e.perm(p1, "try-1")
-	if pr.Decision != agent.DecisionReject || pr.DecidedBy != agent.DecidedByPolicy || pr.MatchedRule != "policy:readonly" || pr.Reason == "" {
+	if pr.Decision != agent.DecisionReject || pr.DecidedBy != agent.DecidedByPolicy || pr.MatchedRule != "lockdown" || pr.Reason == "" {
 		t.Errorf("phase 1 edit request: %+v", pr)
 	}
 	if p1.ExitCode == nil || p1.EndedAt == nil {
@@ -81,7 +85,7 @@ func TestProposalApproveResumesSameSession(t *testing.T) {
 	if got, _ := e.file("hello.txt"); got != "hi\n" {
 		t.Errorf("hello.txt = %q, want the approved edit", got)
 	}
-	if pr := e.perm(p2, "do-1"); pr.Decision != agent.DecisionAllow || pr.MatchedRule != "policy:auto" {
+	if pr := e.perm(p2, "do-1"); pr.Decision != agent.DecisionAllow || !strings.HasPrefix(pr.MatchedRule, "allow.tools[0]") {
 		t.Errorf("phase 2 edit request: %+v", pr)
 	}
 	prompts = e.callsOf("session/prompt")
@@ -109,6 +113,7 @@ func TestProposalApproveResumesSameSession(t *testing.T) {
 func TestProposalResumeFallsBackToNewSession(t *testing.T) {
 	e := newEnv(t, proposalScript(false))
 	req := e.req(agent.ModeApprove, agent.ApproveProposal)
+	req.Allow = helloAllow
 	p1 := e.run(req)
 	if p1.Status != agent.StatusAwaitingApproval {
 		t.Fatalf("phase 1: %s %q", p1.Status, p1.Error)
@@ -162,204 +167,6 @@ func TestDenyProposalRecordsDenied(t *testing.T) {
 	}
 }
 
-// §12.7a: reads pass by policy, edits go to the approval queue with their
-// diff, allow applies, deny lets the agent continue, deny+cancel ends the run.
-func TestPerToolApprovals(t *testing.T) {
-	script := func() fakeagent.Script {
-		return fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{
-			{Op: fakeagent.OpPermission, ID: "r1", Kind: "read", Title: "Read notes.txt", RawInput: map[string]any{"path": "notes.txt"}},
-			editStep("e1", "a.txt", "alpha\n"),
-			msg("after the edit"),
-		}}}}
-	}
-
-	// next returns the queued approval and checks the read was not queued.
-	next := func(t *testing.T, e *env) agent.ToolApproval {
-		t.Helper()
-		a, ok := e.broker.Next(10 * time.Second)
-		if !ok {
-			t.Fatal("no approval was queued")
-		}
-		if a.ToolCallID != "e1" || a.ToolKind != "edit" {
-			t.Fatalf("first queued approval is %q (%s); the read must not be queued", a.ToolCallID, a.ToolKind)
-		}
-		if !strings.Contains(string(a.Content), `"diff"`) || !strings.Contains(string(a.Content), "a.txt") {
-			t.Errorf("approval does not show the diff: %s", a.Content)
-		}
-		return a
-	}
-
-	t.Run("allow applies the edit", func(t *testing.T) {
-		e := newEnv(t, script())
-		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		a := next(t, e)
-		e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictAllow})
-		rec := e.wait(ch)
-		if rec.Status != agent.StatusSucceeded || rec.Policy != agent.PolicyGated || rec.Phase != agent.PhaseExecute {
-			t.Fatalf("status=%s policy=%s err=%q", rec.Status, rec.Policy, rec.Error)
-		}
-		if got, _ := e.file("a.txt"); got != "alpha\n" {
-			t.Errorf("a.txt = %q", got)
-		}
-		if r := e.perm(rec, "r1"); r.Decision != agent.DecisionAllow || r.DecidedBy != agent.DecidedByPolicy || r.MatchedRule != "kind:read" {
-			t.Errorf("read request: %+v", r)
-		}
-		if p := e.perm(rec, "e1"); p.Decision != agent.DecisionAllow || p.DecidedBy != agent.DecidedByUser || p.ID != a.PermissionRequestID {
-			t.Errorf("edit request: %+v", p)
-		}
-		if m := e.callsOf("session/set_mode"); len(m) != 1 || m[0]["mode"] != "default" {
-			t.Errorf("gated runs use the ask mode, got %v", m)
-		}
-	})
-
-	t.Run("deny rejects that call and the agent continues", func(t *testing.T) {
-		e := newEnv(t, script())
-		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		a := next(t, e)
-		e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictDeny, Comment: "not that file"})
-		rec := e.wait(ch)
-		if rec.Status != agent.StatusSucceeded || rec.FinalMessage != "after the edit" {
-			t.Fatalf("agent should have continued: status=%s final=%q err=%q", rec.Status, rec.FinalMessage, rec.Error)
-		}
-		if _, ok := e.file("a.txt"); ok {
-			t.Error("denied edit was applied")
-		}
-		p := e.perm(rec, "e1")
-		if p.Decision != agent.DecisionReject || p.DecidedBy != agent.DecidedByUser || !strings.Contains(p.Reason, "not that file") {
-			t.Errorf("edit request: %+v", p)
-		}
-		if out := e.callsOf("permission_outcome"); len(out) != 2 || out[1]["allowed"] != false {
-			t.Errorf("agent did not see a rejection: %v", out)
-		}
-	})
-
-	t.Run("deny and cancel ends the run as denied", func(t *testing.T) {
-		e := newEnv(t, script())
-		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		a := next(t, e)
-		e.broker.Decide(a.PermissionRequestID, agent.ToolDecision{Verdict: agent.VerdictDenyCancel})
-		rec := e.wait(ch)
-		if rec.Status != agent.StatusDenied || rec.FailureReason != agent.ReasonDenied {
-			t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
-		}
-		if strings.Contains(rec.FullMessage, "after the edit") {
-			t.Error("agent kept running after deny+cancel")
-		}
-		if _, ok := e.file("a.txt"); ok {
-			t.Error("denied edit was applied")
-		}
-		if p := e.perm(rec, "e1"); p.Decision != agent.DecisionCancelled || p.DecidedBy != agent.DecidedByUser {
-			t.Errorf("edit request: %+v", p)
-		}
-	})
-
-	t.Run("approval timeout rejects and fails the run", func(t *testing.T) {
-		e := newEnv(t, script())
-		ch, _ := e.start(e.req(agent.ModeApprove, agent.ApprovePerTool))
-		a := next(t, e)
-		if want := e.clock.Now().Add(time.Hour); !a.ExpiresAt.Equal(want) {
-			t.Errorf("ExpiresAt = %v, want %v", a.ExpiresAt, want)
-		}
-		if !e.clock.WaitTimers(2, 5*time.Second) {
-			t.Fatal("approval timer not registered")
-		}
-		e.clock.Advance(time.Hour + time.Second)
-		rec := e.wait(ch)
-		if rec.Status != agent.StatusFailed || rec.FailureReason != agent.ReasonApprovalTimeout {
-			t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
-		}
-		p := e.perm(rec, "e1")
-		if p.Decision != agent.DecisionExpired || p.DecidedBy != agent.DecidedByTimeout {
-			t.Errorf("edit request: %+v", p)
-		}
-		if exp := e.broker.Expired(); len(exp) != 1 || exp[0] != p.ID {
-			t.Errorf("broker expired = %v", exp)
-		}
-		if _, ok := e.file("a.txt"); ok {
-			t.Error("timed-out edit was applied")
-		}
-	})
-}
-
-// §12.7b: a read-only agent cannot edit or call MCP tools; allow rules open
-// exactly what they name.
-func TestReadonlyPolicyAndAllowRules(t *testing.T) {
-	script := fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{
-		editStep("edit", "x.txt", "x\n"),
-		{Op: fakeagent.OpPermission, ID: "mcp", Kind: "other", Title: "mcp__slack__post_message",
-			RawInput: map[string]any{"text": "hello"},
-			OnAllow:  []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "posted.txt", Data: "p"}}},
-		{Op: fakeagent.OpPermission, ID: "view", Kind: "execute", Title: "gh pr view 12",
-			RawInput: map[string]any{"command": "gh pr view 12 --json title"},
-			OnAllow:  []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "view.txt", Data: "v"}}},
-		{Op: fakeagent.OpPermission, ID: "comment", Kind: "execute", Title: "gh pr view 12",
-			RawInput: map[string]any{"command": "gh pr comment 12 --body hi"},
-			OnAllow:  []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "comment.txt", Data: "c"}}},
-		{Op: fakeagent.OpPermission, ID: "chain", Kind: "execute", Title: "gh pr view 12",
-			RawInput: map[string]any{"command": "gh pr view 12 && gh pr comment 12 --body hi"},
-			OnAllow:  []fakeagent.Step{{Op: fakeagent.OpWriteFile, Path: "chain.txt", Data: "c"}}},
-		{Op: fakeagent.OpPermission, ID: "read", Kind: "search", Title: "grep TODO", RawInput: map[string]any{"pattern": "TODO"}},
-		msg("finished"),
-	}}}}
-
-	t.Run("without tool allow rules", func(t *testing.T) {
-		e := newEnv(t, script)
-		req := e.req(agent.ModeReadonly, "")
-		req.Allow.Commands = []string{`^gh pr view\b`}
-		rec := e.run(req)
-		if rec.Status != agent.StatusSucceeded || rec.Policy != agent.PolicyReadonly {
-			t.Fatalf("status=%s err=%q", rec.Status, rec.Error)
-		}
-		for _, f := range []string{"x.txt", "posted.txt", "comment.txt", "chain.txt"} {
-			if _, ok := e.file(f); ok {
-				t.Errorf("%s was written despite the read-only policy", f)
-			}
-		}
-		if got, ok := e.file("view.txt"); !ok || got != "v" {
-			t.Errorf("gh pr view must be allowed by allow.commands (got %q, %v)", got, ok)
-		}
-		want := map[string]struct{ decision, ruleHas string }{
-			"edit":    {agent.DecisionReject, "policy:readonly"},
-			"mcp":     {agent.DecisionReject, "policy:readonly"},
-			"view":    {agent.DecisionAllow, "allow.commands[0]"},
-			"comment": {agent.DecisionReject, "policy:readonly"},
-			"chain":   {agent.DecisionReject, "policy:readonly"},
-			"read":    {agent.DecisionAllow, "kind:search"},
-		}
-		for id, w := range want {
-			p := e.perm(rec, id)
-			if p.Decision != w.decision || !strings.Contains(p.MatchedRule, w.ruleHas) || p.DecidedBy != agent.DecidedByPolicy || p.Reason == "" {
-				t.Errorf("%s: %+v, want %s via %s", id, p, w.decision, w.ruleHas)
-			}
-		}
-		if r := e.perm(rec, "mcp").Reason; !strings.Contains(r, "allow.tools") {
-			t.Errorf("MCP rejection reason should point at allow.tools: %q", r)
-		}
-		if r := e.perm(rec, "chain").Reason; !strings.Contains(r, "shell operators") {
-			t.Errorf("chained command reason: %q", r)
-		}
-		if len(e.broker.Pending()) != 0 {
-			t.Error("readonly must never queue approvals")
-		}
-	})
-
-	t.Run("allow.tools opens the named MCP tool", func(t *testing.T) {
-		e := newEnv(t, script)
-		req := e.req(agent.ModeReadonly, "")
-		req.Allow.Tools = []string{`^mcp__slack__post_`}
-		rec := e.run(req)
-		if got, _ := e.file("posted.txt"); got != "p" {
-			t.Error("allow.tools did not permit the MCP tool")
-		}
-		if p := e.perm(rec, "mcp"); p.Decision != agent.DecisionAllow || !strings.HasPrefix(p.MatchedRule, "allow.tools[0]") {
-			t.Errorf("mcp request: %+v", p)
-		}
-		if _, ok := e.file("x.txt"); ok {
-			t.Error("edit still must be rejected")
-		}
-	})
-}
-
 // §12.8: an auto-mode agent in a worktree changes the worktree, not the
 // source repo; success removes the worktree, failure keeps it.
 func TestAutoModeWorktreeIsolation(t *testing.T) {
@@ -374,6 +181,7 @@ func TestAutoModeWorktreeIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := e.req(agent.ModeAuto, "")
+	req.Allow = agent.AllowRules{Tools: []string{`feature\.txt`}}
 	req.Cwd = cwd
 	rec := e.run(req)
 	if rec.Status != agent.StatusSucceeded || rec.Policy != agent.PolicyAuto {

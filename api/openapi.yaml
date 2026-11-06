@@ -49,6 +49,7 @@ tags:
   - {name: sandboxes, description: 'Sandbox backends: config, environment, connectivity check'}
   - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
+  - {name: mcp, description: 'hal MCP server backend: tool list and calls, authorized by a per-run capability token'}
 paths:
   /:
     get:
@@ -1134,6 +1135,68 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/mcp/tools:
+    get:
+      operationId: listMcpTools
+      tags: [mcp]
+      summary: Tools of one agent run (hal MCP backend)
+      description: |
+        Backend of `hal9001 mcp`, the stdio MCP server hal injects into every agent session. Not for general use: it is
+        authorized by the per-run capability token in `Authorization: Bearer <token>` instead of the auth stack. The token
+        is random, stored hashed, scoped to one run's tool set, and revoked when the run ends; a missing, unknown or
+        revoked token is 401.
+      x-hal-service: api
+      x-hal-public: true
+      security: []
+      responses:
+        '200':
+          description: The tools of the run the token belongs to.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/McpToolList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503':
+          description: The daemon has no tool hub (not expected in a normal daemon).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/mcp/call:
+    post:
+      operationId: callMcpTool
+      tags: [mcp]
+      summary: Call a tool of one agent run (hal MCP backend)
+      description: |
+        Runs one tool for the run the capability token belongs to (`Authorization: Bearer <token>`). A call that needs
+        approval (for example a `gh_api` POST) creates a `tool_call` approval and blocks until it is decided or the
+        run's approval timeout passes. A tool failure, a denial and an unknown tool are 200 with `is_error: true` and the
+        reason in `text`, so the agent sees them as a tool error. Every call is recorded as a permission request of the
+        agent run.
+      x-hal-service: api
+      x-hal-public: true
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/McpCallRequest'}
+      responses:
+        '200':
+          description: The tool's result or error.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/McpCallResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '503':
+          description: The daemon has no tool hub (not expected in a normal daemon).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         default: {$ref: '#/components/responses/Error'}
   /api/transform/preview:
     post:
@@ -3139,11 +3202,10 @@ components:
         url: {type: string}
     AgentAllow:
       type: object
-      description: Extends the read-only policy (§7.2). Entries are regular expressions.
+      description: Tools of the node's `mcp_servers` the agent may call (hal's own tools are always allowed). Entries are regular expressions over the tool title or name. Agents have no shell or file tools.
       additionalProperties: false
       properties:
         tools: {type: array, items: {type: string}, description: Regexes over tool title or name.}
-        commands: {type: array, items: {type: string}, description: Regexes over the command of execute-kind tool calls.}
     McpServer:
       type: object
       description: MCP server passed through to `session/new`.
@@ -3173,6 +3235,35 @@ components:
         timeout: {$ref: '#/components/schemas/Duration'}
         side_effect: {type: boolean, description: 'Skipped in dry-run, recorded as decision `skipped` with reason `dry_run`.'}
         ui: {$ref: '#/components/schemas/NodeUI'}
+    McpToolList:
+      type: object
+      additionalProperties: false
+      required: [tools]
+      properties:
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, description, input_schema]
+            properties:
+              name: {type: string}
+              description: {type: string}
+              input_schema: {type: object, additionalProperties: true, description: JSON Schema of the arguments.}
+    McpCallRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string}
+        arguments: {type: object, additionalProperties: true}
+    McpCallResult:
+      type: object
+      additionalProperties: false
+      required: [text, is_error]
+      properties:
+        text: {type: string, description: 'The tool output, or the error message when `is_error` is true.'}
+        is_error: {type: boolean}
     AgentNode:
       type: object
       description: |
@@ -3198,6 +3289,11 @@ components:
         approval_timeout: {$ref: '#/components/schemas/Duration'}
         allow: {$ref: '#/components/schemas/AgentAllow'}
         mcp_servers: {type: array, items: {$ref: '#/components/schemas/McpServer'}}
+        sandbox: {type: string, description: 'Sandbox backend id; adds fs and shell tools executed there. Validated where sandboxes are defined.'}
+        image: {type: string, description: 'Sandbox image (sandbox option).'}
+        repo: {type: string, description: 'Repository to check out in the sandbox (sandbox option).'}
+        ref: {type: string, description: 'Git ref of `repo` (sandbox option).'}
+        tools: {type: array, items: {type: string}, description: 'Custom tool ids made available to the agent through hal MCP.'}
         ui: {$ref: '#/components/schemas/NodeUI'}
     InboxNode:
       type: object
@@ -3438,9 +3534,13 @@ components:
         full:
           $ref: '#/components/schemas/RuntimeSpawn'
           description: Extra argv/env for permissive (auto, approved proposal) runs.
+        kind:
+          type: string
+          enum: [claude, codex, omp]
+          description: Runtime family, used to lock the agent down to hal's MCP tools. Detected from `command` when absent; an unknown runtime runs without lockdown.
         session_meta:
           type: object
-          description: Sent as `_meta` on session/new and session/load (e.g. claude settingSources isolation).
+          description: Sent as `_meta` on session/new and session/load (e.g. claude settingSources isolation). Lockdown keys win over these.
           additionalProperties: true
         elicitation:
           type: boolean
@@ -4476,7 +4576,7 @@ components:
         options: {type: array, items: {$ref: '#/components/schemas/PermissionOption'}}
         decision: {oneOf: [{$ref: '#/components/schemas/PermissionDecision'}, {type: 'null'}], description: Null while pending.}
         decided_by: {oneOf: [{$ref: '#/components/schemas/DecidedBy'}, {type: 'null'}]}
-        matched_rule: {type: [string, 'null'], description: 'The policy rule that decided, for example `kind:read` or `allow.commands[0]`.'}
+        matched_rule: {type: [string, 'null'], description: 'The policy rule that decided, for example `hal:mcp`, `allow.tools[0]: ...` or `lockdown`.'}
         reason: {type: [string, 'null']}
         approval_id: {$ref: '#/components/schemas/NullableUlid'}
         requested_at: {$ref: '#/components/schemas/Timestamp'}

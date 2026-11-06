@@ -9,6 +9,7 @@ import (
 	"hal9001/internal/assist"
 	"hal9001/internal/core"
 	"hal9001/internal/runner"
+	"hal9001/internal/tools"
 )
 
 // ToolApprovalObserver is told when a gated tool call of an agent run starts
@@ -84,6 +85,8 @@ func (h assistHost) Recorder(assistSessionID, model string) agent.Recorder {
 }
 
 func (h assistHost) Broker() agent.ApprovalBroker { return h.e.broker }
+
+func (h assistHost) Tools() *tools.Hub { return h.e.tools }
 
 func (h assistHost) Clock() agent.Clock { return h.e.clock }
 

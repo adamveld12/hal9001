@@ -34,10 +34,6 @@ func (m *Manager) testFlow(ctx context.Context, s *session, byAgent bool, req co
 		s.mu.Unlock()
 		return zero, err
 	}
-	if err := s.syncFromDiskLocked(); err != nil {
-		s.mu.Unlock()
-		return zero, err
-	}
 	flow, _, ds, _ := m.checkFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
 	if flow == nil || spec.HasErrors(ds) {
 		s.mu.Unlock()

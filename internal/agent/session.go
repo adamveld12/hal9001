@@ -416,7 +416,7 @@ func (r *run) processUsable() bool {
 		errors.Is(cause, ErrCancelled),
 		errors.Is(cause, errTimeout),
 		errors.Is(cause, errApprovalTimeout),
-		errors.Is(cause, errDeniedCancel):
+		errors.Is(cause, ErrDeniedCancel):
 	default:
 		return false
 	}

@@ -398,13 +398,13 @@ func (h *harness) agentRuns(nodeRunID string) []store.AgentRun {
 	return page.Items
 }
 
-// waitApproval waits for a pending approval of the type and returns it.
-func (h *harness) waitApproval(typ store.ApprovalType) store.Approval {
+// waitProposal waits for a pending proposal approval and returns it.
+func (h *harness) waitProposal() store.Approval {
 	h.t.Helper()
 	var got store.Approval
-	h.eventually("a pending "+string(typ)+" approval", func() bool {
+	h.eventually("a pending proposal approval", func() bool {
 		for _, a := range h.approvals(store.ApprovalPending) {
-			if a.Type == typ {
+			if a.Type == store.ApprovalProposal {
 				got = a
 				return true
 			}

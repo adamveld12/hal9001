@@ -12,6 +12,7 @@ import (
 	"hal9001/internal/agent"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
+	"hal9001/internal/tools"
 )
 
 // snapshot is the immutable view of the workspace the engine runs against.
@@ -169,6 +170,10 @@ func (e *Engine) runtimeConfig(snap *snapshot, name string) (agent.RuntimeConfig
 	}
 	if len(rt.Full.Args) == 0 {
 		cfg.Full.Args = nil
+	}
+	cfg = agent.ApplyLockdown(cfg, rt.Kind, agent.LockdownOptions{Dir: filepath.Join(e.data, "runtimes"), Server: tools.ServerName})
+	if cfg.Lockdown.Err != "" {
+		e.log.Error("engine: runtime lockdown", "runtime", name, "err", cfg.Lockdown.Err)
 	}
 	e.ensureAgentHomes(cfg)
 	return cfg, true

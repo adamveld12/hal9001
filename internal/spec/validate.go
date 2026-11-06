@@ -197,6 +197,7 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 		case rt.Command[0] == "":
 			c.errorf(CodeInvalidValue, p+".command[0]", "runtime %q: command[0] (the program) must not be empty", name)
 		}
+		c.enum(p+".kind", rt.Kind, []string{"claude", "codex", "omp"}, false)
 		validateEnvNames(c, p+".env", rt.Env)
 		validateEnvNames(c, p+".ask.env", rt.Ask.Env)
 		validateEnvNames(c, p+".full.env", rt.Full.Env)
@@ -303,7 +304,7 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 
 var nodeFieldsAllowed = map[string][]string{
 	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
 }
@@ -323,6 +324,7 @@ func (n *Node) setFields() []string {
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
 		{"side_effect", n.SideEffect}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
+		{"sandbox", n.Sandbox != ""}, {"image", n.Image != ""}, {"repo", n.Repo != ""}, {"ref", n.Ref != ""}, {"tools", len(n.Tools) > 0},
 	} {
 		if f.set {
 			s = append(s, f.name)
@@ -483,7 +485,6 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 	c.positiveDuration(p+".approval_timeout", n.ApprovalTimeout, "approval_timeout")
 	if n.Allow != nil {
 		c.regexps(p+".allow.tools", n.Allow.Tools)
-		c.regexps(p+".allow.commands", n.Allow.Commands)
 	}
 	seen := map[string]bool{}
 	for i, m := range n.MCPServers {
@@ -493,6 +494,8 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 			c.errorf(CodeRequired, mp+".name", "mcp server name is required")
 		case seen[m.Name]:
 			c.errorf(CodeDuplicateID, mp+".name", "mcp server %q is declared twice", m.Name)
+		case m.Name == "hal":
+			c.errorf(CodeInvalidValue, mp+".name", "mcp server name \"hal\" is reserved for hal's own tools")
 		}
 		seen[m.Name] = true
 		c.enum(mp+".type", m.Type, []string{MCPStdio, MCPHTTP, MCPSSE}, true)

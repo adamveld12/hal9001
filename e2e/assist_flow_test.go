@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"hal9001/internal/agent/fakeagent"
 )
 
 // AI-assisted flow authoring end to end: the same session machinery as sensors with target kind flow, the scripted
@@ -108,16 +106,9 @@ func (d *Daemon) assistFlowTest(id string, body map[string]any) flowTestJSON {
 	return res
 }
 
-// assistWrite is an agent edit that writes data to rel (inside the draft directory unless rel says otherwise).
-func assistWrite(id, rel, data string, onReject ...step) step {
-	old := ""
-	return step{
-		Op: fakeagent.OpPermission, ID: id, Kind: "edit", Title: "Edit " + rel,
-		RawInput: map[string]any{"file_path": rel, "new_string": data},
-		Content:  []fakeagent.Content{{Type: "diff", Path: rel, OldText: &old, NewText: data}},
-		OnAllow:  []step{{Op: fakeagent.OpWriteFile, Path: rel, Data: data}},
-		OnReject: onReject,
-	}
+// assistWrite is the agent writing a draft file with draft_write (flow.yaml or prompts/<name>.md).
+func assistWrite(id, rel, data string) step {
+	return mcpStep(id, "draft_write", map[string]any{"path": rel, "content": data}, "")
 }
 
 const (
@@ -178,7 +169,9 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 			say("Writing the prompt and the flow."),
 			assistWrite("p1", "prompts/new-triage.md", triagePrompt),
 			assistWrite("f1", "flow.yaml", urgentFlowYAML),
-			assistWrite("r1", "reference/runtimes.txt", "hacked\n", say("The reference is read-only.")),
+			assistWrite("r1", "reference/runtimes.txt", "hacked\n"),
+			mcpStep("i1", "draft_read", map[string]any{"path": "instructions"}, "instructions.txt"),
+			mcpStep("i2", "draft_read", map[string]any{"path": "reference/runtimes.txt"}, "runtimes-read.txt"),
 			say("Done."),
 		}})
 	})
@@ -196,7 +189,7 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 		t.Errorf("skeleton must be disabled and dry-run:\n%s", s.Draft.YAML)
 	}
 
-	// The draft directory: flow.yaml, prompts/, read-only reference material and the instructions.
+	// The draft directory: flow.yaml, prompts/ and read-only reference material.
 	dir := d.assistDir(s.ID)
 	for _, rel := range []string{
 		"flow.yaml", "prompts", "reference/sensors/src.yaml", "reference/prompts/existing-prompt.md", "reference/runtimes.txt",
@@ -212,14 +205,6 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 	samples, _ := os.ReadFile(filepath.Join(dir, "reference/samples/src.jsonl"))
 	if strings.Contains(string(samples), secretGlobalValue) || !strings.Contains(string(samples), "«GLOBAL_TOKEN»") {
 		t.Errorf("samples must be redacted:\n%s", samples)
-	}
-	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-		b, _ := os.ReadFile(filepath.Join(dir, name))
-		for _, want := range []string{"PREFER `transform`", "hal9001 assist test", "--sample", "enabled: false", "reference/", "mode: readonly", "output: note", "NEVER enable"} {
-			if !strings.Contains(string(b), want) {
-				t.Errorf("%s lacks %q", name, want)
-			}
-		}
 	}
 	var samp struct {
 		Items []struct {
@@ -249,20 +234,25 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 			t.Errorf("unexpected diagnostic %v (the draft prompt must satisfy the agent node)", dg)
 		}
 	}
-	// The edit under reference/ was rejected by policy and the file is untouched; the others were allowed.
+	// The write under reference/ failed as a tool error and the file is untouched; the others went through.
 	run := d.assistRuns(s.ID)[0]
-	byID := map[string]permJSON{}
-	for _, p := range d.permissions(run.ID) {
-		byID[p.Title] = p
+	if w := d.halPerms(run.ID, "draft_write"); len(w) != 3 {
+		t.Errorf("draft_write records = %+v", w)
 	}
-	if p := byID["Edit reference/runtimes.txt"]; decisionOf(p) != "reject" || !strings.HasPrefix(ruleOf(p), "edit_deny:") {
-		t.Errorf("reference edit permission = %+v", p)
-	}
-	if p := byID["Edit flow.yaml"]; decisionOf(p) != "allow" || !strings.HasPrefix(ruleOf(p), "allow.edit_under") {
-		t.Errorf("flow edit permission = %+v", p)
+	if tr := d.Transcript(run.ID); !strings.Contains(tr, "mcp[r1] is_error=true") || !strings.Contains(tr, "mcp[p1] is_error=false") {
+		t.Errorf("transcript:\n%s", tr)
 	}
 	if rt, _ := os.ReadFile(filepath.Join(dir, "reference/runtimes.txt")); strings.Contains(string(rt), "hacked") {
 		t.Error("the reference file was edited")
+	}
+	if rt, _ := os.ReadFile(filepath.Join(dir, "runtimes-read.txt")); !strings.Contains(string(rt), "fake") {
+		t.Errorf("draft_read of the reference = %q", rt)
+	}
+	instr, _ := os.ReadFile(filepath.Join(dir, "instructions.txt"))
+	for _, want := range []string{"PREFER `transform`", "draft_test", "`sample`", "enabled: false", "reference/", "mode: readonly", "output: note", "NEVER enable"} {
+		if !strings.Contains(string(instr), want) {
+			t.Errorf("the instructions lack %q", want)
+		}
 	}
 	if n := len(d.pendingApprovals()); n != 0 {
 		t.Errorf("%d approvals pending", n)
@@ -409,21 +399,21 @@ edges: []
 		d.assistRuntime(false,
 			turn{When: when("command flow$"), Steps: []step{
 				assistWrite("f1", "flow.yaml", cmdFlow),
-				execPermission("t1", "hal9001 assist test --sample 0", []step{shellStep("hal9001 assist test --sample 0 > test-result.json")}),
+				mcpStep("t1", "draft_test", map[string]any{"sample": 0}, "test-result.json"),
 				say("Tested."),
 			}},
 			turn{When: when("same command again$"), Steps: []step{
-				execPermission("t2", "hal9001 assist test --sample 0", []step{shellStep("hal9001 assist test --sample 0 > test-result2.json")}),
+				mcpStep("t2", "draft_test", map[string]any{"sample": 0}, "test-result2.json"),
 				say("Tested again."),
 			}},
 			turn{When: when("changed command$"), Steps: []step{
 				assistWrite("f2", "flow.yaml", cmdFlow2),
-				execPermission("t3", "hal9001 assist test --sample 0", []step{shellStep("hal9001 assist test --sample 0 > test-result3.json")}),
+				mcpStep("t3", "draft_test", map[string]any{"sample": 0}, "test-result3.json"),
 				say("Tested the change."),
 			}},
 			turn{When: when("transform only$"), Steps: []step{
 				assistWrite("f3", "flow.yaml", transformFlow),
-				execPermission("t4", "hal9001 assist test --sample 0", []step{shellStep("hal9001 assist test --sample 0 > test-result4.json")}),
+				mcpStep("t4", "draft_test", map[string]any{"sample": 0}, "test-result4.json"),
 				say("Tested the transform flow."),
 			}},
 		)
@@ -461,7 +451,7 @@ edges: []
 		t.Errorf("note = %+v", n)
 	}
 	// The approval showed the command nodes.
-	if desc, _ := json.Marshal(ap); !strings.Contains(string(desc), "assist test") {
+	if desc, _ := json.Marshal(ap); !strings.Contains(string(desc), "draft_test") {
 		t.Errorf("approval = %s", desc)
 	}
 

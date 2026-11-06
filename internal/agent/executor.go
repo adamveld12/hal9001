@@ -227,9 +227,10 @@ func newRun(e *Executor, p plan) (*run, error) {
 	if _, err := os.Stat(cwd); err != nil {
 		return nil, fmt.Errorf("cwd: %w", err)
 	}
-	if p.req.Allow.Base == "" {
-		p.req.Allow.Base = cwd
+	if err := p.req.Config.Lockdown.check(cwd); err != nil {
+		return nil, err
 	}
+	p.prompt, p.fallbackPrompt = GuardPrompt(p.prompt), GuardPrompt(p.fallbackPrompt)
 	eng, err := NewEngine(p.policy, p.req.Allow)
 	if err != nil {
 		return nil, err

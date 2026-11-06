@@ -10,7 +10,7 @@ Repository: {{.input.repo}}
 Link: {{.input.url}}
 Why you are seeing it: {{.input.reason}}
 
-Use read-only commands such as `gh pr view`, `gh pr diff`, and `git log` to read the change; the working directory is a checkout of the repository's default branch for context. Run each command on its own, exactly as `gh pr view <number> --repo <repo>` or `gh pr diff <number> --repo <repo>`: commands with pipes, redirects (`2>&1`), `&&`, `;` or `$(...)` are refused by the read-only policy. Do not post comments, approve, push, or modify anything.
+Read the change with the hal tools `pr_view` and `pr_diff` (and `gh_api` GET calls for anything else, such as check runs or file contents). You have no shell and no file access; do not try to post comments, approve, push, or modify anything: write calls need the user's approval and are not part of a review.
 
 Report:
 - What the PR does, in two sentences.

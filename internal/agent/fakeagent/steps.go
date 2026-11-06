@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/acp-go-sdk"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // turnState carries what steps need while a turn runs. s is nil for startup
@@ -204,6 +205,14 @@ func (t *turnState) exec(st Step) (bool, error) {
 		}
 		<-t.ctx.Done()
 		return true, nil
+	case OpMCPCall:
+		return t.permission(Step{
+			Op: OpPermission, ID: st.ID, Kind: "other", Title: "mcp__" + firstNonEmpty(st.Name, "hal") + "__" + st.Tool, RawInput: st.Args,
+			OnAllow:  []Step{{Op: OpMCPInvoke, ID: st.ID, Name: st.Name, Tool: st.Tool, Args: st.Args, Path: st.Path}},
+			OnReject: []Step{{Op: OpMessage, Text: "mcp[" + st.ID + "] rejected by the client"}},
+		})
+	case OpMCPInvoke:
+		return false, t.mcpInvoke(st)
 	case OpIgnoreSIGTRM:
 		signal.Ignore(syscall.SIGTERM)
 	case OpStderr:
@@ -367,4 +376,47 @@ func (t *turnState) askElicitation(st Step) (string, error) {
 		return "reject", nil
 	}
 	return "cancelled", nil
+}
+
+// mcpInvoke calls a tool on one of the MCP servers the client injected (stdio only) and reports the outcome as an
+// agent message "mcp[<id>] is_error=<bool> <text>", so tests can read it from the run's final message.
+func (t *turnState) mcpInvoke(st Step) error {
+	name := firstNonEmpty(st.Name, "hal")
+	var srv *acp.McpServerStdio
+	for _, m := range t.s.mcp {
+		if m.Stdio != nil && m.Stdio.Name == name {
+			srv = m.Stdio
+		}
+	}
+	if srv == nil {
+		return fmt.Errorf("mcp_call: the client injected no stdio MCP server %q", name)
+	}
+	cmd := exec.CommandContext(t.ctx, srv.Command, srv.Args...) //nolint:gosec // the command is what the client under test injected
+	cmd.Env = os.Environ()
+	for _, e := range srv.Env {
+		cmd.Env = append(cmd.Env, e.Name+"="+e.Value)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "fake-acp-agent", Version: "0"}, nil)
+	cs, err := client.Connect(t.ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=true connect: %v", st.ID, err)))
+	}
+	defer func() { _ = cs.Close() }()
+	res, err := cs.CallTool(t.ctx, &mcp.CallToolParams{Name: st.Tool, Arguments: st.Args})
+	if err != nil {
+		return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=true call: %v", st.ID, err)))
+	}
+	var text strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			text.WriteString(tc.Text)
+		}
+	}
+	if st.Path != "" && !res.IsError {
+		p := t.abs(st.Path)
+		if err := os.WriteFile(p, []byte(text.String()), 0o600); err != nil {
+			return err
+		}
+	}
+	return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=%t %s", st.ID, res.IsError, text.String())))
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"hal9001/internal/agent"
+	"hal9001/internal/api"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
@@ -32,6 +33,9 @@ type engineParams struct {
 	Log       *slog.Logger
 	UIBaseURL string
 	Clock     agent.Clock
+	// MCPURL and Executable are how agents reach hal's MCP server (see engine.Options).
+	MCPURL     string
+	Executable string
 }
 
 // apiParams are the inputs of api.New (see wiring_engine.go).
@@ -41,6 +45,7 @@ type apiParams struct {
 	Engine    core.Engine
 	Assist    core.Assist
 	Auth      *auth.Manager
+	MCP       api.MCPHub
 	Workspace func() *spec.Workspace
 	Reload    func()
 	Version   string

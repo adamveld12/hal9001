@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -225,80 +224,9 @@ func (r *run) decide(pc permissionCtx) verdict {
 	if r.ctx.Err() != nil {
 		return r.finish1(pr, DecisionCancelled, DecidedByPolicy, "run was already cancelled: "+cancelWhy(r.ctx))
 	}
-	d := r.engine.Decide(ToolRequest{Kind: pc.kind, Title: pc.title, Name: pc.name, RawInput: pc.rawIn, Paths: ToolPaths(pc.rawIn, pc.content, pc.locations), ToolCallID: pc.toolCallID})
+	d := r.engine.Decide(ToolRequest{Kind: pc.kind, Title: pc.title, Name: pc.name, RawInput: pc.rawIn, ToolCallID: pc.toolCallID})
 	pr.MatchedRule, pr.Reason = d.Rule, d.Reason
-	switch d.Action {
-	case ActionAllow:
-		return r.respond(pr, true, DecidedByPolicy)
-	case ActionReject:
-		return r.respond(pr, false, DecidedByPolicy)
-	}
-	return r.askUser(pr)
-}
-
-// askUser queues a gated tool call for approval and blocks for the decision,
-// the approval timeout, or cancellation of the run.
-func (r *run) askUser(pr PermissionRecord) verdict {
-	r.savePermission(pr) // pending: no decision yet
-
-	timeout := orDefault(r.p.req.ApprovalTimeout, DefaultApprovalTimeout)
-	actx, acancel := context.WithCancelCause(r.ctx)
-	defer acancel(nil)
-	timer := r.e.clock().After(timeout)
-	go func() {
-		select {
-		case <-timer:
-			acancel(errApprovalTimeout)
-		case <-actx.Done():
-		}
-	}()
-
-	dec, err := r.e.Broker.AwaitToolApproval(actx, ToolApproval{
-		RunID:               r.rec.ID,
-		NodeRunID:           r.rec.NodeRunID,
-		PermissionRequestID: pr.ID,
-		ToolCallID:          pr.ToolCallID,
-		ToolKind:            pr.ToolKind,
-		Title:               pr.Title,
-		RawInput:            pr.RawInput,
-		Content:             pr.Content,
-		ExpiresAt:           r.now().Add(timeout),
-	})
-	if err != nil {
-		cause := context.Cause(actx)
-		switch {
-		case cause == nil:
-			// The broker failed on its own: reject the call, keep going.
-			pr.Reason = "approval queue error: " + err.Error()
-			return r.respond(pr, false, DecidedByPolicy)
-		case errors.Is(cause, errApprovalTimeout):
-			r.fail(ReasonApprovalTimeout, fmt.Errorf("tool approval for %q not decided within %s", pr.Title, timeout))
-			r.cancel(errApprovalTimeout)
-			return r.finish1(pr, DecisionExpired, DecidedByTimeout, "no decision within the approval timeout of "+timeout.String())
-		default:
-			return r.finish1(pr, DecisionCancelled, DecidedByPolicy, "run cancelled while waiting for approval: "+cancelWhy(r.ctx))
-		}
-	}
-
-	switch dec.Verdict {
-	case VerdictAllow:
-		pr.Reason = userReason("approved by user", dec.Comment)
-		return r.respond(pr, true, DecidedByUser)
-	case VerdictDenyCancel:
-		r.fail(ReasonDenied, fmt.Errorf("tool call %q denied by user and run cancelled", pr.Title))
-		r.cancel(errDeniedCancel)
-		return r.finish1(pr, DecisionCancelled, DecidedByUser, userReason("denied by user and the run cancelled", dec.Comment))
-	default:
-		pr.Reason = userReason("denied by user", dec.Comment)
-		return r.respond(pr, false, DecidedByUser)
-	}
-}
-
-func userReason(base, comment string) string {
-	if c := strings.TrimSpace(comment); c != "" {
-		return base + ": " + c
-	}
-	return base
+	return r.respond(pr, d.Action == ActionAllow, DecidedByPolicy)
 }
 
 func cancelWhy(ctx context.Context) string {

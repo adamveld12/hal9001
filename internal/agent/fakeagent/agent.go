@@ -38,6 +38,8 @@ type session struct {
 	cwd   string
 	mode  string
 	turns int // completed prompts
+	// mcp are the MCP servers the client handed to session/new or session/load, for the mcp_call steps.
+	mcp []acp.McpServer
 }
 
 // persisted session record (one JSON line per record).
@@ -182,7 +184,7 @@ func newID() string {
 
 func (a *Agent) NewSession(_ context.Context, p acp.NewSessionRequest) (acp.NewSessionResponse, error) {
 	a.logCall(map[string]any{"method": "session/new", "cwd": p.Cwd, "mcp_servers": p.McpServers, "meta": p.Meta})
-	s := &session{id: newID(), cwd: p.Cwd, mode: a.initialMode()}
+	s := &session{id: newID(), cwd: p.Cwd, mode: a.initialMode(), mcp: p.McpServers}
 	a.mu.Lock()
 	a.sessions[s.id] = s
 	a.mu.Unlock()
@@ -260,7 +262,7 @@ func (a *loadingAgent) LoadSession(ctx context.Context, p acp.LoadSessionRequest
 	}
 	defer func() { _ = f.Close() }()
 
-	s := &session{id: string(p.SessionId), cwd: p.Cwd, mode: a.initialMode()}
+	s := &session{id: string(p.SessionId), cwd: p.Cwd, mode: a.initialMode(), mcp: p.McpServers}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {

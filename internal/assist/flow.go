@@ -74,22 +74,6 @@ func readDraftPrompts(dir string) []draftPrompt {
 	return out
 }
 
-// promptsChanged reports whether the prompt files on disk differ from the stored list (names and contents).
-func (m *Manager) promptsChanged(dir string, stored json.RawMessage) bool {
-	var old []draftPrompt
-	_ = json.Unmarshal(stored, &old)
-	now := readDraftPrompts(dir)
-	if len(old) != len(now) {
-		return true
-	}
-	for i := range now {
-		if old[i].Name != now[i].Name || old[i].YAML != now[i].YAML {
-			return true
-		}
-	}
-	return false
-}
-
 // evaluateFlow validates a flow draft like a flow file, with the draft's own prompts counting as existing. A
 // changed id of an existing flow is flagged. Prompt files are validated too; a draft prompt named like a saved
 // one is flagged because Save never overwrites it.
@@ -195,7 +179,7 @@ func (m *Manager) writeReference(dir string) error {
 	}
 	sort.Strings(sensors)
 	var index strings.Builder
-	index.WriteString("# index of the samples: `hal9001 assist test --sample N` runs the draft flow on sample N.\n")
+	index.WriteString("# index of the samples: draft_test with `sample` N runs the draft flow on sample N.\n")
 	n := 0
 	for _, id := range sensors {
 		lines, err := m.recentPayloads(id)
@@ -276,19 +260,20 @@ func (m *Manager) Samples(ctx context.Context, sessionID string) ([]core.AssistS
 // flowPreamble prefixes every prompt of a flow session.
 func flowPreamble(targetID string, globalEnv []string) string {
 	var b strings.Builder
-	b.WriteString("[hal9001 flow assistant] The draft is `" + FlowDraftFile + "` in the working directory; new prompts go in `" + PromptsDir + "/<name>.md`. " +
-		"Edit only those. `" + ReferenceDir + "/` is read-only reference material (sensors, prompts, runtimes, samples, docs). The format, the node types and how to test are in AGENTS.md.\n")
+	b.WriteString("[hal9001 flow assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
+		"New prompts are draft files `" + PromptsDir + "/<name>.md` (draft_write with that path). `" + ReferenceDir + "/` is read-only reference material (sensors, prompts, runtimes, samples, docs) read with draft_read. " +
+		"Call draft_read with path `instructions` first: it holds the format, the node types and how to test.\n")
 	if targetID != "" {
 		b.WriteString("You are editing the existing flow `" + targetID + "`; keep its id.\n")
 	} else {
 		b.WriteString("You are creating a new flow. Never enable it: keep `enabled: false`; the user enables it.\n")
 	}
 	b.WriteString("Env variable names command nodes can use: " + nameList(globalEnv) + ".\n")
-	b.WriteString("Run `hal9001 assist test` (optionally `--sample N`) to test the draft; the first test after you change a command node asks the user to approve it.\n\n")
+	b.WriteString("Test the draft with draft_test (optionally `sample`); the first test after you change a command node asks the user to approve it.\n\n")
 	return b.String()
 }
 
-// flowInstructions is the text of AGENTS.md / CLAUDE.md for a flow session.
+// flowInstructions is the authoring guide of a flow session; the agent reads it with draft_read path `instructions`.
 func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
@@ -297,7 +282,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("You help the user write or change ONE hal9001 flow. hal9001 is a local daemon that polls systems with sensors, ")
 	w("turns what they return into events, and runs flows over those events. A flow is a small graph of nodes: ")
 	w("it subscribes to sensors, reshapes and routes each event, optionally asks an agent, and puts what needs attention in the user's inbox. ")
-	w("This directory is a private draft directory (session %s). Your job is the file `%s`, plus new prompt files under `%s/`.\n\n", sessionID, FlowDraftFile, PromptsDir)
+	w("This is a private draft (session %s). You have no file or shell access: you work only through the hal tools draft_read, draft_write, draft_test and validate. Your job is the draft `%s`, plus new prompt files `%s/<name>.md` (draft_write with that path).\n\n", sessionID, FlowDraftFile, PromptsDir)
 
 	if targetID != "" {
 		w("You are EDITING the existing flow `%s`. Keep `id: %s` unchanged: the user saves the draft over that flow.\n\n", targetID, targetID)
@@ -306,24 +291,23 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	}
 
 	w("## Rules\n\n")
-	w("- Edit only `%s` and files under `%s/`. `%s/` is READ-ONLY reference material: edits there are rejected. The user's own flows, sensors, prompts and settings are not editable from here.\n", FlowDraftFile, PromptsDir, ReferenceDir)
+	w("- Change only the draft and files under `%s/`, with draft_write. `%s/` is READ-ONLY reference material (draft_read path `%s/...`). The user's own flows, sensors, prompts and settings are not editable from here.\n", PromptsDir, ReferenceDir, ReferenceDir)
 	w("- NEVER enable a flow: keep `enabled: false` (and `dry_run: true` for a new flow). The user enables it after reading it.\n")
-	w("- Never print, echo, log or ask for a secret value, and do not try to read `env` files or `~/.hal9001`. You only ever see variable names.\n")
-	w("- Reading and searching are allowed. Running anything else asks the user for approval each time.\n")
-	w("- Run the helper commands below exactly as written, one per call: no pipes, redirects, `&&`, `;` or `cd`.\n")
-	w("- Test the draft with `hal9001 assist test` before you say it is done, and fix what it reports. Test both a sample that should pass and one that should be dropped when you can.\n")
+	w("- Never print, echo, log or ask for a secret value. You only ever see variable names.\n")
+	w("- Reading and writing the draft and validating it never ask the user. Testing it asks only when a command node changed (below).\n")
+	w("- Test the draft with draft_test before you say it is done, and fix what it reports. Test both a sample that should pass and one that should be dropped when you can.\n")
 	w("- A test runs `command` nodes with the user's real credentials, so the first test after you change a command node (`lang`, `script`, `command`, `cwd`, or the credentials it mentions) asks the user to approve it. ")
 	w("Before you run it, say in a sentence what the command nodes do and which credentials they use. Once the user allowed a version, testing the same code again does not ask. ")
 	w("`transform` nodes are generated code and never ask. If the user denies the test, do not look for another way to run it: explain what you wanted to check and wait.\n")
 	w("- End every turn with a short plain-language summary of what the flow does now, what the test showed and what the user should check or decide. The user sees the draft and its graph update live.\n\n")
 
-	w("## Helper commands\n\n")
-	w("- `hal9001 assist draft` prints the current draft with its validation diagnostics as JSON.\n")
-	w("- `hal9001 assist test` runs the draft flow once on a sample and prints JSON: `flow_run_id`, `input`, `nodes` (per node: `status`, `decision` `emitted`/`dropped`/`error`/`skipped`, `reason`, `ports`, `outputs`, `would_create` for inbox nodes, `stdout`, `stderr`, `exit_code`) and `edges_taken`. ")
-	w("Pick the input with `--sample N` (an index from `%s/samples/index.txt`) or `--event ID`; without either the first sample is used. ", ReferenceDir)
+	w("## Tools\n\n")
+	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it (or a prompt file) and returns the same. `validate` returns the diagnostics only.\n")
+	w("- `draft_test` runs the draft flow once on a sample and returns JSON: `flow_run_id`, `input`, `nodes` (per node: `status`, `decision` `emitted`/`dropped`/`error`/`skipped`, `reason`, `ports`, `outputs`, `would_create` for inbox nodes, `stdout`, `stderr`, `exit_code`) and `edges_taken`. ")
+	w("Pick the input with `sample` (an index from `%s/samples/index.txt`) or `event` (an event id); without either the first sample is used. ", ReferenceDir)
 	w("The test is a dry run: `side_effect` command nodes are skipped, **agent nodes are not run** (they are `skipped` with the reason `assist test: agent nodes are not run`, and their branch ends there) and inbox nodes only report the item they would create. ")
 	w("`transform` and other `command` nodes run for real and follow the edges.\n")
-	w("- `hal9001 flows validate flow.yaml` checks the file against the flow format only.\n\n")
+	w("\n")
 
 	w("## Reference material (`%s/`, read-only)\n\n", ReferenceDir)
 	w("- `%s/docs/flows.md`: the full format of sensors, flows, nodes, templates and prompts. Read the flow and node sections before you write a flow.\n", ReferenceDir)
@@ -357,7 +341,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("- Default to `mode: readonly`: the agent can read but not act. For inbox triage use a prompt with `output: note` (see the existing prompts in `%s/prompts/`): the agent's note becomes an inbox item on its own, without an `inbox` node after it.\n", ReferenceDir)
 	w("- `runtime` must be one of `%s/runtimes.txt`. Do not invent models.\n", ReferenceDir)
 	w("- Use `mode: approve` or `auto` only if the user asked for the agent to act, and say so in your summary.\n")
-	w("- `prompt` names a file in `prompts/` of the user's home. Reuse an existing prompt from `%s/prompts/` when one fits. If you need a new one, create `%s/<new-name>.md` in the draft directory with a front matter (`name`, `description`, `output: note`) and the prompt text (a template over `{{.input}}`); ", ReferenceDir, PromptsDir)
+	w("- `prompt` names a file in `prompts/` of the user's home. Reuse an existing prompt from `%s/prompts/` when one fits. If you need a new one, create the draft file `%s/<new-name>.md` (draft_write) with a front matter (`name`, `description`, `output: note`) and the prompt text (a template over `{{.input}}`); ", ReferenceDir, PromptsDir)
 	w("the user's Save creates it. Never edit or reuse the name of an existing prompt: Save does not overwrite existing prompts, so choose a new name instead.\n")
 	w("- You cannot run agent nodes in a test: they are skipped. Say in your summary that the agent step was not exercised.\n\n")
 

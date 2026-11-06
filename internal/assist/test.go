@@ -58,10 +58,6 @@ func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (cor
 		s.mu.Unlock()
 		return zero, err
 	}
-	if err := s.syncFromDiskLocked(); err != nil {
-		s.mu.Unlock()
-		return zero, err
-	}
 	target := s.row.TargetID
 	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
 	if sensor == nil || spec.HasErrors(ds) {
