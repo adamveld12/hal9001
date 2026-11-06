@@ -298,10 +298,11 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 
 - All tools run through mise: `mise exec -- <tool>` or `mise run <task>`. First time in a clone or worktree:
   `mise run setup`.
-- Commit early, one logical change per commit. Never bypass hooks. Pre-commit runs gitleaks, gofmt/goimports,
-  `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: prettier, oxlint, tsc, vitest. Pre-commit also regenerates
-  `web/src/api/schema.d.ts` when `api/openapi.yaml` or the schema changes and fails if it differs. Pre-push runs
-  `mise run race`, `RACE=1 mise run e2e` and the full web check. When a hook fails, assume your code is wrong first.
+- Commit early, one logical change per commit. Never bypass hooks. Pre-commit first auto-fixes and re-stages your staged
+  files (gofmt/goimports, prettier, and `web/src/api/schema.d.ts` regenerated from `api/openapi.yaml`), so formatting
+  never fails a commit. It then runs gitleaks, `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`:
+  oxlint, tsc, vitest. Pre-push runs `mise run race`, `RACE=1 mise run e2e` and the full web check. When a hook fails,
+  assume your code is wrong first.
 - Parallel work uses one git worktree and branch per agent; the coordinator merges. Do not commit to `main` directly
   or touch another worktree.
 - API first: `api/openapi.yaml` is the contract and changes in the same commit as the handler. After editing it run
