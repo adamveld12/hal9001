@@ -125,6 +125,7 @@ func (s *Server) createTool(w http.ResponseWriter, r *http.Request) {
 	if !checkID(w, id) {
 		return
 	}
+	raw = spec.DropLegacyID(raw)
 	_, ds = spec.CheckTool(id, raw)
 	if !s.saveFile(w, r, spec.KindTool, id, raw, "", ds) {
 		return
@@ -157,6 +158,7 @@ func (s *Server) updateTool(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	raw = spec.DropLegacyID(raw)
 	if _, _, err := s.readFile(spec.KindTool, id); err != nil {
 		s.writeError(w, r, err)
 		return

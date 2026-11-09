@@ -62,3 +62,15 @@ func TestRenameFile(t *testing.T) {
 		t.Errorf("old file: %v", err)
 	}
 }
+
+func TestDropLegacyFields(t *testing.T) {
+	if got := string(DropLegacyID([]byte("# c\nid: a\nlang: bash\nnodes:\n  - id: a\n"))); got != "# c\nlang: bash\nnodes:\n  - id: a\n" {
+		t.Errorf("DropLegacyID = %q", got)
+	}
+	if got := string(DropLegacyName([]byte("---\nname: p\ndescription: d\n---\nname: body\n"))); got != "---\ndescription: d\n---\nname: body\n" {
+		t.Errorf("DropLegacyName = %q", got)
+	}
+	if got := string(DropLegacyName([]byte("name: plain body\n"))); got != "name: plain body\n" {
+		t.Errorf("no frontmatter = %q", got)
+	}
+}

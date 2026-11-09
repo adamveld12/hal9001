@@ -217,6 +217,9 @@ func TestSensorFilesAndStatus(t *testing.T) {
 		} `json:"status"`
 	}
 	created.decode(&d)
+	if raw := e.readHome("sensors/probe.yaml"); strings.Contains(raw, "id:") {
+		t.Errorf("a legacy id line was stored: %q", raw)
+	}
 	if d.Sensor.Interval != "5m" || d.Sensor.FirstRun != "baseline" || d.Status.State != "idle" || d.Status.LastRun != nil {
 		t.Errorf("new sensor = %+v", d)
 	}
@@ -325,7 +328,7 @@ func TestPromptFilesAndRendering(t *testing.T) {
 		Markdown string `json:"markdown"`
 	}
 	created.decode(&p)
-	if p.Name != "greet" || p.Prompt.Description != "Say hi" || p.Prompt.Body != "Hello {{.input.name}}.\n" || p.Markdown != md || e.reloads.Load() != 1 {
+	if p.Name != "greet" || p.Prompt.Description != "Say hi" || p.Prompt.Body != "Hello {{.input.name}}.\n" || p.Markdown != strings.Replace(md, "name: greet\n", "", 1) || e.reloads.Load() != 1 {
 		t.Errorf("prompt = %+v", p)
 	}
 	e.do("POST", "/api/prompts", map[string]any{"markdown": md}).want(409)

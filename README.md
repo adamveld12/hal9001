@@ -368,3 +368,5 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/live-smoke.md](docs/live-smoke.md) | Live smoke tests against real runtimes and services. |
 | [cmd/fake-acp-agent/README.md](cmd/fake-acp-agent/README.md) | The scripted ACP agent used by tests. |
 | [web/README.md](web/README.md) | UI layout and dev commands. |
+
+Sensors, flows, tools and prompts are named by their file; rename them from the UI or `hal9001 <kind> rename <old> <new>` (see docs/flows.md).

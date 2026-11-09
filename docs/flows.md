@@ -150,7 +150,6 @@ exec:
 
 ```yaml
 # sensors/github-notifications.yaml
-id: github-notifications
 interval: 2m              # or: cron: "*/5 9-18 * * 1-5"; leave both out for a manual-only sensor
 lang: bash
 script: |
@@ -275,7 +274,6 @@ section (`IMAP_USER`, `IMAP_PASSWORD`; optional `IMAP_HOST`, `IMAP_PORT`, `IMAP_
 
 ```yaml
 # flows/triage-github.yaml (abridged; see content/flows/ for the full starters)
-id: triage-github
 enabled: true
 dry_run: false
 subscribe: [github-notifications]
@@ -583,3 +581,15 @@ Downstream nodes receive `{"input": <the agent node's input>, "agent": {"run_id"
 - **Kill switch.** `hal9001 killswitch pause` pauses sensors and stops starting nodes; `--kill` also terminates running
   nodes (SIGTERM, then SIGKILL after 10s; runs are marked `killed`). `killswitch resume` undoes it. The state survives a
   restart.
+
+## Names, descriptions and renaming
+
+The file name is the id: `sensors/<id>.yaml`, `flows/<id>.yaml`, `tools/<id>.yaml` and `prompts/<name>.md` have no
+`id:` (or prompt `name:`) field. An old one is ignored with a warning and dropped on the next write. Sensors and flows
+take an optional one-line `description:` that the UI shows under the name.
+
+Rename in the UI (click the name), with `hal9001 sensors|flows|tools|prompts rename <old> <new>`, or
+`POST /api/<kind>/{id}/rename` with `{new_id, expected_hash}`. It moves the file and its env file
+(`env.d/sensors/<id>.env`, `env.d/tools/<id>.env`), rewrites flows' `subscribe`, agent nodes' `tools` and `prompt`
+entries, and moves a sensor's dedup keys, last success, pause and reset state. Recorded events and runs keep the old
+id, so a renamed flow's earlier runs stay under the old name.

@@ -67,6 +67,11 @@ export function SensorTable({
                 >
                   {r.id}
                 </Link>
+                {s.sensor?.description ? (
+                  <div className="text-xs text-muted">
+                    {s.sensor.description}
+                  </div>
+                ) : null}
               </Td>
               <Td className="text-muted">{r.schedule}</Td>
               <Td>

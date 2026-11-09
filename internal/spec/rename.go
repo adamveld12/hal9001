@@ -17,6 +17,38 @@ import (
 // (the id is the file name now; see Sensor.ID).
 var legacyIDLine = regexp.MustCompile(`(?m)^id:[^\n]*\n?`)
 
+// DropLegacyID removes a top-level id: line from sensor, flow or tool YAML, so
+// files written through the API never carry the id (see Sensor.ID).
+func DropLegacyID(raw []byte) []byte { return legacyIDLine.ReplaceAll(raw, nil) }
+
+// DropLegacyName removes the name: line from a prompt's frontmatter (the file
+// name is the name); text without frontmatter is returned unchanged.
+func DropLegacyName(raw []byte) []byte {
+	lines := bytes.SplitAfter(raw, []byte("\n"))
+	isFence := func(l []byte) bool { return string(bytes.TrimRight(l, " \t\r\n")) == "---" }
+	if len(lines) == 0 || !isFence(lines[0]) {
+		return raw
+	}
+	closing := -1
+	for i := 1; i < len(lines); i++ {
+		if isFence(lines[i]) {
+			closing = i
+			break
+		}
+	}
+	if closing < 0 {
+		return raw
+	}
+	var out []byte
+	for i, l := range lines {
+		if i > 0 && i < closing && bytes.HasPrefix(l, []byte("name:")) {
+			continue
+		}
+		out = append(out, l...)
+	}
+	return out
+}
+
 // RenameFile moves the file of kind k from oldID to newID if it still hashes to
 // expectedHash. It fails with ErrNotFound when oldID does not exist and with an
 // error wrapping ErrConflict when expectedHash is stale or newID already exists;
@@ -54,7 +86,10 @@ func RenameFile(home string, k Kind, oldID, newID, expectedHash string) (string,
 		return "", err
 	}
 	if k == KindSensor || k == KindFlow || k == KindTool {
-		data = legacyIDLine.ReplaceAll(data, nil)
+		data = DropLegacyID(data)
+	}
+	if k == KindPrompt {
+		data = DropLegacyName(data)
 	}
 	if err := writeAtomic(newPath, data, mode); err != nil {
 		return "", err

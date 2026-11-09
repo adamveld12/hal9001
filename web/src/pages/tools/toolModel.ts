@@ -45,7 +45,7 @@ function textField(key: string, text: string): string[] {
 /** The tool as YAML. Nested values are written as JSON, which is valid YAML flow syntax. */
 export function toolToYaml(t: Tool): string {
   const out: string[] = [];
-  out.push(`id: ${yamlScalar(t.id)}`);
+  if (t.id) out.push(`id: ${yamlScalar(t.id)}`);
   out.push(...textField("description", t.description));
   const names = Object.keys(t.params ?? {}).sort();
   if (t.schema) {

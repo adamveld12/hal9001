@@ -158,6 +158,16 @@ export function SensorsPage() {
             id={id}
             onDirtyChange={onDirtyChange}
             onDeleted={() => void navigate("/sensors")}
+            otherIds={items.map((s) => s.id).filter((x) => x !== id)}
+            onRenamed={(newId) =>
+              void navigate(
+                {
+                  pathname: `/sensors/${newId}`,
+                  search: window.location.search,
+                },
+                { replace: true },
+              )
+            }
           />
         </section>
       </div>

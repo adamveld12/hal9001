@@ -1,4 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { InlineEdit } from "../../components/InlineEdit";
+import { useRenameSensor } from "../../api/rename";
+import { validateName } from "../../lib/inlineEdit";
+import { withDescription } from "../files/description";
 import { ApiError, errorMessage } from "../../api/client";
 import {
   useDeleteSensor,
@@ -57,10 +61,14 @@ function Editor({
   detail,
   onDirtyChange,
   onDeleted,
+  onRenamed,
+  otherIds,
 }: {
   detail: SensorDetail;
   onDirtyChange: (dirty: boolean) => void;
   onDeleted: () => void;
+  onRenamed: (newId: string) => void;
+  otherIds: readonly string[];
 }) {
   const id = detail.id;
   const { state, dispatch, dirty } = useEditState({
@@ -71,6 +79,7 @@ function Editor({
   const validate = useValidateSensor();
   const del = useDeleteSensor();
   const poll = usePollSensor();
+  const rename = useRenameSensor();
   const sensor = useSensor(id);
   const [checked, setChecked] = useState<Checked | null>(null);
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
@@ -164,7 +173,21 @@ function Editor({
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="m-0 font-mono text-sm font-semibold">{id}</h2>
+        <InlineEdit
+          mono
+          label="Sensor name"
+          value={id}
+          validate={(v) => validateName(v, id, otherIds, "sensor")}
+          disabledReason={
+            dirty ? "Save or discard your edits before renaming" : null
+          }
+          onSave={(newId) =>
+            rename.mutateAsync(
+              { id, newId, expectedHash: state.base.hash },
+              { onSuccess: () => onRenamed(newId) },
+            )
+          }
+        />
         <span title={pausedTitle(status) ?? undefined}>
           <Badge tone={sensorStateTone(status.state)}>{status.state}</Badge>
         </span>
@@ -209,6 +232,26 @@ function Editor({
           />
         </div>
       </div>
+
+      <InlineEdit
+        muted
+        label="Sensor description"
+        placeholder="Add a description"
+        value={detail.sensor?.description ?? ""}
+        validate={() => null}
+        onSave={(text) => {
+          const next = withDescription(dirty ? state.draft : detail.yaml, text);
+          if (dirty) {
+            dispatch({ type: "edit", draft: next });
+            return Promise.resolve();
+          }
+          return update.mutateAsync({
+            id,
+            expectedHash: state.base.hash,
+            yaml: next,
+          });
+        }}
+      />
 
       <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
         <Meta
@@ -430,10 +473,14 @@ export function SensorEditorPane({
   id,
   onDirtyChange,
   onDeleted,
+  onRenamed,
+  otherIds,
 }: {
   id: string;
   onDirtyChange: (dirty: boolean) => void;
   onDeleted: () => void;
+  onRenamed: (newId: string) => void;
+  otherIds: readonly string[];
 }) {
   const sensor = useSensor(id);
   if (sensor.isPending) return <LoadingState label="Loading sensor" />;
@@ -456,6 +503,8 @@ export function SensorEditorPane({
       detail={sensor.data}
       onDirtyChange={onDirtyChange}
       onDeleted={onDeleted}
+      onRenamed={onRenamed}
+      otherIds={otherIds}
     />
   );
 }

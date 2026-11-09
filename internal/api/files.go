@@ -331,6 +331,7 @@ func (s *Server) createSensor(w http.ResponseWriter, r *http.Request) {
 	if !checkID(w, id) {
 		return
 	}
+	raw = spec.DropLegacyID(raw)
 	_, ds = spec.CheckSensor(id, raw)
 	if !s.saveFile(w, r, spec.KindSensor, id, raw, "", ds) {
 		return
@@ -364,6 +365,7 @@ func (s *Server) updateSensor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	raw = spec.DropLegacyID(raw)
 	if _, _, err := s.readFile(spec.KindSensor, id); err != nil {
 		s.writeError(w, r, err)
 		return
@@ -582,6 +584,7 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	if !checkID(w, id) {
 		return
 	}
+	raw = spec.DropLegacyID(raw)
 	_, ds = spec.CheckFlow(id, raw, s.refs())
 	if !s.saveFile(w, r, spec.KindFlow, id, raw, "", ds) {
 		return
@@ -615,6 +618,7 @@ func (s *Server) updateFlow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	raw = spec.DropLegacyID(raw)
 	if _, _, err := s.readFile(spec.KindFlow, id); err != nil {
 		s.writeError(w, r, err)
 		return
@@ -756,6 +760,7 @@ func (s *Server) createPrompt(w http.ResponseWriter, r *http.Request) {
 	if !checkID(w, name) {
 		return
 	}
+	raw = spec.DropLegacyName(raw)
 	_, ds := spec.CheckPrompt(name, raw)
 	if !s.saveFile(w, r, spec.KindPrompt, name, raw, "", ds) {
 		return
@@ -783,6 +788,7 @@ func (s *Server) updatePrompt(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	raw = spec.DropLegacyName(raw)
 	if _, _, err := s.readFile(spec.KindPrompt, name); err != nil {
 		s.writeError(w, r, err)
 		return
