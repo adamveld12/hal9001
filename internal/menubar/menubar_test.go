@@ -1,0 +1,113 @@
+package menubar
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+const (
+	statusJSON  = `{"unread_inbox":3,"pending_approvals":2}`
+	flowsJSON   = `{"items":[{"id":"triage","enabled":true},{"id":"off","enabled":false},{"id":"broken","enabled":null}]}`
+	sensorsJSON = `{"items":[{"id":"gh","status":{"paused":false}},{"id":"mail","status":{"paused":true}}]}`
+)
+
+func daemon(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/status", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(statusJSON)) })
+	mux.HandleFunc("/api/flows", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(flowsJSON)) })
+	mux.HandleFunc("/api/sensors", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(sensorsJSON)) })
+	mux.HandleFunc("/api/stream", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("id: 1\nevent: stream.ready\ndata: {}\n\n: keepalive\n\nid: 2\nevent: inbox.created\ndata: {}\n\n"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestFetchAndBuildMenu(t *testing.T) {
+	srv := daemon(t)
+	snap, err := NewClient(srv.URL).Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := BuildMenu(snap, "http://ui")
+	if !m.Reachable || m.Title != "5" {
+		t.Fatalf("reachable=%v title=%q, want true and 5 (unread + approvals)", m.Reachable, m.Title)
+	}
+	titles := func(es []Entry) (out []string) {
+		for _, e := range es {
+			out = append(out, e.Title+"|"+e.URL)
+		}
+		return
+	}
+	got := strings.Join(titles(m.Entries), ",")
+	want := "Inbox|http://ui/inbox,Flows|,Sensors|,Settings|http://ui/settings/general,|,Quit|"
+	if got != want {
+		t.Fatalf("entries\n got %s\nwant %s", got, want)
+	}
+	if g := strings.Join(titles(m.Entries[1].Children), ","); g != "triage|http://ui/flows/triage,All flows|http://ui/flows" {
+		t.Fatalf("flows submenu (only enabled flows): %s", g)
+	}
+	if g := strings.Join(titles(m.Entries[2].Children), ","); g != "gh|http://ui/sensors/gh,mail (paused)|http://ui/sensors/mail,All sensors|http://ui/sensors" {
+		t.Fatalf("sensors submenu: %s", g)
+	}
+}
+
+func TestZeroCountHidesTitle(t *testing.T) {
+	m := BuildMenu(&Snapshot{}, "http://ui")
+	if m.Title != "" {
+		t.Fatalf("title %q, want hidden at 0", m.Title)
+	}
+}
+
+func TestUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+	if _, err := NewClient(url).Fetch(context.Background()); err == nil {
+		t.Fatal("want error for a dead daemon")
+	}
+	m := BuildMenu(nil, "http://ui")
+	if m.Reachable || m.Title != "" || m.Entries[0].Kind != Info || m.Entries[0].Title != "hal9001 is not running" {
+		t.Fatalf("unreachable menu: %+v", m)
+	}
+}
+
+func TestFetchHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", 500) }))
+	defer srv.Close()
+	if _, err := NewClient(srv.URL).Fetch(context.Background()); err == nil {
+		t.Fatal("want error on 500")
+	}
+}
+
+func TestStreamReportsEventsThenEnds(t *testing.T) {
+	srv := daemon(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var got []string
+	err := NewClient(srv.URL).Stream(ctx, func(typ string) { got = append(got, typ) })
+	if err == nil {
+		t.Fatal("stream end must be reported as an error so the caller reconnects")
+	}
+	if strings.Join(got, ",") != "stream.ready,inbox.created" {
+		t.Fatalf("events %v", got)
+	}
+}
+
+func TestIconSizes(t *testing.T) {
+	for _, n := range []int{16, 32} {
+		if b := Icon(n, false); len(b) < 8 || string(b[1:4]) != "PNG" {
+			t.Fatalf("size %d: not a PNG", n)
+		}
+		if len(Icon(n, true)) == 0 {
+			t.Fatal("dim icon empty")
+		}
+	}
+}

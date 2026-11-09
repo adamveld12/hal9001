@@ -298,6 +298,18 @@ the UI, or written through the API (see [docs/api.md](docs/api.md)). The CLI aut
 default auth config local requests need nothing; otherwise pass a session cookie obtained from
 `POST /api/auth/{service}/begin` ([docs/auth.md](docs/auth.md#logging-in-from-scripts)).
 
+## Menubar (macOS)
+
+`cmd/hal9001-menubar` is a menubar client of the daemon's REST API: the HAL 9000 eye (dimmed when the daemon is down), the inbox count (unread notes plus pending approvals, hidden at 0), and quick links to the Inbox, enabled flows, sensors and Settings. It refreshes from `GET /api/stream` and polls every 10 s as a fallback.
+
+```sh
+mise run menubar                         # run from source
+mise run menubar:build                   # bin/hal9001-menubar
+bin/hal9001-menubar install --dry-run    # print the LaunchAgent plist; without --dry-run, install it (starts at login)
+```
+
+Set `--url` / `HAL9001_URL` for the API (default `http://127.0.0.1:9001`) and `HAL9001_UI_URL` for the pages it opens (for example `http://localhost:5173` under `mise run dev`). It uses cgo (fyne.io/systray) and runs only on macOS.
+
 ## Development
 
 Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:

@@ -66,3 +66,11 @@ run = "scripts/e2e.sh"
 [tasks.sandbox]
 description = "Throwaway daemon on a free port with a fake agent runtime (--port, --script, --web-dir, --keep)"
 run = "go run ./cmd/hal9001-sandbox"
+
+[tasks.menubar]
+description = "Run the macOS menubar app (HAL9001_URL / HAL9001_UI_URL override the daemon and UI URLs)"
+run = "go run ./cmd/hal9001-menubar"
+
+[tasks."menubar:build"]
+description = "Build the macOS menubar app (bin/hal9001-menubar)"
+run = "go build -o bin/hal9001-menubar ./cmd/hal9001-menubar"
