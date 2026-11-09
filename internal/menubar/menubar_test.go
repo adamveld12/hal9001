@@ -53,10 +53,10 @@ func TestFetchAndBuildMenu(t *testing.T) {
 	if got != want {
 		t.Fatalf("entries\n got %s\nwant %s", got, want)
 	}
-	if g := strings.Join(titles(m.Entries[2].Children), ","); g != "triage|http://ui/flows/triage,All flows|http://ui/flows" {
+	if g := strings.Join(titles(m.Entries[2].Children), ","); g != "All flows|http://ui/flows,|,triage|http://ui/flows/triage" {
 		t.Fatalf("flows submenu (only enabled flows): %s", g)
 	}
-	if g := strings.Join(titles(m.Entries[3].Children), ","); g != "gh|http://ui/sensors/gh,mail (paused)|http://ui/sensors/mail,All sensors|http://ui/sensors" {
+	if g := strings.Join(titles(m.Entries[3].Children), ","); g != "All sensors|http://ui/sensors,|,gh|http://ui/sensors/gh,mail (paused)|http://ui/sensors/mail" {
 		t.Fatalf("sensors submenu: %s", g)
 	}
 }
@@ -169,7 +169,7 @@ func TestFlowRunCountLabel(t *testing.T) {
 			}
 		}
 	}
-	if len(got) < 2 || got[0] != "triage-github (2)" || got[1] != "idle" {
+	if len(got) < 4 || got[2] != "triage-github (2)" || got[3] != "idle" {
 		t.Fatalf("labels = %v", got)
 	}
 }

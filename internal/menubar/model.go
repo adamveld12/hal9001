@@ -48,8 +48,8 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 	if snap != nil {
 		inbox, approvals = snap.Status.UnreadInbox, snap.Status.PendingApprovals
 	}
-	flows := Entry{Kind: Submenu, Title: "Flows"}
-	sensors := Entry{Kind: Submenu, Title: "Sensors"}
+	flows := Entry{Kind: Submenu, Title: "Flows", Children: []Entry{link("All flows", "/flows"), {Kind: Separator}}}
+	sensors := Entry{Kind: Submenu, Title: "Sensors", Children: []Entry{link("All sensors", "/sensors"), {Kind: Separator}}}
 	if snap != nil {
 		for _, f := range snap.Flows {
 			if f.Enabled != nil && *f.Enabled {
@@ -64,8 +64,6 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 			sensors.Children = append(sensors.Children, link(t, "/sensors/"+url.PathEscape(s.ID)))
 		}
 	}
-	flows.Children = append(flows.Children, link("All flows", "/flows"))
-	sensors.Children = append(sensors.Children, link("All sensors", "/sensors"))
 
 	m.Entries = append(m.Entries,
 		link(counted("Inbox", inbox), "/inbox"),
