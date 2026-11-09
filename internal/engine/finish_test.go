@@ -95,7 +95,7 @@ edges:
 func TestFlowTestQueuesAllEntryNodesInOneCommit(t *testing.T) {
 	h := newHarness(t)
 	h.start()
-	flow, ds := spec.ParseFlow([]byte("id: draft\nenabled: true\nsubscribe: [src]\nnodes:\n  - {id: a, type: inbox, title: A}\n  - {id: b, type: inbox, title: B}\n"))
+	flow, ds := spec.ParseFlow("draft", []byte("enabled: true\nsubscribe: [src]\nnodes:\n  - {id: a, type: inbox, title: A}\n  - {id: b, type: inbox, title: B}\n"))
 	if flow == nil {
 		t.Fatalf("parse flow: %v", ds)
 	}

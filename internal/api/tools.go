@@ -99,6 +99,7 @@ func toolInput(w http.ResponseWriter, yamlText *string, tool *spec.Tool) ([]byte
 
 func (s *Server) createTool(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID   string     `json:"id"`
 		YAML *string    `json:"yaml"`
 		Tool *spec.Tool `json:"tool"`
 	}
@@ -109,12 +110,18 @@ func (s *Server) createTool(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, ds := spec.ParseTool(raw)
+	parsed, ds := spec.ParseTool("", raw)
 	if parsed == nil {
 		validationProblem(w, "the tool does not parse", ds)
 		return
 	}
-	id := parsed.ID
+	id := req.ID
+	if id == "" && req.Tool != nil {
+		id = req.Tool.ID
+	}
+	if id == "" {
+		id = parsed.ID
+	}
 	if !checkID(w, id) {
 		return
 	}

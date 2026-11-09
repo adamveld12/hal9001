@@ -1,5 +1,4 @@
 ---
-name: pr-review
 description: Review a pull request and summarize findings for the engineer
 output: note
 ---

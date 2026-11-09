@@ -39,7 +39,7 @@ func TestRequirementsSensorLoadsClean(t *testing.T) {
 }
 
 func TestSensorDefaults(t *testing.T) {
-	s, _ := ParseSensor([]byte("id: s\ninterval: 1m\nlang: jq\nscript: .\nkey: '{{.id}}'\n"))
+	s, _ := ParseSensor("", []byte("id: s\ninterval: 1m\nlang: jq\nscript: .\nkey: '{{.id}}'\n"))
 	if s.Timeout.Std() != time.Minute || s.FirstRun != FirstRunBaseline {
 		t.Errorf("timeout %v first_run %q", s.Timeout, s.FirstRun)
 	}
@@ -76,7 +76,6 @@ func TestSensorValidationErrors(t *testing.T) {
 		{"first_run enum", "id: s\ninterval: 1m\nfirst_run: maybe\n" + ok, CodeInvalidEnum, "first_run", `first_run "maybe" is not valid (one of baseline | fire)`},
 		{"lang enum", "id: s\ninterval: 1m\nlang: ruby\nscript: x\nkey: k\n", CodeInvalidEnum, "lang", `lang "ruby" is not valid`},
 		{"script required", "id: s\ninterval: 1m\nlang: python\nkey: k\n", CodeRequired, "script", "script is required when lang is python"},
-		{"id must match file name", "id: other\ninterval: 1m\n" + ok, CodeIDMismatch, "id", `does not match the file name "s"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -194,16 +193,36 @@ func TestDuration(t *testing.T) {
 }
 
 func TestSensorMarshalRoundTrip(t *testing.T) {
-	s, _ := ParseSensor([]byte(requirementsSensor))
+	s, _ := ParseSensor("github-notifications", []byte(requirementsSensor))
 	out, err := MarshalSensor(*s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(out), "first_run") || strings.Contains(string(out), "timeout") {
+	if strings.Contains(string(out), "id:") || strings.Contains(string(out), "first_run") || strings.Contains(string(out), "timeout") {
 		t.Errorf("defaults written:\n%s", out)
 	}
-	back, ds := ParseSensor(out)
+	back, ds := ParseSensor("github-notifications", out)
 	if len(ds) != 0 || mustJSON(t, back) != mustJSON(t, s) {
 		t.Errorf("round trip: %v\n%s", ds, out)
+	}
+}
+
+func TestSensorIDFromFileName(t *testing.T) {
+	const body = "interval: 1m\nlang: bash\nscript: echo\nkey: k\n"
+	s, ds := CheckSensor("poller", []byte("description: Polls things\n"+body))
+	if len(ds) != 0 || s.ID != "poller" || s.Description != "Polls things" {
+		t.Errorf("no id field: id %q desc %q diags %v", s.ID, s.Description, ds)
+	}
+	s, ds = CheckSensor("poller", []byte("id: other\n"+body))
+	if s.ID != "poller" || len(ds) != 1 || ds[0].Code != CodeIDMismatch || ds[0].Severity != SeverityWarning {
+		t.Errorf("legacy id: id %q diags %v", s.ID, ds)
+	}
+	s, ds = CheckSensor("poller", []byte("id: poller\n"+body))
+	if len(ds) != 0 {
+		t.Errorf("matching legacy id should be silent: %v", ds)
+	}
+	out, err := MarshalSensor(*s)
+	if err != nil || strings.Contains(string(out), "id:") {
+		t.Errorf("marshal must drop the id: %v\n%s", err, out)
 	}
 }

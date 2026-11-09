@@ -31,6 +31,7 @@ const (
 // flowSkeleton is the draft of a new flow when the request carries no YAML.
 const flowSkeleton = `# New flow. Describe what it should do and the assistant fills this in.
 id: new-flow
+description: What this flow does, in one line.
 enabled: false
 dry_run: true
 subscribe: []
@@ -116,7 +117,7 @@ func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID s
 				Message: fmt.Sprintf("a prompt named %q is already saved and Save will not overwrite it: use a new name", files[i].Name)})
 		}
 	}
-	flow, fds := spec.CheckFlow("", []byte(yaml), refs)
+	flow, fds := spec.CheckFlow(target, []byte(yaml), refs)
 	for i := range fds {
 		fds[i].File = FlowDraftFile
 	}
@@ -124,12 +125,6 @@ func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID s
 	if flow != nil {
 		if spec.ValidID(flow.ID) {
 			flowID = flow.ID
-		}
-		if target != "" && flow.ID != target {
-			ds = append(ds, spec.Diagnostic{
-				File: FlowDraftFile, Path: "id", Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
-				Message: fmt.Sprintf("id %q differs from the flow being edited (%q): saving would create a different flow", flow.ID, target),
-			})
 		}
 	}
 	return flow, flowID, ds, files
@@ -288,9 +283,10 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("This is a private draft (session %s). You have no file or shell access: you work only through the hal tools draft_read, draft_write, draft_test and validate. Your job is the draft `%s`, plus new prompt files `%s/<name>.md` (draft_write with that path).\n\n", sessionID, FlowDraftFile, PromptsDir)
 
 	if targetID != "" {
-		w("You are EDITING the existing flow `%s`. Keep `id: %s` unchanged: the user saves the draft over that flow.\n\n", targetID, targetID)
+		w("You are EDITING the existing flow `%s`. Do not add an `id:` line: the flow's name is its file name and the user saves the draft over it.\n\n", targetID)
 	} else {
-		w("You are creating a NEW flow. Pick a short kebab-case `id` (letters, digits, `-` and `_`, at most 64 characters) and keep it stable for the rest of the session: the user may already have the editor open on it.\n\n")
+		w("You are creating a NEW flow. Pick a short kebab-case `id` (letters, digits, `-` and `_`, at most 64 characters) and keep it stable for the rest of the session: the user may already have the editor open on it. It becomes the file name and is not stored in the file.\n")
+		w("Write a short `description:` (one line, what the flow does); the user sees it under the name.\n\n")
 	}
 
 	w("## Rules\n\n")
@@ -322,7 +318,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("Look at them before you write field names: use the fields that are really there.\n\n")
 
 	w("## The flow file\n\n")
-	w("```yaml\nid: triage-github\nenabled: false\ndry_run: true\nsubscribe: [github-notifications]\nnodes:\n  - id: only-reviews\n    type: transform\n    steps:\n      - type: filter\n        conditions:\n          - {field: reason, op: equals, value: review_requested}\n  - id: note\n    type: inbox\n    title: \"Review requested: {{.input.subject.title}}\"\n    priority: normal\n    summary_md: \"{{.input.repository.full_name}}\"\n    ui: {x: 400, y: 120}\nedges:\n  - {from: only-reviews, to: note}\n```\n\n")
+	w("```yaml\nid: triage-github        # new flows only: the file name, not stored\ndescription: Review requests become inbox notes.\nenabled: false\ndry_run: true\nsubscribe: [github-notifications]\nnodes:\n  - id: only-reviews\n    type: transform\n    steps:\n      - type: filter\n        conditions:\n          - {field: reason, op: equals, value: review_requested}\n  - id: note\n    type: inbox\n    title: \"Review requested: {{.input.subject.title}}\"\n    priority: normal\n    summary_md: \"{{.input.repository.full_name}}\"\n    ui: {x: 400, y: 120}\nedges:\n  - {from: only-reviews, to: note}\n```\n\n")
 	w("- `subscribe` lists sensor ids (from `%s/sensors/`); each event of those sensors starts one run of the flow at its entry nodes (nodes with no incoming edge).\n", ReferenceDir)
 	w("- Every `edges` entry is `{from: node, port: out, to: node}`; `port` defaults to `out`. A node can fail onto the `error` port. A port without edges ends the branch.\n")
 	w("- Give every node a `ui: {x, y}` position so the graph reads left to right (about 300 apart horizontally, 140 vertically); nodes without a position are laid out automatically.\n")

@@ -46,7 +46,9 @@ var paramNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 // described by Params (name to parameter) or, as an override, by a raw JSON
 // Schema; at most one of the two is set.
 type Tool struct {
-	ID          string               `yaml:"id" json:"id"`
+	// ID is the file name stem; see Sensor.ID.
+	ID          string               `yaml:"-" json:"id,omitempty"`
+	LegacyID    string               `yaml:"id,omitempty" json:"-"`
 	Description string               `yaml:"description" json:"description"`
 	Params      map[string]ToolParam `yaml:"params,omitempty" json:"params,omitempty"`
 	// Schema is a raw JSON Schema (an object schema) replacing Params.
@@ -246,20 +248,20 @@ func (t *Tool) EffectiveSchema() map[string]any {
 }
 
 // ParseTool parses a tool file.
-func ParseTool(b []byte) (*Tool, []Diagnostic) {
+func ParseTool(name string, b []byte) (*Tool, []Diagnostic) {
 	t, ds := parseYAMLFile[Tool](b)
 	if t != nil {
 		t.ApplyDefaults()
+		ds = append(ds, adoptName(KindTool, name, &t.ID, &t.LegacyID)...)
 	}
 	return t, ds
 }
 
 // CheckTool parses and validates tool bytes; see CheckSensor for name.
 func CheckTool(name string, b []byte) (*Tool, []Diagnostic) {
-	t, ds := ParseTool(b)
+	t, ds := ParseTool(name, b)
 	if t != nil {
 		ds = append(ds, ValidateTool(t)...)
-		ds = append(ds, checkIDMatchesName(KindTool, name, t.ID)...)
 	}
 	return t, withFile(KindTool.Rel(name), ds)
 }
@@ -283,7 +285,7 @@ func ValidateTool(t *Tool) []Diagnostic {
 	g := t.Clone()
 	g.ApplyDefaults()
 	c := &collector{}
-	c.id("id", "id", g.ID)
+	c.optionalID(g.ID)
 	if strings.TrimSpace(g.Description) == "" {
 		c.errorf(CodeRequired, "description", "description is required: the agent reads it to decide when to call the tool")
 	}

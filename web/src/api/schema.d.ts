@@ -358,6 +358,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/tools/{id}/rename": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rename a tool
+     * @description Renames the file (the file name is the id), moves its env file, and rewrites references to it; agent nodes' `tools` entries in flows are rewritten to the new id.
+     *     Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+     *     `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+     */
+    post: operations["renameTool"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/tools/{id}/test": {
     parameters: {
       query?: never;
@@ -505,6 +529,30 @@ export interface paths {
      *     until retention pruning.
      */
     delete: operations["deleteSensor"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/sensors/{id}/rename": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rename a sensor
+     * @description Renames the file (the file name is the id), moves its env file, and rewrites references to it; dedup state, last success, paused state and reset info move with it; `flows` subscribe entries are rewritten to the new id.
+     *     Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+     *     `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+     */
+    post: operations["renameSensor"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -880,6 +928,30 @@ export interface paths {
      * @description Removes the file. Version snapshots and past runs stay until retention pruning.
      */
     delete: operations["deleteFlow"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/flows/{id}/rename": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rename a flow
+     * @description Renames the file (the file name is the id), moves its env file, and rewrites references to it; run history keeps pointing at the old id.
+     *     Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+     *     `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+     */
+    post: operations["renameFlow"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -1543,6 +1615,30 @@ export interface paths {
      * @description Flows that select it get an `unknown_prompt` diagnostic.
      */
     delete: operations["deletePrompt"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/prompts/{name}/rename": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["PromptName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rename a prompt
+     * @description Renames the file (the file name is the id), moves its env file, and rewrites references to it; agent nodes' `prompt` references in flows are rewritten to the new name.
+     *     Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+     *     `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+     */
+    post: operations["renamePrompt"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -2541,12 +2637,19 @@ export interface components {
       /** @description 1-based YAML line, when known. */
       line?: number;
     };
+    RenameRequest: {
+      new_id: components["schemas"]["Slug"];
+      expected_hash: components["schemas"]["Hash"];
+    };
     /**
-     * @description Sensor definition (§5). At most one of `interval` and `cron`; with neither the sensor is manual-only: the
+     * @description Sensor definition (§5). `id` is the file name: it is returned by the API but never written to the file (an old
+     *     `id:` line is ignored on read). At most one of `interval` and `cron`; with neither the sensor is manual-only: the
      *     scheduler never polls it and only "Run now" does. `exec` takes `command`; every other `lang` takes `script`.
      */
     Sensor: {
-      id: components["schemas"]["Slug"];
+      id?: components["schemas"]["Slug"];
+      /** @description Free text shown under the name; optional. */
+      description?: string;
       interval?: components["schemas"]["Duration"];
       /** @example *\/5 9-18 * * 1-5 */
       cron?: string;
@@ -2905,9 +3008,11 @@ export interface components {
       /** @description Source port; omitted means `out`. */
       port?: string;
     };
-    /** @description Flow definition (§6). */
+    /** @description Flow definition (§6). `id` is the file name; it is never written to the file. */
     Flow: {
-      id: components["schemas"]["Slug"];
+      id?: components["schemas"]["Slug"];
+      /** @description Free text shown under the name; optional. */
+      description?: string;
       /**
        * @description A flow without `enabled` is disabled; new flows must opt in.
        * @default false
@@ -2923,7 +3028,7 @@ export interface components {
       edges?: components["schemas"]["Edge"][];
     };
     /**
-     * @description Prompt file (§7.1) as JSON: the front matter (`name`, `description`, `output`) plus the template `body`.
+     * @description Prompt file (§7.1) as JSON: the front matter (`description`, `output`) plus the template `body`. `name` is the file name.
      *     `output: note` expects the structured note schema; `none` is free text.
      */
     Prompt: {
@@ -3103,6 +3208,7 @@ export interface components {
     };
     /** @description Exactly one of `yaml` and `sensor`. */
     SensorCreateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       sensor?: components["schemas"]["Sensor"];
     } & (unknown | unknown);
@@ -3173,7 +3279,7 @@ export interface components {
      *     exit is a tool error carrying the stderr tail. `exec` takes `command`; every other `lang` takes `script`.
      */
     Tool: {
-      id: components["schemas"]["Slug"];
+      id?: components["schemas"]["Slug"];
       /** @description What the tool does and when to use it; the agent reads this. */
       description: string;
       params?: {
@@ -3217,6 +3323,7 @@ export interface components {
     };
     /** @description Exactly one of `yaml` and `tool`. */
     ToolCreateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       tool?: components["schemas"]["Tool"];
     } & (unknown | unknown);
@@ -3326,6 +3433,7 @@ export interface components {
     };
     /** @description Exactly one of `yaml` and `flow`. */
     FlowCreateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       flow?: components["schemas"]["Flow"];
     } & (unknown | unknown);
@@ -3416,6 +3524,7 @@ export interface components {
     };
     /** @description Exactly one of `markdown` and `prompt`. */
     PromptCreateRequest: {
+      name?: components["schemas"]["Slug"];
       markdown?: string;
       prompt?: components["schemas"]["Prompt"];
     } & (unknown | unknown);
@@ -5648,6 +5757,40 @@ export interface operations {
       default: components["responses"]["Error"];
     };
   };
+  renameTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["ToolId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenameRequest"];
+      };
+    };
+    responses: {
+      /** @description Renamed; the item under its new id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ToolDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
   testTool: {
     parameters: {
       query?: never;
@@ -5936,6 +6079,40 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  renameSensor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["SensorId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenameRequest"];
+      };
+    };
+    responses: {
+      /** @description Renamed; the item under its new id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SensorDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };
@@ -6530,6 +6707,40 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  renameFlow: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["FlowId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenameRequest"];
+      };
+    };
+    responses: {
+      /** @description Renamed; the item under its new id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FlowDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };
@@ -7544,6 +7755,40 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  renamePrompt: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["PromptName"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenameRequest"];
+      };
+    };
+    responses: {
+      /** @description Renamed; the item under its new id. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PromptDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };

@@ -1,6 +1,6 @@
 # Credential-free demo: demo-ticker -> drop noise -> route by severity -> inbox.
 # The first two nodes are transform nodes: plain-language steps instead of jq.
-id: demo
+description: "Credential-free demo: filter, route by severity, inbox."
 enabled: true
 dry_run: false
 subscribe: [demo-ticker]

@@ -1,5 +1,5 @@
 # Linear changes on your assigned issues: skip closed issues, then a read-only agent writes an inbox note.
-id: linear-triage
+description: Triages Linear issues assigned to you into inbox notes.
 enabled: false
 dry_run: true
 subscribe: [linear-assigned]

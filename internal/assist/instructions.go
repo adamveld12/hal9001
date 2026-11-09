@@ -17,6 +17,7 @@ const (
 // skeleton is the draft of a new sensor when the request carries no YAML.
 const skeleton = `# New sensor. Describe what it should watch and the assistant fills this in.
 id: new-sensor
+description: What this sensor watches, in one line.
 interval: 5m
 lang: bash
 script: |
@@ -41,9 +42,10 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("draft (session %s). You have no file or shell access: you work only through the hal tools draft_read, draft_write, draft_test and validate. Your whole job is the draft `%s`.\n\n", sessionID, SensorDraftFile)
 
 	if targetID != "" {
-		w("You are EDITING the existing sensor `%s`. Keep `id: %s` unchanged: the user saves the draft over that sensor.\n\n", targetID, targetID)
+		w("You are EDITING the existing sensor `%s`. Do not add an `id:` line: the sensor's name is its file name and the user saves the draft over it.\n\n", targetID)
 	} else {
-		w("You are creating a NEW sensor. Pick a short kebab-case `id` (letters, digits, `-` and `_`, at most 64 characters).\n\n")
+		w("You are creating a NEW sensor. Pick a short kebab-case `id` (letters, digits, `-` and `_`, at most 64 characters); it becomes the file name and is not stored in the file.\n")
+		w("Write a short `description:` (one line, what the sensor watches); the user sees it under the name.\n\n")
 	}
 
 	w("## Rules\n\n")
@@ -65,7 +67,7 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("Nothing is recorded: no sensor run, no events. Values of the credentials appear as `«NAME»`. It asks the user first when the script changed since the user last tested or approved it.\n\n")
 
 	w("## The sensor file\n\n")
-	w("```yaml\nid: github-notifications\ninterval: 2m            # or: cron: \"*/5 9-18 * * 1-5\"  (at most one of the two)\nlang: bash\nscript: |\n  gh api notifications --paginate -q '.[]'\nkey: \"{{.id}}:{{.updated_at}}\"\nfirst_run: baseline\ntimeout: 60s\n```\n\n")
+	w("```yaml\nid: github-notifications        # new sensors only: the file name, not stored\ndescription: GitHub notifications for me.\ninterval: 2m            # or: cron: \"*/5 9-18 * * 1-5\"  (at most one of the two)\nlang: bash\nscript: |\n  gh api notifications --paginate -q '.[]'\nkey: \"{{.id}}:{{.updated_at}}\"\nfirst_run: baseline\ntimeout: 60s\n```\n\n")
 	w("| Field | Meaning |\n|---|---|\n")
 	w("| `id` | Names the sensor and its file. |\n")
 	w("| `interval` / `cron` | At most one; with neither the sensor only runs on request (Run now). `interval` is a Go duration (`30s`, `2m`, `1h`; at least `1s`). `cron` has 5 fields (minute hour day-of-month month day-of-week) in local time. |\n")

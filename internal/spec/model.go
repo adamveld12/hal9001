@@ -172,13 +172,17 @@ type AuthModule struct {
 // Sensor is sensors/<id>.yaml (REQUIREMENTS §5). At most one of Interval and
 // Cron is set; with neither the sensor is manual-only (never scheduled).
 type Sensor struct {
-	ID       string   `yaml:"id" json:"id"`
-	Interval Duration `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Cron     string   `yaml:"cron,omitempty" json:"cron,omitempty"`
-	Lang     string   `yaml:"lang" json:"lang"`
-	Script   string   `yaml:"script,omitempty" json:"script,omitempty"`
-	Command  []string `yaml:"command,omitempty" json:"command,omitempty"`
-	Cwd      string   `yaml:"cwd,omitempty" json:"cwd,omitempty"`
+	// ID is the file name stem; it is never written to the file. LegacyID
+	// receives an old-style id: field on read and is dropped by ParseSensor.
+	ID          string   `yaml:"-" json:"id,omitempty"`
+	LegacyID    string   `yaml:"id,omitempty" json:"-"`
+	Description string   `yaml:"description,omitempty" json:"description"`
+	Interval    Duration `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Cron        string   `yaml:"cron,omitempty" json:"cron,omitempty"`
+	Lang        string   `yaml:"lang" json:"lang"`
+	Script      string   `yaml:"script,omitempty" json:"script,omitempty"`
+	Command     []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Cwd         string   `yaml:"cwd,omitempty" json:"cwd,omitempty"`
 	// Key is a text/template over one item producing its dedup key.
 	Key      string   `yaml:"key" json:"key"`
 	FirstRun string   `yaml:"first_run,omitempty" json:"first_run"`
@@ -187,7 +191,10 @@ type Sensor struct {
 
 // Flow is flows/<id>.yaml (REQUIREMENTS §6).
 type Flow struct {
-	ID            string   `yaml:"id" json:"id"`
+	// ID is the file name stem; see Sensor.ID.
+	ID            string   `yaml:"-" json:"id,omitempty"`
+	LegacyID      string   `yaml:"id,omitempty" json:"-"`
+	Description   string   `yaml:"description,omitempty" json:"description"`
 	Enabled       bool     `yaml:"enabled" json:"enabled"`
 	DryRun        bool     `yaml:"dry_run" json:"dry_run"`
 	Subscribe     []string `yaml:"subscribe" json:"subscribe"`
@@ -308,7 +315,8 @@ type Edge struct {
 // Prompt is prompts/<name>.md: YAML frontmatter plus a template body
 // (REQUIREMENTS §7.1).
 type Prompt struct {
-	Name        string `yaml:"name" json:"name"`
+	// Name is the file name stem; a frontmatter name: is ignored and never written.
+	Name        string `yaml:"name,omitempty" json:"name"`
 	Description string `yaml:"description,omitempty" json:"description"`
 	// Output is OutputNote (structured inbox schema, §7.4) or OutputNone.
 	Output string `yaml:"output,omitempty" json:"output"`

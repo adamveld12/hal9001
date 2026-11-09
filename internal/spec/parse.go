@@ -35,19 +35,21 @@ func ParseConfig(b []byte) (*Config, []Diagnostic) {
 }
 
 // ParseSensor parses a sensor file.
-func ParseSensor(b []byte) (*Sensor, []Diagnostic) {
+func ParseSensor(name string, b []byte) (*Sensor, []Diagnostic) {
 	s, ds := parseYAMLFile[Sensor](b)
 	if s != nil {
 		s.ApplyDefaults()
+		ds = append(ds, adoptName(KindSensor, name, &s.ID, &s.LegacyID)...)
 	}
 	return s, ds
 }
 
 // ParseFlow parses a flow file.
-func ParseFlow(b []byte) (*Flow, []Diagnostic) {
+func ParseFlow(name string, b []byte) (*Flow, []Diagnostic) {
 	f, ds := parseYAMLFile[Flow](b)
 	if f != nil {
 		f.ApplyDefaults()
+		ds = append(ds, adoptName(KindFlow, name, &f.ID, &f.LegacyID)...)
 	}
 	return f, ds
 }
@@ -62,13 +64,12 @@ func CheckConfig(b []byte) (*Config, []Diagnostic) {
 }
 
 // CheckSensor parses and validates sensor bytes. name is the file stem the
-// sensor is (or will be) stored under; the sensor's id must equal it. An empty
-// name skips that check.
+// sensor is (or will be) stored under; it becomes the sensor's id. An empty
+// name leaves the id to a legacy id: field, or empty.
 func CheckSensor(name string, b []byte) (*Sensor, []Diagnostic) {
-	s, ds := ParseSensor(b)
+	s, ds := ParseSensor(name, b)
 	if s != nil {
 		ds = append(ds, ValidateSensor(s)...)
-		ds = append(ds, checkIDMatchesName(KindSensor, name, s.ID)...)
 	}
 	return s, withFile(KindSensor.Rel(name), ds)
 }
@@ -76,10 +77,9 @@ func CheckSensor(name string, b []byte) (*Sensor, []Diagnostic) {
 // CheckFlow parses and validates flow bytes; see CheckSensor for name. refs
 // may be nil to skip reference checks.
 func CheckFlow(name string, b []byte, refs *Refs) (*Flow, []Diagnostic) {
-	f, ds := ParseFlow(b)
+	f, ds := ParseFlow(name, b)
 	if f != nil {
 		ds = append(ds, ValidateFlow(f, refs)...)
-		ds = append(ds, checkIDMatchesName(KindFlow, name, f.ID)...)
 	}
 	return f, withFile(KindFlow.Rel(name), ds)
 }
@@ -93,13 +93,24 @@ func CheckPrompt(name string, b []byte) (*Prompt, []Diagnostic) {
 	return p, withFile(KindPrompt.Rel(name), ds)
 }
 
-func checkIDMatchesName(k Kind, name, id string) []Diagnostic {
-	if name == "" || id == "" || id == name {
+// adoptName sets the id of a parsed file from its file name. A legacy id:
+// field is ignored (and not kept, so the next write drops it); when no name is
+// given it supplies the id, and when it disagrees with the name that is a
+// warning.
+func adoptName(k Kind, name string, id, legacy *string) []Diagnostic {
+	l := *legacy
+	*legacy = ""
+	if name == "" {
+		*id = l
+		return nil
+	}
+	*id = name
+	if l == "" || l == name {
 		return nil
 	}
 	return []Diagnostic{{
-		Path: "id", Severity: SeverityError, Code: CodeIDMismatch,
-		Message: fmt.Sprintf("id %q does not match the file name %q (%s): rename the file or change the id", id, name, k.Rel(name)),
+		Path: "id", Severity: SeverityWarning, Code: CodeIDMismatch,
+		Message: fmt.Sprintf("id %q is ignored: the file name %q (%s) is the id; remove the id line", l, name, k.Rel(name)),
 	}}
 }
 
@@ -123,7 +134,7 @@ func ParsePrompt(name string, b []byte) (*Prompt, []Diagnostic) {
 	p := &Prompt{Name: name, Body: text}
 	first, rest, _ := strings.Cut(text, "\n")
 	if strings.TrimRight(first, " \t\r") != "---" {
-		return p, []Diagnostic{{Severity: SeverityWarning, Code: CodeRequired, Message: "prompt has no frontmatter (---, then name, description, output, then ---)"}}
+		return p, []Diagnostic{{Severity: SeverityWarning, Code: CodeRequired, Message: "prompt has no frontmatter (---, then description, output, then ---)"}}
 	}
 	var fm strings.Builder
 	var ds []Diagnostic
@@ -153,15 +164,19 @@ func ParsePrompt(name string, b []byte) (*Prompt, []Diagnostic) {
 		ds = append(ds, d...)
 		if !fatal {
 			p.Name, p.Description, p.Output = meta.Name, meta.Description, meta.Output
+			if name != "" {
+				p.Name = ""
+				if meta.Name != "" && meta.Name != name {
+					ds = append(ds, Diagnostic{
+						Path: "name", Severity: SeverityWarning, Code: CodeIDMismatch,
+						Message: fmt.Sprintf("frontmatter name %q is ignored: the file name %q is the name; remove the name line", meta.Name, name),
+					})
+				}
+			}
 		}
 	}
 	if p.Name == "" {
 		p.Name = name
-	} else if name != "" && p.Name != name {
-		ds = append(ds, Diagnostic{
-			Path: "name", Severity: SeverityWarning, Code: CodeIDMismatch,
-			Message: fmt.Sprintf("frontmatter name %q differs from the file name %q; agent nodes select prompts by file name", p.Name, name),
-		})
 	}
 	if p.Output == "" {
 		p.Output = OutputNone
@@ -174,6 +189,7 @@ func MarshalPrompt(p Prompt) ([]byte, error) {
 	if p.Output == OutputNone {
 		p.Output = ""
 	}
+	p.Name = "" // the file name is the name
 	fm, err := encodeYAML(p)
 	if err != nil {
 		return nil, err

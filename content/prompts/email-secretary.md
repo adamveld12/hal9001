@@ -1,5 +1,4 @@
 ---
-name: email-secretary
 description: Triage an unread email and draft a reply
 output: note
 ---

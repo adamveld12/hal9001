@@ -1,6 +1,6 @@
 # Mentions of you (search.messages) and direct messages to you (conversations.list/history).
 # Needs SLACK_USER_TOKEN (xoxp; search:read, im:history, im:read, users:read).
-id: slack-mentions-dms
+description: Slack mentions and direct messages.
 interval: 2m
 lang: bash
 script: |

@@ -1,5 +1,5 @@
 # Credential-free sensor for demos and tests: emits the same three sample items on every poll.
-id: demo-ticker
+description: Fake items for the credential-free demo flow.
 interval: 5m
 lang: bash
 script: |

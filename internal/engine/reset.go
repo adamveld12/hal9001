@@ -3,10 +3,41 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"hal9001/internal/core"
 	"hal9001/internal/store"
 )
+
+// RenameSensorState moves the state a sensor keeps between polls to newID (see
+// store.RenameSensorState) and its state directory. It holds the poll slot of
+// both ids, so it fails with core.ErrInvalidState while a poll is running.
+func (e *Engine) RenameSensorState(ctx context.Context, oldID, newID string) error {
+	e.pollMu.Lock()
+	if e.polling[oldID] || e.polling[newID] {
+		e.pollMu.Unlock()
+		return fmt.Errorf("%w: a poll of sensor %q is running; try again when it has finished", core.ErrInvalidState, oldID)
+	}
+	e.polling[oldID], e.polling[newID] = true, true
+	e.pollMu.Unlock()
+	defer func() {
+		e.pollMu.Lock()
+		delete(e.polling, oldID)
+		delete(e.polling, newID)
+		e.pollMu.Unlock()
+	}()
+	oldDir, newDir := filepath.Join(e.data, "state", "_sensors", oldID), filepath.Join(e.data, "state", "_sensors", newID)
+	if _, err := os.Stat(oldDir); err == nil {
+		if err := os.RemoveAll(newDir); err != nil {
+			return fmt.Errorf("engine: clear state dir of %s: %w", newID, err)
+		}
+		if err := os.Rename(oldDir, newDir); err != nil {
+			return fmt.Errorf("engine: move state dir: %w", err)
+		}
+	}
+	return e.st.RenameSensorState(e.dbCtx, oldID, newID)
+}
 
 // ResetSensor clears everything a sensor remembers between polls: its dedup
 // keys and last_success_at (see store.ResetSensor), and records who did it. Past

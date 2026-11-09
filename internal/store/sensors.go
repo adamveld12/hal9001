@@ -254,6 +254,38 @@ func (s *Store) ResetSensor(ctx context.Context, sensorID, by string) (SensorSta
 	return st, cleared, err
 }
 
+// RenameSensorState moves the operational state of a sensor to a new id in one
+// transaction: its dedup keys and its sensor_state row (last success, paused
+// and reset info). Events and sensor runs keep the id they were recorded with.
+// Rows already stored under newID (left by an earlier sensor of that name) are
+// replaced.
+func (s *Store) RenameSensorState(ctx context.Context, oldID, newID string) error {
+	if oldID == "" || newID == "" || oldID == newID {
+		return fmt.Errorf("%w: rename needs two different sensor ids", ErrInvalid)
+	}
+	return s.write(ctx, func(t *txn) error {
+		for _, q := range []string{
+			`DELETE FROM seen_keys WHERE sensor_id = ?`,
+			`DELETE FROM sensor_state WHERE sensor_id = ?`,
+		} {
+			if _, err := t.ExecContext(ctx, q, newID); err != nil {
+				return fmt.Errorf("store: clear state of %s: %w", newID, err)
+			}
+		}
+		for _, q := range []string{
+			`UPDATE seen_keys SET sensor_id = ? WHERE sensor_id = ?`,
+			`UPDATE sensor_state SET sensor_id = ? WHERE sensor_id = ?`,
+		} {
+			if _, err := t.ExecContext(ctx, q, newID, oldID); err != nil {
+				return fmt.Errorf("store: move state of %s: %w", oldID, err)
+			}
+		}
+		t.note(ResSensorState, oldID, OpDelete)
+		t.note(ResSensorState, newID, OpUpdate)
+		return nil
+	})
+}
+
 // SetSensorPaused pauses or resumes one sensor and returns its new state.
 // Both directions are idempotent: pausing an already paused sensor keeps the
 // original PausedAt and PausedBy; resuming a sensor that is not paused changes

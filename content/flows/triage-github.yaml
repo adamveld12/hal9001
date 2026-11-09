@@ -1,5 +1,5 @@
 # Review requests: small PRs get an agent review note, large ones go straight to the inbox.
-id: triage-github
+description: Sorts GitHub notifications; an agent reviews pull requests.
 enabled: false
 dry_run: true
 subscribe: [github-notifications]

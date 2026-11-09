@@ -69,6 +69,8 @@ func (d *engineDouble) ResetSensor(ctx context.Context, sensorID, principal stri
 	return d.resetSensor(ctx, sensorID, principal, opts)
 }
 
+func (d *engineDouble) RenameSensorState(context.Context, string, string) error { return nil }
+
 func (d *engineDouble) PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error) {
 	if d.pauseSensor == nil {
 		return store.SensorState{}, errUnscripted

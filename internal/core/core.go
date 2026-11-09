@@ -145,6 +145,10 @@ type Engine interface {
 	// ResetSensor clears the sensor's dedup keys and incremental state, records
 	// principal as who did it, and optionally runs the sensor at once.
 	ResetSensor(ctx context.Context, sensorID, principal string, opts ResetOptions) (ResetResult, error)
+	// RenameSensorState moves everything the sensor remembers (dedup keys, last success, paused and reset
+	// info, its state dir) from oldID to newID. Recorded events and runs keep oldID. core.ErrInvalidState
+	// while a poll of oldID is running (nothing is changed).
+	RenameSensorState(ctx context.Context, oldID, newID string) error
 	// PauseSensor stops the scheduler polling one sensor (persisted; idempotent).
 	// Poll now and event injection still work. principal is recorded as who paused it.
 	PauseSensor(ctx context.Context, sensorID, principal string) (store.SensorState, error)
@@ -369,6 +373,8 @@ type Assist interface {
 	FlowCreated(ctx context.Context, flowID string) error
 	// ToolCreated is SensorCreated for tool sessions authoring a new custom tool.
 	ToolCreated(ctx context.Context, toolID string) error
+	// TargetRenamed points the open sessions on the file oldID of kind (store.AssistTarget*) at newID.
+	TargetRenamed(ctx context.Context, kind, oldID, newID string) error
 }
 
 // DraftConflictError is UpdateDraft's hash mismatch (409 conflict).

@@ -527,7 +527,7 @@ func (s *Server) getFlowVersion(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	f, _ := spec.ParseFlow([]byte(v.YAML))
+	f, _ := spec.ParseFlow(id, []byte(v.YAML))
 	writeJSON(w, http.StatusOK, flowVersionView{
 		flowVersionSummaryView: flowVersionSummaryView{FlowID: v.FlowID, Hash: v.Hash, CreatedAt: utc(v.FirstSeen), RunCount: counts[hash]},
 		YAML:                   v.YAML, Flow: flowValue(f),

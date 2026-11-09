@@ -145,7 +145,7 @@ func (s *Server) listFlowNodeSamples(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	flow, _ := spec.ParseFlow(raw)
+	flow, _ := spec.ParseFlow(flowID, raw)
 	items := []flowSampleView{}
 	if flow != nil {
 		// A node that is not in the saved flow yet has no incoming edges there, so it is sampled like an entry node.

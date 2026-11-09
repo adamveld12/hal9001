@@ -1,5 +1,5 @@
 # Slack mentions and DMs: drop empty and bot noise, then a read-only agent writes an inbox note with a draft reply.
-id: triage-slack
+description: Triages Slack mentions and DMs and drafts replies.
 enabled: false
 dry_run: true
 subscribe: [slack-mentions-dms]

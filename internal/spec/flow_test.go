@@ -83,7 +83,7 @@ func TestRequirementsFlowLoadsClean(t *testing.T) {
 }
 
 func TestFlowDefaults(t *testing.T) {
-	f, _ := ParseFlow([]byte(requirementsFlow))
+	f, _ := ParseFlow("", []byte(requirementsFlow))
 	filter, classify, review, note := f.Nodes[0], f.Nodes[1], f.Nodes[2], f.Nodes[3]
 	if filter.Timeout.Std() != 60*time.Second {
 		t.Errorf("command timeout = %v, want 60s", filter.Timeout)
@@ -107,7 +107,7 @@ func TestFlowDefaults(t *testing.T) {
 		t.Errorf("edge port default = %q", f.Edges[0].Port)
 	}
 
-	g, _ := ParseFlow([]byte(`
+	g, _ := ParseFlow("", []byte(`
 id: g
 subscribe: [s]
 nodes:
@@ -327,11 +327,6 @@ func TestFlowValidationErrors(t *testing.T) {
 			code: CodeInvalidID, path: "nodes[0].id", node: "a b", msg: `node id "a b" is invalid`,
 		},
 		{
-			name: "flow id must match file name",
-			yaml: strings.Replace(flowWith(cmd("a"), "  []\n"), "id: t\n", "id: other\n", 1),
-			code: CodeIDMismatch, path: "id", msg: `id "other" does not match the file name "t"`,
-		},
-		{
 			name: "unknown field is reported with its location",
 			yaml: flowWith("  - {id: a, type: command, lang: jq, script: '.', timout: 5s}\n", "  []\n"),
 			code: CodeUnknownField, path: "nodes[0].timout", msg: `unknown field "timout"`,
@@ -384,7 +379,7 @@ func TestFlowValidationErrors(t *testing.T) {
 }
 
 func TestYAMLTypeErrorCarriesLine(t *testing.T) {
-	_, ds := ParseFlow([]byte("id: t\nnodes:\n  - {id: a, type: command, lang: jq, script: '.',\n     timeout: soon}\n"))
+	_, ds := ParseFlow("", []byte("id: t\nnodes:\n  - {id: a, type: command, lang: jq, script: '.',\n     timeout: soon}\n"))
 	if len(ds) != 1 || ds[0].Line != 4 {
 		t.Fatalf("want one diagnostic on line 4, got %+v", ds)
 	}
@@ -429,7 +424,7 @@ func TestNilRefsSkipReferenceChecks(t *testing.T) {
 }
 
 func TestMarshalFlowRoundTrip(t *testing.T) {
-	f, ds := ParseFlow([]byte(requirementsFlow))
+	f, ds := ParseFlow("triage-github", []byte(requirementsFlow))
 	if len(ds) != 0 {
 		t.Fatal(ds)
 	}
@@ -438,7 +433,7 @@ func TestMarshalFlowRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(out)
-	for _, bad := range []string{"timeout: 1m", "max_concurrent", "approve: proposal", "port: out"} {
+	for _, bad := range []string{"\nid:", "id: triage-github", "timeout: 1m", "max_concurrent", "approve: proposal", "port: out"} {
 		if strings.Contains(text, bad) {
 			t.Errorf("defaults leaked into saved file (%q):\n%s", bad, text)
 		}
@@ -448,16 +443,16 @@ func TestMarshalFlowRoundTrip(t *testing.T) {
 			t.Errorf("saved file lacks %q:\n%s", want, text)
 		}
 	}
-	// Field order: id, enabled, dry_run, subscribe, nodes, edges.
+	// Field order: enabled, dry_run, subscribe, nodes, edges.
 	last := -1
-	for _, key := range []string{"\nid:", "\nenabled:", "\ndry_run:", "\nsubscribe:", "\nnodes:", "\nedges:"} {
+	for _, key := range []string{"\nenabled:", "\ndry_run:", "\nsubscribe:", "\nnodes:", "\nedges:"} {
 		i := strings.Index("\n"+text, key)
 		if i <= last {
 			t.Errorf("key %q out of order in:\n%s", key, text)
 		}
 		last = i
 	}
-	g, ds := ParseFlow(out)
+	g, ds := ParseFlow("triage-github", out)
 	if len(ds) != 0 {
 		t.Fatalf("saved file does not parse: %v\n%s", ds, text)
 	}
@@ -475,8 +470,30 @@ func TestMarshalFlowKeepsDirCwdAsString(t *testing.T) {
 	if !strings.Contains(string(out), "cwd: ~/code") {
 		t.Errorf("dir cwd should be a plain string:\n%s", out)
 	}
-	g, ds := ParseFlow(out)
+	g, ds := ParseFlow("", out)
 	if len(ds) != 0 || g.Nodes[0].Cwd == nil || *g.Nodes[0].Cwd != (Cwd{Mode: CwdDir, Path: "~/code"}) {
 		t.Errorf("round trip: %v %+v", ds, g)
+	}
+}
+
+func TestFlowIDFromFileName(t *testing.T) {
+	f, ds := CheckFlow("renamed", []byte(requirementsFlow), nil)
+	if f.ID != "renamed" {
+		t.Errorf("id = %q, want the file name", f.ID)
+	}
+	var warn bool
+	for _, d := range ds {
+		if d.Code == CodeIDMismatch && d.Severity == SeverityWarning && d.Path == "id" {
+			warn = true
+		}
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error %v", d)
+		}
+	}
+	if !warn {
+		t.Errorf("want an id_mismatch warning for the legacy id field, got %v", ds)
+	}
+	if out, _ := MarshalFlow(*f); strings.Contains(string(out), "\nid:") || strings.HasPrefix(string(out), "id:") {
+		t.Errorf("marshal wrote an id line:\n%s", out)
 	}
 }

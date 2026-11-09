@@ -1,4 +1,3 @@
-id: now
 description: Current date and time, optionally in a given IANA timezone (for example Europe/Berlin). Returns ISO 8601 text.
 params:
   timezone:

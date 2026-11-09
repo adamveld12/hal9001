@@ -46,6 +46,13 @@ func (c *collector) id(path, what, id string) bool {
 	return false
 }
 
+// optionalID checks a file-derived id; an empty one (a draft not yet named) is fine.
+func (c *collector) optionalID(id string) {
+	if id != "" {
+		c.id("id", "id", id)
+	}
+}
+
 func (c *collector) enum(path, val string, allowed []string, required bool) {
 	if val == "" {
 		if required {
@@ -271,7 +278,7 @@ func ValidateSensor(s *Sensor) []Diagnostic {
 	g := s.Clone()
 	g.ApplyDefaults()
 	c := &collector{}
-	c.id("id", "id", g.ID)
+	c.optionalID(g.ID)
 	if _, err := g.Schedule(); err != nil {
 		path := "interval"
 		if g.Cron != "" {
@@ -348,7 +355,7 @@ func ValidateFlow(f *Flow, refs *Refs) []Diagnostic {
 	g := f.Clone()
 	g.ApplyDefaults()
 	c := &collector{}
-	c.id("id", "id", g.ID)
+	c.optionalID(g.ID)
 	if g.MaxConcurrent < 0 {
 		c.errorf(CodeInvalidValue, "max_concurrent", "max_concurrent must be positive, got %d", g.MaxConcurrent)
 	}

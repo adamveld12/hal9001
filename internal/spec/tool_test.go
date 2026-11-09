@@ -97,14 +97,14 @@ func TestToolValidation(t *testing.T) {
 }
 
 func TestToolEffectiveSchema(t *testing.T) {
-	tool, _ := ParseTool([]byte(toolYAML))
+	tool, _ := ParseTool("", []byte(toolYAML))
 	s := tool.EffectiveSchema()
 	b, _ := json.Marshal(s)
 	want := `{"additionalProperties":false,"properties":{"limit":{"default":5,"type":"integer"},"mode":{"default":"fast","enum":["fast","deep"],"type":"string"},"query":{"description":"What to find","type":"string"}},"required":["query"],"type":"object"}`
 	if string(b) != want {
 		t.Errorf("schema =\n%s\nwant\n%s", b, want)
 	}
-	raw, _ := ParseTool([]byte("id: t\ndescription: d\nlang: bash\nscript: x\nschema: {type: object, properties: {x: {type: string}}}\n"))
+	raw, _ := ParseTool("", []byte("id: t\ndescription: d\nlang: bash\nscript: x\nschema: {type: object, properties: {x: {type: string}}}\n"))
 	if raw.EffectiveSchema()["properties"] == nil {
 		t.Errorf("raw schema not returned: %v", raw.EffectiveSchema())
 	}

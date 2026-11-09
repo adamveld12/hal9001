@@ -122,6 +122,7 @@ func (a *app) tree() *command {
 		group("killswitch", "pause and resume the daemon", killswitchCmds()...),
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
+		group("prompts", "list, show and rename prompts", promptCmds()...),
 		group("env", "list, set and unset env variables", envCmds("")...),
 		group("sandboxes", "list, inspect, configure and check sandbox backends", sandboxCmds()...),
 		group("assist", "AI-assisted sensor authoring: sessions, draft, test runs", assistCmds()...),
@@ -143,10 +144,38 @@ func idGet(format string) *leaf {
 	}}
 }
 
+// renameLeaf renames the item <old> under base (for example "/api/sensors") to <new>. The item's current hash
+// guards the rename against a concurrent edit.
+func renameLeaf(base string) *leaf {
+	return &leaf{usage: "<old> <new>", minArgs: 2, maxArgs: 2, run: func(ctx context.Context, c *call) error {
+		cur, err := c.client().do(ctx, http.MethodGet, base+"/"+esc(c.args[0]), nil, nil)
+		if err != nil {
+			return err
+		}
+		var got struct {
+			Hash string `json:"hash"`
+		}
+		if err := json.Unmarshal(cur.Body, &got); err != nil || got.Hash == "" {
+			return fmt.Errorf("cannot read the hash of %s", c.args[0])
+		}
+		body, _ := jsonBody(map[string]string{"new_id": c.args[1], "expected_hash": got.Hash})
+		return c.doEmit(ctx, http.MethodPost, base+"/"+esc(c.args[0])+"/rename", nil, body)
+	}}
+}
+
+func promptCmds() []*command {
+	return []*command{
+		cmd("list", "list prompts", apiGet("/api/prompts", "name", "prompt.output", "prompt.description")),
+		cmd("get", "show one prompt", idGet("/api/prompts/%s")),
+		cmd("rename", "rename a prompt: moves the file and updates the agent nodes that use it", renameLeaf("/api/prompts")),
+	}
+}
+
 func sensorCmds() []*command {
 	return []*command{
 		cmd("list", "list sensors", apiGet("/api/sensors", "id", "status.state", "status.last_success_at", "status.new_items_24h")),
 		cmd("get", "show one sensor", idGet("/api/sensors/%s")),
+		cmd("rename", "rename a sensor: moves its file, env and dedup state and updates the flows that subscribe to it", renameLeaf("/api/sensors")),
 		cmd("pause", "stop scheduled polls of a sensor (poll now and inject still work)", &leaf{usage: "<id>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/sensors/"+esc(c.args[0])+"/pause", nil, nil)
 		}}),
@@ -164,6 +193,7 @@ func toolCmds() []*command {
 	return []*command{
 		cmd("list", "list custom tools", apiGet("/api/tools", "id", "tool.lang", "tool.approve", "tool.description")),
 		cmd("get", "show one custom tool: definition, effective argument schema, diagnostics", idGet("/api/tools/%s")),
+		cmd("rename", "rename a tool: moves its file and env and updates the agent nodes that use it", renameLeaf("/api/tools")),
 		cmd("test", "run a custom tool once with the given arguments (JSON object) and show its result; exits 1 when the tool fails", toolTestLeaf()),
 		cmd("validate", "validate tool YAML from a file or stdin without saving", toolValidateLeaf()),
 		group("env", "list, set and unset a tool's own env variables (values are secret and write-only unless set with --plain)", envCmds("tools")...),
@@ -288,6 +318,7 @@ func flowCmds() []*command {
 	return []*command{
 		cmd("list", "list flows", apiGet("/api/flows", "id", "enabled", "dry_run", "node_count", "health.last_run_status")),
 		cmd("get", "show one flow with its YAML", idGet("/api/flows/%s")),
+		cmd("rename", "rename a flow (run history keeps the old id)", renameLeaf("/api/flows")),
 		cmd("validate", "validate flow YAML from a file or stdin without saving", validate),
 		cmd("test-node", "run one node on a sample input", testNode),
 		cmd("run", "run a flow now: poll every sensor it subscribes to and run it on what they return", flowRunLeaf()),

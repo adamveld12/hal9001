@@ -1,4 +1,3 @@
-id: http_get_json
 description: Fetch a URL with HTTP GET and return the JSON response body. Fails on a non-2xx status or a body that is not JSON.
 params:
   url:

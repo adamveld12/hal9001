@@ -505,6 +505,37 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
+  /api/tools/{id}/rename:
+    parameters:
+      - {$ref: '#/components/parameters/ToolId'}
+    post:
+      operationId: renameTool
+      tags: [tools]
+      summary: Rename a tool
+      description: |
+        Renames the file (the file name is the id), moves its env file, and rewrites references to it; agent nodes' `tools` entries in flows are rewritten to the new id.
+        Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+        `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RenameRequest'}
+      responses:
+        '200':
+          description: Renamed; the item under its new id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
   /api/tools/{id}/test:
     parameters:
       - {$ref: '#/components/parameters/ToolId'}
@@ -730,6 +761,37 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sensors/{id}/rename:
+    parameters:
+      - {$ref: '#/components/parameters/SensorId'}
+    post:
+      operationId: renameSensor
+      tags: [sensors]
+      summary: Rename a sensor
+      description: |
+        Renames the file (the file name is the id), moves its env file, and rewrites references to it; dedup state, last success, paused state and reset info move with it; `flows` subscribe entries are rewritten to the new id.
+        Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+        `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RenameRequest'}
+      responses:
+        '200':
+          description: Renamed; the item under its new id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SensorDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
   /api/sensors/{id}/poll:
     parameters:
@@ -1243,6 +1305,37 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/flows/{id}/rename:
+    parameters:
+      - {$ref: '#/components/parameters/FlowId'}
+    post:
+      operationId: renameFlow
+      tags: [flows]
+      summary: Rename a flow
+      description: |
+        Renames the file (the file name is the id), moves its env file, and rewrites references to it; run history keeps pointing at the old id.
+        Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+        `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RenameRequest'}
+      responses:
+        '200':
+          description: Renamed; the item under its new id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FlowDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
   /api/flows/{id}/test-node:
     parameters:
@@ -2106,6 +2199,37 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/prompts/{name}/rename:
+    parameters:
+      - {$ref: '#/components/parameters/PromptName'}
+    post:
+      operationId: renamePrompt
+      tags: [prompts]
+      summary: Rename a prompt
+      description: |
+        Renames the file (the file name is the id), moves its env file, and rewrites references to it; agent nodes' `prompt` references in flows are rewritten to the new name.
+        Recorded history (events, runs) keeps the ids it was recorded with. Emits `config.changed`. 409 `conflict` when
+        `expected_hash` is stale or `new_id` already exists; 422 for an invalid `new_id`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RenameRequest'}
+      responses:
+        '200':
+          description: Renamed; the item under its new id.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PromptDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
   /api/assist/sessions:
     get:
@@ -3413,15 +3537,24 @@ components:
         node_id: {type: string, description: 'Flow node the finding belongs to, when it has one.'}
         line: {type: integer, minimum: 1, description: '1-based YAML line, when known.'}
     # ---------------------------------------------------------------- spec formats (REQUIREMENTS §5-§7, internal/spec)
+    RenameRequest:
+      type: object
+      additionalProperties: false
+      required: [new_id, expected_hash]
+      properties:
+        new_id: {$ref: '#/components/schemas/Slug'}
+        expected_hash: {$ref: '#/components/schemas/Hash'}
     Sensor:
       type: object
       description: |
-        Sensor definition (§5). At most one of `interval` and `cron`; with neither the sensor is manual-only: the
+        Sensor definition (§5). `id` is the file name: it is returned by the API but never written to the file (an old
+        `id:` line is ignored on read). At most one of `interval` and `cron`; with neither the sensor is manual-only: the
         scheduler never polls it and only "Run now" does. `exec` takes `command`; every other `lang` takes `script`.
       additionalProperties: false
-      required: [id, lang]
+      required: [lang]
       properties:
         id: {$ref: '#/components/schemas/Slug'}
+        description: {type: string, description: 'Free text shown under the name; optional.'}
         interval: {$ref: '#/components/schemas/Duration'}
         cron: {type: string, examples: ['*/5 9-18 * * 1-5']}
         lang: {$ref: '#/components/schemas/Lang'}
@@ -3747,11 +3880,12 @@ components:
         port: {type: string, description: 'Source port; omitted means `out`.'}
     Flow:
       type: object
-      description: Flow definition (§6).
+      description: Flow definition (§6). `id` is the file name; it is never written to the file.
       additionalProperties: false
-      required: [id, nodes]
+      required: [nodes]
       properties:
         id: {$ref: '#/components/schemas/Slug'}
+        description: {type: string, description: 'Free text shown under the name; optional.'}
         enabled: {type: boolean, default: false, description: A flow without `enabled` is disabled; new flows must opt in.}
         dry_run: {type: boolean, default: false}
         subscribe: {type: array, items: {$ref: '#/components/schemas/Slug'}, description: Sensor ids.}
@@ -3761,7 +3895,7 @@ components:
     Prompt:
       type: object
       description: |
-        Prompt file (§7.1) as JSON: the front matter (`name`, `description`, `output`) plus the template `body`.
+        Prompt file (§7.1) as JSON: the front matter (`description`, `output`) plus the template `body`. `name` is the file name.
         `output: note` expects the structured note schema; `none` is free text.
       additionalProperties: false
       required: [name, body]
@@ -3968,6 +4102,7 @@ components:
       description: Exactly one of `yaml` and `sensor`.
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         sensor: {$ref: '#/components/schemas/Sensor'}
       oneOf:
@@ -4054,7 +4189,7 @@ components:
         (strings as is, numbers and booleans as text, arrays and objects as JSON). Stdout is the result; a non-zero
         exit is a tool error carrying the stderr tail. `exec` takes `command`; every other `lang` takes `script`.
       additionalProperties: false
-      required: [id, description, lang]
+      required: [description, lang]
       properties:
         id: {$ref: '#/components/schemas/Slug'}
         description: {type: string, description: What the tool does and when to use it; the agent reads this.}
@@ -4098,6 +4233,7 @@ components:
       description: Exactly one of `yaml` and `tool`.
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         tool: {$ref: '#/components/schemas/Tool'}
       oneOf:
@@ -4213,6 +4349,7 @@ components:
       description: Exactly one of `yaml` and `flow`.
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         flow: {$ref: '#/components/schemas/Flow'}
       oneOf:
@@ -4338,6 +4475,7 @@ components:
       description: Exactly one of `markdown` and `prompt`.
       additionalProperties: false
       properties:
+        name: {$ref: '#/components/schemas/Slug'}
         markdown: {type: string}
         prompt: {$ref: '#/components/schemas/Prompt'}
       oneOf:

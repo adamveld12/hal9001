@@ -105,7 +105,7 @@ func TestFlowSaveConflictsValidationAndReload(t *testing.T) {
 		t.Error("the response was sent before the workspace was reloaded")
 	}
 	e.do("POST", "/api/flows", map[string]any{"flow": flowBody("mine", "a")}).want(409)
-	if r := e.do("POST", "/api/flows", map[string]any{"yaml": v1.YAML}).want(409); r.problem() != "already-exists" {
+	if r := e.do("POST", "/api/flows", map[string]any{"id": "mine", "yaml": v1.YAML}).want(409); r.problem() != "already-exists" {
 		t.Errorf("duplicate create: %s", r.problem())
 	}
 	if e.reloads.Load() != 1 {
@@ -151,9 +151,6 @@ func TestFlowSaveConflictsValidationAndReload(t *testing.T) {
 	if r = e.do("PUT", "/api/flows/mine", map[string]any{"expected_hash": fresh.Hash, "flow": badEdge}).want(422); !contains(diagCodes(r), "unknown_node") {
 		t.Errorf("unknown node: %s", r.Body)
 	}
-	if r = e.do("PUT", "/api/flows/mine", map[string]any{"expected_hash": fresh.Hash, "flow": flowBody("other", "a")}).want(422); !contains(diagCodes(r), "id_mismatch") {
-		t.Errorf("id mismatch: %s", r.Body)
-	}
 	if r = e.do("POST", "/api/flows", map[string]any{"flow": flowBody("Bad Name", "a")}).want(422); !contains(diagCodes(r), "invalid_id") {
 		t.Errorf("invalid id: %s", r.Body)
 	}
@@ -178,7 +175,7 @@ func TestFlowSaveConflictsValidationAndReload(t *testing.T) {
 		} `json:"flow"`
 	}
 	e.do("POST", "/api/flows/validate", map[string]any{"flow": flowBody("preview", "a")}).want(200).decode(&val)
-	if !val.Valid || val.YAML == nil || !strings.Contains(*val.YAML, "id: preview") || val.Flow == nil {
+	if !val.Valid || val.YAML == nil || strings.HasPrefix(*val.YAML, "id:") || val.Flow == nil {
 		t.Errorf("validate valid flow = %+v", val)
 	}
 	r = e.do("POST", "/api/flows/validate", map[string]any{"flow": cycle}).want(200)

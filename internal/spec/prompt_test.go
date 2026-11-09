@@ -39,7 +39,7 @@ func TestPromptDefaultsAndFallbacks(t *testing.T) {
 	}
 
 	p, ds = ParsePrompt("file-name", []byte("---\nname: other\n---\nb\n"))
-	if p.Name != "other" || len(ds) != 1 || ds[0].Code != CodeIDMismatch || ds[0].Severity != SeverityWarning {
+	if p.Name != "file-name" || len(ds) != 1 || ds[0].Code != CodeIDMismatch || ds[0].Severity != SeverityWarning {
 		t.Errorf("name mismatch: %+v %v", p, ds)
 	}
 

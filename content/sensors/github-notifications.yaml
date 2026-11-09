@@ -1,6 +1,6 @@
 # GitHub notifications (review requests, mentions, assignments, ...) via the existing gh login.
 # Each item is the notification object plus: source, title, url (browser URL), repo, type.
-id: github-notifications
+description: Your GitHub notifications.
 interval: 2m
 lang: bash
 script: |

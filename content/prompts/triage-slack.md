@@ -1,5 +1,4 @@
 ---
-name: triage-slack
 description: Triage a Slack mention or DM and draft a reply
 output: note
 ---

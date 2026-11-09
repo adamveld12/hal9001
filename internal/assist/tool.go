@@ -36,22 +36,15 @@ approve: always
 timeout: 60s
 `
 
-// evaluateTool validates a draft like a tool file. For a new tool the id need not exist yet. When editing an
-// existing tool a changed id is flagged: saving would create a different tool.
+// evaluateTool validates a draft like a tool file; see evaluate for how the id is determined.
 func evaluateTool(yaml, target string) (toolID string, diagnostics json.RawMessage) {
-	tool, ds := spec.CheckTool("", []byte(yaml))
+	tool, ds := spec.CheckTool(target, []byte(yaml))
 	for i := range ds {
 		ds[i].File = ToolDraftFile
 	}
 	if tool != nil {
 		if spec.ValidID(tool.ID) {
 			toolID = tool.ID
-		}
-		if target != "" && tool.ID != target {
-			ds = append(ds, spec.Diagnostic{
-				File: ToolDraftFile, Path: "id", Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
-				Message: fmt.Sprintf("id %q differs from the tool being edited (%q): saving would create a different tool", tool.ID, target),
-			})
 		}
 	}
 	return toolID, marshalDiagnostics(ds)
@@ -221,7 +214,7 @@ func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) s
 	w("can call: the agent supplies arguments, the script runs, its output goes back to the agent as the result. This directory is a ")
 	w("private draft directory (session %s). Your whole job is the draft `%s`.\n\n", sessionID, ToolDraftFile)
 	if targetID != "" {
-		w("You are EDITING the existing tool `%s`. Keep `id: %s` unchanged: the user saves the draft over that tool.\n\n", targetID, targetID)
+		w("You are EDITING the existing tool `%s`. Do not add an `id:` line: the tool's name is its file name and the user saves the draft over it.\n\n", targetID)
 	} else {
 		w("You are creating a NEW tool. Pick a short snake_case or kebab-case `id` (letters, digits, `-` and `_`, at most 64 characters).\n\n")
 	}

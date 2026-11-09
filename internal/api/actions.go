@@ -440,7 +440,7 @@ func (s *Server) testFlowNode(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	saved, ds := spec.ParseFlow(raw)
+	saved, ds := spec.ParseFlow(flowID, raw)
 	if saved == nil {
 		validationProblem(w, "the flow does not parse", ds)
 		return

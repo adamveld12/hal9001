@@ -15,7 +15,8 @@ import (
 )
 
 type flowDef struct {
-	ID            string    `yaml:"id"`
+	ID            string    `yaml:"id"` // must stay empty: the file name is the id
+	Description   string    `yaml:"description"`
 	Enabled       bool      `yaml:"enabled"`
 	DryRun        bool      `yaml:"dry_run"`
 	Subscribe     []string  `yaml:"subscribe"`
@@ -83,8 +84,8 @@ func loadFlows(t *testing.T) map[string]flowDef {
 	for _, n := range names(t, "flows", ".yaml") {
 		var f flowDef
 		strictDecode(t, "flows/"+n+".yaml", &f)
-		if f.ID != n {
-			t.Errorf("flows/%s.yaml has id %q", n, f.ID)
+		if f.ID != "" {
+			t.Errorf("flows/%s.yaml has an id line (%q): the file name is the id", n, f.ID)
 		}
 		flows[n] = f
 	}

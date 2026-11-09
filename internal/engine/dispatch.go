@@ -79,7 +79,7 @@ func (e *Engine) flowFor(fr *store.FlowRun) (*spec.Flow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load flow version %s: %w", key, err)
 	}
-	f, ds := spec.ParseFlow([]byte(v.YAML))
+	f, ds := spec.ParseFlow(fr.FlowID, []byte(v.YAML))
 	if f == nil {
 		return nil, fmt.Errorf("flow version %s does not parse: %v", key, ds)
 	}

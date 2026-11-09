@@ -411,7 +411,7 @@ func TestIMAPSensorSpecItemsAndKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sensor, diags := spec.ParseSensor(raw)
+	sensor, diags := spec.ParseSensor("imap-mail", raw)
 	if len(diags) > 0 {
 		t.Fatalf("spec diagnostics: %v", diags)
 	}

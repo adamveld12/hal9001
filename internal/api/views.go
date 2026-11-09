@@ -189,7 +189,7 @@ func (rv *resolver) flowVersion(flowID, hash string) *spec.Flow {
 	}
 	var f *spec.Flow
 	if v, err := rv.s.opts.Store.GetFlowVersion(rv.ctx, flowID, hash); err == nil {
-		f, _ = spec.ParseFlow([]byte(v.YAML))
+		f, _ = spec.ParseFlow(flowID, []byte(v.YAML))
 	}
 	rv.flows[key] = f
 	return f

@@ -316,5 +316,6 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 	c.quiet() // nothing from the other session
 }
 
-func (d *assistDouble) FlowCreated(context.Context, string) error { return nil }
-func (d *assistDouble) ToolCreated(context.Context, string) error { return nil }
+func (d *assistDouble) FlowCreated(context.Context, string) error                   { return nil }
+func (d *assistDouble) TargetRenamed(context.Context, string, string, string) error { return nil }
+func (d *assistDouble) ToolCreated(context.Context, string) error                   { return nil }

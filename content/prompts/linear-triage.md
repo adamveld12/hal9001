@@ -1,5 +1,4 @@
 ---
-name: linear-triage
 description: Triage a Linear issue or comment assigned to the engineer
 output: note
 ---

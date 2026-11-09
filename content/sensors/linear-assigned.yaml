@@ -1,6 +1,6 @@
 # Issues assigned to you and comments on them, updated since the last successful poll.
 # Needs LINEAR_API_KEY.
-id: linear-assigned
+description: Linear issues and comments assigned to you.
 interval: 5m
 lang: bash
 script: |

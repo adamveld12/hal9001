@@ -27,7 +27,7 @@ func TestPromptsHaveFrontmatterAndNoteSchema(t *testing.T) {
 		if err := dec.Decode(&fm); err != nil {
 			t.Fatalf("%s: %v", n, err)
 		}
-		if fm.Name != n || fm.Description == "" || fm.Output != "note" {
+		if fm.Name != "" || fm.Description == "" || fm.Output != "note" {
 			t.Errorf("%s: frontmatter %+v", n, fm)
 		}
 		for _, want := range []string{"summary_md", "suggested_reply", "priority", "links", "untrusted"} {

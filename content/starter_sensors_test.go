@@ -19,7 +19,7 @@ func TestSensorsDeclareKeysAndBaseline(t *testing.T) {
 		if id == "imap-mail" {
 			wantLang = "python"
 		}
-		if def.ID != id || def.Key != key || def.Lang != wantLang || def.Script == "" || def.Timeout == "" || def.Interval == "" {
+		if def.ID != "" || def.Description == "" || def.Key != key || def.Lang != wantLang || def.Script == "" || def.Timeout == "" || def.Interval == "" {
 			t.Errorf("%s: unexpected definition %+v", id, def)
 		}
 		wantFirst := "baseline"

@@ -19,7 +19,7 @@
 # Nothing is changed in the mailbox: the mailbox is opened with EXAMINE and bodies are fetched with BODY.PEEK, so no
 # message is marked read. After the first poll only mail since HAL_LAST_SUCCESS_AT (minus one day) is searched;
 # dedup by id drops the overlap. On Gmail the id is X-GM-MSGID; elsewhere UIDVALIDITY:UID.
-id: imap-mail
+description: Unread mail over IMAP (Gmail with an app password by default).
 interval: 2m
 lang: python
 script: |

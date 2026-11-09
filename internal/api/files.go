@@ -305,6 +305,7 @@ func sensorInput(w http.ResponseWriter, yamlText *string, sensor *spec.Sensor) (
 
 func (s *Server) createSensor(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID     string       `json:"id"`
 		YAML   *string      `json:"yaml"`
 		Sensor *spec.Sensor `json:"sensor"`
 	}
@@ -315,12 +316,18 @@ func (s *Server) createSensor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, ds := spec.ParseSensor(raw)
+	parsed, ds := spec.ParseSensor("", raw)
 	if parsed == nil {
 		validationProblem(w, "the sensor does not parse", ds)
 		return
 	}
-	id := parsed.ID
+	id := req.ID
+	if id == "" && req.Sensor != nil {
+		id = req.Sensor.ID
+	}
+	if id == "" {
+		id = parsed.ID
+	}
 	if !checkID(w, id) {
 		return
 	}
@@ -549,6 +556,7 @@ func flowInput(w http.ResponseWriter, yamlText *string, flow *spec.Flow) ([]byte
 
 func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID   string     `json:"id"`
 		YAML *string    `json:"yaml"`
 		Flow *spec.Flow `json:"flow"`
 	}
@@ -559,12 +567,18 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	parsed, ds := spec.ParseFlow(raw)
+	parsed, ds := spec.ParseFlow("", raw)
 	if parsed == nil {
 		validationProblem(w, "the flow does not parse", ds)
 		return
 	}
-	id := parsed.ID
+	id := req.ID
+	if id == "" && req.Flow != nil {
+		id = req.Flow.ID
+	}
+	if id == "" {
+		id = parsed.ID
+	}
 	if !checkID(w, id) {
 		return
 	}
@@ -714,6 +728,7 @@ func promptInput(w http.ResponseWriter, markdown *string, prompt *spec.Prompt) (
 
 func (s *Server) createPrompt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Name     string       `json:"name"`
 		Markdown *string      `json:"markdown"`
 		Prompt   *spec.Prompt `json:"prompt"`
 	}
@@ -724,14 +739,18 @@ func (s *Server) createPrompt(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The file name comes from the prompt's own name (front matter).
-	parsed, _ := spec.ParsePrompt("", raw)
-	name := ""
-	if parsed != nil {
-		name = parsed.Name
+	// The name is the file name: the request's name, the prompt member's, or a legacy front matter name.
+	name := req.Name
+	if name == "" && req.Prompt != nil {
+		name = req.Prompt.Name
 	}
 	if name == "" {
-		fieldProblem(w, "name", "the prompt needs a name (the `name` front matter field), which becomes its file name")
+		if parsed, _ := spec.ParsePrompt("", raw); parsed != nil {
+			name = parsed.Name
+		}
+	}
+	if name == "" {
+		fieldProblem(w, "name", "the prompt needs a name, which becomes its file name")
 		return
 	}
 	if !checkID(w, name) {

@@ -15,13 +15,14 @@ import (
 )
 
 type sensorDef struct {
-	ID       string `yaml:"id"`
-	Interval string `yaml:"interval"`
-	Lang     string `yaml:"lang"`
-	Script   string `yaml:"script"`
-	Key      string `yaml:"key"`
-	FirstRun string `yaml:"first_run"`
-	Timeout  string `yaml:"timeout"`
+	ID          string `yaml:"id"` // must stay empty: the file name is the id
+	Description string `yaml:"description"`
+	Interval    string `yaml:"interval"`
+	Lang        string `yaml:"lang"`
+	Script      string `yaml:"script"`
+	Key         string `yaml:"key"`
+	FirstRun    string `yaml:"first_run"`
+	Timeout     string `yaml:"timeout"`
 }
 
 func loadSensor(t *testing.T, name string) sensorDef {

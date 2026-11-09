@@ -93,22 +93,17 @@ func (s *session) applyDraft(yaml, by string) {
 	row.DraftUpdatedAt, row.DraftUpdatedBy = s.m.st.Now(), by
 }
 
-// evaluate validates a draft like a sensor file. For a new sensor the id need not exist yet. When editing an
-// existing sensor a changed id is flagged: saving would create a different sensor.
+// evaluate validates a draft like a sensor file. A new sensor is named by the draft's id: line (the file name it
+// is saved under, never stored in the file). When editing an existing sensor the name is the target's and an id:
+// line that differs is ignored with a warning.
 func evaluate(yaml, target string) (sensorID string, diagnostics json.RawMessage) {
-	sensor, ds := spec.CheckSensor("", []byte(yaml))
+	sensor, ds := spec.CheckSensor(target, []byte(yaml))
 	for i := range ds {
 		ds[i].File = SensorDraftFile
 	}
 	if sensor != nil {
 		if spec.ValidID(sensor.ID) {
 			sensorID = sensor.ID
-		}
-		if target != "" && sensor.ID != target {
-			ds = append(ds, spec.Diagnostic{
-				File: SensorDraftFile, Path: "id", Severity: spec.SeverityWarning, Code: spec.CodeIDMismatch,
-				Message: fmt.Sprintf("id %q differs from the sensor being edited (%q): saving would create a different sensor", sensor.ID, target),
-			})
 		}
 	}
 	return sensorID, marshalDiagnostics(ds)
@@ -232,6 +227,26 @@ func (s *session) adopt(id string) error {
 		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, id)
 	default:
 		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id)
+	}
+	return s.saveLocked()
+}
+
+// retarget makes the session edit newID instead of oldID after a rename. The draft is re-evaluated against the
+// new name.
+func (s *session) retarget(oldID, newID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.row.Status == store.AssistClosed || s.row.TargetID != oldID {
+		return nil
+	}
+	s.row.TargetID = newID
+	switch {
+	case s.isFlow():
+		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = s.m.evaluateFlow(s.row.DraftYAML, newID, s.dir)
+	case s.isTool():
+		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, newID)
+	default:
+		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, newID)
 	}
 	return s.saveLocked()
 }
@@ -549,7 +564,7 @@ func (m *Manager) savedScript(kind, target string, available []string) (scriptID
 		if err != nil {
 			return scriptID{}, false
 		}
-		flow, ds := spec.ParseFlow(raw)
+		flow, ds := spec.ParseFlow(target, raw)
 		if flow == nil || spec.HasErrors(ds) {
 			return scriptID{}, false
 		}
@@ -560,7 +575,7 @@ func (m *Manager) savedScript(kind, target string, available []string) (scriptID
 		if err != nil {
 			return scriptID{}, false
 		}
-		tool, ds := spec.ParseTool(raw)
+		tool, ds := spec.ParseTool(target, raw)
 		if tool == nil || spec.HasErrors(ds) {
 			return scriptID{}, false
 		}
@@ -570,7 +585,7 @@ func (m *Manager) savedScript(kind, target string, available []string) (scriptID
 	if err != nil {
 		return scriptID{}, false
 	}
-	sensor, ds := spec.ParseSensor(raw)
+	sensor, ds := spec.ParseSensor(target, raw)
 	if sensor == nil || spec.HasErrors(ds) {
 		return scriptID{}, false
 	}

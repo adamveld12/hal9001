@@ -3,7 +3,7 @@
 # Unread inbox mail via the gog CLI (github.com/steipete/gogcli), read-only.
 # Auth is gog's own OAuth: `gog auth add you@example.com`. Set GOG_ACCOUNT to pick an account.
 # To use it, set the email-secretary flow to subscribe to gmail-unread and change the prompt's snippet to text.
-id: gmail-unread
+description: Unread inbox mail via the gog CLI (alternative to imap-mail).
 interval: 5m
 lang: bash
 script: |

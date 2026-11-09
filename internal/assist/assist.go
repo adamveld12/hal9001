@@ -340,6 +340,26 @@ func (m *Manager) ToolCreated(ctx context.Context, toolID string) error {
 	return m.attachNew(ctx, store.AssistTargetTool, toolID)
 }
 
+// TargetRenamed points the open sessions on file oldID of kind at newID, so a rename keeps the drawer attached.
+func (m *Manager) TargetRenamed(ctx context.Context, kind, oldID, newID string) error {
+	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{TargetKind: kind, TargetID: oldID, ListOpts: store.ListOpts{Limit: 500}})
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range page.Items {
+		s, err := m.session(ctx, row.ID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := s.retarget(oldID, newID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (m *Manager) attachNew(ctx context.Context, kind, id string) error {
 	page, err := m.st.ListAssistSessions(ctx, store.AssistSessionFilter{TargetKind: kind, ListOpts: store.ListOpts{Limit: 500}})
 	if err != nil {
