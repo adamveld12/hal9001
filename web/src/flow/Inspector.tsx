@@ -40,6 +40,7 @@ import { discoverFields } from "./transform/fields";
 import { useSampleInput } from "./transform/useSampleInput";
 import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
+import { SandboxSection } from "./SandboxSection";
 import { ToolsSection } from "./ToolsSection";
 import { RequestBody } from "../pages/approvals/ApprovalDetail";
 import { EditFieldsPreview } from "../pages/approvals/EditFields";
@@ -586,6 +587,30 @@ function AgentForm({
           }
         />
       </Field>
+      <SandboxSection
+        sandbox={node.sandbox}
+        image={node.image}
+        repo={node.repo}
+        gitRef={node.ref}
+        errors={{
+          sandbox: msgs(diags, "sandbox"),
+          image: msgs(diags, "image"),
+          repo: msgs(diags, "repo"),
+          ref: msgs(diags, "ref"),
+        }}
+        onChange={(field, v) =>
+          onChange((n) => {
+            let next = setOpt(n, field, v);
+            if (field === "sandbox") {
+              next = setOpt(next, "image", "");
+              if (v === "") {
+                next = setOpt(setOpt(next, "repo", ""), "ref", "");
+              }
+            }
+            return next;
+          })
+        }
+      />
       <ToolsSection
         value={node.tools}
         error={msgs(diags, "tools")}

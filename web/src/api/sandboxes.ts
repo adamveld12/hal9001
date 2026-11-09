@@ -28,8 +28,12 @@ export function useSandboxes() {
   });
 }
 
-export function useSandbox(backend: SandboxBackend) {
+export function useSandbox(
+  backend: SandboxBackend,
+  opts?: { enabled?: boolean },
+) {
   return useQuery({
+    enabled: opts?.enabled ?? true,
     queryKey: qk("sandbox", backend),
     queryFn: () =>
       unwrap(
