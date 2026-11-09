@@ -24,6 +24,7 @@ function approval(over: Partial<Approval> & { id: string }): Approval {
     permission_request_id: null,
     permission_request: null,
     proposal_md: "# Plan",
+    request: null,
     status: "pending",
     comment: null,
     cancel_run: null,
@@ -187,5 +188,52 @@ describe("labels", () => {
     expect(describeDecision(approval({ id: "x", status: "expired" }))).toBe(
       "Timed out without a decision",
     );
+  });
+});
+
+describe("request approvals", () => {
+  const request = {
+    title: "Ship api?",
+    body_md: "details",
+    fields: [],
+    priority: "high" as const,
+    dry_run: false,
+    on_timeout: "denied" as const,
+  };
+  const req = (over: Partial<Approval> = {}) =>
+    approval({
+      id: "r",
+      type: "request",
+      agent_run_id: null,
+      proposal_md: null,
+      request,
+      ...over,
+    });
+
+  it("titles a row with the request title, marking dry runs", () => {
+    expect(approvalTitle(req())).toBe("Ship api?");
+    expect(approvalTitle(req({ request: { ...request, dry_run: true } }))).toBe(
+      "[dry run] Ship api?",
+    );
+  });
+
+  it("accepts request as a type filter", () => {
+    const v = viewFromParams(new URLSearchParams("type=request"));
+    expect(v.type).toBe("request");
+    expect(viewToQuery(v).type).toBe("request");
+  });
+
+  it("says where a timed-out request went", () => {
+    expect(describeDecision(req({ status: "expired" }))).toBe(
+      "Timed out; the flow continued on port denied",
+    );
+    expect(
+      describeDecision(
+        req({
+          status: "expired",
+          request: { ...request, on_timeout: "error" },
+        }),
+      ),
+    ).toBe("Timed out; the flow continued on the error port");
   });
 });

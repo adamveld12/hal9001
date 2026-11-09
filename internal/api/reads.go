@@ -20,7 +20,7 @@ var (
 	agentStatuses   = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "denied", "killed", "interrupted", "timeout"}
 	sensorStatuses  = []string{"running", "succeeded", "failed", "timeout", "killed", "interrupted"}
 	approvalStates  = []string{"pending", "approved", "denied", "expired"}
-	approvalTypes   = []string{"proposal", "tool_call"}
+	approvalTypes   = []string{"proposal", "tool_call", "request"}
 	priorities      = []string{"low", "normal", "high", "urgent"}
 )
 

@@ -30,7 +30,10 @@ export function viewFromParams(p: URLSearchParams): ApprovalsView {
   return {
     tab: p.get("tab") === "history" ? "history" : "pending",
     status: HISTORY_STATUSES.find((s) => s === status) ?? null,
-    type: type === "proposal" || type === "tool_call" ? type : null,
+    type:
+      type === "proposal" || type === "tool_call" || type === "request"
+        ? type
+        : null,
   };
 }
 
@@ -98,6 +101,10 @@ export function mergeApprovalPages(
 
 /** One-line label for a row: the tool call title, or the first line of the proposal. */
 export function approvalTitle(a: Approval): string {
+  if (a.type === "request") {
+    const title = a.request?.title || "Approval";
+    return a.request?.dry_run ? `[dry run] ${title}` : title;
+  }
   if (a.type === "tool_call") {
     return a.permission_request?.title || "Tool call";
   }
@@ -117,7 +124,9 @@ export function describeDecision(a: Approval): string {
     case "pending":
       return "Waiting for a decision";
     case "expired":
-      return "Timed out without a decision";
+      return a.type === "request" && a.request?.on_timeout
+        ? `Timed out; the flow continued on ${a.request.on_timeout === "error" ? "the error port" : `port ${a.request.on_timeout}`}`
+        : "Timed out without a decision";
     case "approved":
       return a.type === "tool_call"
         ? `Allowed by ${a.decided_by ?? "unknown"}`
@@ -130,8 +139,10 @@ export function describeDecision(a: Approval): string {
 /** Confirmation shown after a decision was recorded. */
 export function decisionNotice(a: Approval): string {
   if (a.status === "approved") {
+    if (a.type === "request") return "Approved.";
     return a.type === "tool_call" ? "Tool call allowed." : "Proposal approved.";
   }
   if (a.cancel_run) return "Denied. The run was cancelled.";
+  if (a.type === "request") return "Denied.";
   return a.type === "tool_call" ? "Tool call denied." : "Proposal denied.";
 }

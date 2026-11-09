@@ -318,6 +318,7 @@ var nodeFieldsAllowed = map[string][]string{
 	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
+	NodeApproval:  {"title", "body", "fields", "priority", "timeout", "on_timeout"},
 }
 
 // setFields lists the optional node fields that are set, in struct order.
@@ -331,7 +332,7 @@ func (n *Node) setFields() []string {
 		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
 		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
-		{"title", n.Title != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
+		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
 		{"side_effect", n.SideEffect}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
@@ -401,9 +402,9 @@ func validateNode(c *collector, p string, n *Node, refs *Refs) {
 	allowed, known := nodeFieldsAllowed[n.Type]
 	switch {
 	case n.Type == "":
-		c.errorf(CodeRequired, p+".type", "type is required (command | agent | inbox | transform)")
+		c.errorf(CodeRequired, p+".type", "type is required (command | agent | inbox | transform | approval)")
 	case !known:
-		c.errorf(CodeInvalidEnum, p+".type", "type %q is not valid (one of command | agent | inbox | transform)", n.Type)
+		c.errorf(CodeInvalidEnum, p+".type", "type %q is not valid (one of command | agent | inbox | transform | approval)", n.Type)
 	}
 	if !known {
 		return
@@ -425,6 +426,34 @@ func validateNode(c *collector, p string, n *Node, refs *Refs) {
 		validateInbox(c, p, n)
 	case NodeTransform:
 		validateTransform(c, p, n)
+	case NodeApproval:
+		validateApproval(c, p, n)
+	}
+}
+
+// validateApproval checks an approval node: title and body are templates, fields are dot-paths into the input
+// (event data is reachable through the templates), and on_timeout only makes sense with a timeout.
+func validateApproval(c *collector, p string, n *Node) {
+	if strings.TrimSpace(n.Title) == "" {
+		c.errorf(CodeRequired, p+".title", "title is required")
+	}
+	c.template(p+".title", n.Title)
+	c.template(p+".body", n.Body)
+	c.enum(p+".priority", n.Priority, Priorities, false)
+	seen := map[string]bool{}
+	for i, f := range n.Fields {
+		fp := fmt.Sprintf("%s.fields[%d]", p, i)
+		switch {
+		case strings.TrimSpace(f) == "":
+			c.errorf(CodeRequired, fp, "field path is empty")
+		case seen[f]:
+			c.errorf(CodeDuplicateID, fp, "field %q is listed twice", f)
+		}
+		seen[f] = true
+	}
+	c.enum(p+".on_timeout", n.OnTimeout, []string{OnTimeoutDenied, OnTimeoutApproved, OnTimeoutError}, false)
+	if n.Timeout == 0 && n.OnTimeout != "" {
+		c.errorf(CodeFieldNotAllowed, p+".on_timeout", "on_timeout is only valid with timeout")
 	}
 }
 

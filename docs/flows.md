@@ -421,6 +421,39 @@ a flow carry paths such as `nodes[2].steps[1].conditions[0].value`.
 a dry-run flow the item is tagged `dry-run`. Items at or above `notify_min_priority` raise a macOS notification that
 opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|archive`.
 
+## Approval nodes ("Request approval")
+
+```yaml
+- id: confirm-reply
+  type: approval
+  title: "Send this reply to {{.input.author}}?"
+  body: "{{.input.draft}}"            # markdown template, optional
+  fields: [author, repo, lines]       # input dot-paths shown as a key/value table, optional
+  priority: high                      # low | normal | high | urgent; default normal
+  timeout: 24h                        # optional; without it the node waits indefinitely
+  on_timeout: denied                  # denied (default) | approved | error; only valid with timeout
+```
+
+When a run reaches the node it creates a pending approval of type `request` and parks the node as `awaiting_approval`
+(the flow run is `awaiting_approval`). The node holds no concurrency slot and survives daemon restarts. `title` is
+required and must not render empty; `title` and `body` are templates over the same data as inbox nodes (`.input`,
+`.event`, ...). Someone approves or denies it, with an optional comment, in the Inbox (Needs action) or with
+`hal9001 approvals approve|deny <id>`; a macOS notification opens `/inbox/approval/<id>`.
+
+**Ports** `approved`, `denied` and the implicit `error`. On `approved` and `denied` the payload is
+`{"input": <node input>, "approval": {"decision": "approved|denied|timeout", "comment": "...", "decided_by": "...", "decided_at": "..."}}`.
+When the timeout passes, `on_timeout` decides: `denied` or `approved` route to that port with `decision: timeout`,
+`error` fails the node (class `approval_timeout`, routed on `error` if wired).
+
+**Dry run.** The node still asks, but the approval is tagged `dry_run`, shows a DRY RUN badge and starts with "This is a
+dry run: approving or denying only exercises the flow's branches."; the notification title starts with "[dry run]".
+
+**Kill switch.** Approvals can be decided while paused; the downstream nodes queue until the engine resumes.
+
+**Tests.** "Run node on sample" (`POST /api/flows/{id}/test-node`, `hal9001 flows test-node`) and the assist flow test
+(`draft_test`, `hal9001 assist test`) never wait: they take the decision `simulate_approval` (`approved` default, or
+`denied`; `--simulate-approval`) and create no approval.
+
 ## Agent nodes
 
 ```yaml

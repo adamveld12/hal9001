@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -705,7 +706,7 @@ func (rv *resolver) permissionRequestView(p store.PermissionRequest) (permission
 
 type approvalView struct {
 	ID                  string                 `json:"id"`
-	AgentRunID          string                 `json:"agent_run_id"`
+	AgentRunID          *string                `json:"agent_run_id"`
 	NodeRunID           *string                `json:"node_run_id"`
 	FlowRunID           *string                `json:"flow_run_id"`
 	FlowID              *string                `json:"flow_id"`
@@ -717,6 +718,7 @@ type approvalView struct {
 	PermissionRequestID *string                `json:"permission_request_id"`
 	PermissionRequest   *permissionRequestView `json:"permission_request"`
 	ProposalMD          *string                `json:"proposal_md"`
+	Request             *approvalRequestView   `json:"request"`
 	Status              string                 `json:"status"`
 	Comment             *string                `json:"comment"`
 	CancelRun           *bool                  `json:"cancel_run"`
@@ -726,13 +728,25 @@ type approvalView struct {
 	ExpiresAt           *time.Time             `json:"expires_at"`
 }
 
+type approvalRequestView struct {
+	Title     string               `json:"title"`
+	BodyMD    string               `json:"body_md"`
+	Fields    []store.RequestField `json:"fields"`
+	Priority  store.Priority       `json:"priority"`
+	DryRun    bool                 `json:"dry_run"`
+	OnTimeout *string              `json:"on_timeout"`
+}
+
 func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
+	if a.Type == store.ApprovalRequest {
+		return rv.requestApprovalView(a)
+	}
 	l, ar, err := rv.lineageOfAgentRun(a.AgentRunID)
 	if err != nil {
 		return approvalView{}, err
 	}
 	v := approvalView{
-		ID: a.ID, AgentRunID: a.AgentRunID, NodeRunID: nonEmpty(l.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
+		ID: a.ID, AgentRunID: nonEmpty(a.AgentRunID), NodeRunID: nonEmpty(l.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
 		EventID: nonEmpty(l.EventID), Type: string(a.Type), PermissionRequestID: nonEmpty(a.PermissionRequestID),
 		Status: string(a.Status), Comment: nonEmpty(a.Comment), DecidedBy: nonEmpty(a.DecidedBy),
 		DecidedAt: utcPtr(a.DecidedAt), CreatedAt: utc(a.CreatedAt), ExpiresAt: utcPtr(a.ExpiresAt), Runtime: unknownRef,
@@ -763,6 +777,28 @@ func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
 		}
 	}
 	return v, nil
+}
+
+// requestApprovalView is the view of an approval raised by an approval node: it has no agent run, so its lineage
+// comes from the node run.
+func (rv *resolver) requestApprovalView(a store.Approval) (approvalView, error) {
+	l, err := rv.lineageOfNodeRun(a.NodeRunID, "")
+	if err != nil {
+		return approvalView{}, err
+	}
+	var req store.RequestApproval
+	if err := json.Unmarshal([]byte(a.Request), &req); err != nil {
+		return approvalView{}, fmt.Errorf("api: approval %s: decode request: %w", a.ID, err)
+	}
+	if req.Fields == nil {
+		req.Fields = []store.RequestField{}
+	}
+	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout)}
+	return approvalView{
+		ID: a.ID, NodeRunID: nonEmpty(a.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
+		EventID: nonEmpty(l.EventID), Type: string(a.Type), Request: rq, Status: string(a.Status), Comment: nonEmpty(a.Comment),
+		DecidedBy: nonEmpty(a.DecidedBy), DecidedAt: utcPtr(a.DecidedAt), CreatedAt: utc(a.CreatedAt), ExpiresAt: utcPtr(a.ExpiresAt), Runtime: unknownRef,
+	}, nil
 }
 
 // ---- inbox ----

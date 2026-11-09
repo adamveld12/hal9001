@@ -88,6 +88,7 @@ type Engine struct {
 	tools    *tools.Hub
 
 	assistTests sync.Map // flow run id -> *assistTest, for the runs of TestFlow
+	simulations sync.Map // flow run id -> "approved"|"denied": the simulated decision of approval nodes in test runs
 }
 
 // New returns an engine over opt.Store. Call Apply with the loaded workspace,
@@ -171,9 +172,13 @@ func (e *Engine) start(ctx context.Context) error {
 	if err := e.reconcileProposals(ctx); err != nil {
 		return fmt.Errorf("engine: reconcile proposals: %w", err)
 	}
+	if err := e.reconcileRequests(ctx); err != nil {
+		return fmt.Errorf("engine: reconcile approval nodes: %w", err)
+	}
 	e.started.Store(true)
 	e.spawn(e.dispatchLoop)
 	e.spawn(e.retentionLoop)
+	e.spawn(e.requestExpiryLoop)
 	e.syncSensors()
 	e.wake()
 	return nil

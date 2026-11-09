@@ -2434,7 +2434,7 @@ export interface components {
     /** @enum {string} */
     NodeRunDecision: "emitted" | "dropped" | "error" | "skipped";
     /** @enum {string} */
-    NodeType: "command" | "agent" | "inbox";
+    NodeType: "command" | "agent" | "inbox" | "approval";
     /** @enum {string} */
     AgentRunStatus:
       | "queued"
@@ -2457,7 +2457,7 @@ export interface components {
     /** @enum {string} */
     PermissionPolicy: "readonly" | "gated" | "auto";
     /** @enum {string} */
-    ApprovalType: "proposal" | "tool_call";
+    ApprovalType: "proposal" | "tool_call" | "request";
     /** @enum {string} */
     ApprovalStatus: "pending" | "approved" | "denied" | "expired";
     /** @enum {string} */
@@ -2797,6 +2797,38 @@ export interface components {
       ui?: components["schemas"]["NodeUI"];
     };
     /**
+     * @description "Request approval": asks the user to approve or deny and parks the node as `awaiting_approval` (no concurrency
+     *     slot; it survives daemon restarts) until someone decides in the Inbox or the approval times out. Creates an
+     *     approval of type `request`. `title` and `body` are Go templates over `{.event, .input, .flow, .run}`.
+     *     Ports: `approved`, `denied` and the implicit `error`. On `approved` and `denied` (and a timed-out approval
+     *     routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
+     *     comment, decided_by, decided_at}}`. In a dry run the approval is still created, tagged `dry_run`, and says so.
+     *     Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
+     */
+    ApprovalNode: {
+      id: components["schemas"]["Slug"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "approval";
+      /** @description Template. Required. */
+      title: string;
+      /** @description Markdown template shown in the approval. */
+      body?: string;
+      /** @description Dot-paths into the node input, shown as a key/value table. */
+      fields?: string[];
+      priority?: components["schemas"]["Priority"];
+      timeout?: components["schemas"]["Duration"];
+      /**
+       * @description What an expired approval does: route to `denied`, to `approved`, or fail the node (the `error` port). Only valid with `timeout`.
+       * @default denied
+       * @enum {string}
+       */
+      on_timeout?: "denied" | "approved" | "error";
+      ui?: components["schemas"]["NodeUI"];
+    };
+    /**
      * @description Tests one field of the item. `field` is a dot path (`author.login`); `[]` in a path means "any element"
      *     (`labels[].name`); `.` is the item itself. Operators `not_*`, `is_not_empty` are the exact opposite of their
      *     positive form, so with `[]` they mean "no element ...". Text operators ignore case unless `case_sensitive`.
@@ -2997,7 +3029,8 @@ export interface components {
       | components["schemas"]["CommandNode"]
       | components["schemas"]["AgentNode"]
       | components["schemas"]["InboxNode"]
-      | components["schemas"]["TransformNode"];
+      | components["schemas"]["TransformNode"]
+      | components["schemas"]["ApprovalNode"];
     Edge: {
       /** @description Source node id. */
       from: string;
@@ -3502,6 +3535,12 @@ export interface components {
        * @default false
        */
       dry_run?: boolean;
+      /**
+       * @description For an `approval` node: the decision to take instead of waiting for one.
+       * @default approved
+       * @enum {string}
+       */
+      simulate_approval?: "approved" | "denied";
     };
     TestNodeResult: {
       flow_run: components["schemas"]["FlowRun"];
@@ -4129,7 +4168,7 @@ export interface components {
     };
     Approval: {
       id: components["schemas"]["Ulid"];
-      agent_run_id: components["schemas"]["Ulid"];
+      agent_run_id: components["schemas"]["NullableUlid"];
       /** @description Null for an approval of an assist session. */
       node_run_id: components["schemas"]["Ulid"] | null;
       /** @description Null for an approval of an assist session. */
@@ -4148,6 +4187,8 @@ export interface components {
       permission_request: components["schemas"]["PermissionRequest"] | null;
       /** @description Set for `proposal` approvals. */
       proposal_md: string | null;
+      /** @description Set for `request` approvals. */
+      request: components["schemas"]["ApprovalRequestContent"] | null;
       status: components["schemas"]["ApprovalStatus"];
       comment: string | null;
       /** @description For a denied `tool_call`, whether the run was cancelled. */
@@ -4157,6 +4198,24 @@ export interface components {
       decided_at: components["schemas"]["NullableTimestamp"];
       created_at: components["schemas"]["Timestamp"];
       expires_at: components["schemas"]["NullableTimestamp"];
+    };
+    /** @description What an `approval` node asked, rendered when the node ran. */
+    ApprovalRequestContent: {
+      title: string;
+      /** @description Markdown. In a dry run the first line says so. */
+      body_md: string;
+      fields: {
+        key: string;
+        value: string;
+      }[];
+      priority: components["schemas"]["Priority"];
+      /** @description The approval belongs to a dry run: deciding only exercises the flow's branches. */
+      dry_run: boolean;
+      /**
+       * @description What expiry does; null without a timeout (`expires_at`).
+       * @enum {string|null}
+       */
+      on_timeout: "denied" | "approved" | "error" | null;
     };
     ApprovalList: {
       items: components["schemas"]["Approval"][];
@@ -4698,6 +4757,12 @@ export interface components {
       args?: {
         [key: string]: unknown;
       } | null;
+      /**
+       * @description Flow sessions: the decision `approval` nodes take in the test; the test never waits for a person.
+       * @default approved
+       * @enum {string}
+       */
+      simulate_approval?: "approved" | "denied";
     };
     AssistSample: {
       index: number;

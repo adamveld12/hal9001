@@ -94,7 +94,7 @@ func approval(status string) map[string]any {
 	return map[string]any{
 		"id": id1, "agent_run_id": id2, "node_run_id": id3, "flow_run_id": id1, "flow_id": "triage-github",
 		"node_id": "review", "assist_session_id": nil, "event_id": nil, "runtime": "claude", "type": "proposal", "permission_request_id": nil,
-		"permission_request": nil, "proposal_md": "Fix the flaky test", "status": status, "comment": nil, "cancel_run": nil,
+		"permission_request": nil, "proposal_md": "Fix the flaky test", "request": nil, "status": status, "comment": nil, "cancel_run": nil,
 		"decided_by": nil, "decided_at": nil, "created_at": ts, "expires_at": nil,
 	}
 }

@@ -20,7 +20,9 @@ import {
   LANGS,
   PRIORITIES,
   type AgentCwd,
+  ON_TIMEOUTS,
   type AgentNode,
+  type ApprovalNode,
   type CommandNode,
   type Diagnostic,
   type FlowNode,
@@ -39,6 +41,9 @@ import { useSampleInput } from "./transform/useSampleInput";
 import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
 import { ToolsSection } from "./ToolsSection";
+import { RequestBody } from "../pages/approvals/ApprovalDetail";
+import { PriorityBadge } from "../pages/inbox/InboxList";
+import { fieldChoices, previewApproval, toggleField } from "./approval";
 
 export interface InspectorProps {
   node: FlowNode;
@@ -685,6 +690,173 @@ function InboxForm({
   );
 }
 
+function ApprovalForm({
+  node,
+  flowId,
+  diags,
+  onChange,
+}: {
+  node: ApprovalNode;
+  flowId: string;
+  diags: Diagnostic[];
+  onChange: (p: (n: ApprovalNode) => ApprovalNode) => void;
+}) {
+  const sample = useSampleInput(flowId, node.id);
+  const paths = useMemo(() => fieldChoices(sample.input), [sample.input]);
+  const hints = useMemo(() => templateHints(paths), [paths]);
+  const fields = node.fields ?? [];
+  const offered = paths.filter((p) => !fields.includes(p));
+  const hint =
+    hints.length > 0
+      ? `Variables from the sample: ${hints.join(" ")}`
+      : "Go template: {{.input.field}} is the item, {{.event}} the event.";
+  const preview =
+    sample.input === undefined
+      ? undefined
+      : previewApproval(node, sample.input);
+  return (
+    <>
+      <Field label="Title (template)" error={msgs(diags, "title")} hint={hint}>
+        <TextInput
+          value={node.title}
+          invalid={msgs(diags, "title").length > 0}
+          onChange={(e) => onChange((n) => ({ ...n, title: e.target.value }))}
+        />
+      </Field>
+      <Field label="Body (markdown template)" error={msgs(diags, "body")}>
+        <CodeEditor
+          label="Body"
+          lang="markdown"
+          value={node.body ?? ""}
+          onChange={(v) => onChange((n) => setOpt(n, "body", v))}
+          minHeight="5rem"
+          maxHeight="14rem"
+        />
+      </Field>
+      <Field
+        label="Fields"
+        error={msgs(diags, "fields")}
+        hint="Input values shown to the approver as a small table."
+      >
+        <div className="space-y-1.5">
+          {fields.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {fields.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  title="Remove this field"
+                  className="rounded border border-line bg-raised px-1.5 py-0.5 font-mono text-[11px] hover:border-bad"
+                  onClick={() =>
+                    onChange((n) => setOpt(n, "fields", toggleField(fields, f)))
+                  }
+                >
+                  {f} ×
+                </button>
+              ))}
+            </div>
+          )}
+          <Select
+            aria-label="Add a field"
+            value=""
+            onChange={(e) =>
+              e.target.value &&
+              onChange((n) =>
+                setOpt(n, "fields", toggleField(fields, e.target.value)),
+              )
+            }
+          >
+            <option value="">
+              {paths.length === 0
+                ? "No sample to pick from"
+                : "Add a field from the sample…"}
+            </option>
+            {offered.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </Field>
+      <Field label="Priority" error={msgs(diags, "priority")}>
+        <Select
+          value={node.priority ?? "normal"}
+          onChange={(e) =>
+            onChange((n) => ({
+              ...n,
+              priority: e.target.value as ApprovalNode["priority"],
+            }))
+          }
+        >
+          {PRIORITIES.map((p) => (
+            <option key={p}>{p}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field
+        label="Timeout"
+        error={msgs(diags, "timeout")}
+        hint="Empty waits until someone decides, e.g. 24h."
+      >
+        <TextInput
+          value={node.timeout ?? ""}
+          placeholder="none"
+          onChange={(e) =>
+            onChange((n) => setOpt(n, "timeout", e.target.value))
+          }
+        />
+      </Field>
+      <Field
+        label="When it times out"
+        error={msgs(diags, "on_timeout")}
+        hint="denied and approved route to that port; error fails the node."
+      >
+        <Select
+          value={node.on_timeout ?? "denied"}
+          disabled={!node.timeout}
+          onChange={(e) =>
+            onChange((n) =>
+              setOpt(
+                n,
+                "on_timeout",
+                e.target.value === "denied" ? "" : e.target.value,
+              ),
+            )
+          }
+        >
+          {ON_TIMEOUTS.map((o) => (
+            <option key={o}>{o}</option>
+          ))}
+        </Select>
+      </Field>
+      <div className="space-y-1.5" data-section="approval-preview">
+        <h3 className="m-0 text-xs font-semibold">Preview</h3>
+        {preview === undefined ? (
+          <p className="m-0 text-[11px] text-muted">
+            No sample input yet: run the flow once to see the approval.
+          </p>
+        ) : (
+          <div className="space-y-2 rounded-md border border-line p-2">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                {preview.title || "(empty title)"}
+              </span>
+              <PriorityBadge priority={preview.priority} />
+            </div>
+            <RequestBody request={{ ...preview, dry_run: false }} />
+            <div className="text-[11px] text-muted">
+              {preview.timeout
+                ? `Expires after ${preview.timeout}, then continues on ${preview.on_timeout === "error" ? "the error port" : `port ${preview.on_timeout}`}.`
+                : "Waits until someone decides."}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export function Inspector(props: InspectorProps) {
   const { node, diagnostics } = props;
   const [draftId, setDraftId] = useState(node.id);
@@ -792,6 +964,16 @@ export function Inspector(props: InspectorProps) {
           diags={diagnostics}
           onChange={(p) =>
             props.onChange((n) => (n.type === "inbox" ? p(n) : n))
+          }
+        />
+      )}
+      {node.type === "approval" && (
+        <ApprovalForm
+          node={node}
+          flowId={props.flowId}
+          diags={diagnostics}
+          onChange={(p) =>
+            props.onChange((n) => (n.type === "approval" ? p(n) : n))
           }
         />
       )}

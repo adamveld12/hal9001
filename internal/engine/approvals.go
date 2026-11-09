@@ -184,6 +184,18 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 		dec.Status = store.ApprovalApproved
 	}
 
+	if ap.Type == store.ApprovalRequest {
+		if d.CancelRun {
+			return nil, fmt.Errorf("%w: cancel_run applies to tool_call approvals", core.ErrInvalidState)
+		}
+		decided, err := e.st.DecideApproval(ctx, ap.ID, dec)
+		if err != nil {
+			return nil, mapDecideErr(approvalID, err)
+		}
+		e.applyRequestDecision(decided.NodeRunID)
+		return decided, nil
+	}
+
 	if ap.Type == store.ApprovalToolCall {
 		e.waitMu.Lock()
 		ch := e.waiters[ap.ID]

@@ -314,7 +314,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("- `draft_test` runs the draft flow once on a sample and returns JSON: `flow_run_id`, `input`, `nodes` (per node: `status`, `decision` `emitted`/`dropped`/`error`/`skipped`, `reason`, `ports`, `outputs`, `would_create` for inbox nodes, `stdout`, `stderr`, `exit_code`) and `edges_taken`. ")
 	w("Pick the input with `sample` (an index from `%s/samples/index.txt`) or `event` (an event id); without either the first sample is used. ", ReferenceDir)
 	w("The test is a dry run: `side_effect` command nodes are skipped, **agent nodes are not run** (they are `skipped` with the reason `assist test: agent nodes are not run`, and their branch ends there) and inbox nodes only report the item they would create. ")
-	w("`transform` and other `command` nodes run for real and follow the edges.\n")
+	w("`transform` and other `command` nodes run for real and follow the edges. `approval` nodes do not wait for a person: they take the decision `simulate_approval` (`approved`, the default, or `denied`) and emit on that port, so test both branches.\n")
 	w("\n")
 
 	w("## Sensors in this session\n\n")
@@ -352,7 +352,8 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("| `transform` | Filter, route, reshape. First choice. |\n")
 	w("| `command` | Code (`lang`, `script`/`command`, `ports`, `side_effect`). Reads the item on stdin, writes JSON to stdout. Mark anything that changes the outside world `side_effect: true`. Needs the user's approval before its first test. |\n")
 	w("| `agent` | Asks a coding agent to read the item and think (`runtime`, `mode`, `prompt`). Slower and costs money: use it only for judgement a rule cannot make (summarize, triage, draft a reply). |\n")
-	w("| `inbox` | Puts an item in the user's inbox (`title`, `priority`, `summary_md`, `suggested_reply`, `links`; all are templates). What a person should look at ends here. |\n\n")
+	w("| `inbox` | Puts an item in the user's inbox (`title`, `priority`, `summary_md`, `suggested_reply`, `links`; all are templates). What a person should look at ends here. |\n")
+	w("| `approval` | \"Request approval\": asks the user to approve or deny before the flow goes on (`title`, `body` templates; `fields` input paths shown as a table; `priority`; optional `timeout` with `on_timeout: denied|approved|error`). Ports `approved` and `denied`; the payload is `{input, approval: {decision, comment, decided_by, decided_at}}`. Put it between a step that prepares an action (for example an agent that drafts a reply) and the `side_effect` command that performs it: `draft -> approval -(approved)-> act`. |\n\n")
 
 	w("### Agent nodes\n\n")
 	w("- Default to `mode: readonly`: the agent can read but not act. For inbox triage use a prompt with `output: note` (see the existing prompts in `%s/prompts/`): the agent's note becomes an inbox item on its own, without an `inbox` node after it.\n", ReferenceDir)

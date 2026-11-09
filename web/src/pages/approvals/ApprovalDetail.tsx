@@ -40,15 +40,17 @@ function Context({ a }: { a: Approval }) {
           assist session {shortId(a.assist_session_id)}
         </Link>
       )}
-      <span>runtime {a.runtime}</span>
+      {a.type !== "request" && <span>runtime {a.runtime}</span>}
       {a.flow_run_id && (
         <Link to={`/runs/${a.flow_run_id}`} className={cls}>
           run {shortId(a.flow_run_id)}
         </Link>
       )}
-      <Link to={`/agent-runs/${a.agent_run_id}`} className={cls}>
-        agent run {shortId(a.agent_run_id)}
-      </Link>
+      {a.agent_run_id && (
+        <Link to={`/agent-runs/${a.agent_run_id}`} className={cls}>
+          agent run {shortId(a.agent_run_id)}
+        </Link>
+      )}
       {a.event_id && (
         <Link to={`/events/${a.event_id}`} className={cls}>
           event {shortId(a.event_id)}
@@ -74,7 +76,7 @@ function ToolCallBody({
   req: NonNullable<Approval["permission_request"]>;
 }) {
   const command = extractCommand(req.raw_input);
-  const transcript = useAgentTranscript(a.agent_run_id);
+  const transcript = useAgentTranscript(a.agent_run_id ?? "");
   const diffs = useMemo(() => {
     const fromInput = extractDiffs(req.raw_input);
     if (fromInput.length > 0 || !transcript.data) return fromInput;
@@ -112,6 +114,45 @@ function ToolCallBody({
           Options offered to the agent:{" "}
           {req.options.map((o) => `${o.name} (${o.kind})`).join(", ")}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** What an approval node asks: a dry-run notice, the body, and the fields table. */
+export function RequestBody({
+  request,
+}: {
+  request: Pick<
+    NonNullable<Approval["request"]>,
+    "dry_run" | "body_md" | "fields"
+  >;
+}) {
+  return (
+    <div className="space-y-3">
+      {request.dry_run && (
+        <div className="flex items-center gap-2">
+          <Badge tone="warn">DRY RUN</Badge>
+        </div>
+      )}
+      {request.body_md ? (
+        <Markdown>{request.body_md}</Markdown>
+      ) : (
+        <p className="m-0 text-xs text-muted">No details.</p>
+      )}
+      {request.fields.length > 0 && (
+        <table className="w-full border-collapse text-xs">
+          <tbody>
+            {request.fields.map((f) => (
+              <tr key={f.key} className="border-t border-line">
+                <th className="w-1/3 py-1 pr-3 text-left font-normal text-muted">
+                  {f.key}
+                </th>
+                <td className="break-words py-1">{f.value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
@@ -196,7 +237,11 @@ export function ApprovalDetail({
         </div>
       )}
 
-      {isTool ? (
+      {a.request ? (
+        <Panel title="Request">
+          <RequestBody request={a.request} />
+        </Panel>
+      ) : isTool ? (
         <Panel title="Tool call">
           <ToolCall a={a} />
         </Panel>

@@ -283,13 +283,14 @@ func (s *Server) updateAssistDraft(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SampleIndex *int            `json:"sample_index"`
-		EventID     string          `json:"event_id"`
-		Input       json.RawMessage `json:"input"`
-		Args        json.RawMessage `json:"args"`
-		Sensor      string          `json:"sensor"`
-		FromSensor  string          `json:"from_sensor"`
-		Item        *int            `json:"item"`
+		SampleIndex      *int            `json:"sample_index"`
+		EventID          string          `json:"event_id"`
+		Input            json.RawMessage `json:"input"`
+		Args             json.RawMessage `json:"args"`
+		Sensor           string          `json:"sensor"`
+		FromSensor       string          `json:"from_sensor"`
+		Item             *int            `json:"item"`
+		SimulateApproval string          `json:"simulate_approval"`
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return
@@ -312,6 +313,10 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		fieldProblem(w, "event_id", "event_id must be a ULID")
 		return
 	}
+	if req.SimulateApproval != "" && req.SimulateApproval != "approved" && req.SimulateApproval != "denied" {
+		fieldProblem(w, "simulate_approval", "simulate_approval must be approved or denied")
+		return
+	}
 	if string(req.Input) == "null" {
 		req.Input = nil
 	}
@@ -324,7 +329,7 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "",
 		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args,
-			Sensor: req.Sensor, FromSensor: req.FromSensor, Item: req.Item})
+			Sensor: req.Sensor, FromSensor: req.FromSensor, Item: req.Item, SimulateApproval: req.SimulateApproval})
 	if err != nil {
 		s.writeError(w, r, err)
 		return

@@ -276,7 +276,7 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `agent-runs list` | `--flow-run`, `--node-run`, `--runtime`, `--status`, `--limit`, `--cursor` |
 | `agent-runs get <id>` | |
 | `agent-runs events <id>` | `--after-seq N`, `--limit N`, `--kind K` |
-| `approvals list` | `--status` (`pending`, `approved`, `denied`, `expired`), `--type` (`proposal`, `tool_call`), `--flow-run`, `--agent-run`, `--limit`, `--cursor` |
+| `approvals list` | `--status` (`pending`, `approved`, `denied`, `expired`), `--type` (`proposal`, `tool_call`, `request`), `--flow-run`, `--agent-run`, `--limit`, `--cursor` |
 | `approvals get <id>` | |
 | `approvals approve <id>` | `--comment text` (passed to the agent) |
 | `approvals deny <id>` | `--comment text`, `--cancel-run` (tool-call approvals: end the run instead of letting the agent continue) |

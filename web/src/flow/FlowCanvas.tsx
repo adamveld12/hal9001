@@ -30,6 +30,7 @@ const NODE_TYPES = {
   command: FlowNodeView,
   agent: FlowNodeView,
   inbox: FlowNodeView,
+  approval: FlowNodeView,
   transform: FlowNodeView,
   sensor: SensorNodeView,
 };

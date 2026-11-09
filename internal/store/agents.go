@@ -472,7 +472,7 @@ func (s *Store) ListPermissionRequests(ctx context.Context, f PermissionRequestF
 // ---- approvals ----
 
 func approvalCols(slim bool) string {
-	return "id, agent_run_id, type, COALESCE(permission_request_id, ''), " + contentCols("proposal", slim) +
+	return "id, COALESCE(agent_run_id, ''), COALESCE(node_run_id, ''), type, COALESCE(permission_request_id, ''), request, " + contentCols("proposal", slim) +
 		", status, comment, decided_by, created_at, expires_at, decided_at"
 }
 
@@ -480,7 +480,7 @@ func scanApproval(r rowScanner) (Approval, error) {
 	var a Approval
 	var typ, status, created string
 	var expires, decided sql.NullString
-	dests := []any{&a.ID, &a.AgentRunID, &typ, &a.PermissionRequestID}
+	dests := []any{&a.ID, &a.AgentRunID, &a.NodeRunID, &typ, &a.PermissionRequestID, &a.Request}
 	dests = append(dests, scanDests(&a.Proposal)...)
 	dests = append(dests, &status, &a.Comment, &a.DecidedBy, &created, &expires, &decided)
 	if err := r.Scan(dests...); err != nil {
@@ -501,10 +501,11 @@ func scanApproval(r rowScanner) (Approval, error) {
 // CreateApproval inserts a, assigning ID, Status (pending) and CreatedAt.
 // A tool_call approval must reference its permission request.
 func (s *Store) CreateApproval(ctx context.Context, a *Approval) error {
-	if a.AgentRunID == "" {
-		return fmt.Errorf("%w: agent_run_id required", ErrInvalid)
-	}
 	switch a.Type {
+	case ApprovalRequest:
+		if a.NodeRunID == "" || a.AgentRunID != "" || a.Request == "" {
+			return fmt.Errorf("%w: request approval requires node_run_id and request, and no agent_run_id", ErrInvalid)
+		}
 	case ApprovalProposal:
 	case ApprovalToolCall:
 		if a.PermissionRequestID == "" {
@@ -512,6 +513,9 @@ func (s *Store) CreateApproval(ctx context.Context, a *Approval) error {
 		}
 	default:
 		return fmt.Errorf("%w: approval type %q", ErrInvalid, a.Type)
+	}
+	if a.Type != ApprovalRequest && a.AgentRunID == "" {
+		return fmt.Errorf("%w: agent_run_id required", ErrInvalid)
 	}
 	if a.Status == "" {
 		a.Status = ApprovalPending
@@ -529,9 +533,9 @@ func (s *Store) CreateApproval(ctx context.Context, a *Approval) error {
 		if err := t.prep(ctx, "approvals", "", contentField{"proposal", &a.Proposal}); err != nil {
 			return err
 		}
-		_, err := t.ExecContext(ctx, `INSERT INTO approvals (id, agent_run_id, type, permission_request_id, proposal_text, proposal_ref, proposal_size, status, comment, decided_by,
-			created_at, expires_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			a.ID, a.AgentRunID, a.Type, nullStr(a.PermissionRequestID), a.Proposal.Text, a.Proposal.Ref, a.Proposal.Size, a.Status, a.Comment, a.DecidedBy,
+		_, err := t.ExecContext(ctx, `INSERT INTO approvals (id, agent_run_id, node_run_id, type, permission_request_id, request, proposal_text, proposal_ref, proposal_size, status, comment, decided_by,
+			created_at, expires_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			a.ID, nullStr(a.AgentRunID), nullStr(a.NodeRunID), a.Type, nullStr(a.PermissionRequestID), a.Request, a.Proposal.Text, a.Proposal.Ref, a.Proposal.Size, a.Status, a.Comment, a.DecidedBy,
 			ts(a.CreatedAt), tsOrNil(a.ExpiresAt), tsOrNil(a.DecidedAt))
 		if err != nil {
 			return fmt.Errorf("store: insert approval: %w", err)
@@ -555,6 +559,7 @@ type ApprovalFilter struct {
 	Statuses   []ApprovalState
 	Type       ApprovalType
 	AgentRunID string
+	NodeRunID  string // request approvals of one node run
 	FlowRunID  string
 	Time       TimeRange // on created_at
 	Slim       bool      // omit inline proposal text
@@ -565,11 +570,13 @@ type ApprovalFilter struct {
 func (s *Store) ListApprovals(ctx context.Context, f ApprovalFilter) (Page[Approval], error) {
 	var w where
 	w.eq("agent_run_id", f.AgentRunID)
+	w.eq("node_run_id", f.NodeRunID)
 	w.eq("type", string(f.Type))
 	w.in("status", strs(f.Statuses))
 	w.timeRange("created_at", f.Time)
 	if f.FlowRunID != "" {
-		w.add(`agent_run_id IN (SELECT a.id FROM agent_runs a JOIN node_runs n ON n.id = a.node_run_id WHERE n.flow_run_id = ?)`, f.FlowRunID)
+		w.add(`(agent_run_id IN (SELECT a.id FROM agent_runs a JOIN node_runs n ON n.id = a.node_run_id WHERE n.flow_run_id = ?)
+			OR node_run_id IN (SELECT id FROM node_runs WHERE flow_run_id = ?))`, f.FlowRunID, f.FlowRunID)
 	}
 	return listPage(ctx, s.rdb, "SELECT "+approvalCols(f.Slim)+" FROM approvals", &w, f.ListOpts, "id",
 		scanApproval, func(a Approval) string { return a.ID })

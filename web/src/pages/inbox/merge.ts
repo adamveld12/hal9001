@@ -36,14 +36,19 @@ export function selectionFromPath(pathname: string): Selection | null {
 
 /**
  * Whether a pending approval belongs in the list under `f`. Approvals are
- * never archived, starred or dry-run, count as unread and urgent.
+ * never archived or starred, count as unread and urgent.
  */
 export function approvalMatches(a: Approval, f: InboxFilters): boolean {
   if (f.kind === "notes") return false;
-  if (f.archived || f.starred || f.dryRun === "only") return false;
+  if (f.archived || f.starred) return false;
+  // Only request approvals can belong to a dry run.
+  const dry = a.type === "request" && a.request?.dry_run === true;
+  if (f.dryRun === "only" && !dry) return false;
+  if (f.dryRun === "hide" && dry) return false;
   const q = f.q.trim().toLowerCase();
   if (q) {
-    const hay = `${approvalTitle(a)} ${a.proposal_md ?? ""}`.toLowerCase();
+    const hay =
+      `${approvalTitle(a)} ${a.proposal_md ?? ""} ${a.request?.body_md ?? ""}`.toLowerCase();
     if (!hay.includes(q)) return false;
   }
   return true;

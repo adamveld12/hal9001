@@ -131,7 +131,7 @@ func assistCmds() []*command {
 	}}
 
 	var testSample, testItem int
-	var testEvent, testArgs, testSensor, testFromSensor string
+	var testEvent, testArgs, testSensor, testFromSensor, testSimulate string
 	test := &leaf{
 		usage: "[--sample N|--event ID|--sensor ID|--from-sensor ID [--item N]|--args JSON] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
 		flags: func(fs *flag.FlagSet) {
@@ -141,6 +141,7 @@ func assistCmds() []*command {
 			fs.StringVar(&testSensor, "sensor", "", "flow sessions: run this draft sensor like a poll")
 			fs.StringVar(&testFromSensor, "from-sensor", "", "flow sessions: run this draft sensor and use its output item as the flow's input")
 			fs.IntVar(&testItem, "item", 0, "with --from-sensor: which output item (default 0)")
+			fs.StringVar(&testSimulate, "simulate-approval", "", "flow sessions: the decision request-approval nodes take, approved (default) or denied")
 		},
 		run: func(ctx context.Context, c *call) error {
 			id, err := c.sessionArg("assist test")
@@ -171,6 +172,9 @@ func assistCmds() []*command {
 			}
 			if c.flagSet("item") {
 				req["item"] = testItem
+			}
+			if testSimulate != "" {
+				req["simulate_approval"] = testSimulate
 			}
 			if testArgs != "" {
 				var obj map[string]any

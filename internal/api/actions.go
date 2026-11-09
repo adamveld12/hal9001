@@ -423,10 +423,11 @@ func (s *Server) testFlowNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		NodeID string        `json:"node_id"`
-		Node   *spec.Node    `json:"node"`
-		Input  testNodeInput `json:"input"`
-		DryRun bool          `json:"dry_run"`
+		NodeID           string        `json:"node_id"`
+		Node             *spec.Node    `json:"node"`
+		Input            testNodeInput `json:"input"`
+		DryRun           bool          `json:"dry_run"`
+		SimulateApproval string        `json:"simulate_approval"`
 	}
 	if !decodeJSON(w, r, &req, false) {
 		return
@@ -445,7 +446,11 @@ func (s *Server) testFlowNode(w http.ResponseWriter, r *http.Request) {
 		validationProblem(w, "the flow does not parse", ds)
 		return
 	}
-	engineReq := core.TestNodeRequest{FlowID: flowID, NodeID: req.NodeID, DryRun: req.DryRun}
+	if req.SimulateApproval != "" && req.SimulateApproval != "approved" && req.SimulateApproval != "denied" {
+		fieldProblem(w, "simulate_approval", "simulate_approval must be approved or denied")
+		return
+	}
+	engineReq := core.TestNodeRequest{FlowID: flowID, NodeID: req.NodeID, DryRun: req.DryRun, SimulateApproval: req.SimulateApproval}
 	if req.Node != nil {
 		if req.Node.ID != req.NodeID {
 			fieldProblem(w, "node.id", "node.id must equal node_id")

@@ -3346,14 +3346,14 @@ components:
     FlowRunKind: {type: string, enum: [live, replay, test]}
     NodeRunStatus: {type: string, enum: [queued, running, awaiting_approval, done, failed, killed, interrupted, skipped, cancelled]}
     NodeRunDecision: {type: string, enum: [emitted, dropped, error, skipped]}
-    NodeType: {type: string, enum: [command, agent, inbox]}
+    NodeType: {type: string, enum: [command, agent, inbox, approval]}
     AgentRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, denied, killed, interrupted, timeout]}
     AgentRunPhase: {type: string, enum: [propose, execute]}
     ResumedVia: {type: string, enum: [load, new_session]}
     AgentMode: {type: string, enum: [auto, approve, readonly]}
     ApproveStyle: {type: string, enum: [proposal, per_tool]}
     PermissionPolicy: {type: string, enum: [readonly, gated, auto]}
-    ApprovalType: {type: string, enum: [proposal, tool_call]}
+    ApprovalType: {type: string, enum: [proposal, tool_call, request]}
     ApprovalStatus: {type: string, enum: [pending, approved, denied, expired]}
     PermissionDecision: {type: string, enum: [allow, reject, cancelled, expired]}
     DecidedBy: {type: string, enum: [policy, user, timeout]}
@@ -3695,6 +3695,28 @@ components:
         suggested_reply: {type: string}
         links: {type: array, items: {$ref: '#/components/schemas/NoteLink'}}
         ui: {$ref: '#/components/schemas/NodeUI'}
+    ApprovalNode:
+      type: object
+      description: |
+        "Request approval": asks the user to approve or deny and parks the node as `awaiting_approval` (no concurrency
+        slot; it survives daemon restarts) until someone decides in the Inbox or the approval times out. Creates an
+        approval of type `request`. `title` and `body` are Go templates over `{.event, .input, .flow, .run}`.
+        Ports: `approved`, `denied` and the implicit `error`. On `approved` and `denied` (and a timed-out approval
+        routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
+        comment, decided_by, decided_at}}`. In a dry run the approval is still created, tagged `dry_run`, and says so.
+        Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
+      additionalProperties: false
+      required: [id, type, title]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        type: {type: string, enum: [approval]}
+        title: {type: string, description: Template. Required.}
+        body: {type: string, description: Markdown template shown in the approval.}
+        fields: {type: array, items: {type: string}, description: 'Dot-paths into the node input, shown as a key/value table.'}
+        priority: {$ref: '#/components/schemas/Priority'}
+        timeout: {$ref: '#/components/schemas/Duration'}
+        on_timeout: {type: string, enum: [denied, approved, error], default: denied, description: 'What an expired approval does: route to `denied`, to `approved`, or fail the node (the `error` port). Only valid with `timeout`.'}
+        ui: {$ref: '#/components/schemas/NodeUI'}
     TransformCondition:
       type: object
       description: |
@@ -3857,6 +3879,7 @@ components:
         - {$ref: '#/components/schemas/AgentNode'}
         - {$ref: '#/components/schemas/InboxNode'}
         - {$ref: '#/components/schemas/TransformNode'}
+        - {$ref: '#/components/schemas/ApprovalNode'}
       discriminator:
         propertyName: type
         mapping:
@@ -3864,6 +3887,7 @@ components:
           agent: '#/components/schemas/AgentNode'
           inbox: '#/components/schemas/InboxNode'
           transform: '#/components/schemas/TransformNode'
+          approval: '#/components/schemas/ApprovalNode'
     Edge:
       type: object
       additionalProperties: false
@@ -4438,6 +4462,7 @@ components:
         node: {$ref: '#/components/schemas/Node'}
         input: {$ref: '#/components/schemas/TestNodeInput'}
         dry_run: {type: boolean, default: false, description: 'Run with dry-run semantics (`HAL_DRY_RUN=1`, agents forced readonly, `side_effect` skipped).'}
+        simulate_approval: {type: string, enum: [approved, denied], default: approved, description: 'For an `approval` node: the decision to take instead of waiting for one.'}
     TestNodeResult:
       type: object
       required: [flow_run, node_run]
@@ -5143,10 +5168,10 @@ components:
         items: {type: array, items: {$ref: '#/components/schemas/PermissionRequest'}}
     Approval:
       type: object
-      required: [id, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, assist_session_id, event_id, runtime, type, permission_request_id, permission_request, proposal_md, status, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
+      required: [id, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, assist_session_id, event_id, runtime, type, permission_request_id, permission_request, proposal_md, request, status, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
-        agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
         node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
         flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
         flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
@@ -5158,6 +5183,7 @@ components:
         permission_request_id: {$ref: '#/components/schemas/NullableUlid'}
         permission_request: {oneOf: [{$ref: '#/components/schemas/PermissionRequest'}, {type: 'null'}], description: 'Embedded for `tool_call` approvals.'}
         proposal_md: {type: [string, 'null'], description: 'Set for `proposal` approvals.'}
+        request: {oneOf: [{$ref: '#/components/schemas/ApprovalRequestContent'}, {type: 'null'}], description: 'Set for `request` approvals.'}
         status: {$ref: '#/components/schemas/ApprovalStatus'}
         comment: {type: [string, 'null']}
         cancel_run: {type: [boolean, 'null'], description: 'For a denied `tool_call`, whether the run was cancelled.'}
@@ -5165,6 +5191,17 @@ components:
         decided_at: {$ref: '#/components/schemas/NullableTimestamp'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         expires_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    ApprovalRequestContent:
+      type: object
+      description: What an `approval` node asked, rendered when the node ran.
+      required: [title, body_md, fields, priority, dry_run, on_timeout]
+      properties:
+        title: {type: string}
+        body_md: {type: string, description: 'Markdown. In a dry run the first line says so.'}
+        fields: {type: array, items: {type: object, required: [key, value], properties: {key: {type: string}, value: {type: string}}}}
+        priority: {$ref: '#/components/schemas/Priority'}
+        dry_run: {type: boolean, description: 'The approval belongs to a dry run: deciding only exercises the flow''s branches.'}
+        on_timeout: {type: [string, 'null'], enum: [denied, approved, error, null], description: 'What expiry does; null without a timeout (`expires_at`).'}
     ApprovalList:
       type: object
       required: [items, next_cursor]
@@ -5718,6 +5755,7 @@ components:
         event_id: {$ref: '#/components/schemas/Ulid'}
         input: {$ref: '#/components/schemas/JsonValue'}
         args: {type: [object, 'null'], additionalProperties: true, description: Tool sessions only.}
+        simulate_approval: {type: string, enum: [approved, denied], default: approved, description: 'Flow sessions: the decision `approval` nodes take in the test; the test never waits for a person.'}
     AssistSample:
       type: object
       required: [index, sensor_id, payload]

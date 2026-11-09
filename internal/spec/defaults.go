@@ -198,6 +198,13 @@ func (f *Flow) ApplyDefaults() {
 			if n.Timeout == 0 {
 				n.Timeout = DefaultCommandTimeout
 			}
+		case NodeApproval:
+			if n.Priority == "" {
+				n.Priority = PriorityNormal
+			}
+			if n.Timeout > 0 && n.OnTimeout == "" {
+				n.OnTimeout = OnTimeoutDenied
+			}
 		}
 	}
 	for i := range f.Edges {
@@ -211,6 +218,7 @@ func (n Node) clone() Node {
 	n.Steps = transform.Clone(n.Steps)
 	n.Command = slices.Clone(n.Command)
 	n.Links = slices.Clone(n.Links)
+	n.Fields = slices.Clone(n.Fields)
 	n.MCPServers = slices.Clone(n.MCPServers)
 	n.Tools = slices.Clone(n.Tools)
 	for i, t := range n.Tools {
@@ -275,6 +283,13 @@ func (f Flow) Minimal() Flow {
 			if n.Timeout == DefaultCommandTimeout {
 				n.Timeout = 0
 			}
+		case NodeApproval:
+			if n.Priority == PriorityNormal {
+				n.Priority = ""
+			}
+			if n.OnTimeout == OnTimeoutDenied {
+				n.OnTimeout = ""
+			}
 		}
 	}
 	for i := range f.Edges {
@@ -321,6 +336,8 @@ func (n *Node) OutPorts() []string {
 		ports = slices.Clone(n.Ports)
 	case NodeTransform:
 		ports = transform.Ports(n.Steps)
+	case NodeApproval:
+		ports = []string{PortApproved, PortDenied}
 	default:
 		ports = []string{PortOut}
 	}

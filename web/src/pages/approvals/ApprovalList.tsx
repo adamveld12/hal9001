@@ -8,7 +8,11 @@ import { approvalTitle } from "./queue";
 export function TypeBadge({ type }: { type: Approval["type"] }) {
   return (
     <Badge tone={type === "tool_call" ? "run" : "info"}>
-      {type === "tool_call" ? "tool call" : "proposal"}
+      {type === "tool_call"
+        ? "tool call"
+        : type === "request"
+          ? "request"
+          : "proposal"}
     </Badge>
   );
 }
@@ -32,6 +36,7 @@ function Row({ approval: a }: { approval: Approval }) {
       </div>
       <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
         <TypeBadge type={a.type} />
+        {a.request?.dry_run && <Badge tone="warn">dry run</Badge>}
         {!pending && <StatusBadge status={a.status} />}
         {a.type === "tool_call" && a.permission_request && (
           <span>{a.permission_request.tool_kind}</span>

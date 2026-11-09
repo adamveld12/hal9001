@@ -70,12 +70,13 @@ func (s *session) draftTools() []tools.Tool {
 			Description: "Run the draft the way a poll (sensor) or one flow run (flow) would and return the result as JSON; flow sessions can pick the input with `sample` " +
 				"(an index of reference/samples/index.txt) or `event`, or `sensor` (the id of a draft sensor of the session: run it like a poll) or `from_sensor` (+ `item`: run the draft sensor and use its item as the flow's input); tool sessions pass `args` (the tool's arguments, result is stdout/stderr/exit code). It runs the code with the user's credentials: the first test after the script changed asks the user for approval.",
 			InputSchema: obj(map[string]any{
-				"sample":      map[string]any{"type": "integer", "minimum": 0},
-				"event":       map[string]any{"type": "string"},
-				"sensor":      map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor to run like a poll."},
-				"from_sensor": map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor whose output item is the flow test's input."},
-				"item":        map[string]any{"type": "integer", "minimum": 0, "description": "With from_sensor: which output item to use (default 0)."},
-				"args":        map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
+				"sample":            map[string]any{"type": "integer", "minimum": 0},
+				"event":             map[string]any{"type": "string"},
+				"sensor":            map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor to run like a poll."},
+				"from_sensor":       map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor whose output item is the flow test's input."},
+				"item":              map[string]any{"type": "integer", "minimum": 0, "description": "With from_sensor: which output item to use (default 0)."},
+				"args":              map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
+				"simulate_approval": map[string]any{"type": "string", "enum": []string{"approved", "denied"}, "description": "Flow sessions: the decision request-approval nodes take in the test (default approved); the test never waits for a person."},
 			}),
 			Approval: s.testApproval,
 			Run:      s.runDraftTest,
@@ -306,18 +307,19 @@ func (s *session) testApproval(args json.RawMessage) (bool, string) {
 
 func (s *session) runDraftTest(ctx context.Context, c tools.Call) (tools.Result, error) {
 	var a struct {
-		Sample     *int            `json:"sample"`
-		Event      string          `json:"event"`
-		Args       json.RawMessage `json:"args"`
-		Sensor     string          `json:"sensor"`
-		FromSensor string          `json:"from_sensor"`
-		Item       *int            `json:"item"`
+		Sample           *int            `json:"sample"`
+		Event            string          `json:"event"`
+		Args             json.RawMessage `json:"args"`
+		Sensor           string          `json:"sensor"`
+		FromSensor       string          `json:"from_sensor"`
+		Item             *int            `json:"item"`
+		SimulateApproval string          `json:"simulate_approval"`
 	}
 	if err := json.Unmarshal(c.Args, &a); err != nil {
 		return tools.Result{}, fmt.Errorf("arguments: %w", err)
 	}
 	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event, Args: a.Args,
-		Sensor: a.Sensor, FromSensor: a.FromSensor, Item: a.Item})
+		Sensor: a.Sensor, FromSensor: a.FromSensor, Item: a.Item, SimulateApproval: a.SimulateApproval})
 	if err != nil {
 		var verr *core.ValidationError
 		if errors.As(err, &verr) {

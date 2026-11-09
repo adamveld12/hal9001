@@ -14,6 +14,7 @@ function colorFor(e: GraphEdge, input: EdgeStyleInput): string | undefined {
     return input.overlay.takenEdges.has(e.id) ? "var(--ok)" : "var(--line)";
   if (e.sourceHandle === "error") return "var(--bad)";
   if (e.sourceHandle === "denied") return "var(--warn)";
+  if (e.sourceHandle === "approved") return "var(--ok)";
   return undefined;
 }
 

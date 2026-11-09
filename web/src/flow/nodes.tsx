@@ -20,6 +20,7 @@ const TYPE_ICON: Record<FlowNode["type"], IconName> = {
   command: "command",
   agent: "agent",
   inbox: "note",
+  approval: "check",
   transform: "transform",
 };
 
@@ -27,6 +28,7 @@ const TYPE_ACCENT: Record<FlowNode["type"], string> = {
   command: "text-info",
   agent: "text-run",
   inbox: "text-warn",
+  approval: "text-ok",
   transform: "text-ok",
 };
 
@@ -50,6 +52,8 @@ function summary(node: FlowNode): string {
         .filter(Boolean)
         .join(" · ");
     case "inbox":
+      return node.title;
+    case "approval":
       return node.title;
     case "transform": {
       const n = node.steps?.length ?? 0;
@@ -188,7 +192,12 @@ function PortRows({ node }: { node: FlowNode }) {
                 "font-mono text-[10px]",
                 bad ? "text-bad" : implicit ? "text-muted" : "text-fg",
                 port === "error" && !bad ? "text-bad/80" : "",
-                port === "denied" && !bad ? "text-warn" : "",
+                port === "denied" && !bad
+                  ? node.type === "approval"
+                    ? "text-bad"
+                    : "text-warn"
+                  : "",
+                port === "approved" && !bad ? "text-ok" : "",
               )}
               title={
                 bad
@@ -207,7 +216,9 @@ function PortRows({ node }: { node: FlowNode }) {
               isConnectable={!ctx.readOnly}
               className={cx(
                 port === "error" && "!bg-bad",
-                port === "denied" && "!bg-warn",
+                port === "denied" &&
+                  (node.type === "approval" ? "!bg-bad" : "!bg-warn"),
+                port === "approved" && "!bg-ok",
                 bad && "!bg-bad",
               )}
             />
