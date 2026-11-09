@@ -136,6 +136,8 @@ func (s *session) initDir() error {
 		if err := s.m.writeReference(s.dir); err != nil {
 			return err
 		}
+	} else if err := s.m.writeConfigReference(s.dir); err != nil {
+		return err
 	}
 	return writeAtomic(s.draftPath(), []byte(s.row.DraftYAML))
 }
@@ -372,8 +374,13 @@ func (s *session) runTurn(ctx context.Context, t *turn, text string) {
 func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRecord, error) {
 	s.mu.Lock()
 	ag, err := s.agentSessionLocked()
-	if err == nil && s.isFlow() {
-		err = s.m.writeReference(s.dir) // samples and saved prompts change between turns
+	if err == nil {
+		// Samples, saved prompts and the app's configuration change between turns.
+		if s.isFlow() {
+			err = s.m.writeReference(s.dir)
+		} else {
+			err = s.m.writeConfigReference(s.dir)
+		}
 	}
 	row, ht := s.row, s.halTools
 	s.mu.Unlock()
@@ -385,14 +392,15 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 		return agent.RunRecord{}, err
 	}
 	global, sensor := s.m.envNames(row.TargetID)
-	head := preamble(row.TargetID, global, sensor)
+	summary := s.m.configSummary()
+	head := preamble(row.TargetID, global, sensor, summary)
 	switch row.TargetKind {
 	case store.AssistTargetFlow:
 		global, _ = s.m.envNames("")
-		head = flowPreamble(row.TargetID, global)
+		head = flowPreamble(row.TargetID, global, summary)
 	case store.AssistTargetTool:
 		global, own := s.m.envNamesOf(row.TargetKind, row.TargetID)
-		head = toolPreamble(row.TargetID, global, own)
+		head = toolPreamble(row.TargetID, global, own, summary)
 	}
 	head = tools.Preamble(tools.PreambleData{
 		Info: tools.RunInfo{AgentRunID: t.runID, AssistSessionID: s.id}, Now: s.m.host.Clock().Now(), Tools: ht.Tools(),
@@ -411,7 +419,7 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 }
 
 // preamble prefixes every prompt: it names the draft and repeats what changes between turns.
-func preamble(targetID string, global, sensor []string) string {
+func preamble(targetID string, global, sensor []string, summary string) string {
 	var b strings.Builder
 	b.WriteString("[hal9001 sensor assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
 		"Call draft_read with path `instructions` first: it holds the sensor format, the output and key rules and how to test.\n")
@@ -421,7 +429,8 @@ func preamble(targetID string, global, sensor []string) string {
 		b.WriteString("You are creating a new sensor.\n")
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), sensor...)) + ".\n")
-	b.WriteString("Test the draft with draft_test; the first test after you change the script asks the user to approve it.\n\n")
+	b.WriteString("Test the draft with draft_test; the first test after you change the script asks the user to approve it.\n")
+	b.WriteString(summary + "\n")
 	return b.String()
 }
 

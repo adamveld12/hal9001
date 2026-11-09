@@ -549,7 +549,7 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 		case seenTools[t.ID]:
 			c.errorf(CodeDuplicateID, tp, "tool %q is listed twice", t.ID)
 		case refs.Tools != nil && !refs.Tools[t.ID]:
-			c.errorf(CodeUnknownTool, tp, "unknown tool %q%s", t.ID, availableList(keysOf(refs.Tools)))
+			c.errorf(CodeUnknownTool, tp, "unknown tool %q%s", t.ID, availableList(sortedKeys(refs.Tools)))
 		}
 		seenTools[t.ID] = true
 		if m := t.Approve; m != nil && m.Mode != ToolApproveNever && m.Mode != ToolApproveAlways && m.Mode != ToolApproveWhen {
@@ -765,7 +765,7 @@ func validateAgentSandbox(c *collector, p string, n *Node, refs *Refs) {
 	if refs.Sandboxes != nil {
 		var ok bool
 		if sb, ok = refs.Sandboxes[n.Sandbox]; !ok {
-			c.errorf(CodeUnknownSandbox, p+".sandbox", "sandbox %q is not enabled (Configure \u2192 Sandboxes)%s", n.Sandbox, availableList(sortedKeys(refs.Sandboxes)))
+			c.errorf(CodeUnknownSandbox, p+".sandbox", "sandbox %q is not enabled: enable it in Configure \u2192 Sandboxes \u2192 %s, or use an enabled sandbox%s", n.Sandbox, strings.ToUpper(n.Sandbox[:1])+n.Sandbox[1:], availableList(sortedKeys(refs.Sandboxes)))
 			return
 		}
 	}

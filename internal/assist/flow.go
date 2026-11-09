@@ -171,14 +171,7 @@ func (m *Manager) writeReference(dir string) error {
 			return err
 		}
 	}
-	var runtimes []string
-	if ws.Config.Value != nil {
-		for name := range ws.Config.Value.Runtimes {
-			runtimes = append(runtimes, name)
-		}
-	}
-	sort.Strings(runtimes)
-	if err := put("runtimes.txt", []byte(strings.Join(runtimes, "\n")+"\n")); err != nil {
+	if err := m.writeConfigFiles(ws, put); err != nil {
 		return err
 	}
 	if err := put("docs/flows.md", []byte(docs.Flows)); err != nil {
@@ -265,7 +258,7 @@ func (m *Manager) Samples(ctx context.Context, sessionID string) ([]core.AssistS
 }
 
 // flowPreamble prefixes every prompt of a flow session.
-func flowPreamble(targetID string, globalEnv []string) string {
+func flowPreamble(targetID string, globalEnv []string, summary string) string {
 	var b strings.Builder
 	b.WriteString("[hal9001 flow assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
 		"New prompts are draft files `" + PromptsDir + "/<name>.md` (draft_write with that path). `" + ReferenceDir + "/` is read-only reference material (sensors, prompts, runtimes, samples, docs) read with draft_read. " +
@@ -276,7 +269,8 @@ func flowPreamble(targetID string, globalEnv []string) string {
 		b.WriteString("You are creating a new flow. Never enable it: keep `enabled: false`; the user enables it.\n")
 	}
 	b.WriteString("Env variable names command nodes can use: " + nameList(globalEnv) + ".\n")
-	b.WriteString("Test the draft with draft_test (optionally `sample`); the first test after you change a command node asks the user to approve it.\n\n")
+	b.WriteString("Test the draft with draft_test (optionally `sample`); the first test after you change a command node asks the user to approve it.\n")
+	b.WriteString(summary + "\n")
 	return b.String()
 }
 
@@ -331,9 +325,11 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("- `%s/sensors/<id>.yaml`: the user's sensors, i.e. what can be subscribed to (the definitions contain no secret values).\n", ReferenceDir)
 	w("- `%s/prompts/<name>.md`: the user's existing prompts, which agent nodes can use.\n", ReferenceDir)
 	w("- For agent nodes PREFER inline `instructions: |` (a prompt template written on the node, `output: note|none`, default `note`) over creating a prompt file. Create a prompt file under `%s/` only when the user asks for a reusable prompt or several nodes share one; an agent node has either `prompt` or `instructions`, never both.\n", PromptsDir)
-	w("- `%s/runtimes.txt`: the names of the configured agent runtimes (`runtime:` of an agent node).\n", ReferenceDir)
+	w("- `%s/runtimes.txt`, `%s/sandboxes.md`, `%s/tools.md`, `%s/settings.md`, `%s/docs/agent-nodes.md`: the configured runtimes, sandboxes (with images), custom tools, settings and the agent/approval node fields. See the next section.\n", ReferenceDir, ReferenceDir, ReferenceDir, ReferenceDir, ReferenceDir)
 	w("- `%s/samples/<sensor>.jsonl` and `%s/samples/index.txt`: up to 5 recent real event payloads per sensor, redacted, one JSON value per line. ", ReferenceDir, ReferenceDir)
 	w("Look at them before you write field names: use the fields that are really there.\n\n")
+
+	w("%s", configGuide())
 
 	w("## The flow file\n\n")
 	w("```yaml\nid: triage-github        # new flows only: the file name, not stored\ndescription: Review requests become inbox notes.\nenabled: false\ndry_run: true\nsubscribe: [github-notifications]\nnodes:\n  - id: only-reviews\n    type: transform\n    steps:\n      - type: filter\n        conditions:\n          - {field: reason, op: equals, value: review_requested}\n  - id: note\n    type: inbox\n    title: \"Review requested: {{.input.subject.title}}\"\n    priority: normal\n    summary_md: \"{{.input.repository.full_name}}\"\n    ui: {x: 400, y: 120}\nedges:\n  - {from: only-reviews, to: note}\n```\n\n")
@@ -357,7 +353,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 
 	w("### Agent nodes\n\n")
 	w("- Default to `mode: readonly`: the agent can read but not act. For inbox triage use a prompt with `output: note` (see the existing prompts in `%s/prompts/`): the agent's note becomes an inbox item on its own, without an `inbox` node after it.\n", ReferenceDir)
-	w("- `runtime` must be one of `%s/runtimes.txt`. Do not invent models.\n", ReferenceDir)
+	w("- `runtime` must be one of `%s/runtimes.txt`, `sandbox` an enabled backend of `%s/sandboxes.md` and `image` one of its images. Do not invent models or names.\n", ReferenceDir, ReferenceDir)
 	w("- Use `mode: approve` or `auto` only if the user asked for the agent to act, and say so in your summary.\n")
 	w("- `prompt` names a file in `prompts/` of the user's home. Reuse an existing prompt from `%s/prompts/` when one fits. If you need a new one, create the draft file `%s/<new-name>.md` (draft_write) with a front matter (`name`, `description`, `output: note`) and the prompt text (a template over `{{.input}}`); ", ReferenceDir, PromptsDir)
 	w("the user's Save creates it. Never edit or reuse the name of an existing prompt: Save does not overwrite existing prompts, so choose a new name instead.\n")

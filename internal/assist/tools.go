@@ -51,7 +51,7 @@ func (s *session) draftTools() []tools.Tool {
 			Name: "draft_read",
 			Description: "Read the session's draft. Without `path` it returns the current draft with its validation diagnostics as JSON. " +
 				"`path` may also be `instructions` (how to author this draft: read it first), `prompts/<name>.md` (a draft prompt), `sensors/<id>.yaml` (flow sessions: a draft sensor, else the saved one) or `sensors` (list the draft sensors) or `reference/<file>` " +
-				"(read-only reference material of a flow session: docs/flows.md, sensors/, prompts/, samples/, runtimes.txt; a directory lists its entries).",
+				"(read-only reference material of a flow session: runtimes.txt, sandboxes.md, tools.md, settings.md, docs/agent-nodes.md; flow sessions also docs/flows.md, sensors/, prompts/, samples/; a directory lists its entries).",
 			InputSchema: obj(map[string]any{"path": map[string]any{"type": "string"}}),
 			Run:         s.runDraftRead,
 		},
@@ -92,6 +92,11 @@ func (s *session) draftTools() []tools.Tool {
 
 // instructionsText is the authoring guide of this session (what AGENTS.md used to hold).
 func (s *session) instructionsText() (string, error) {
+	if !s.isFlow() {
+		if err := s.m.writeConfigReference(s.dir); err != nil {
+			return "", err
+		}
+	}
 	if s.isFlow() {
 		if err := s.m.writeReference(s.dir); err != nil {
 			return "", err
@@ -154,7 +159,7 @@ func (s *session) runDraftRead(_ context.Context, c tools.Call) (tools.Result, e
 		return s.readUnder(SensorsDir, ".")
 	case s.isFlow() && strings.HasPrefix(p, SensorsDir+"/") && strings.HasSuffix(p, draftSensorSuffix):
 		return s.readDraftSensorLocked(strings.TrimSuffix(strings.TrimPrefix(p, SensorsDir+"/"), draftSensorSuffix))
-	case strings.HasPrefix(p, ReferenceDir) && s.isFlow():
+	case strings.HasPrefix(p, ReferenceDir):
 		return s.readUnder(ReferenceDir, strings.TrimPrefix(strings.TrimPrefix(p, ReferenceDir), "/"))
 	}
 	return tools.Result{}, fmt.Errorf("unknown path %q: use no path, instructions, prompts/<name>.md, sensors/<id>.yaml or reference/<file>", a.Path)

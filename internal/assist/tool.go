@@ -188,7 +188,7 @@ func clip(s string) string {
 }
 
 // toolPreamble prefixes every prompt of a tool session.
-func toolPreamble(targetID string, global, own []string) string {
+func toolPreamble(targetID string, global, own []string, summary string) string {
 	var b strings.Builder
 	b.WriteString("[hal9001 tool assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
 		"Call draft_read with path `instructions` first: it holds the tool format, how arguments reach the script and how to test.\n")
@@ -198,7 +198,8 @@ func toolPreamble(targetID string, global, own []string) string {
 		b.WriteString("You are creating a new tool.\n")
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), own...)) + ".\n")
-	b.WriteString("Test with draft_test (pass `args`) before you say it is done.\n\n")
+	b.WriteString("Test with draft_test (pass `args`) before you say it is done.\n")
+	b.WriteString(summary + "\n")
 	return b.String()
 }
 
@@ -227,6 +228,8 @@ func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) s
 	w("Before you run it, say in a sentence what the script does and which credentials it uses. Once the user allowed a version, testing the same code again does not ask. ")
 	w("Changing only `description`, `params`, `approve`, `timeout` or `runs_in_sandbox` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
+
+	w("%s", configGuide())
 
 	w("## Tools\n\n")
 	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it and returns the same.\n")

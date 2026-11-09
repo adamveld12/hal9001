@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -99,4 +100,15 @@ func runContext(_ context.Context, c Call) (Result, error) {
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
 	return Result{Text: string(b)}, nil
+}
+
+// BuiltinToolNames lists the names of the tools every agent run has (the hal tools, not custom tools or the sandbox
+// tools), sorted.
+func BuiltinToolNames() []string {
+	var names []string
+	for _, t := range builtinTools(GHOptions{}) {
+		names = append(names, t.Name)
+	}
+	sort.Strings(names)
+	return names
 }

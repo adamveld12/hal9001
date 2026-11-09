@@ -123,3 +123,27 @@ func TestDepotRequiresToken(t *testing.T) {
 		t.Fatalf("enabled depot with a token: %v", ds)
 	}
 }
+
+// A disabled or unknown sandbox, an image outside the list, and an unknown tool each list the valid options.
+func TestAgentNodeConfigDiagnosticsListOptions(t *testing.T) {
+	refs := &Refs{
+		Runtimes:  map[string]Runtime{"claude": {}},
+		Tools:     map[string]bool{"lint": true},
+		Sandboxes: map[string]Sandbox{SandboxLocal: {Enabled: true}, SandboxDocker: {Enabled: true, Images: []string{"alpine:3"}}},
+	}
+	for _, tc := range []struct{ node, want string }{
+		{"sandbox: kubernetes", "enable it in Configure \u2192 Sandboxes \u2192 Kubernetes"},
+		{"sandbox: kubernetes", "(available: docker, local)"},
+		{"sandbox: docker\n    image: nope", "(available: alpine:3)"},
+		{"tools: [{id: nope}]", "(available: lint)"},
+	} {
+		_, ds := CheckFlow("f", []byte("subscribe: []\nnodes:\n  - id: a\n    type: agent\n    runtime: claude\n    instructions: hi\n    "+tc.node+"\nedges: []\n"), refs)
+		var msgs []string
+		for _, d := range ds {
+			msgs = append(msgs, d.Message)
+		}
+		if !strings.Contains(strings.Join(msgs, "\n"), tc.want) {
+			t.Errorf("%q: diagnostics %q lack %q", tc.node, msgs, tc.want)
+		}
+	}
+}

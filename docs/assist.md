@@ -109,7 +109,17 @@ the agent: the environment holds no env-file values and `draft_test` redacts the
 | `flow.yaml` | The draft: the flow's file, or a skeleton with `enabled: false` and `dry_run: true`. The agent keeps the id stable and never enables a flow; you enable it. |
 | `prompts/<name>.md` | New prompt files the agent drafts. They are validated like prompt files and listed in `draft.prompts` (`{name, yaml, exists}`); they do not change `draft.hash`. A name that is already saved is flagged: Save never overwrites it. |
 | `sensors/<id>.yaml` | Sensors the agent drafts so the flow does not need another page: new ones, and edits of saved ones (the first `draft_write` of a saved id copies it in and remembers the saved file's hash). They are validated like sensor files together with the flow, which may subscribe to them, and listed in `draft.sensors` (`{id, yaml, exists, base_hash, diagnostics}`; `base_hash` is null for a new sensor). They do not change `draft.hash`. A new sensor whose name is already saved is an error; a saved sensor that changed since the copy is a warning. |
-| `reference/` | **Read-only** material: `sensors/<id>.yaml` (definitions, no env values), `prompts/<name>.md` (existing prompts), `runtimes.txt` (names only), `samples/<sensor>.jsonl` (up to 5 recent event payloads per sensor, redacted) with `samples/index.txt`, and `docs/flows.md` (the formats). Rebuilt every turn. It is read with `draft_read` and cannot be written. |
+| `reference/` | **Read-only** material: `sensors/<id>.yaml` (definitions, no env values), `prompts/<name>.md` (existing prompts), `runtimes.txt` (names, kind, lockdown), `samples/<sensor>.jsonl` (up to 5 recent event payloads per sensor, redacted) with `samples/index.txt`, and `docs/flows.md` (the formats). Rebuilt every turn. It is read with `draft_read` and cannot be written. |
+
+Every session kind (sensor, flow, tool) also gets the app's configuration under `reference/`, rebuilt every turn, with no secrets
+(never env values, runtime commands, kubeconfig paths, hosts or keys): `runtimes.txt`, `sandboxes.md` (each backend id as used in
+`sandbox:`, enabled or not, lifecycle, images, approval policy), `tools.md` (custom tools with params, approval and
+`runs_in_sandbox`, plus the built-in tool names), `settings.md` (concurrency, approval timeout, notification priority, retention) and
+`docs/agent-nodes.md` (agent and approval node fields). The per-turn preamble repeats a summary (enabled and disabled sandboxes with
+images, runtime names, custom tool ids), and the instructions tell the agent to use only ids listed there and to tell the user where to
+enable anything else (for example Configure > Sandboxes > Kubernetes). Validation diagnostics for an unknown or disabled sandbox, an
+image outside the list, an unknown tool or an unknown runtime list the valid options.
+
 | (`draft_read` path `instructions`) | The instructions: the flow format, the node types, **prefer `transform` nodes** for filtering, routing and reshaping (steps compile to jq; no code, no credentials, no approval), agent nodes (default `mode: readonly`; for inbox triage a prompt with `output: note`), inbox nodes, keep the id, never enable, how to test, and end each turn with a plain summary. |
 
 The agent's tools are the ones above; `draft_write` accepts `flow.yaml`, `prompts/<name>.md` and `sensors/<id>.yaml` only.

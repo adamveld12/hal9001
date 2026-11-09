@@ -59,6 +59,8 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("Changing only `interval`, `key`, `first_run` or `timeout` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
 
+	w("%s", configGuide())
+
 	w("## Tools\n\n")
 	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it and returns the same.\n")
 	w("- `validate` checks the draft against the sensor format and returns the diagnostics.\n")
