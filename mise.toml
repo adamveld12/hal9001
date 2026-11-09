@@ -74,3 +74,7 @@ run = "go run ./cmd/hal9001-menubar"
 [tasks."menubar:build"]
 description = "Build the macOS menubar app (bin/hal9001-menubar)"
 run = "go build -o bin/hal9001-menubar ./cmd/hal9001-menubar"
+
+[tasks."build:all"]
+description = "Build everything: hal9001 with embedded UI and the menubar app"
+depends = ["build", "menubar:build"]

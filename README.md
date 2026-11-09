@@ -329,6 +329,7 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 | Task | Command |
 |---|---|
 | Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
+| Build UI, binary and menubar app | `mise run build:all` (outputs `bin/hal9001` and `bin/hal9001-menubar`) |
 | Hot-reload dev loop (UI on :5173, daemon restarts on Go changes) | `mise run dev` |
 | Everything the hooks run, on the whole tree | `mise run check` (static checks, `race`, sharded `e2e` and the web check, in parallel) |
 | Race detector on all packages but e2e | `mise run race` |
