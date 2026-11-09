@@ -4326,6 +4326,7 @@ components:
         enabled: {type: [boolean, 'null'], description: Null when the YAML does not parse.}
         dry_run: {type: [boolean, 'null']}
         subscribe: {type: array, items: {$ref: '#/components/schemas/Slug'}}
+        description: {type: string, description: 'The flow''s `description`; empty when unset.'}
         node_count: {type: integer, minimum: 0}
         diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}}
         health: {$ref: '#/components/schemas/FlowHealth'}

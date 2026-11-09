@@ -479,6 +479,7 @@ type flowSummaryView struct {
 	Enabled     *bool             `json:"enabled"`
 	DryRun      *bool             `json:"dry_run"`
 	Subscribe   []string          `json:"subscribe"`
+	Description string            `json:"description"`
 	NodeCount   int               `json:"node_count"`
 	Diagnostics []spec.Diagnostic `json:"diagnostics"`
 	Health      flowHealthView    `json:"health"`
@@ -503,6 +504,7 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 		if f.Value != nil {
 			v.Enabled, v.DryRun = &f.Value.Enabled, &f.Value.DryRun
 			v.NodeCount = len(f.Value.Nodes)
+			v.Description = f.Value.Description
 			v.Subscribe = nonNil(f.Value.Subscribe)
 		}
 		out.Items = append(out.Items, v)

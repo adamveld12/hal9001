@@ -1,3 +1,8 @@
+import { InlineEdit } from "../../components/InlineEdit";
+import { useRenameTool } from "../../api/rename";
+import { useTools } from "../../api/tools";
+import { validateName } from "../../lib/inlineEdit";
+import { withDescription } from "../files/description";
 import { useEffect, useState } from "react";
 import { ApiError, errorMessage } from "../../api/client";
 import {
@@ -31,12 +36,18 @@ function Editor({
   detail,
   onDirtyChange,
   onDeleted,
+  onRenamed,
 }: {
   detail: ToolDetail;
   onDirtyChange: (dirty: boolean) => void;
   onDeleted: () => void;
+  onRenamed: (newId: string) => void;
 }) {
   const id = detail.id;
+  const rename = useRenameTool();
+  const otherIds = (useTools().data?.items ?? [])
+    .map((x) => x.id)
+    .filter((x) => x !== id);
   const { state, dispatch, dirty } = useEditState({
     hash: detail.hash,
     text: detail.yaml,
@@ -112,7 +123,21 @@ function Editor({
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="m-0 font-mono text-sm font-semibold">{id}</h2>
+        <InlineEdit
+          mono
+          label="Tool name"
+          value={id}
+          validate={(v) => validateName(v, id, otherIds, "tool")}
+          disabledReason={
+            dirty ? "Save or discard your edits before renaming" : null
+          }
+          onSave={(newId) =>
+            rename.mutateAsync(
+              { id, newId, expectedHash: state.base.hash },
+              { onSuccess: () => onRenamed(newId) },
+            )
+          }
+        />
         {t && <Badge tone="muted">{t.lang}</Badge>}
         {t && (
           <Badge tone={t.approve === "never" ? "ok" : "warn"}>
@@ -133,6 +158,26 @@ function Editor({
           />
         </div>
       </div>
+
+      <InlineEdit
+        muted
+        label="Tool description"
+        placeholder="Add a description"
+        value={detail.tool?.description ?? ""}
+        validate={(v) => (v === "" ? "The agent needs a description." : null)}
+        onSave={(text) => {
+          const next = withDescription(dirty ? state.draft : detail.yaml, text);
+          if (dirty) {
+            dispatch({ type: "edit", draft: next });
+            return Promise.resolve();
+          }
+          return update.mutateAsync({
+            id,
+            expectedHash: state.base.hash,
+            yaml: next,
+          });
+        }}
+      />
 
       {state.conflict && (
         <ConflictBanner
@@ -238,10 +283,12 @@ export function ToolEditorPane({
   id,
   onDirtyChange,
   onDeleted,
+  onRenamed,
 }: {
   id: string;
   onDirtyChange: (dirty: boolean) => void;
   onDeleted: () => void;
+  onRenamed: (newId: string) => void;
 }) {
   const tool = useTool(id);
   if (tool.isPending) return <LoadingState label="Loading tool" />;
@@ -264,6 +311,7 @@ export function ToolEditorPane({
       detail={tool.data}
       onDirtyChange={onDirtyChange}
       onDeleted={onDeleted}
+      onRenamed={onRenamed}
     />
   );
 }

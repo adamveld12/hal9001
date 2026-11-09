@@ -1,3 +1,7 @@
+import { InlineEdit } from "../../components/InlineEdit";
+import { useRenamePrompt } from "../../api/rename";
+import { usePrompts } from "../../api/prompts";
+import { validateName } from "../../lib/inlineEdit";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { ApiError, errorMessage } from "../../api/client";
@@ -42,12 +46,18 @@ function Editor({
   detail,
   onDirtyChange,
   onDeleted,
+  onRenamed,
 }: {
   detail: PromptDetail;
   onDirtyChange: (dirty: boolean) => void;
   onDeleted: () => void;
+  onRenamed: (newName: string) => void;
 }) {
   const name = detail.name;
+  const rename = useRenamePrompt();
+  const otherNames = (usePrompts().data?.items ?? [])
+    .map((x) => x.name)
+    .filter((x) => x !== name);
   const [params, setParams] = useSearchParams();
   const tab: TabKey = params.get("tab") === "preview" ? "preview" : "edit";
   const { state, dispatch, dirty } = useEditState({
@@ -132,7 +142,21 @@ function Editor({
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="m-0 font-mono text-sm font-semibold">{name}</h2>
+        <InlineEdit
+          mono
+          label="Prompt name"
+          value={name}
+          validate={(v) => validateName(v, name, otherNames, "prompt")}
+          disabledReason={
+            dirty ? "Save or discard your edits before renaming" : null
+          }
+          onSave={(newName) =>
+            rename.mutateAsync(
+              { id: name, newId: newName, expectedHash: state.base.hash },
+              { onSuccess: () => onRenamed(newName) },
+            )
+          }
+        />
         {parsed && (
           <Badge tone={parsed.output === "note" ? "info" : "muted"}>
             output: {parsed.output ?? "none"}
@@ -245,10 +269,12 @@ export function PromptEditorPane({
   name,
   onDirtyChange,
   onDeleted,
+  onRenamed,
 }: {
   name: string;
   onDirtyChange: (dirty: boolean) => void;
   onDeleted: () => void;
+  onRenamed: (newName: string) => void;
 }) {
   const prompt = usePrompt(name);
   if (prompt.isPending) return <LoadingState label="Loading prompt" />;
@@ -271,6 +297,7 @@ export function PromptEditorPane({
       detail={prompt.data}
       onDirtyChange={onDirtyChange}
       onDeleted={onDeleted}
+      onRenamed={onRenamed}
     />
   );
 }

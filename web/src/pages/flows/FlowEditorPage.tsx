@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
+import { InlineEdit } from "../../components/InlineEdit";
+import { useRenameFlow } from "../../api/rename";
+import { validateName } from "../../lib/inlineEdit";
+import { withDescription } from "../files/description";
 import { ApiError, errorMessage } from "../../api/client";
 import {
   renderFlowYaml,
   useFlow,
+  useFlows,
   useUpdateFlow,
   useValidateFlow,
   type FlowDetail,
@@ -77,6 +82,11 @@ function Loaded({
   refetched: FlowDetail;
 }) {
   const [loaded, setLoaded] = useState(initial);
+  const navigate = useNavigate();
+  const rename = useRenameFlow();
+  const otherIds = (useFlows().data ?? [])
+    .map((x) => x.id)
+    .filter((x) => x !== initial.id);
   const [generation, setGeneration] = useState(0);
   const [view, setView] = useState<View>(initial.flow ? "visual" : "yaml");
   const [dirty, setDirty] = useState(false);
@@ -201,8 +211,59 @@ function Loaded({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        title={loaded.id}
-        subtitle={loaded.path}
+        title={
+          <InlineEdit
+            mono
+            label="Flow name"
+            value={loaded.id}
+            validate={(v) => validateName(v, loaded.id, otherIds, "flow")}
+            disabledReason={
+              dirty || yamlText !== loaded.yaml
+                ? "Save or discard your edits before renaming"
+                : null
+            }
+            onSave={(newId) =>
+              rename.mutateAsync(
+                { id: loaded.id, newId, expectedHash: loaded.hash },
+                {
+                  onSuccess: () =>
+                    void navigate(
+                      {
+                        pathname: `/flows/${newId}`,
+                        search: window.location.search,
+                      },
+                      { replace: true },
+                    ),
+                },
+              )
+            }
+          />
+        }
+        subtitle={
+          <span className="flex items-center gap-2">
+            <span>{loaded.path}</span>
+            <InlineEdit
+              muted
+              label="Flow description"
+              placeholder="Add a description"
+              value={loaded.flow?.description ?? ""}
+              validate={() => null}
+              disabledReason={
+                dirty || yamlText !== loaded.yaml
+                  ? "Save or discard your edits first"
+                  : null
+              }
+              onSave={(text) =>
+                update
+                  .mutateAsync({
+                    expectedHash: loaded.hash,
+                    yaml: withDescription(loaded.yaml, text),
+                  })
+                  .then((saved) => adopt(saved))
+              }
+            />
+          </span>
+        }
         actions={
           <>
             <FlowRunNow

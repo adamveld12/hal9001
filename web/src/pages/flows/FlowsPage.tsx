@@ -269,6 +269,11 @@ function FlowsPageBody() {
                         >
                           {f.id}
                         </Link>
+                        {f.description ? (
+                          <div className="text-xs text-muted">
+                            {f.description}
+                          </div>
+                        ) : null}
                       </Td>
                       <Td>
                         <div className="flex gap-1">

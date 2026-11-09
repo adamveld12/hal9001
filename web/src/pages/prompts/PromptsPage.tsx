@@ -66,6 +66,15 @@ export function PromptsPage() {
             name={name}
             onDirtyChange={onDirtyChange}
             onDeleted={() => void navigate("/prompts")}
+            onRenamed={(newName) =>
+              void navigate(
+                {
+                  pathname: `/prompts/${newName}`,
+                  search: window.location.search,
+                },
+                { replace: true },
+              )
+            }
           />
         </section>
       </div>

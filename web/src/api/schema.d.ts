@@ -3414,6 +3414,8 @@ export interface components {
       enabled: boolean | null;
       dry_run: boolean | null;
       subscribe: components["schemas"]["Slug"][];
+      /** @description The flow's `description`; empty when unset. */
+      description?: string;
       node_count: number;
       diagnostics: components["schemas"]["Diagnostic"][];
       health: components["schemas"]["FlowHealth"];

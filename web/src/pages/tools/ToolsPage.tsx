@@ -142,6 +142,12 @@ export function ToolsPage() {
             id={id}
             onDirtyChange={onDirtyChange}
             onDeleted={() => void navigate("/tools")}
+            onRenamed={(newId) =>
+              void navigate(
+                { pathname: `/tools/${newId}`, search: window.location.search },
+                { replace: true },
+              )
+            }
           />
         </section>
       </div>

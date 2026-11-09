@@ -148,6 +148,11 @@ export function SensorSidebar({
                 <span aria-hidden="true">·</span>
                 <span className="tabular-nums">{r.newItems24h} new</span>
               </span>
+              {s.sensor?.description ? (
+                <span className="block truncate text-muted">
+                  {s.sensor.description}
+                </span>
+              ) : null}
               {r.problems.length > 0 && (
                 <span className="block truncate text-bad">
                   {r.problems.join(", ")}
