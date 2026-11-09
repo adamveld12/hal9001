@@ -115,6 +115,9 @@ func (e *Engine) TestNode(ctx context.Context, req core.TestNodeRequest) (*store
 	if err := e.st.CreateFlowRun(ctx, fr); err != nil {
 		return nil, nil, err
 	}
+	if node.Type == spec.NodeApproval {
+		e.simulations.Store(fr.ID, simulatedDecision(req.SimulateApproval))
+	}
 	nr := &store.NodeRun{FlowRunID: fr.ID, NodeID: node.ID, NodeType: nodeRunType(node), Stdin: store.Inline(string(input))}
 	if err := e.st.CreateNodeRun(ctx, nr); err != nil {
 		return nil, nil, err

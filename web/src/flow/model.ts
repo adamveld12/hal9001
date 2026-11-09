@@ -105,9 +105,35 @@ export interface InboxNode {
   ui?: UIPos;
 }
 
+/** "Request approval": parks the run until a person approves or denies. */
+export interface ApprovalNode {
+  id: string;
+  type: "approval";
+  /** Template, required. */
+  title: string;
+  /** Markdown template. */
+  body?: string;
+  /** Dot-paths into the node input, shown as a key/value table. */
+  fields?: string[];
+  priority?: Priority;
+  /** Duration; without it the node waits indefinitely. */
+  timeout?: string;
+  /** What an expired approval does; only valid with `timeout`. Default denied. */
+  on_timeout?: OnTimeout;
+  ui?: UIPos;
+}
+
+export type OnTimeout = "denied" | "approved" | "error";
+export const ON_TIMEOUTS: readonly OnTimeout[] = [
+  "denied",
+  "approved",
+  "error",
+];
+
 export type { TransformNode };
 
-export type FlowNode = CommandNode | AgentNode | InboxNode | TransformNode;
+export type FlowNode =
+  CommandNode | AgentNode | InboxNode | ApprovalNode | TransformNode;
 export type NodeType = FlowNode["type"];
 
 export interface FlowEdge {
@@ -143,6 +169,7 @@ export interface Diagnostic {
 export const DEFAULT_PORT = "out";
 export const ERROR_PORT = "error";
 export const DENIED_PORT = "denied";
+export const APPROVED_PORT = "approved";
 
 export function edgePort(e: FlowEdge): string {
   return e.port && e.port !== "" ? e.port : DEFAULT_PORT;
@@ -160,6 +187,8 @@ export function declaredPorts(node: FlowNode): string[] {
     case "agent":
     case "inbox":
       return [DEFAULT_PORT];
+    case "approval":
+      return [APPROVED_PORT, DENIED_PORT];
     case "transform":
       return transformPorts(node.steps);
   }
@@ -220,6 +249,14 @@ export function newNode(type: NodeType, id: string, ui: UIPos): FlowNode {
       };
     case "inbox":
       return { id, type, title: "{{.input.title}}", priority: "normal", ui };
+    case "approval":
+      return {
+        id,
+        type,
+        title: "Approve {{.input.title}}?",
+        priority: "normal",
+        ui,
+      };
     case "transform":
       return { id, type, steps: [], ui };
   }

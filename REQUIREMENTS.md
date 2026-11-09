@@ -43,7 +43,7 @@ flowchart LR
 | Item / Event | One item from a sensor that passes dedup. Immutable, stored. |
 | Flow | DAG of nodes subscribed to 1+ sensors. YAML file. |
 | FlowRun | One execution of one flow for one event (or replay / manual test). |
-| Node | `command`, `agent`, `inbox`, or `transform` (plain-language steps compiled to jq, for people who do not write code). Has named output ports. |
+| Node | `command`, `agent`, `inbox`, `approval` ("Request approval": parks the node on a pending `request` approval until approved, denied or timed out; ports `approved`/`denied`; docs/flows.md), or `transform` (plain-language steps compiled to jq, for people who do not write code). Has named output ports. |
 | NodeRun | One execution of a node within a FlowRun. |
 | AgentRun | Agent CLI session(s) behind an agent NodeRun, incl. full transcript. |
 | Prompt | Reusable prompt template file selected by agent nodes. |

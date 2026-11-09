@@ -295,7 +295,7 @@ func flowCmds() []*command {
 			return nil
 		},
 	}
-	var event, nodeRun, jsonInput, wait string
+	var event, nodeRun, jsonInput, wait, simulate string
 	var dry bool
 	testNode := &leaf{
 		usage: "<flow-id> <node-id> [--event <id> | --node-run <id>[:<output-index>] | --json <value>] (default input: stdin JSON)", minArgs: 2, maxArgs: 2,
@@ -305,13 +305,18 @@ func flowCmds() []*command {
 			fs.StringVar(&jsonInput, "json", "", "use this JSON value as input")
 			fs.StringVar(&wait, "wait", "", "how long to wait for the node run, e.g. 60s (server default 30s)")
 			fs.BoolVar(&dry, "dry-run", false, "run with dry-run semantics")
+			fs.StringVar(&simulate, "simulate-approval", "", "approval nodes: the decision to take instead of waiting, approved (default) or denied")
 		},
 		run: func(ctx context.Context, c *call) error {
 			input, err := testNodeInput(c, event, nodeRun, jsonInput)
 			if err != nil {
 				return err
 			}
-			body, _ := jsonBody(map[string]any{"node_id": c.args[1], "input": input, "dry_run": dry})
+			req := map[string]any{"node_id": c.args[1], "input": input, "dry_run": dry}
+			if simulate != "" {
+				req["simulate_approval"] = simulate
+			}
+			body, _ := jsonBody(req)
 			return c.doEmit(ctx, http.MethodPost, "/api/flows/"+esc(c.args[0])+"/test-node", query("wait", wait), body)
 		},
 	}

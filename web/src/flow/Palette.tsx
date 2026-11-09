@@ -35,6 +35,12 @@ const NODE_ITEMS: {
     icon: "note",
     hint: "Leave a note for yourself",
   },
+  {
+    type: "approval",
+    label: "Request approval",
+    icon: "check",
+    hint: "Ask for a yes or no before the flow goes on",
+  },
 ];
 
 export function Palette({

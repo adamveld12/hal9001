@@ -9,9 +9,10 @@ import (
 // Enum values. The wire format is the plain string, so fields below use
 // string rather than a named type; these constants are the only legal values.
 const (
-	NodeCommand = "command"
-	NodeAgent   = "agent"
-	NodeInbox   = "inbox"
+	NodeCommand  = "command"
+	NodeAgent    = "agent"
+	NodeInbox    = "inbox"
+	NodeApproval = "approval"
 
 	NodeTransform = "transform"
 
@@ -51,6 +52,8 @@ const (
 	PortOut    = "out"
 	PortError  = "error"
 	PortDenied = "denied"
+	// PortApproved is the port an approval node emits on when the request was approved.
+	PortApproved = "approved"
 
 	ServiceUI      = "ui"
 	ServiceAPI     = "api"
@@ -69,6 +72,13 @@ const (
 
 // Languages lists the legal values of lang.
 var Languages = []string{LangBash, LangPython, LangNode, LangJQ, LangExec}
+
+// On-timeout outcomes of an approval node (on_timeout).
+const (
+	OnTimeoutDenied   = "denied"
+	OnTimeoutApproved = "approved"
+	OnTimeoutError    = "error"
+)
 
 // Priorities lists inbox priorities from lowest to highest.
 var Priorities = []string{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent}
@@ -211,6 +221,7 @@ type Flow struct {
 //	         approval_timeout, allow, mcp_servers, sandbox, image, repo, ref, tools
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
+//	approval: title, body, fields, priority, timeout, on_timeout
 type Node struct {
 	ID   string `yaml:"id" json:"id"`
 	Type string `yaml:"type" json:"type"`
@@ -242,6 +253,11 @@ type Node struct {
 	SummaryMD      string `yaml:"summary_md,omitempty" json:"summary_md,omitempty"`
 	SuggestedReply string `yaml:"suggested_reply,omitempty" json:"suggested_reply,omitempty"`
 	Links          []Link `yaml:"links,omitempty" json:"links,omitempty"`
+
+	// approval (title and priority are shared with inbox)
+	Body      string   `yaml:"body,omitempty" json:"body,omitempty"`
+	Fields    []string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	OnTimeout string   `yaml:"on_timeout,omitempty" json:"on_timeout,omitempty"`
 
 	// command and agent
 	Cwd             *Cwd     `yaml:"cwd,omitempty" json:"cwd,omitempty"`

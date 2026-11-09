@@ -70,9 +70,10 @@ func (s *session) draftTools() []tools.Tool {
 			Description: "Run the draft the way a poll (sensor) or one flow run (flow) would and return the result as JSON; flow sessions can pick the input with `sample` " +
 				"(an index of reference/samples/index.txt) or `event`; tool sessions pass `args` (the tool's arguments, result is stdout/stderr/exit code). It runs the code with the user's credentials: the first test after the script changed asks the user for approval.",
 			InputSchema: obj(map[string]any{
-				"sample": map[string]any{"type": "integer", "minimum": 0},
-				"event":  map[string]any{"type": "string"},
-				"args":   map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
+				"sample":            map[string]any{"type": "integer", "minimum": 0},
+				"event":             map[string]any{"type": "string"},
+				"args":              map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
+				"simulate_approval": map[string]any{"type": "string", "enum": []string{"approved", "denied"}, "description": "Flow sessions: the decision request-approval nodes take in the test (default approved); the test never waits for a person."},
 			}),
 			Approval: s.testApproval,
 			Run:      s.runDraftTest,
@@ -270,11 +271,13 @@ func (s *session) runDraftTest(ctx context.Context, c tools.Call) (tools.Result,
 		Sample *int            `json:"sample"`
 		Event  string          `json:"event"`
 		Args   json.RawMessage `json:"args"`
+
+		SimulateApproval string `json:"simulate_approval"`
 	}
 	if err := json.Unmarshal(c.Args, &a); err != nil {
 		return tools.Result{}, fmt.Errorf("arguments: %w", err)
 	}
-	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event, Args: a.Args})
+	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event, Args: a.Args, SimulateApproval: a.SimulateApproval})
 	if err != nil {
 		var verr *core.ValidationError
 		if errors.As(err, &verr) {

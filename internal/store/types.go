@@ -71,9 +71,10 @@ const (
 	DecisionError   NodeDecision = "error"
 	DecisionSkipped NodeDecision = "skipped"
 
-	NodeCommand NodeType = "command"
-	NodeAgent   NodeType = "agent"
-	NodeInbox   NodeType = "inbox"
+	NodeCommand  NodeType = "command"
+	NodeAgent    NodeType = "agent"
+	NodeInbox    NodeType = "inbox"
+	NodeApproval NodeType = "approval"
 
 	AgentQueued           AgentStatus = "queued"
 	AgentRunning          AgentStatus = "running"
@@ -104,6 +105,7 @@ const (
 
 	ApprovalProposal ApprovalType = "proposal"
 	ApprovalToolCall ApprovalType = "tool_call"
+	ApprovalRequest  ApprovalType = "request"
 
 	ApprovalPending  ApprovalState = "pending"
 	ApprovalApproved ApprovalState = "approved"
@@ -177,7 +179,9 @@ func (d NodeDecision) valid() bool {
 	return false
 }
 
-func (t NodeType) valid() bool { return t == NodeCommand || t == NodeAgent || t == NodeInbox }
+func (t NodeType) valid() bool {
+	return t == NodeCommand || t == NodeAgent || t == NodeInbox || t == NodeApproval
+}
 
 func (s AgentStatus) valid() bool {
 	switch s {
@@ -443,7 +447,9 @@ type PermissionRequest struct {
 // Approval is a pending or decided approval-queue entry.
 type Approval struct {
 	ID                  string        `json:"id"`
-	AgentRunID          string        `json:"agent_run_id"`
+	AgentRunID          string        `json:"agent_run_id,omitempty"` // empty for a request approval
+	NodeRunID           string        `json:"node_run_id,omitempty"`  // set for a request approval
+	Request             string        `json:"request,omitempty"`      // JSON of a RequestApproval; request approvals only
 	Type                ApprovalType  `json:"type"`
 	PermissionRequestID string        `json:"permission_request_id,omitempty"`
 	Proposal            Content       `json:"proposal_md"`
@@ -540,4 +546,22 @@ type KillSwitch struct {
 	KillRunning bool      `json:"kill_running"`
 	Since       time.Time `json:"since"`
 	By          string    `json:"by,omitempty"`
+}
+
+// RequestApproval is the content of a request approval (Approval.Request, stored as JSON): the title, body and
+// fields an approval node rendered when it ran, so the approval reads the same whenever it is opened.
+type RequestApproval struct {
+	Title    string         `json:"title"`
+	BodyMD   string         `json:"body_md"`
+	Fields   []RequestField `json:"fields"`
+	Priority Priority       `json:"priority"`
+	DryRun   bool           `json:"dry_run"`
+	// OnTimeout is what an expiry does: denied, approved or error. Empty without a timeout.
+	OnTimeout string `json:"on_timeout,omitempty"`
+}
+
+// RequestField is one row of the key/value table of a request approval.
+type RequestField struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }

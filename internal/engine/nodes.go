@@ -112,6 +112,8 @@ func (e *Engine) execNode(parent context.Context, nr *store.NodeRun) {
 		out = e.runTransform(ctx, ne)
 	case ne.node.Type == spec.NodeInbox:
 		out = e.runInbox(ne)
+	case ne.node.Type == spec.NodeApproval:
+		out = e.runApproval(ne)
 	case ne.node.Type == spec.NodeAgent && e.assistTestOf(fr.ID) != nil:
 		out = nodeOutcome{status: store.NodeSkipped, decision: store.DecisionSkipped, reason: assistTestAgentSkip}
 	case ne.node.Type == spec.NodeAgent:
@@ -463,6 +465,7 @@ func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 		// An approval decided while the node was still running could not be
 		// applied (the node was not parked yet); apply it now.
 		e.applyProposalDecision(nr.ID)
+		e.applyRequestDecision(nr.ID)
 	}
 	e.wake()
 }

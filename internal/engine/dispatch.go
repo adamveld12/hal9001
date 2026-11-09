@@ -57,9 +57,10 @@ func (e *Engine) claimNodes(testOnly bool) {
 	for testOnly || !e.isPaused() {
 		cfg := e.snapshot().cfg
 		nr, err := e.st.ClaimNextNodeRun(e.dbCtx, store.NodeLimits{
-			store.NodeCommand: cfg.MaxCommandRuns,
-			store.NodeAgent:   cfg.MaxAgentRuns,
-			store.NodeInbox:   store.Unlimited,
+			store.NodeCommand:  cfg.MaxCommandRuns,
+			store.NodeAgent:    cfg.MaxAgentRuns,
+			store.NodeInbox:    store.Unlimited,
+			store.NodeApproval: store.Unlimited,
 		}, testOnly)
 		if err != nil {
 			e.log.Error("engine: claim node run", "err", err)

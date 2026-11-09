@@ -78,6 +78,7 @@ export function ApprovalsPage() {
           <option value="">All types</option>
           <option value="proposal">Proposals</option>
           <option value="tool_call">Tool calls</option>
+          <option value="request">Requests</option>
         </Select>
         {view.tab === "history" && (
           <Select

@@ -168,6 +168,13 @@ function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
       if (node.title.trim() === "") at("title", "an inbox note needs a title");
       break;
     }
+    case "approval": {
+      if (node.title.trim() === "") at("title", "an approval needs a title");
+      if (node.on_timeout && !node.timeout) {
+        at("on_timeout", "on_timeout only applies with a timeout");
+      }
+      break;
+    }
     case "transform": {
       for (const d of validateSteps(node.steps)) {
         out.push({

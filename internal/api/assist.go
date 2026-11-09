@@ -286,6 +286,8 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		EventID     string          `json:"event_id"`
 		Input       json.RawMessage `json:"input"`
 		Args        json.RawMessage `json:"args"`
+
+		SimulateApproval string `json:"simulate_approval"`
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return
@@ -296,6 +298,10 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.EventID != "" && !ulidRE.MatchString(req.EventID) {
 		fieldProblem(w, "event_id", "event_id must be a ULID")
+		return
+	}
+	if req.SimulateApproval != "" && req.SimulateApproval != "approved" && req.SimulateApproval != "denied" {
+		fieldProblem(w, "simulate_approval", "simulate_approval must be approved or denied")
 		return
 	}
 	if string(req.Input) == "null" {
@@ -309,7 +315,7 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "",
-		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args})
+		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args, SimulateApproval: req.SimulateApproval})
 	if err != nil {
 		s.writeError(w, r, err)
 		return

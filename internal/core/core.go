@@ -107,6 +107,8 @@ type TestNodeRequest struct {
 	// EventID optionally supplies the original event for templates and HAL_EVENT_FILE.
 	EventID string
 	DryRun  bool
+	// SimulateApproval is the decision an approval node takes in the test: "approved" (default) or "denied".
+	SimulateApproval string
 }
 
 // ApprovalDecision is a user decision on an approval.
@@ -236,6 +238,8 @@ type AssistTestRequest struct {
 	Input       json.RawMessage
 	// Args are the arguments of a tool session's test call (a JSON object; nil means {}).
 	Args json.RawMessage
+	// SimulateApproval is the decision approval nodes take in a flow session's test: "approved" (default) or "denied".
+	SimulateApproval string
 }
 
 // AssistSample is one sample input of a flow session.
@@ -285,6 +289,8 @@ type FlowTestRequest struct {
 	// Input is the JSON input of the entry nodes; EventID optionally names the stored event it came from.
 	Input   json.RawMessage
 	EventID string
+	// SimulateApproval is the decision approval nodes take in the test: "approved" (default) or "denied".
+	SimulateApproval string
 }
 
 // AssistFlowTestOutput is one payload a node emitted.

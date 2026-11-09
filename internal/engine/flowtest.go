@@ -120,6 +120,8 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 	at := &assistTest{outputs: map[string][]runner.Output{}, would: map[string]*core.AssistInboxPreview{}}
 	e.assistTests.Store(fr.ID, at)
 	defer e.assistTests.Delete(fr.ID)
+	e.simulations.Store(fr.ID, simulatedDecision(req.SimulateApproval))
+	defer e.simulations.Delete(fr.ID)
 
 	entries := flow.EntryNodes()
 	if len(entries) == 0 {
@@ -194,6 +196,14 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 	}
 	out.EdgesTaken = append([]core.AssistFlowTestEdge{}, at.edges...)
 	return out, nil
+}
+
+// simulatedDecision defaults the simulated approval decision to approved.
+func simulatedDecision(s string) string {
+	if s == SimulateDenied {
+		return SimulateDenied
+	}
+	return SimulateApproved
 }
 
 func strPtr(s string) *string {
