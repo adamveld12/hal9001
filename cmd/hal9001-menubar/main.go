@@ -47,10 +47,13 @@ type app struct {
 	ui     string
 	cancel context.CancelFunc
 
-	mu      sync.Mutex
-	last    menubar.Menu
-	hasLast bool
-	done    chan struct{} // closed to stop click goroutines of the current menu
+	mu       sync.Mutex
+	last     menubar.Menu
+	hasLast  bool
+	throb    bool          // current throb state
+	stopAnim chan struct{} // closes to stop the throb ticker; nil when idle
+	frames   [][]byte      // precomputed throb frames, built on first use
+	done     chan struct{} // closed to stop click goroutines of the current menu
 }
 
 func (a *app) onReady() {
@@ -111,6 +114,7 @@ func (a *app) refresh(ctx context.Context) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.setThrob(menubar.ShouldThrob(snap))
 	if a.hasLast && sameMenu(a.last, m) {
 		return
 	}
@@ -120,6 +124,40 @@ func (a *app) refresh(ctx context.Context) {
 
 func sameMenu(a, b menubar.Menu) bool { return fmt.Sprintf("%+v", a) == fmt.Sprintf("%+v", b) }
 
+// setThrob starts or stops the single throb ticker. Called with a.mu held.
+func (a *app) setThrob(on bool) {
+	if on == a.throb {
+		return
+	}
+	a.throb = on
+	if !on {
+		close(a.stopAnim)
+		a.stopAnim = nil
+		if a.hasLast { // restore the static icon
+			systray.SetIcon(menubar.Icon(32, !a.last.Reachable))
+		}
+		return
+	}
+	if a.frames == nil {
+		a.frames = menubar.ThrobIcons(32)
+	}
+	stop := make(chan struct{})
+	a.stopAnim = stop
+	frames := a.frames
+	go func() {
+		t := time.NewTicker(time.Second / menubar.ThrobFPS)
+		defer t.Stop()
+		for i := 0; ; i = (i + 1) % len(frames) {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				systray.SetIcon(frames[i])
+			}
+		}
+	}()
+}
+
 // render replaces the whole menu. Called with a.mu held.
 func (a *app) render(m menubar.Menu) {
 	if a.done != nil {
@@ -127,7 +165,9 @@ func (a *app) render(m menubar.Menu) {
 	}
 	a.done = make(chan struct{})
 	systray.ResetMenu()
-	systray.SetIcon(menubar.Icon(32, !m.Reachable)) // 32px at 16pt = 2x; macOS downsamples on 1x displays
+	if !a.throb {
+		systray.SetIcon(menubar.Icon(32, !m.Reachable)) // 32px at 16pt = 2x; macOS downsamples on 1x displays
+	}
 	systray.SetTitle(m.Title)
 	for _, e := range m.Entries {
 		a.add(nil, e)

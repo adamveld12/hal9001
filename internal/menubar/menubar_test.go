@@ -1,7 +1,9 @@
 package menubar
 
 import (
+	"bytes"
 	"context"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,5 +114,62 @@ func TestIconSizes(t *testing.T) {
 		if len(Icon(n, true)) == 0 {
 			t.Fatal("dim icon empty")
 		}
+	}
+}
+
+func TestThrobFrames(t *testing.T) {
+	frames := ThrobIcons(32)
+	if len(frames) != ThrobFrames {
+		t.Fatalf("frames = %d", len(frames))
+	}
+	seen := map[string]bool{}
+	for _, f := range frames {
+		cfg, err := png.DecodeConfig(bytes.NewReader(f))
+		if err != nil || cfg.Width != 32 || cfg.Height != 32 {
+			t.Fatalf("bad frame: %v %+v", err, cfg)
+		}
+		seen[string(f)] = true
+	}
+	if len(seen) < ThrobFrames/2 {
+		t.Fatalf("only %d distinct frames", len(seen))
+	}
+	centre := func(b []byte) uint32 {
+		img, _ := png.Decode(bytes.NewReader(b))
+		r, _, _, _ := img.At(16, 10).RGBA() // lens body
+		return r
+	}
+	if centre(frames[0]) <= centre(frames[ThrobFrames/2]) {
+		t.Fatal("peak frame should be brighter than trough frame")
+	}
+}
+
+func TestShouldThrob(t *testing.T) {
+	if ShouldThrob(nil) {
+		t.Fatal("unreachable daemon must not throb")
+	}
+	if ShouldThrob(&Snapshot{}) {
+		t.Fatal("idle must not throb")
+	}
+	if !ShouldThrob(&Snapshot{Status: Status{RunningFlowRuns: 1}}) {
+		t.Fatal("running flow must throb")
+	}
+}
+
+func TestFlowRunCountLabel(t *testing.T) {
+	var f Flow
+	on := true
+	f.ID, f.Enabled, f.Health.Running = "triage-github", &on, 2
+	idle := Flow{ID: "idle", Enabled: &on}
+	m := BuildMenu(&Snapshot{Flows: []Flow{f, idle}}, "http://ui")
+	var got []string
+	for _, e := range m.Entries {
+		if e.Title == "Flows" {
+			for _, c := range e.Children {
+				got = append(got, c.Title)
+			}
+		}
+	}
+	if len(got) < 2 || got[0] != "triage-github (2)" || got[1] != "idle" {
+		t.Fatalf("labels = %v", got)
 	}
 }

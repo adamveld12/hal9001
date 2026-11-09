@@ -53,7 +53,7 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 	if snap != nil {
 		for _, f := range snap.Flows {
 			if f.Enabled != nil && *f.Enabled {
-				flows.Children = append(flows.Children, link(f.ID, "/flows/"+url.PathEscape(f.ID)))
+				flows.Children = append(flows.Children, link(counted(f.ID, f.Health.Running), "/flows/"+url.PathEscape(f.ID)))
 			}
 		}
 		for _, s := range snap.Sensors {

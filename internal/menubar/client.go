@@ -16,12 +16,16 @@ import (
 type Status struct {
 	UnreadInbox      int `json:"unread_inbox"`
 	PendingApprovals int `json:"pending_approvals"`
+	RunningFlowRuns  int `json:"running_flow_runs"`
 }
 
 // Flow is the subset of a FlowSummary the menubar uses.
 type Flow struct {
 	ID      string `json:"id"`
 	Enabled *bool  `json:"enabled"`
+	Health  struct {
+		Running int `json:"running"`
+	} `json:"health"`
 }
 
 // Sensor is the subset of a SensorSummary the menubar uses.
@@ -89,7 +93,7 @@ func (c *Client) Fetch(ctx context.Context) (*Snapshot, error) {
 }
 
 // refreshEvents are the SSE event types that can change what the menu shows.
-const refreshEvents = "status.changed,killswitch.changed,sensor.changed,config.changed,inbox.created,inbox.updated,approval.created,approval.updated"
+const refreshEvents = "status.changed,killswitch.changed,sensor.changed,config.changed,inbox.created,inbox.updated,flow_run.created,flow_run.updated,approval.created,approval.updated"
 
 // Stream connects to GET /api/stream and calls onEvent for each event type received (including stream.resync)
 // until the connection ends or ctx is done. It returns the connection error, never nil.
