@@ -47,14 +47,14 @@ func TestFetchAndBuildMenu(t *testing.T) {
 		return
 	}
 	got := strings.Join(titles(m.Entries), ",")
-	want := "Inbox|http://ui/inbox,Flows|,Sensors|,Settings|http://ui/settings/general,|,Quit|"
+	want := "Inbox (3)|http://ui/inbox,Approvals (2)|http://ui/approvals,Flows|,Sensors|,Settings|http://ui/settings/general,|,Quit|"
 	if got != want {
 		t.Fatalf("entries\n got %s\nwant %s", got, want)
 	}
-	if g := strings.Join(titles(m.Entries[1].Children), ","); g != "triage|http://ui/flows/triage,All flows|http://ui/flows" {
+	if g := strings.Join(titles(m.Entries[2].Children), ","); g != "triage|http://ui/flows/triage,All flows|http://ui/flows" {
 		t.Fatalf("flows submenu (only enabled flows): %s", g)
 	}
-	if g := strings.Join(titles(m.Entries[2].Children), ","); g != "gh|http://ui/sensors/gh,mail (paused)|http://ui/sensors/mail,All sensors|http://ui/sensors" {
+	if g := strings.Join(titles(m.Entries[3].Children), ","); g != "gh|http://ui/sensors/gh,mail (paused)|http://ui/sensors/mail,All sensors|http://ui/sensors" {
 		t.Fatalf("sensors submenu: %s", g)
 	}
 }
@@ -63,6 +63,9 @@ func TestZeroCountHidesTitle(t *testing.T) {
 	m := BuildMenu(&Snapshot{}, "http://ui")
 	if m.Title != "" {
 		t.Fatalf("title %q, want hidden at 0", m.Title)
+	}
+	if m.Entries[0].Title != "Inbox" || m.Entries[1].Title != "Approvals" {
+		t.Fatalf("zero counts must have no suffix: %q, %q", m.Entries[0].Title, m.Entries[1].Title)
 	}
 }
 

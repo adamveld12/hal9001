@@ -44,6 +44,10 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 		m.Title = strconv.Itoa(n)
 	}
 
+	var inbox, approvals int
+	if snap != nil {
+		inbox, approvals = snap.Status.UnreadInbox, snap.Status.PendingApprovals
+	}
 	flows := Entry{Kind: Submenu, Title: "Flows"}
 	sensors := Entry{Kind: Submenu, Title: "Sensors"}
 	if snap != nil {
@@ -64,7 +68,8 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 	sensors.Children = append(sensors.Children, link("All sensors", "/sensors"))
 
 	m.Entries = append(m.Entries,
-		link("Inbox", "/inbox"),
+		link(counted("Inbox", inbox), "/inbox"),
+		link(counted("Approvals", approvals), "/approvals"),
 		flows,
 		sensors,
 		link("Settings", "/settings/general"),
@@ -72,4 +77,11 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 		Entry{Kind: Quit, Title: "Quit"},
 	)
 	return m
+}
+
+func counted(label string, n int) string {
+	if n > 0 {
+		return label + " (" + strconv.Itoa(n) + ")"
+	}
+	return label
 }
