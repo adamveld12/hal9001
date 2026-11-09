@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hal9001/internal/spec"
 )
 
 // AI-assisted flow authoring end to end: the same session machinery as sensors with target kind flow, the scripted
@@ -329,7 +331,7 @@ func TestAssistFlowAgentDraftsTestsAndIsSavedThroughTheNormalEndpoints(t *testin
 	// Save, as the UI does: the new prompt first, then the flow.
 	d.Post("/api/prompts", map[string]any{"markdown": f.Draft.Prompts[0].YAML}).Want(201)
 	d.Post("/api/flows", map[string]any{"yaml": f.Draft.YAML}).Want(201)
-	if d.Read("prompts/new-triage.md") != triagePrompt || d.Read("flows/urgent-to-inbox.yaml") == "" {
+	if d.Read("prompts/new-triage.md") != string(spec.DropLegacyName([]byte(triagePrompt))) || d.Read("flows/urgent-to-inbox.yaml") == "" {
 		t.Error("Save did not write the prompt and the flow")
 	}
 	var saved struct {

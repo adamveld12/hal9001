@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"hal9001/internal/agent/fakeagent"
+	"hal9001/internal/spec"
 )
 
 // AI-assisted sensor authoring end to end: a real daemon, the scripted fake ACP agent as the runtime, and the
@@ -526,7 +527,7 @@ func TestAssistTestUsesSecretsButNeverShowsThem(t *testing.T) {
 
 	// Save is the normal sensor endpoint with the sensor's own hash.
 	d.Put("/api/sensors/gh", map[string]any{"yaml": got.Draft.YAML, "expected_hash": before.Hash}).Want(200)
-	if d.Read("sensors/gh.yaml") != draft {
+	if d.Read("sensors/gh.yaml") != string(spec.DropLegacyID([]byte(draft))) {
 		t.Errorf("sensor file after Save = %q", d.Read("sensors/gh.yaml"))
 	}
 }

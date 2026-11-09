@@ -102,7 +102,7 @@ func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID s
 	for i := range files {
 		saved := ws.Prompt(files[i].Name)
 		files[i].Exists = saved != nil
-		clash := saved != nil && string(saved.Raw) != files[i].YAML // a prompt Save just created is not a clash
+		clash := saved != nil && string(saved.Raw) != string(spec.DropLegacyName([]byte(files[i].YAML))) // a prompt Save just created is not a clash
 		refs.Prompts[files[i].Name] = true
 		path := PromptsDir + "/" + files[i].Name + ".md"
 		if !spec.ValidID(files[i].Name) {
