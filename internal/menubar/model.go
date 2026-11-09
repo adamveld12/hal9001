@@ -69,7 +69,7 @@ func BuildMenu(snap *Snapshot, ui string) Menu {
 
 	m.Entries = append(m.Entries,
 		link(counted("Inbox", inbox), "/inbox"),
-		link(counted("Approvals", approvals), "/approvals"),
+		link(counted("Approvals", approvals), "/inbox?kind=action"),
 		flows,
 		sensors,
 		link("Settings", "/settings/general"),

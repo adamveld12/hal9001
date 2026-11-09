@@ -47,7 +47,7 @@ func TestFetchAndBuildMenu(t *testing.T) {
 		return
 	}
 	got := strings.Join(titles(m.Entries), ",")
-	want := "Inbox (3)|http://ui/inbox,Approvals (2)|http://ui/approvals,Flows|,Sensors|,Settings|http://ui/settings/general,|,Quit|"
+	want := "Inbox (3)|http://ui/inbox,Approvals (2)|http://ui/inbox?kind=action,Flows|,Sensors|,Settings|http://ui/settings/general,|,Quit|"
 	if got != want {
 		t.Fatalf("entries\n got %s\nwant %s", got, want)
 	}
