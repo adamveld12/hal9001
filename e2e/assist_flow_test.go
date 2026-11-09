@@ -532,3 +532,24 @@ func TestAssistFlowOnAnExistingFlowAndInvalidDrafts(t *testing.T) {
 	d.Put("/api/assist/sessions/"+s.ID+"/draft", map[string]any{"yaml": edited}).Want(200)
 	d.Post("/api/assist/sessions/"+s.ID+"/test", map[string]any{}).Want(422)
 }
+
+// "Test flow" works while the kill switch is engaged, even with "pause and kill running": the test's nodes run, while
+// live flow runs of the same flow stay queued.
+func TestAssistFlowTestRunsWhilePaused(t *testing.T) {
+	const flow = "id: paused-test\nenabled: false\ndry_run: true\nsubscribe: [src]\nnodes:\n  - id: keep\n    type: transform\n    steps:\n      - {type: remove, fields: [x]}\nedges: []\n"
+	d := newAssistDaemon(t, func(d *Daemon) {
+		srcSensor(d)
+		d.assistRuntime(false, turn{Steps: []step{say("ok")}})
+	})
+	s := d.assistCreateFlow("")
+	d.Put("/api/assist/sessions/"+s.ID+"/draft", map[string]any{"yaml": flow}).Want(200)
+	d.Post("/api/killswitch/pause", map[string]any{"kill_running": true}).Want(200)
+	res := d.assistFlowTest(s.ID, map[string]any{"input": map[string]any{"id": "1", "x": "y", "title": "t"}})
+	n := res.node("keep")
+	if res.Status != "succeeded" || n == nil || n.Status != "done" {
+		t.Fatalf("test while paused = %+v", res)
+	}
+	if got := d.assistTurn(s.ID, "hi"); got.Status != "idle" {
+		t.Errorf("turn while paused: %+v", got)
+	}
+}

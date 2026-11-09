@@ -10,11 +10,14 @@ export function Composer({
   disabled,
   placeholder,
   prefill,
+  autoFocus,
   onSend,
 }: {
   disabled: boolean;
   placeholder: string;
   prefill: { text: string; n: number } | null;
+  /** Focus the input when the composer mounts (the drawer opened, or the conversation started). */
+  autoFocus?: boolean;
   onSend: (text: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
@@ -31,6 +34,9 @@ export function Composer({
   useEffect(() => {
     if (prefill) ref.current?.focus();
   }, [prefill]);
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus();
+  }, [autoFocus]);
 
   const submit = async () => {
     const t = text.trim();
@@ -62,7 +68,8 @@ export function Composer({
           className="min-w-0 flex-1 resize-none font-sans text-[13px]"
           placeholder={placeholder}
           value={text}
-          disabled={disabled || sending}
+          readOnly={sending}
+          aria-disabled={disabled || undefined}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (

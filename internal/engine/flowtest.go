@@ -87,9 +87,6 @@ func inboxReason(preview bool, it *store.InboxItem) string {
 // run to finish. req.Flow must already be validated by the caller.
 func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error) {
 	var zero core.AssistFlowTestResult
-	if e.isPaused() {
-		return zero, fmt.Errorf("%w: flow tests are rejected while the kill switch is engaged", core.ErrPaused)
-	}
 	flow := req.Flow.Clone()
 	flow.ApplyDefaults()
 	raw, err := spec.MarshalFlow(flow)
@@ -160,7 +157,7 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 	}
 	switch fr.Status {
 	case store.FlowRunKilled:
-		return zero, fmt.Errorf("%w: the test was stopped by the kill switch", core.ErrPaused)
+		return zero, errors.New("engine: the test was cancelled")
 	case store.FlowRunInterrupted:
 		return zero, errors.New("engine: the daemon stopped during the test")
 	}

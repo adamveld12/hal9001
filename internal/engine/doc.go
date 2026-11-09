@@ -65,5 +65,7 @@
 // With killRunning, running nodes and polls are cancelled: agents with
 // agent.ErrKilled, commands by killing their process group. PollSensor and
 // TestNode are rejected with core.ErrPaused; InjectEvent, Replay and
-// DecideApproval are accepted and queue. The state is persisted.
+// DecideApproval are accepted and queue. Assist (chat turns, draft tests and
+// the node runs of flow tests) is exempt: it neither is rejected nor cancelled
+// by the kill switch. The state is persisted.
 package engine

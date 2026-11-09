@@ -35,7 +35,7 @@ flowchart LR
    the draft starts from the sensor's file (or from `yaml`); without it, from `yaml` or a commented skeleton. `runtime` is
    a key of `runtimes` in `config.yaml` (`claude`, `codex`, `omp`). No agent process runs yet.
 2. `POST /api/assist/sessions/{id}/messages` with `{text, yaml?}` starts one turn (202). `yaml`, when sent, first replaces
-   the draft, so the agent sees what is in your editor. 409 while a turn runs, 423 while the kill switch is engaged.
+   the draft, so the agent sees what is in your editor. 409 while a turn runs. The kill switch does not apply to assist: turns and draft tests (flow tests included) run while it is engaged, and "pause and kill running" leaves them alone (Stop and daemon shutdown still end them).
 3. Watch `GET /api/stream?assist_session_id=<id>` for `assist.updated` (status, draft) and `assist.message` (conversation).
    The same stream carries the session's `agent_run.*` and `approval.*` events. `GET /api/assist/sessions/{id}` returns the
    whole state.

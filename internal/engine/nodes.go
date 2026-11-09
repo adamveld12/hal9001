@@ -79,13 +79,18 @@ func failure(class, reason string) nodeOutcome {
 func (e *Engine) execNode(parent context.Context, nr *store.NodeRun) {
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
-	defer e.track(nr.ID, cancel)()
 
 	fr, err := e.st.GetFlowRun(e.dbCtx, nr.FlowRunID)
 	if err != nil {
 		e.log.Error("engine: load flow run", "node_run", nr.ID, "err", err)
 		e.failNodeRun(nr, err.Error())
 		return
+	}
+	// Test runs (assist flow tests) are not live work: the kill switch does not cancel them.
+	if fr.Kind == store.KindTest {
+		defer e.trackExempt(nr.ID, cancel)()
+	} else {
+		defer e.track(nr.ID, cancel)()
 	}
 	if fr.Status.Terminal() {
 		e.skipNode(nr, "flow run "+string(fr.Status))

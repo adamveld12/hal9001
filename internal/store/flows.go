@@ -528,13 +528,14 @@ type NodeLimits map[NodeType]int
 
 // ClaimNextNodeRun atomically moves the oldest queued node run whose type pool
 // has a free slot to running (StartedAt = now) and returns it, or nil when
-// none is claimable.
+// none is claimable. testOnly claims only node runs of kind=test flow runs (assist flow tests), which run while
+// the kill switch is engaged.
 //
 // Slots in use: node runs in status running, plus, for agents, node runs
 // awaiting a per-tool approval, because that agent process stays alive
 // (REQUIREMENTS §7.2). Agent nodes waiting on a proposal approval hold no slot;
 // after approval, requeue the node run (status queued) and claim it again.
-func (s *Store) ClaimNextNodeRun(ctx context.Context, limits NodeLimits) (*NodeRun, error) {
+func (s *Store) ClaimNextNodeRun(ctx context.Context, limits NodeLimits, testOnly bool) (*NodeRun, error) {
 	var claimed *NodeRun
 	err := s.write(ctx, func(t *txn) error {
 		inUse, err := t.nodeSlotsInUse(ctx)
@@ -551,8 +552,11 @@ func (s *Store) ClaimNextNodeRun(ctx context.Context, limits NodeLimits) (*NodeR
 			return nil
 		}
 		var id string
-		q := "SELECT id FROM node_runs WHERE status = 'queued' AND node_type IN (" + placeholders(len(types)) + ") ORDER BY id LIMIT 1"
-		err = t.QueryRowContext(ctx, q, anySlice(types)...).Scan(&id)
+		q := "SELECT id FROM node_runs WHERE status = 'queued' AND node_type IN (" + placeholders(len(types)) + ")"
+		if testOnly {
+			q += " AND flow_run_id IN (SELECT id FROM flow_runs WHERE kind = 'test')"
+		}
+		err = t.QueryRowContext(ctx, q+" ORDER BY id LIMIT 1", anySlice(types)...).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}

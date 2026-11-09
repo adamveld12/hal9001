@@ -69,7 +69,7 @@ type Engine struct {
 	ctl    sync.Mutex // guards ks and active
 	ks     store.KillSwitch
 	paused atomic.Bool
-	active map[string]context.CancelCauseFunc
+	active map[string]activeUnit
 
 	pollMu  sync.Mutex
 	polling map[string]bool
@@ -121,7 +121,7 @@ func New(opt Options) (*Engine, error) {
 		clock:   clock,
 		wt:      &agent.Worktrees{Dir: filepath.Join(data, "worktrees")},
 		kick:    make(chan struct{}, 1),
-		active:  map[string]context.CancelCauseFunc{},
+		active:  map[string]activeUnit{},
 		polling: map[string]bool{},
 		loops:   map[string]*sensorLoop{},
 		waiters: map[string]chan agent.ToolDecision{},
@@ -231,12 +231,24 @@ func (e *Engine) wake() {
 // kill switch already demands killing running work, it is cancelled at once.
 func (e *Engine) track(id string, cancel context.CancelCauseFunc) (untrack func()) {
 	e.ctl.Lock()
-	e.active[id] = cancel
+	e.active[id] = activeUnit{cancel: cancel, killable: true}
 	killNow := e.ks.Paused && e.ks.KillRunning
 	e.ctl.Unlock()
 	if killNow {
 		cancel(agent.ErrKilled)
 	}
+	return e.untracker(id)
+}
+
+// trackExempt is track for a unit the kill switch must not cancel (an assist turn or test): Stop and cancelOne still do.
+func (e *Engine) trackExempt(id string, cancel context.CancelCauseFunc) (untrack func()) {
+	e.ctl.Lock()
+	e.active[id] = activeUnit{cancel: cancel}
+	e.ctl.Unlock()
+	return e.untracker(id)
+}
+
+func (e *Engine) untracker(id string) func() {
 	return func() {
 		e.ctl.Lock()
 		delete(e.active, id)
@@ -244,21 +256,30 @@ func (e *Engine) track(id string, cancel context.CancelCauseFunc) (untrack func(
 	}
 }
 
+// activeUnit is a running, cancelable unit of work. killable: the kill switch's "pause and kill running" cancels it.
+type activeUnit struct {
+	cancel   context.CancelCauseFunc
+	killable bool
+}
+
 // cancelOne cancels one tracked unit (a node run, or "assist:<run id>").
 func (e *Engine) cancelOne(id string, cause error) {
 	e.ctl.Lock()
-	cancel := e.active[id]
+	u := e.active[id]
 	e.ctl.Unlock()
-	if cancel != nil {
-		cancel(cause)
+	if u.cancel != nil {
+		u.cancel(cause)
 	}
 }
 
+// cancelActive cancels every tracked unit with cause; the kill switch (agent.ErrKilled) leaves the exempt ones.
 func (e *Engine) cancelActive(cause error) {
 	e.ctl.Lock()
 	fns := make([]context.CancelCauseFunc, 0, len(e.active))
-	for _, c := range e.active {
-		fns = append(fns, c)
+	for _, u := range e.active {
+		if u.killable || !errors.Is(cause, agent.ErrKilled) {
+			fns = append(fns, u.cancel)
+		}
 	}
 	e.ctl.Unlock()
 	for _, c := range fns {

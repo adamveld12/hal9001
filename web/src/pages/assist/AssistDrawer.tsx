@@ -27,6 +27,7 @@ import { relativeTime } from "../../lib/format";
 import type { Tone } from "../../lib/status";
 import { ConfirmButton } from "../files/ConfirmButton";
 import { Composer } from "./Composer";
+import { startSession } from "./startSession";
 import { useAssistPage } from "./context";
 import { FlowSavePanel } from "./FlowSavePanel";
 import { FlowTestPanel } from "./FlowTestPanel";
@@ -258,6 +259,7 @@ function StartView() {
   const sessions = useAssistSessions(kind, targetId);
   const create = useCreateAssistSession();
   const send = useSendAssistMessage();
+  const end = useEndAssistSession();
   const [runtimeChoice, setRuntime] = useState<string | null>(null);
   const [model, setModel] = useState("");
   const [prefill, setPrefill] = useState<{ text: string; n: number } | null>(
@@ -267,14 +269,19 @@ function StartView() {
   const resumable = selectResumable(sessions.data ?? [], kind, targetId);
 
   const start = async (text: string) => {
-    const session = await create.mutateAsync({
-      target: targetId === null ? { kind } : { kind, id: targetId },
-      runtime,
-      model: model.trim() === "" ? undefined : model.trim(),
-      yaml: await page.editor()?.getText(),
+    const yaml = await page.editor()?.getText();
+    await startSession({
+      create: () =>
+        create.mutateAsync({
+          target: targetId === null ? { kind } : { kind, id: targetId },
+          runtime,
+          model: model.trim() === "" ? undefined : model.trim(),
+          yaml,
+        }),
+      send: (id) => send.mutateAsync({ id, text }),
+      end: (id) => end.mutateAsync(id),
+      bind: page.bind,
     });
-    page.bind(session.id);
-    await send.mutateAsync({ id: session.id, text });
   };
 
   return (
@@ -292,6 +299,11 @@ function StartView() {
       </Header>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-3">
         <p className="m-0 text-xs text-muted">{cfg.intro}</p>
+        {runtimes.isError && (
+          <div role="alert" className="text-xs text-bad">
+            Could not load the runtimes: {runtimes.error.message}
+          </div>
+        )}
         {runtimes.isSuccess && runtimes.data.length === 0 && (
           <div role="alert" className="text-xs text-bad">
             No ACP runtimes are configured. Add one under <code>runtimes</code>{" "}
@@ -327,6 +339,7 @@ function StartView() {
               : cfg.composerPlaceholder.existing
           }
           prefill={prefill}
+          autoFocus
           onSend={start}
         />
       </div>
@@ -667,6 +680,7 @@ function SessionView({ id }: { id: string }) {
                 busy ? "Waiting for the agent…" : "Message the agent…"
               }
               prefill={prefill}
+              autoFocus
               onSend={async (text) => {
                 await page.editor()?.flush();
                 await send.mutateAsync({

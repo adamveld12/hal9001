@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,9 +29,6 @@ const (
 // approved; the agent's runs only while the script is one the user has tested or approved (or the target sensor's
 // saved script), else core.ErrInvalidState: the agent has to ask through its permission request first.
 func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error) {
-	if m.host.Paused() {
-		return core.AssistTestOutcome{}, fmt.Errorf("%w: draft tests are rejected while the kill switch is engaged", core.ErrPaused)
-	}
 	s, err := m.session(ctx, sessionID)
 	if err != nil {
 		return core.AssistTestOutcome{}, err
@@ -113,7 +109,7 @@ func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (cor
 	}
 	defer cleanup()
 
-	// The run ends with the request, the engine, or the kill switch.
+	// The run ends with the request or the engine.
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	stop := context.AfterFunc(m.host.Context(), func() { cancel(agent.ErrInterrupted) })
@@ -140,9 +136,6 @@ func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (cor
 		return core.AssistTestResult{Kind: "sensor", ExitCode: -1, Items: []core.AssistTestItem{}, Stdout: core.AssistText{}, Stderr: stderr}, nil
 	}
 	if res.Killed && !res.TimedOut {
-		if errors.Is(context.Cause(runCtx), agent.ErrKilled) {
-			return zero, fmt.Errorf("%w: the test was stopped by the kill switch", core.ErrPaused)
-		}
 		return zero, context.Cause(runCtx)
 	}
 	res = red.Result(res)

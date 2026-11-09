@@ -934,37 +934,30 @@ func TestAssistDeleteRemovesTheDraftDirectoryAndStopsTheAgent(t *testing.T) {
 	d.Delete("/api/assist/sessions/01JC7Z3K9Q8V5T2M4N6P8R0S1T").Want(404)
 }
 
-// The kill switch refuses new turns and tests (423 paused), like other work.
-func TestAssistIsRejectedWhilePaused(t *testing.T) {
-	d := newAssistDaemon(t, func(d *Daemon) { d.assistRuntime(false, turn{Steps: []step{say("ok")}}) })
-	s := d.assistCreate("")
-	d.Post("/api/killswitch/pause", map[string]any{}).Want(200)
-	if got := d.Post("/api/assist/sessions/"+s.ID+"/messages", map[string]any{"text": "hi"}).Want(423).Problem(); got != "paused" {
-		t.Errorf("problem = %q", got)
-	}
-	d.Post("/api/assist/sessions/"+s.ID+"/test", nil).Want(423)
-	d.Put("/api/assist/sessions/"+s.ID+"/draft", map[string]any{"yaml": "id: x\n"}).Want(200) // editing the draft starts nothing
-	d.Post("/api/killswitch/resume", map[string]any{}).Want(200)
-	if got := d.assistTurn(s.ID, "hi"); got.Status != "idle" {
-		t.Errorf("after resume: %+v", got)
-	}
-}
-
-// "Pause and kill running" stops a running assist turn like any other running work.
-func TestAssistTurnIsKilledByThePauseAndKillSwitch(t *testing.T) {
+// The kill switch stops sensors, flow runs and flow agent nodes, not the chat assistant: turns and draft tests run
+// while it is engaged, and "pause and kill running" leaves a running turn alone (Stop and the daemon's shutdown end it).
+func TestAssistIsNotAffectedByThePause(t *testing.T) {
 	d := newAssistDaemon(t, func(d *Daemon) {
-		d.assistRuntime(false, turn{Steps: []step{say("working"), {Op: fakeagent.OpHang}}})
+		d.assistRuntime(false,
+			turn{When: &fakeagent.When{PromptMatches: "go on"}, Steps: []step{say("working"), {Op: fakeagent.OpHang}}},
+			turn{Steps: []step{say("ok")}})
 	})
 	s := d.assistCreate("")
-	d.assistSend(s.ID, "go", nil)
-	d.Eventually("the agent to start the turn", func() bool { return countCalls(d, "session/prompt") == 1 })
 	d.Post("/api/killswitch/pause", map[string]any{"kill_running": true}).Want(200)
-	got := d.assistWait(s.ID, "failed")
-	if got.Error == nil || !strings.Contains(*got.Error, "kill switch") {
-		t.Errorf("error = %v", got.Error)
+	d.Post("/api/assist/sessions/"+s.ID+"/test", nil).Want(200) // the draft skeleton runs like a poll
+	if got := d.assistTurn(s.ID, "hi"); got.Status != "idle" {
+		t.Errorf("turn while paused: %+v", got)
 	}
-	if runs := d.assistRuns(s.ID); len(runs) != 1 || runs[0].Status != "killed" {
-		t.Errorf("runs = %+v", runs)
+	d.assistSend(s.ID, "go on", nil)
+	d.Eventually("the agent to start the second turn", func() bool { return countCalls(d, "session/prompt") == 2 })
+	d.Post("/api/killswitch/pause", map[string]any{"kill_running": true}).Want(200) // again, with the turn running
+	time.Sleep(500 * time.Millisecond)
+	if got := d.assistGet(s.ID); got.Status != "running" {
+		t.Errorf("a running turn must survive pause and kill: %+v", got)
+	}
+	d.Post("/api/assist/sessions/"+s.ID+"/cancel", nil).Want(200)
+	if got := d.assistWait(s.ID, "idle", "failed"); got.Status != "idle" {
+		t.Errorf("after Stop: %+v", got)
 	}
 }
 
