@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router";
+import { eyeLabel, eyeThrobs } from "./halEye";
 import { useStatus } from "../api/status";
 import { useStreamState } from "../api/streamHooks";
 import { Icon, type IconName } from "../components/icons";
@@ -195,8 +196,13 @@ export function AppShell() {
           )}
         >
           <span
-            className="size-2.5 shrink-0 rounded-full bg-bad shadow-[0_0_8px_var(--bad)]"
-            title="hal9001"
+            className={cx(
+              "size-2.5 shrink-0 rounded-full bg-bad shadow-[0_0_8px_var(--bad)]",
+              eyeThrobs(s?.running_flow_runs) && "hal-eye-throb",
+            )}
+            title={eyeLabel(s?.running_flow_runs)}
+            aria-label={eyeLabel(s?.running_flow_runs)}
+            role="img"
           />
           {!collapsed && "hal9001"}
         </div>
