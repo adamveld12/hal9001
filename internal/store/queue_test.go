@@ -136,7 +136,7 @@ func TestNodeRunClaimingPoolsAndAgentSlots(t *testing.T) {
 	claim := func() []*NodeRun {
 		var out []*NodeRun
 		for {
-			n, err := s.ClaimNextNodeRun(ctx(), limits)
+			n, err := s.ClaimNextNodeRun(ctx(), limits, false)
 			must(t, err)
 			if n == nil {
 				return out
@@ -184,7 +184,7 @@ func TestNodeRunClaimingPoolsAndAgentSlots(t *testing.T) {
 
 	// Types missing from the limits map are never claimed.
 	mkNodeRun(t, s, fr.ID, "cmd2", NodeCommand, NodeQueued)
-	if n, err := s.ClaimNextNodeRun(ctx(), NodeLimits{NodeAgent: Unlimited}); err != nil || n != nil {
+	if n, err := s.ClaimNextNodeRun(ctx(), NodeLimits{NodeAgent: Unlimited}, false); err != nil || n != nil {
 		t.Errorf("claimed a command node with no command pool: %v %v", n, err)
 	}
 }
@@ -200,7 +200,7 @@ func TestConcurrentNodeClaimsRespectGlobalAgentLimit(t *testing.T) {
 	for range 8 {
 		wg.Go(func() {
 			for {
-				got, err := s.ClaimNextNodeRun(ctx(), NodeLimits{NodeAgent: 2})
+				got, err := s.ClaimNextNodeRun(ctx(), NodeLimits{NodeAgent: 2}, false)
 				if err != nil {
 					t.Error(err)
 					return

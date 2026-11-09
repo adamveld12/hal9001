@@ -181,12 +181,6 @@ func TestAssistMessageAndDraftErrorsMapToProblems(t *testing.T) {
 	}
 	e.do("POST", base+"/messages", `{"text":"hi"}`).want(409)
 	e.do("POST", base+"/messages", `{"text":"   "}`).want(422)
-	svc.send = func(context.Context, string, string, *string) (*store.AssistSession, error) {
-		return nil, core.ErrPaused
-	}
-	if got := e.do("POST", base+"/messages", `{"text":"hi"}`).want(423).problem(); got != "paused" {
-		t.Errorf("problem = %q", got)
-	}
 	svc.send = func(_ context.Context, id, text string, yaml *string) (*store.AssistSession, error) {
 		if text != "go" || yaml == nil || *yaml != "id: y\n" {
 			t.Errorf("service got text %q yaml %v", text, yaml)
@@ -235,11 +229,6 @@ func TestAssistMessageAndDraftErrorsMapToProblems(t *testing.T) {
 	if len(byAgent) != 2 || byAgent[0] || !byAgent[1] {
 		t.Errorf("byAgent per call = %v, want [false true]", byAgent)
 	}
-	svc.test = func(context.Context, string, bool, core.AssistTestRequest) (core.AssistTestOutcome, error) {
-		return core.AssistTestOutcome{}, core.ErrPaused
-	}
-	e.do("POST", base+"/test", `{}`).want(423)
-
 	svc.closeS = func(context.Context, string) error { return store.ErrNotFound }
 	e.do("DELETE", base, "").want(404)
 	svc.closeS = func(context.Context, string) error { return nil }

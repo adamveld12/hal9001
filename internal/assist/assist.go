@@ -51,10 +51,9 @@ type Host interface {
 	Context() context.Context
 	// Spawn runs fn on the engine's lifetime, tracked by Stop. It reports false, without running fn, once Stop has begun.
 	Spawn(fn func(ctx context.Context)) bool
-	// Track registers a cancelable unit so the kill switch and Stop can cancel it; the returned function unregisters it.
+	// Track registers a cancelable unit so Stop and a denied-and-cancelled tool call can cancel it; the returned function
+	// unregisters it. The kill switch does not touch assist units: it only stops sensors and flow runs.
 	Track(id string, cancel context.CancelCauseFunc) (untrack func())
-	// Paused reports whether the kill switch is engaged.
-	Paused() bool
 	// Runtime returns a configured runtime with its placeholders resolved.
 	Runtime(name string) (agent.RuntimeConfig, bool)
 	// Env returns copies of the global env file values and of the sensor's own values (sensorID may be empty),
@@ -274,9 +273,6 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 
 // SendMessage stores the user's message and starts one agent turn.
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, yaml *string) (*store.AssistSession, error) {
-	if m.host.Paused() {
-		return nil, fmt.Errorf("%w: assist turns are rejected while the kill switch is engaged", core.ErrPaused)
-	}
 	if yaml != nil && len(*yaml) > maxDraftBytes {
 		return nil, invalid("yaml", "the draft is too large")
 	}

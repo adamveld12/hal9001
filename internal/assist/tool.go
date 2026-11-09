@@ -145,7 +145,7 @@ func (m *Manager) testTool(ctx context.Context, s *session, byAgent bool, req co
 	}
 	defer func() { _ = os.RemoveAll(stateDir) }()
 
-	// The run ends with the request, the engine, or the kill switch.
+	// The run ends with the request or the engine.
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	stop := context.AfterFunc(m.host.Context(), func() { cancel(agent.ErrInterrupted) })
@@ -178,8 +178,6 @@ func (m *Manager) testTool(ctx context.Context, s *session, byAgent bool, req co
 		msg := te.Error()
 		out.Error = &msg
 		return out, nil
-	case errors.Is(context.Cause(runCtx), agent.ErrKilled):
-		return zero, fmt.Errorf("%w: the test was stopped by the kill switch", core.ErrPaused)
 	case runCtx.Err() != nil:
 		return zero, context.Cause(runCtx)
 	}

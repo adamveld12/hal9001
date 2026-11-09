@@ -88,6 +88,7 @@ function useGoToShortcuts() {
         t instanceof HTMLElement &&
         (t.isContentEditable ||
           t.closest(".cm-editor") ||
+          t.closest("[aria-label='AI assistant']") ||
           /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
       ) {
         return;
@@ -137,6 +138,7 @@ function useNavCollapsed(): [boolean, () => void] {
         t instanceof HTMLElement &&
         (t.isContentEditable ||
           t.closest(".cm-editor") ||
+          t.closest("[aria-label='AI assistant']") ||
           /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
       ) {
         return;

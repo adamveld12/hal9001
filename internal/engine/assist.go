@@ -64,10 +64,8 @@ func (h assistHost) Context() context.Context { return h.e.ctx }
 func (h assistHost) Spawn(fn func(ctx context.Context)) bool { return h.e.spawn(fn) }
 
 func (h assistHost) Track(id string, cancel context.CancelCauseFunc) func() {
-	return h.e.track(id, cancel)
+	return h.e.trackExempt(id, cancel)
 }
-
-func (h assistHost) Paused() bool { return h.e.isPaused() }
 
 func (h assistHost) Runtime(name string) (agent.RuntimeConfig, bool) {
 	return h.e.runtimeConfig(h.e.snapshot(), name)

@@ -113,7 +113,7 @@ export function SensorDraftPane({
             <Button
               variant="primary"
               icon="save"
-              disabled={create.isPending || text.trim() === ""}
+              disabled={create.isPending || !dirty || text.trim() === ""}
               onClick={() => {
                 const t = text;
                 create.mutate(t, {

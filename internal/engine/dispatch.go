@@ -30,7 +30,12 @@ func (e *Engine) dispatchLoop(ctx context.Context) {
 }
 
 func (e *Engine) dispatch() {
-	if e.isPaused() || e.stopping.Load() {
+	if e.stopping.Load() {
+		return
+	}
+	if e.isPaused() {
+		// The kill switch stops sensors, live runs and replays, not assist flow tests: their nodes still run.
+		e.claimNodes(true)
 		return
 	}
 	for {
@@ -44,13 +49,18 @@ func (e *Engine) dispatch() {
 		}
 		e.beginFlowRun(fr)
 	}
-	for !e.isPaused() {
+	e.claimNodes(false)
+}
+
+// claimNodes starts queued node runs while slots are free (only those of test flow runs with testOnly).
+func (e *Engine) claimNodes(testOnly bool) {
+	for testOnly || !e.isPaused() {
 		cfg := e.snapshot().cfg
 		nr, err := e.st.ClaimNextNodeRun(e.dbCtx, store.NodeLimits{
 			store.NodeCommand: cfg.MaxCommandRuns,
 			store.NodeAgent:   cfg.MaxAgentRuns,
 			store.NodeInbox:   store.Unlimited,
-		})
+		}, testOnly)
 		if err != nil {
 			e.log.Error("engine: claim node run", "err", err)
 			return
