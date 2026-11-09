@@ -429,6 +429,7 @@ opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|ar
   title: "Send this reply to {{.input.author}}?"
   body: "{{.input.draft}}"            # markdown template, optional
   fields: [author, repo, lines]       # input dot-paths shown as a key/value table, optional
+  editable: [draft]                   # input dot-paths the approver may edit before approving, optional
   priority: high                      # low | normal | high | urgent; default normal
   timeout: 24h                        # optional; without it the node waits indefinitely
   on_timeout: denied                  # denied (default) | approved | error; only valid with timeout
@@ -441,9 +442,39 @@ required and must not render empty; `title` and `body` are templates over the sa
 `hal9001 approvals approve|deny <id>`; a macOS notification opens `/inbox/approval/<id>`.
 
 **Ports** `approved`, `denied` and the implicit `error`. On `approved` and `denied` the payload is
-`{"input": <node input>, "approval": {"decision": "approved|denied|timeout", "comment": "...", "decided_by": "...", "decided_at": "..."}}`.
+`{"input": <node input>, "approval": {"decision": "approved|denied|timeout", "comment": "...", "decided_by": "...", "decided_at": "...", "edited": false}}`.
 When the timeout passes, `on_timeout` decides: `denied` or `approved` route to that port with `decision: timeout`,
 `error` fails the node (class `approval_timeout`, routed on `error` if wired).
+
+**Edit before approve.** `editable` lists dot-paths into the input (validated: non-empty, no empty segments, no
+duplicates). The approval shows each as an editable box prefilled with the current value: a textarea for strings, a JSON
+editor for objects, arrays and other values. `POST /api/approvals/{id}/approve` takes optional
+`edits: {"<path>": <new value>}`; it is only allowed for `request` approvals and only for the node's declared paths
+(422 otherwise). Deny ignores edits. On approve, the payload's `input` has the new values set at those paths, and
+`approval.edited` is `true` with `approval.edits: {"<path>": {"before": ..., "after": ...}}` (only paths whose value
+changed). The same `edits` appear on the approval (`request.edits`) and so in the approval history. Example: an agent
+drafts a Slack reply, the approver fixes the wording, and the command node sends the edited text:
+
+```yaml
+nodes:
+  - id: draft
+    type: agent
+    prompt: draft-slack-reply            # outputs {channel, thread_ts, reply}
+  - id: review
+    type: approval
+    title: "Reply in #{{.input.channel}}?"
+    editable: [reply]
+  - id: send
+    type: command
+    side_effect: true
+    command: [hal-slack-post]            # reads {{.input.input.reply}}: the edited text
+edges:
+  - {from: draft, to: review}
+  - {from: review, port: approved, to: send}
+```
+
+`hal9001 approvals approve <id>` approves without edits. The flow editor's "Editable fields" picker (from the sample)
+shows the boxes in the preview. Node tests simulate the decision and never apply edits.
 
 **Dry run.** The node still asks, but the approval is tagged `dry_run`, shows a DRY RUN badge and starts with "This is a
 dry run: approving or denying only exercises the flow's branches."; the notification title starts with "[dry run]".

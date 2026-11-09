@@ -255,8 +255,10 @@ type Node struct {
 	Links          []Link `yaml:"links,omitempty" json:"links,omitempty"`
 
 	// approval (title and priority are shared with inbox)
-	Body      string   `yaml:"body,omitempty" json:"body,omitempty"`
-	Fields    []string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Body   string   `yaml:"body,omitempty" json:"body,omitempty"`
+	Fields []string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	// Editable lists dot-paths into the input the approver may edit before approving.
+	Editable  []string `yaml:"editable,omitempty" json:"editable,omitempty"`
 	OnTimeout string   `yaml:"on_timeout,omitempty" json:"on_timeout,omitempty"`
 
 	// command and agent

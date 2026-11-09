@@ -188,6 +188,13 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 		if d.CancelRun {
 			return nil, fmt.Errorf("%w: cancel_run applies to tool_call approvals", core.ErrInvalidState)
 		}
+		if d.Approve && len(d.Edits) > 0 { // a denial ignores edits
+			rq, err := recordEdits(ap.Request, d.Edits)
+			if err != nil {
+				return nil, err
+			}
+			dec.Request = rq
+		}
 		decided, err := e.st.DecideApproval(ctx, ap.ID, dec)
 		if err != nil {
 			return nil, mapDecideErr(approvalID, err)

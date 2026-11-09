@@ -156,3 +156,17 @@ describe("approval node validation", () => {
     ).toEqual([]);
   });
 });
+
+describe("previewApproval editable fields", () => {
+  it("lists editable paths with their sample values (null when missing)", () => {
+    const p = previewApproval(
+      node({ editable: ["title", "labels", "nope"] }),
+      sample,
+    );
+    expect(p.editable).toEqual([
+      { key: "title", value: "Fix it" },
+      { key: "labels", value: ["a", "b"] },
+      { key: "nope", value: null },
+    ]);
+  });
+});

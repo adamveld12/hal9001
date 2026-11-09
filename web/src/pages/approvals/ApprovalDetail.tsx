@@ -22,6 +22,8 @@ import { timeLeft, useNow } from "./timeLeft";
 import { diffsFromToolContent, extractCommand, extractDiffs } from "./diff";
 import { DiffView } from "./DiffView";
 import { approvalTitle, describeDecision } from "./queue";
+import { EditFields } from "./EditFields";
+import { initialDrafts } from "./edits";
 
 const STALE_POLL_MS = 3000;
 
@@ -158,6 +160,10 @@ export function RequestBody({
   );
 }
 
+function editText(v: unknown): string {
+  return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+}
+
 /** The decided state: who decided, when, and with what comment. */
 function Decision({ a }: { a: Approval }) {
   return (
@@ -171,6 +177,22 @@ function Decision({ a }: { a: Approval }) {
         {a.comment && (
           <p className="m-0 whitespace-pre-wrap break-words">{a.comment}</p>
         )}
+        {a.request?.edits && Object.keys(a.request.edits).length > 0 && (
+          <div className="space-y-1.5" data-testid="approval-edits">
+            <div className="font-medium">Edited before approving</div>
+            {Object.entries(a.request.edits).map(([path, e]) => (
+              <div key={path}>
+                <div className="font-mono text-muted">{path}</div>
+                <pre className="m-0 whitespace-pre-wrap break-words text-bad line-through">
+                  {editText(e.before)}
+                </pre>
+                <pre className="m-0 whitespace-pre-wrap break-words">
+                  {editText(e.after)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Panel>
   );
@@ -181,6 +203,8 @@ export function ApprovalDetail({
   approval: a,
   comment,
   onComment,
+  editDrafts,
+  onEditDraft,
   busy,
   onDecide,
   onStale,
@@ -189,6 +213,9 @@ export function ApprovalDetail({
   approval: Approval;
   comment: string;
   onComment: (text: string) => void;
+  /** Box text of the editable fields, by path (missing = the current value). */
+  editDrafts: Readonly<Record<string, string>>;
+  onEditDraft: (key: string, text: string) => void;
   busy: boolean;
   onDecide: (action: "approve" | "deny", cancelRun?: boolean) => void;
   /** Called every few seconds while a pending call is past its deadline, to refetch. */
@@ -258,6 +285,21 @@ export function ApprovalDetail({
       {pending ? (
         <Panel title="Decide">
           <div className="space-y-3">
+            {a.request && a.request.editable.length > 0 && (
+              <div className="space-y-1">
+                <p className="m-0 text-xs text-muted">
+                  You can edit these before approving. Denying ignores edits.
+                </p>
+                <EditFields
+                  editable={a.request.editable}
+                  drafts={{
+                    ...initialDrafts(a.request.editable),
+                    ...editDrafts,
+                  }}
+                  onChange={onEditDraft}
+                />
+              </div>
+            )}
             <Field label="Comment (optional)">
               <TextArea
                 rows={3}

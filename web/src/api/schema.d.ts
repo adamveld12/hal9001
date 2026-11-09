@@ -2802,7 +2802,9 @@ export interface components {
      *     approval of type `request`. `title` and `body` are Go templates over `{.event, .input, .flow, .run}`.
      *     Ports: `approved`, `denied` and the implicit `error`. On `approved` and `denied` (and a timed-out approval
      *     routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
-     *     comment, decided_by, decided_at}}`. In a dry run the approval is still created, tagged `dry_run`, and says so.
+     *     comment, decided_by, decided_at, edited, edits?}}`. With `editable`, the approver may change those input paths when
+     *     approving; the payload's `input` carries the edited values and `approval.edits` is `{path: {before, after}}`.
+     *     In a dry run the approval is still created, tagged `dry_run`, and says so.
      *     Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
      */
     ApprovalNode: {
@@ -2818,6 +2820,8 @@ export interface components {
       body?: string;
       /** @description Dot-paths into the node input, shown as a key/value table. */
       fields?: string[];
+      /** @description Dot-paths into the node input the approver may edit before approving (strings or JSON values). */
+      editable?: string[];
       priority?: components["schemas"]["Priority"];
       timeout?: components["schemas"]["Duration"];
       /**
@@ -4208,6 +4212,18 @@ export interface components {
         key: string;
         value: string;
       }[];
+      /** @description Input paths the approver may edit when approving, with their current values (any JSON). */
+      editable: {
+        key: string;
+        value: unknown;
+      }[];
+      /** @description Set once approved with edits: what changed at each path. */
+      edits?: {
+        [key: string]: {
+          before: unknown;
+          after: unknown;
+        };
+      };
       priority: components["schemas"]["Priority"];
       /** @description The approval belongs to a dry run: deciding only exercises the flow's branches. */
       dry_run: boolean;
@@ -4223,9 +4239,15 @@ export interface components {
     };
     ApproveRequest: {
       comment?: string;
+      /** @description `request` approvals only: new values (any JSON) for paths the node declares `editable`. 422 for any other approval or path. Ignored by deny. */
+      edits?: {
+        [key: string]: unknown;
+      };
     };
     DenyRequest: {
       comment?: string;
+      /** @description Accepted and ignored: a denial never applies edits. */
+      edits?: unknown;
       /**
        * @description `tool_call` only: cancel the run instead of letting the agent continue.
        * @default false
@@ -7510,6 +7532,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };

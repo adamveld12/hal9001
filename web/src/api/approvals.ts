@@ -52,6 +52,8 @@ export interface Decision {
   id: string;
   action: "approve" | "deny";
   comment?: string;
+  /** `request` approvals, approve only: new values for editable paths. */
+  edits?: Record<string, unknown>;
   /** `tool_call` denials only: cancel the run instead of letting the agent continue. */
   cancelRun?: boolean;
 }
@@ -91,12 +93,17 @@ export function replaceApprovalInPages(
 export function useDecideApproval() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, action, comment, cancelRun }: Decision) => {
+    mutationFn: ({ id, action, comment, cancelRun, edits }: Decision) => {
       const text = comment?.trim() ? { comment: comment.trim() } : {};
+      const approveBody =
+        edits && Object.keys(edits).length > 0 ? { ...text, edits } : text;
       const params = { path: { id } };
       return action === "approve"
         ? unwrap(
-            api.POST("/api/approvals/{id}/approve", { params, body: text }),
+            api.POST("/api/approvals/{id}/approve", {
+              params,
+              body: approveBody,
+            }),
           )
         : unwrap(
             api.POST("/api/approvals/{id}/deny", {

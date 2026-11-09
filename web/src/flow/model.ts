@@ -115,6 +115,8 @@ export interface ApprovalNode {
   body?: string;
   /** Dot-paths into the node input, shown as a key/value table. */
   fields?: string[];
+  /** Dot-paths into the node input the approver may edit before approving. */
+  editable?: string[];
   priority?: Priority;
   /** Duration; without it the node waits indefinitely. */
   timeout?: string;

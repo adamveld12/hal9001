@@ -1921,6 +1921,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
   /api/approvals/{id}/deny:
     parameters:
@@ -3703,7 +3704,9 @@ components:
         approval of type `request`. `title` and `body` are Go templates over `{.event, .input, .flow, .run}`.
         Ports: `approved`, `denied` and the implicit `error`. On `approved` and `denied` (and a timed-out approval
         routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
-        comment, decided_by, decided_at}}`. In a dry run the approval is still created, tagged `dry_run`, and says so.
+        comment, decided_by, decided_at, edited, edits?}}`. With `editable`, the approver may change those input paths when
+        approving; the payload's `input` carries the edited values and `approval.edits` is `{path: {before, after}}`.
+        In a dry run the approval is still created, tagged `dry_run`, and says so.
         Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
       additionalProperties: false
       required: [id, type, title]
@@ -3713,6 +3716,7 @@ components:
         title: {type: string, description: Template. Required.}
         body: {type: string, description: Markdown template shown in the approval.}
         fields: {type: array, items: {type: string}, description: 'Dot-paths into the node input, shown as a key/value table.'}
+        editable: {type: array, items: {type: string}, description: 'Dot-paths into the node input the approver may edit before approving (strings or JSON values).'}
         priority: {$ref: '#/components/schemas/Priority'}
         timeout: {$ref: '#/components/schemas/Duration'}
         on_timeout: {type: string, enum: [denied, approved, error], default: denied, description: 'What an expired approval does: route to `denied`, to `approved`, or fail the node (the `error` port). Only valid with `timeout`.'}
@@ -5194,11 +5198,13 @@ components:
     ApprovalRequestContent:
       type: object
       description: What an `approval` node asked, rendered when the node ran.
-      required: [title, body_md, fields, priority, dry_run, on_timeout]
+      required: [title, body_md, fields, editable, priority, dry_run, on_timeout]
       properties:
         title: {type: string}
         body_md: {type: string, description: 'Markdown. In a dry run the first line says so.'}
         fields: {type: array, items: {type: object, required: [key, value], properties: {key: {type: string}, value: {type: string}}}}
+        editable: {type: array, description: 'Input paths the approver may edit when approving, with their current values (any JSON).', items: {type: object, required: [key, value], properties: {key: {type: string}, value: {}}}}
+        edits: {type: object, description: 'Set once approved with edits: what changed at each path.', additionalProperties: {type: object, required: [before, after], properties: {before: {}, after: {}}}}
         priority: {$ref: '#/components/schemas/Priority'}
         dry_run: {type: boolean, description: 'The approval belongs to a dry run: deciding only exercises the flow''s branches.'}
         on_timeout: {type: [string, 'null'], enum: [denied, approved, error, null], description: 'What expiry does; null without a timeout (`expires_at`).'}
@@ -5213,11 +5219,13 @@ components:
       additionalProperties: false
       properties:
         comment: {type: string}
+        edits: {type: object, description: '`request` approvals only: new values (any JSON) for paths the node declares `editable`. 422 for any other approval or path. Ignored by deny.', additionalProperties: {}}
     DenyRequest:
       type: object
       additionalProperties: false
       properties:
         comment: {type: string}
+        edits: {description: 'Accepted and ignored: a denial never applies edits.'}
         cancel_run: {type: boolean, default: false, description: '`tool_call` only: cancel the run instead of letting the agent continue.'}
     InboxItem:
       type: object

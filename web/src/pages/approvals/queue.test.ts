@@ -196,6 +196,7 @@ describe("request approvals", () => {
     title: "Ship api?",
     body_md: "details",
     fields: [],
+    editable: [],
     priority: "high" as const,
     dry_run: false,
     on_timeout: "denied" as const,

@@ -10,6 +10,7 @@ import {
 } from "../../api/approvals";
 import { qk } from "../../api/keys";
 import { ApprovalDetail } from "../approvals/ApprovalDetail";
+import { buildEdits, initialDrafts } from "../approvals/edits";
 import { decisionNotice } from "../approvals/queue";
 import {
   mergeInboxPages,
@@ -271,6 +272,12 @@ export function InboxPage() {
   // Approvals: the comment draft, the outcome notice and the decision itself.
   const [draft, setDraft] = useState({ id: "", text: "" });
   const comment = draft.id === openApprovalId ? draft.text : "";
+  // Edit boxes of an approval node's editable fields, by path.
+  const [editDraft, setEditDraft] = useState<{
+    id: string;
+    values: Record<string, string>;
+  }>({ id: "", values: {} });
+  const editValues = editDraft.id === openApprovalId ? editDraft.values : {};
   const [notice, setNotice] = useState<string | null>(null);
   const shownApproval: Approval | undefined =
     approvalDetail.data ??
@@ -283,6 +290,19 @@ export function InboxPage() {
     cancelRun?: boolean,
   ) => {
     if (decide.isPending) return;
+    let edits: Record<string, unknown> | undefined;
+    if (action === "approve" && a.request && a.request.editable.length > 0) {
+      const built = buildEdits(a.request.editable, {
+        ...initialDrafts(a.request.editable),
+        ...editValues,
+      });
+      const bad = Object.keys(built.errors);
+      if (bad.length > 0) {
+        setNotice(`Fix the edit of ${bad.join(", ")}: it is not valid JSON.`);
+        return;
+      }
+      edits = built.edits;
+    }
     const pendingKeys = rows
       .filter((r) => r.kind === "approval")
       .map((r) => r.key);
@@ -291,11 +311,12 @@ export function InboxPage() {
       selectionKey({ kind: "approval", id: a.id }),
     );
     decide.mutate(
-      { id: a.id, action, comment, cancelRun },
+      { id: a.id, action, comment, cancelRun, edits },
       {
         onSuccess: (done) => {
           setNotice(decisionNotice(done));
           setDraft({ id: "", text: "" });
+          setEditDraft({ id: "", values: {} });
           // Keep working through the queue; the last one stays open to show its outcome.
           if (next) open(next, true);
         },
@@ -578,6 +599,13 @@ export function InboxPage() {
                 approval={shownApproval}
                 comment={comment}
                 onComment={(text) => setDraft({ id: shownApproval.id, text })}
+                editDrafts={editValues}
+                onEditDraft={(key, text) =>
+                  setEditDraft({
+                    id: shownApproval.id,
+                    values: { ...editValues, [key]: text },
+                  })
+                }
                 busy={decide.isPending}
                 onDecide={(action, cancelRun) =>
                   decideApproval(shownApproval, action, cancelRun)

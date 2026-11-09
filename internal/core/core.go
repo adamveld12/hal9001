@@ -115,6 +115,8 @@ type TestNodeRequest struct {
 type ApprovalDecision struct {
 	Approve bool
 	Comment string
+	// Edits are new values for editable paths of a request approval; used by approvals only.
+	Edits map[string]json.RawMessage
 	// CancelRun applies to tool_call approvals: deny and cancel the agent run.
 	CancelRun bool
 	// Principal is the authenticated principal making the decision.

@@ -42,6 +42,7 @@ import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
 import { ToolsSection } from "./ToolsSection";
 import { RequestBody } from "../pages/approvals/ApprovalDetail";
+import { EditFieldsPreview } from "../pages/approvals/EditFields";
 import { PriorityBadge } from "../pages/inbox/InboxList";
 import { fieldChoices, previewApproval, toggleField } from "./approval";
 
@@ -705,6 +706,7 @@ function ApprovalForm({
   const paths = useMemo(() => fieldChoices(sample.input), [sample.input]);
   const hints = useMemo(() => templateHints(paths), [paths]);
   const fields = node.fields ?? [];
+  const editable = node.editable ?? [];
   const offered = paths.filter((p) => !fields.includes(p));
   const hint =
     hints.length > 0
@@ -779,6 +781,56 @@ function ApprovalForm({
           </Select>
         </div>
       </Field>
+      <Field
+        label="Editable fields"
+        error={msgs(diags, "editable")}
+        hint="Input values the approver can change before approving. Downstream nodes get the edited values."
+      >
+        <div className="space-y-1.5">
+          {editable.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {editable.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  title="Make this field read-only"
+                  className="rounded border border-line bg-raised px-1.5 py-0.5 font-mono text-[11px] hover:border-bad"
+                  onClick={() =>
+                    onChange((n) =>
+                      setOpt(n, "editable", toggleField(editable, f)),
+                    )
+                  }
+                >
+                  {f} ×
+                </button>
+              ))}
+            </div>
+          )}
+          <Select
+            aria-label="Add an editable field"
+            value=""
+            onChange={(e) =>
+              e.target.value &&
+              onChange((n) =>
+                setOpt(n, "editable", toggleField(editable, e.target.value)),
+              )
+            }
+          >
+            <option value="">
+              {paths.length === 0
+                ? "No sample to pick from"
+                : "Make a field editable…"}
+            </option>
+            {paths
+              .filter((p) => !editable.includes(p))
+              .map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+          </Select>
+        </div>
+      </Field>
       <Field label="Priority" error={msgs(diags, "priority")}>
         <Select
           value={node.priority ?? "normal"}
@@ -845,6 +897,12 @@ function ApprovalForm({
               <PriorityBadge priority={preview.priority} />
             </div>
             <RequestBody request={{ ...preview, dry_run: false }} />
+            {preview.editable.length > 0 && (
+              <EditFieldsPreview
+                key={JSON.stringify(preview.editable)}
+                editable={preview.editable}
+              />
+            )}
             <div className="text-[11px] text-muted">
               {preview.timeout
                 ? `Expires after ${preview.timeout}, then continues on ${preview.on_timeout === "error" ? "the error port" : `port ${preview.on_timeout}`}.`

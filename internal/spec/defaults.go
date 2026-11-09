@@ -219,6 +219,7 @@ func (n Node) clone() Node {
 	n.Command = slices.Clone(n.Command)
 	n.Links = slices.Clone(n.Links)
 	n.Fields = slices.Clone(n.Fields)
+	n.Editable = slices.Clone(n.Editable)
 	n.MCPServers = slices.Clone(n.MCPServers)
 	n.Tools = slices.Clone(n.Tools)
 	for i, t := range n.Tools {

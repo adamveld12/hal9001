@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
@@ -589,18 +590,42 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request, d core.A
 
 func (s *Server) approveApproval(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Comment string `json:"comment"`
+		Comment string                     `json:"comment"`
+		Edits   map[string]json.RawMessage `json:"edits"`
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return
 	}
-	s.decideApproval(w, r, core.ApprovalDecision{Approve: true, Comment: req.Comment})
+	if len(req.Edits) > 0 {
+		a, err := s.opts.Store.GetApproval(r.Context(), r.PathValue("id"))
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		if a.Type != store.ApprovalRequest {
+			fieldProblem(w, "edits", "edits apply to request approvals only")
+			return
+		}
+		var rq store.RequestApproval
+		if err := json.Unmarshal([]byte(a.Request), &rq); err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		for path := range req.Edits {
+			if !slices.ContainsFunc(rq.Editable, func(e store.RequestEditable) bool { return e.Key == path }) {
+				fieldProblem(w, "edits."+path, fmt.Sprintf("%q is not an editable path of this approval", path))
+				return
+			}
+		}
+	}
+	s.decideApproval(w, r, core.ApprovalDecision{Approve: true, Comment: req.Comment, Edits: req.Edits})
 }
 
 func (s *Server) denyApproval(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Comment   string `json:"comment"`
 		CancelRun bool   `json:"cancel_run"`
+		Edits     any    `json:"edits"` // accepted and ignored
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return

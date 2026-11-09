@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +37,9 @@ type approvalInfo struct {
 	Comment   string  `json:"comment"`
 	DecidedBy string  `json:"decided_by"`
 	DecidedAt *string `json:"decided_at"`
+	// Edited is true when the approver changed editable input values; Edits then lists them by path.
+	Edited bool                         `json:"edited"`
+	Edits  map[string]store.RequestEdit `json:"edits,omitempty"`
 }
 
 // SimulatedApproval values for core.TestNodeRequest.SimulateApproval and core.FlowTestRequest.SimulateApproval.
@@ -67,6 +72,13 @@ func (e *Engine) runApproval(ne *nodeEnv) nodeOutcome {
 	for _, path := range n.Fields {
 		req.Fields = append(req.Fields, store.RequestField{Key: path, Value: red.String(fieldText(lookupPath(ne.inputV, path)))})
 	}
+	for _, path := range n.Editable {
+		v, err := json.Marshal(lookupPath(ne.inputV, path))
+		if err != nil {
+			return failure(errConfig, err.Error())
+		}
+		req.Editable = append(req.Editable, store.RequestEditable{Key: path, Value: v})
+	}
 	if req.DryRun {
 		req.BodyMD = strings.TrimRight(dryRunNotice+"\n\n"+req.BodyMD, "\n")
 	}
@@ -80,7 +92,7 @@ func (e *Engine) runApproval(ne *nodeEnv) nodeOutcome {
 			e.simulations.Delete(ne.fr.ID) // a node test runs one node; TestFlow deletes its own
 		}
 		now := time.Now().UTC()
-		return e.requestOutcome(ne, decision, "", "simulated", &now, "simulated approval: "+decision+": "+truncate(req.Title, 120))
+		return e.requestOutcome(ne, decision, "", "simulated", &now, "simulated approval: "+decision+": "+truncate(req.Title, 120), nil)
 	}
 
 	raw, err := json.Marshal(req)
@@ -107,13 +119,22 @@ func (e *Engine) runApproval(ne *nodeEnv) nodeOutcome {
 }
 
 // requestOutcome is the outcome of a decided approval node: the input plus the approval, on port approved or denied.
-func (e *Engine) requestOutcome(ne *nodeEnv, decision, comment, by string, at *time.Time, reason string) nodeOutcome {
+func (e *Engine) requestOutcome(ne *nodeEnv, decision, comment, by string, at *time.Time, reason string, edits map[string]store.RequestEdit) nodeOutcome {
 	info := approvalInfo{Decision: decision, Comment: comment, DecidedBy: by}
 	if at != nil {
 		s := at.UTC().Format(time.RFC3339)
 		info.DecidedAt = &s
 	}
-	payload, err := json.Marshal(map[string]any{"input": json.RawMessage(nonEmptyJSON(ne.input)), "approval": info})
+	input := json.RawMessage(nonEmptyJSON(ne.input))
+	if decision == "approved" && len(edits) > 0 {
+		edited, err := applyEdits(input, edits)
+		if err != nil {
+			return failure(errConfig, "apply edits: "+err.Error())
+		}
+		input, info.Edited, info.Edits = edited, true, edits
+		reason += " (edited " + strings.Join(sortedPaths(edits), ", ") + ")"
+	}
+	payload, err := json.Marshal(map[string]any{"input": input, "approval": info})
 	if err != nil {
 		return failure(errConfig, err.Error())
 	}
@@ -152,21 +173,26 @@ func (e *Engine) applyRequestDecision(nodeRunID string) {
 		e.reconcileFlowRun(fr.ID)
 		return
 	}
+	var edits map[string]store.RequestEdit
+	var rq store.RequestApproval
+	if json.Unmarshal([]byte(ap.Request), &rq) == nil {
+		edits = rq.Edits
+	}
 	var out nodeOutcome
 	switch ap.Status {
 	case store.ApprovalApproved:
-		out = e.requestOutcome(ne, "approved", ap.Comment, ap.DecidedBy, ap.DecidedAt, "approved"+commentSuffix(ap.Comment))
+		out = e.requestOutcome(ne, "approved", ap.Comment, ap.DecidedBy, ap.DecidedAt, "approved"+commentSuffix(ap.Comment), edits)
 	case store.ApprovalDenied:
-		out = e.requestOutcome(ne, "denied", ap.Comment, ap.DecidedBy, ap.DecidedAt, "denied"+commentSuffix(ap.Comment))
+		out = e.requestOutcome(ne, "denied", ap.Comment, ap.DecidedBy, ap.DecidedAt, "denied"+commentSuffix(ap.Comment), nil)
 	default: // expired
 		switch ne.node.OnTimeout {
 		case spec.OnTimeoutApproved:
-			out = e.requestOutcome(ne, "timeout", ap.Comment, ap.DecidedBy, ap.DecidedAt, "timed out, treated as approved")
+			out = e.requestOutcome(ne, "timeout", ap.Comment, ap.DecidedBy, ap.DecidedAt, "timed out, treated as approved", nil)
 			out.outputs[0].Port = spec.PortApproved
 		case spec.OnTimeoutError:
 			out = failure(errApprovalTimeout, "approval timed out")
 		default:
-			out = e.requestOutcome(ne, "timeout", ap.Comment, ap.DecidedBy, ap.DecidedAt, "timed out, treated as denied")
+			out = e.requestOutcome(ne, "timeout", ap.Comment, ap.DecidedBy, ap.DecidedAt, "timed out, treated as denied", nil)
 		}
 	}
 	e.finishNode(ne, out)
@@ -261,4 +287,95 @@ func fieldText(v any) string {
 		return fmt.Sprint(v)
 	}
 	return string(b)
+}
+
+func sortedPaths[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// recordEdits validates the edits against the request's editable paths and returns the request JSON with the changed
+// ones recorded as {before, after}; a value equal to the current one is not an edit. Unchanged JSON comes back as "".
+func recordEdits(raw string, edits map[string]json.RawMessage) (string, error) {
+	var req store.RequestApproval
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return "", err
+	}
+	for _, path := range sortedPaths(edits) {
+		i := -1
+		for j, ed := range req.Editable {
+			if ed.Key == path {
+				i = j
+			}
+		}
+		if i < 0 {
+			return "", fmt.Errorf("%w: %q is not an editable path of this approval", store.ErrInvalid, path)
+		}
+		var after bytes.Buffer
+		if err := json.Compact(&after, edits[path]); err != nil {
+			return "", fmt.Errorf("%w: edit of %q is not valid JSON", store.ErrInvalid, path)
+		}
+		var before bytes.Buffer
+		_ = json.Compact(&before, req.Editable[i].Value)
+		if bytes.Equal(before.Bytes(), after.Bytes()) {
+			continue
+		}
+		if req.Edits == nil {
+			req.Edits = map[string]store.RequestEdit{}
+		}
+		req.Edits[path] = store.RequestEdit{Before: before.Bytes(), After: after.Bytes()}
+	}
+	if len(req.Edits) == 0 {
+		return "", nil
+	}
+	out, err := json.Marshal(req)
+	return string(out), err
+}
+
+// applyEdits sets each edit's after value at its dot-path in the input JSON.
+func applyEdits(input json.RawMessage, edits map[string]store.RequestEdit) (json.RawMessage, error) {
+	var v any
+	if err := json.Unmarshal(input, &v); err != nil {
+		return nil, err
+	}
+	for _, path := range sortedPaths(edits) {
+		var after any
+		if err := json.Unmarshal(edits[path].After, &after); err != nil {
+			return nil, err
+		}
+		var err error
+		if v, err = setPath(v, strings.Split(path, "."), after); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return json.Marshal(v)
+}
+
+// setPath returns v with the value at segs replaced, creating missing objects on the way.
+func setPath(v any, segs []string, val any) (any, error) {
+	if len(segs) == 0 {
+		return val, nil
+	}
+	switch t := v.(type) {
+	case nil:
+		child, err := setPath(nil, segs[1:], val)
+		return map[string]any{segs[0]: child}, err
+	case map[string]any:
+		child, err := setPath(t[segs[0]], segs[1:], val)
+		t[segs[0]] = child
+		return t, err
+	case []any:
+		var i int
+		if _, err := fmt.Sscanf(segs[0], "%d", &i); err != nil || i < 0 || i >= len(t) {
+			return v, fmt.Errorf("no list element %q", segs[0])
+		}
+		child, err := setPath(t[i], segs[1:], val)
+		t[i] = child
+		return t, err
+	}
+	return v, fmt.Errorf("cannot go into a %T value", v)
 }

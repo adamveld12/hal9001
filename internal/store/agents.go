@@ -587,6 +587,8 @@ type ApprovalDecision struct {
 	Status    ApprovalState // approved, denied or expired
 	Comment   string
 	DecidedBy string // principal; "system" for expiry
+	// Request, when set, replaces the approval's request JSON in the same update (a request approval's recorded edits).
+	Request string
 	// PermissionDecision, when set on a tool_call approval, is recorded on the
 	// linked permission request in the same transaction (decided_by is "user",
 	// or "timeout" for expired), with PermissionReason as the reason.
@@ -604,8 +606,8 @@ func (s *Store) DecideApproval(ctx context.Context, id string, d ApprovalDecisio
 	var out *Approval
 	err := s.write(ctx, func(t *txn) error {
 		now := s.now()
-		res, err := t.ExecContext(ctx, `UPDATE approvals SET status=?, comment=?, decided_by=?, decided_at=? WHERE id=? AND status='pending'`,
-			d.Status, d.Comment, d.DecidedBy, ts(now), id)
+		res, err := t.ExecContext(ctx, `UPDATE approvals SET status=?, comment=?, decided_by=?, decided_at=?, request=CASE WHEN ? = '' THEN request ELSE ? END WHERE id=? AND status='pending'`,
+			d.Status, d.Comment, d.DecidedBy, ts(now), d.Request, d.Request, id)
 		if err != nil {
 			return fmt.Errorf("store: decide approval: %w", err)
 		}

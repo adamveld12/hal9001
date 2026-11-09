@@ -551,13 +551,29 @@ type KillSwitch struct {
 // RequestApproval is the content of a request approval (Approval.Request, stored as JSON): the title, body and
 // fields an approval node rendered when it ran, so the approval reads the same whenever it is opened.
 type RequestApproval struct {
-	Title    string         `json:"title"`
-	BodyMD   string         `json:"body_md"`
-	Fields   []RequestField `json:"fields"`
-	Priority Priority       `json:"priority"`
-	DryRun   bool           `json:"dry_run"`
+	Title  string         `json:"title"`
+	BodyMD string         `json:"body_md"`
+	Fields []RequestField `json:"fields"`
+	// Editable are the input paths the approver may edit, with their values when the approval was raised.
+	Editable []RequestEditable `json:"editable,omitempty"`
+	// Edits is set when the approval was approved with edits.
+	Edits    map[string]RequestEdit `json:"edits,omitempty"`
+	Priority Priority               `json:"priority"`
+	DryRun   bool                   `json:"dry_run"`
 	// OnTimeout is what an expiry does: denied, approved or error. Empty without a timeout.
 	OnTimeout string `json:"on_timeout,omitempty"`
+}
+
+// RequestEditable is one input path of a request approval the approver may edit, with its current value.
+type RequestEditable struct {
+	Key   string          `json:"key"`
+	Value json.RawMessage `json:"value"`
+}
+
+// RequestEdit is one applied edit.
+type RequestEdit struct {
+	Before json.RawMessage `json:"before"`
+	After  json.RawMessage `json:"after"`
 }
 
 // RequestField is one row of the key/value table of a request approval.

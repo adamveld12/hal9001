@@ -729,12 +729,14 @@ type approvalView struct {
 }
 
 type approvalRequestView struct {
-	Title     string               `json:"title"`
-	BodyMD    string               `json:"body_md"`
-	Fields    []store.RequestField `json:"fields"`
-	Priority  store.Priority       `json:"priority"`
-	DryRun    bool                 `json:"dry_run"`
-	OnTimeout *string              `json:"on_timeout"`
+	Title     string                       `json:"title"`
+	BodyMD    string                       `json:"body_md"`
+	Fields    []store.RequestField         `json:"fields"`
+	Editable  []store.RequestEditable      `json:"editable"`
+	Edits     map[string]store.RequestEdit `json:"edits,omitempty"`
+	Priority  store.Priority               `json:"priority"`
+	DryRun    bool                         `json:"dry_run"`
+	OnTimeout *string                      `json:"on_timeout"`
 }
 
 func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
@@ -793,7 +795,10 @@ func (rv *resolver) requestApprovalView(a store.Approval) (approvalView, error) 
 	if req.Fields == nil {
 		req.Fields = []store.RequestField{}
 	}
-	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout)}
+	if req.Editable == nil {
+		req.Editable = []store.RequestEditable{}
+	}
+	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Editable: req.Editable, Edits: req.Edits, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout)}
 	return approvalView{
 		ID: a.ID, NodeRunID: nonEmpty(a.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
 		EventID: nonEmpty(l.EventID), Type: string(a.Type), Request: rq, Status: string(a.Status), Comment: nonEmpty(a.Comment),

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -242,5 +243,69 @@ func TestApprovalNodeTestNodeSimulates(t *testing.T) {
 	}).Want(400, 422)
 	if got := d.Approvals(""); len(got) != 0 {
 		t.Errorf("a test created approvals: %+v", got)
+	}
+}
+
+const approvalEditFlowYAML = `id: ask
+enabled: true
+subscribe: [src]
+nodes:
+  - id: confirm
+    type: approval
+    title: "Send reply?"
+    editable: [draft, tags]
+  - {id: yes, type: inbox, title: "sent", summary_md: "{{.input.input.draft}}|{{.input.approval.edited}}|{{.input.approval.edits.draft.before}}|{{index .input.input.tags 0}}"}
+  - {id: no, type: inbox, title: "dropped", summary_md: "{{.input.input.draft}}|{{.input.approval.edited}}"}
+edges:
+  - {from: confirm, port: approved, to: yes}
+  - {from: confirm, port: denied, to: no}
+`
+
+type editableApproval struct {
+	Request struct {
+		Editable []struct {
+			Key   string          `json:"key"`
+			Value json.RawMessage `json:"value"`
+		} `json:"editable"`
+		Edits map[string]struct{ Before, After json.RawMessage } `json:"edits"`
+	} `json:"request"`
+}
+
+// Approving with edits applies them to the downstream input and records before/after; undeclared paths are 422;
+// a denial ignores edits.
+func TestApprovalNodeEdits(t *testing.T) {
+	d := newDaemon(t)
+	d.IdleSensor("src")
+	d.Flow("ask", approvalEditFlowYAML)
+	d.Start()
+	payload := map[string]any{"id": "1", "draft": "hi", "tags": []string{"a", "b"}, "other": "x"}
+
+	run := d.InjectRun("src", payload)
+	d.WaitRun(run, "awaiting_approval")
+	ap := d.requestApproval()
+	var view editableApproval
+	d.Get("/api/approvals/" + ap.ID).Want(200).JSON(&view)
+	if len(view.Request.Editable) != 2 || view.Request.Editable[0].Key != "draft" || string(view.Request.Editable[0].Value) != `"hi"` ||
+		string(view.Request.Editable[1].Value) != `["a","b"]` {
+		t.Fatalf("editable: %+v", view.Request.Editable)
+	}
+	d.Post("/api/approvals/"+ap.ID+"/approve", map[string]any{"edits": map[string]any{"other": "y"}}).Want(422)
+	d.Decide(ap.ID, true, map[string]any{"edits": map[string]any{"draft": "hello there", "tags": []string{"z"}}})
+	d.WaitRun(run, "succeeded")
+	if it := d.InboxByTitle()["sent"]; it.SummaryMD != "hello there|true|hi|z" {
+		t.Errorf("approved with edits: %+v", it)
+	}
+	d.Get("/api/approvals/" + ap.ID).Want(200).JSON(&view)
+	if e := view.Request.Edits["draft"]; string(e.Before) != `"hi"` || string(e.After) != `"hello there"` || len(view.Request.Edits) != 2 {
+		t.Errorf("recorded edits: %+v", view.Request.Edits)
+	}
+
+	payload["id"] = "2"
+	run2 := d.InjectRun("src", payload)
+	d.WaitRun(run2, "awaiting_approval")
+	d.Decide(d.requestApproval().ID, false, map[string]any{"edits": map[string]any{"draft": "nope"}})
+	d.WaitRun(run2, "succeeded")
+	if it := d.InboxByTitle()["dropped"]; it.SummaryMD != "hi|false" {
+		t.Errorf("denied: %+v", it)
 	}
 }

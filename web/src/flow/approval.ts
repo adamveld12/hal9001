@@ -11,6 +11,8 @@ export interface ApprovalPreview {
   title: string;
   body_md: string;
   fields: { key: string; value: string }[];
+  /** Input paths the approver can edit, with their current values. */
+  editable: { key: string; value: unknown }[];
   priority: Priority;
   /** The node's timeout as written; null without one. */
   timeout: string | null;
@@ -77,6 +79,10 @@ export function previewApproval(
       key,
       value: fieldText(lookupPath(sample, key)),
     })),
+    editable: (node.editable ?? []).map((key) => ({
+      key,
+      value: lookupPath(sample, key) ?? null,
+    })),
     priority: node.priority ?? "normal",
     timeout: node.timeout ?? null,
     on_timeout: node.timeout ? (node.on_timeout ?? "denied") : null,
@@ -91,7 +97,7 @@ export function fieldChoices(sample: unknown): string[] {
     .filter((p) => p !== "." && !p.includes("[]"));
 }
 
-/** Add or remove `path` in a fields list, keeping order and dropping duplicates. */
+/** Add or remove `path` in a fields or editable list, keeping order and dropping duplicates. */
 export function toggleField(fields: readonly string[], path: string): string[] {
   return fields.includes(path)
     ? fields.filter((f) => f !== path)

@@ -318,7 +318,7 @@ var nodeFieldsAllowed = map[string][]string{
 	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
-	NodeApproval:  {"title", "body", "fields", "priority", "timeout", "on_timeout"},
+	NodeApproval:  {"title", "body", "fields", "editable", "priority", "timeout", "on_timeout"},
 }
 
 // setFields lists the optional node fields that are set, in struct order.
@@ -332,7 +332,7 @@ func (n *Node) setFields() []string {
 		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
 		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
-		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
+		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"editable", len(n.Editable) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
 		{"side_effect", n.SideEffect}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
@@ -450,6 +450,19 @@ func validateApproval(c *collector, p string, n *Node) {
 			c.errorf(CodeDuplicateID, fp, "field %q is listed twice", f)
 		}
 		seen[f] = true
+	}
+	seenEdit := map[string]bool{}
+	for i, f := range n.Editable {
+		fp := fmt.Sprintf("%s.editable[%d]", p, i)
+		switch {
+		case strings.TrimSpace(f) == "":
+			c.errorf(CodeRequired, fp, "editable path is empty")
+		case slices.Contains(strings.Split(f, "."), ""):
+			c.errorf(CodeInvalidValue, fp, "editable path %q has an empty segment", f)
+		case seenEdit[f]:
+			c.errorf(CodeDuplicateID, fp, "editable path %q is listed twice", f)
+		}
+		seenEdit[f] = true
 	}
 	c.enum(p+".on_timeout", n.OnTimeout, []string{OnTimeoutDenied, OnTimeoutApproved, OnTimeoutError}, false)
 	if n.Timeout == 0 && n.OnTimeout != "" {
