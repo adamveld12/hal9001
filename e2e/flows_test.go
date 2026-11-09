@@ -322,8 +322,7 @@ edges:
 func TestScenario16FlowEditingAPIAndFile(t *testing.T) {
 	d := newDaemon(t)
 	d.IdleSensor("src")
-	const tmpl = `id: editme
-enabled: true
+	const tmpl = `enabled: true
 subscribe: [src]
 nodes:
   - {id: note, type: inbox, title: "%s {{.input.id}}"}
