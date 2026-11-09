@@ -156,3 +156,25 @@ body {
     animation: none;
   }
 }
+
+/* HAL eye throbs slowly while flows run. */
+@keyframes hal-throb {
+  0%,
+  100% {
+    opacity: 0.55;
+    box-shadow: 0 0 3px var(--bad);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 14px 3px var(--bad);
+  }
+}
+.hal-eye-throb {
+  animation: hal-throb 2.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hal-eye-throb {
+    animation: none;
+    box-shadow: 0 0 12px 2px var(--bad);
+  }
+}
