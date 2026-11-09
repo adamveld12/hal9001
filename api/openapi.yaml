@@ -5476,12 +5476,26 @@ components:
         name: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string, description: 'The file as written (front matter and body).'}
         exists: {type: boolean, description: 'A prompt of that name is already saved. Save never overwrites it.'}
+    AssistDraftSensor:
+      type: object
+      description: |
+        A sensor the agent drafted in a flow session (`sensors/<id>.yaml` in the draft directory): a new sensor, or an edit
+        of a saved one (the agent's first `draft_write` to `sensors/<id>.yaml` copies it in). Save creates it
+        (`POST /api/sensors` with `id`) when `base_hash` is null, else replaces the file (`PUT /api/sensors/{id}` with
+        `expected_hash` = `base_hash`), before the prompts and the flow.
+      required: [id, yaml, exists, base_hash, diagnostics]
+      properties:
+        id: {$ref: '#/components/schemas/Slug'}
+        yaml: {type: string, description: The draft file as written}
+        exists: {type: boolean, description: 'A sensor file of that id is saved now. For a new sensor (`base_hash` null) that is a clash and the draft carries an error diagnostic.'}
+        base_hash: {oneOf: [{$ref: '#/components/schemas/Hash'}, {type: 'null'}], description: 'Hash of the saved file when the draft copy was made (an edit); null for a new sensor.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'The validator''s findings for this draft sensor (also part of the draft''s `diagnostics`, with `file` `sensors/<id>.yaml`).'}
     AssistDraft:
       type: object
       description: |
         The YAML the session works on, stored in the session's draft directory (`sensor.yaml`, `flow.yaml` or `tool.yaml`). Only the
         user's Save writes a real file.
-      required: [kind, yaml, hash, sensor_id, flow_id, tool_id, prompts, diagnostics, updated_at, updated_by]
+      required: [kind, yaml, hash, sensor_id, flow_id, tool_id, prompts, sensors, diagnostics, updated_at, updated_by]
       properties:
         kind: {$ref: '#/components/schemas/AssistTargetKind'}
         yaml: {type: string}
@@ -5490,7 +5504,8 @@ components:
         flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and tools.'}
         tool_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Tool sessions: the `id` parsed from the YAML; null when it has none or does not parse. Null for sensors and flows.'}
         prompts: {type: array, items: {$ref: '#/components/schemas/AssistDraftPrompt'}, description: 'Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`.'}
-        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts.'}
+        sensors: {type: array, items: {$ref: '#/components/schemas/AssistDraftSensor'}, description: 'Flow sessions: sensors the agent drafted (new or edits of saved ones), by id. Always empty for sensors and tools. Flow drafts may subscribe to them. They do not change `hash`.'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files and, in flow sessions, `sensors/` drafts that do not validate. Flow drafts may reference the draft prompts and sensors.'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
         updated_by: {$ref: '#/components/schemas/AssistDraftAuthor'}
     AssistSession:
@@ -5586,9 +5601,10 @@ components:
       description: |
         Outcome of one test run of a sensor draft, redacted: values of the global env file and of the target sensor's env
         file are replaced by `«KEY»`. `items` lists at most the first 200 parsed items; `item_count` is the total.
-      required: [kind, exit_code, duration_ms, timed_out, items, item_count, parse_error, stdout, stderr]
+      required: [kind, sensor_id, exit_code, duration_ms, timed_out, items, item_count, parse_error, stdout, stderr]
       properties:
         kind: {type: string, enum: [sensor]}
+        sensor_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Flow sessions: the draft sensor that was run (`sensor` in the request); null in sensor sessions.'}
         exit_code: {type: integer, description: '-1 when the process was killed by a signal (for example on timeout).'}
         duration_ms: {type: integer, minimum: 0}
         timed_out: {type: boolean}
@@ -5689,7 +5705,15 @@ components:
         Flow sessions: the input to run the draft flow on. At most one of `sample_index`, `event_id` and `input`; with
         none, the first sample is used (422 when there is none). Tool sessions: `args`, the arguments object of the
         call (default `{}`). Ignored for sensors.
+
+        Flow sessions can also run a draft sensor (`sensors/<id>.yaml` of the draft): `sensor` runs it like a sensor test and
+        returns the `sensor` variant; `from_sensor` runs it and uses its item number `item` (default 0) as the flow test's
+        input. `sensor` and `from_sensor` exclude each other and the other inputs. The sensor's script is subject to the same
+        approval rule as a command node.
       properties:
+        sensor: {$ref: '#/components/schemas/Slug'}
+        from_sensor: {$ref: '#/components/schemas/Slug'}
+        item: {type: integer, minimum: 0, description: 'With `from_sensor`: which item of the sensor''s output to use.'}
         sample_index: {type: integer, minimum: 0, description: 'Index into `GET /api/assist/sessions/{id}/samples`.'}
         event_id: {$ref: '#/components/schemas/Ulid'}
         input: {$ref: '#/components/schemas/JsonValue'}

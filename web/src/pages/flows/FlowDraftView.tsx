@@ -8,6 +8,7 @@ import { FlowEditor } from "../../flow/FlowEditor";
 import type { Flow } from "../../flow/model";
 import { DraftBanners } from "../assist/DraftBanners";
 import { overlayFromTestResult } from "../assist/flowTest";
+import { canvasDiagnostics, findingLabel } from "../assist/sensorDrafts";
 import { useFlowDraftSync } from "../assist/useFlowDraftSync";
 
 const NO_SAVE = () => Promise.reject(new Error("saved from the assistant"));
@@ -50,6 +51,20 @@ export function FlowDraftView({ sessionId }: { sessionId: string }) {
     ],
     [prompts.data, draft?.prompts],
   );
+  // Sensors the agent drafted are valid choices before Save creates them.
+  const sensorIds = useMemo(
+    () => [
+      ...new Set([
+        ...(sensors.data ?? []),
+        ...(draft?.sensors ?? []).map((s) => s.id),
+      ]),
+    ],
+    [sensors.data, draft?.sensors],
+  );
+  const diagnostics = useMemo(
+    () => (draft ? canvasDiagnostics(draft.diagnostics) : undefined),
+    [draft],
+  );
   const newPrompts = (draft?.prompts ?? []).filter((p) => !p.exists);
   const parseErrors = (draft?.diagnostics ?? []).filter(
     (d) => d.severity === "error",
@@ -76,7 +91,10 @@ export function FlowDraftView({ sessionId }: { sessionId: string }) {
           {parseErrors.length > 0 && (
             <ul className="m-0 list-disc space-y-0.5 pl-4">
               {parseErrors.map((d) => (
-                <li key={`${d.line ?? ""}|${d.path ?? ""}|${d.message}`}>
+                <li
+                  key={`${d.file ?? ""}|${d.line ?? ""}|${d.path ?? ""}|${d.message}`}
+                >
+                  {findingLabel(d)}
                   {d.line ? `line ${d.line}: ` : ""}
                   {d.message}
                 </li>
@@ -119,10 +137,10 @@ export function FlowDraftView({ sessionId }: { sessionId: string }) {
           external={external}
           overlay={overlay}
           saveHidden
-          sensors={sensors.data ?? []}
+          sensors={sensorIds}
           prompts={promptNames}
           runtimes={runtimes.data ?? []}
-          serverDiagnostics={draft?.diagnostics}
+          serverDiagnostics={diagnostics}
           onSave={NO_SAVE}
           onChange={onChange}
         />

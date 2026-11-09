@@ -217,7 +217,9 @@ type AssistText struct {
 
 // AssistTestResult is the sensor variant of the outcome of POST /api/assist/sessions/{id}/test.
 type AssistTestResult struct {
-	Kind       string           `json:"kind"`
+	Kind string `json:"kind"`
+	// SensorID is the draft sensor that was run in a flow session; nil in sensor sessions.
+	SensorID   *string          `json:"sensor_id"`
 	ExitCode   int              `json:"exit_code"`
 	DurationMS int64            `json:"duration_ms"`
 	TimedOut   bool             `json:"timed_out"`
@@ -234,6 +236,10 @@ type AssistTestRequest struct {
 	SampleIndex *int
 	EventID     string
 	Input       json.RawMessage
+	// Sensor (flow sessions) runs that draft sensor like a sensor test; FromSensor runs it and feeds its item number
+	// Item (default 0) to the flow test as the input. They exclude each other and the other inputs.
+	Sensor, FromSensor string
+	Item               *int
 	// Args are the arguments of a tool session's test call (a JSON object; nil means {}).
 	Args json.RawMessage
 }

@@ -7,6 +7,7 @@ const blob = { text: "", size: 0, truncated: false, blob: null };
 function result(over: Partial<AssistSensorTestResult>): AssistSensorTestResult {
   return {
     kind: "sensor",
+    sensor_id: null,
     exit_code: 0,
     duration_ms: 10,
     timed_out: false,

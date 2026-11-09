@@ -1715,8 +1715,7 @@ export interface paths {
      * Send a message and start a turn
      * @description Stores the user message and starts one agent turn; the agent's work arrives as `assist.message` events and as
      *     draft changes (`assist.updated`). `yaml`, when sent, first replaces the draft so the agent sees the editor's
-     *     latest content. 409 `invalid-state` while a turn is running or the session is closed; 423 `paused` while the
-     *     kill switch is engaged.
+     *     latest content. 409 `invalid-state` while a turn is running or the session is closed. The kill switch does not apply.
      */
     post: operations["sendAssistMessage"];
     delete?: never;
@@ -1767,8 +1766,7 @@ export interface paths {
      *     with a temporary `HAL_STATE_DIR` and no `HAL_LAST_SUCCESS_AT`) with the global env file overlaid by the values
      *     in the target sensor's `env.d` file, and returns the redacted result. Nothing is recorded: no sensor run, no
      *     events, no dedup keys. This is the only way the agent can execute the draft, because the agent never receives
-     *     the secret values. 422 `validation-failed` when the draft does not parse as a sensor; 423 `paused` while the
-     *     kill switch is engaged.
+     *     the secret values. 422 `validation-failed` when the draft does not parse as a sensor. The kill switch does not apply.
      *
      *     The script runs with real credentials, so the caller matters. A test by the user (no `X-Hal9001-Assist-Agent`
      *     header: the UI's Test button, the API, the CLI outside an agent) always runs and marks the draft's script as
@@ -4447,6 +4445,23 @@ export interface components {
       exists: boolean;
     };
     /**
+     * @description A sensor the agent drafted in a flow session (`sensors/<id>.yaml` in the draft directory): a new sensor, or an edit
+     *     of a saved one (the agent's first `draft_write` to `sensors/<id>.yaml` copies it in). Save creates it
+     *     (`POST /api/sensors` with `id`) when `base_hash` is null, else replaces the file (`PUT /api/sensors/{id}` with
+     *     `expected_hash` = `base_hash`), before the prompts and the flow.
+     */
+    AssistDraftSensor: {
+      id: components["schemas"]["Slug"];
+      /** @description The draft file as written */
+      yaml: string;
+      /** @description A sensor file of that id is saved now. For a new sensor (`base_hash` null) that is a clash and the draft carries an error diagnostic. */
+      exists: boolean;
+      /** @description Hash of the saved file when the draft copy was made (an edit); null for a new sensor. */
+      base_hash: components["schemas"]["Hash"] | null;
+      /** @description The validator's findings for this draft sensor (also part of the draft's `diagnostics`, with `file` `sensors/<id>.yaml`). */
+      diagnostics: components["schemas"]["Diagnostic"][];
+    };
+    /**
      * @description The YAML the session works on, stored in the session's draft directory (`sensor.yaml`, `flow.yaml` or `tool.yaml`). Only the
      *     user's Save writes a real file.
      */
@@ -4462,7 +4477,9 @@ export interface components {
       tool_id: components["schemas"]["Slug"] | null;
       /** @description Flow sessions: new prompt files the agent drafted, by name. Always empty for sensors. They do not change `hash`. */
       prompts: components["schemas"]["AssistDraftPrompt"][];
-      /** @description Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files that do not validate. Flow drafts may reference the draft prompts. */
+      /** @description Flow sessions: sensors the agent drafted (new or edits of saved ones), by id. Always empty for sensors and tools. Flow drafts may subscribe to them. They do not change `hash`. */
+      sensors: components["schemas"]["AssistDraftSensor"][];
+      /** @description Findings of the validator for the target kind (the same checks as `POST /api/sensors/validate` or `POST /api/flows/validate`), plus `prompts/` files and, in flow sessions, `sensors/` drafts that do not validate. Flow drafts may reference the draft prompts and sensors. */
       diagnostics: components["schemas"]["Diagnostic"][];
       updated_at: components["schemas"]["Timestamp"];
       updated_by: components["schemas"]["AssistDraftAuthor"];
@@ -4552,6 +4569,8 @@ export interface components {
        * @enum {string}
        */
       kind: "sensor";
+      /** @description Flow sessions: the draft sensor that was run (`sensor` in the request); null in sensor sessions. */
+      sensor_id: components["schemas"]["Slug"] | null;
       /** @description -1 when the process was killed by a signal (for example on timeout). */
       exit_code: number;
       duration_ms: number;
@@ -4660,8 +4679,17 @@ export interface components {
      * @description Flow sessions: the input to run the draft flow on. At most one of `sample_index`, `event_id` and `input`; with
      *     none, the first sample is used (422 when there is none). Tool sessions: `args`, the arguments object of the
      *     call (default `{}`). Ignored for sensors.
+     *
+     *     Flow sessions can also run a draft sensor (`sensors/<id>.yaml` of the draft): `sensor` runs it like a sensor test and
+     *     returns the `sensor` variant; `from_sensor` runs it and uses its item number `item` (default 0) as the flow test's
+     *     input. `sensor` and `from_sensor` exclude each other and the other inputs. The sensor's script is subject to the same
+     *     approval rule as a command node.
      */
     AssistTestRequest: {
+      sensor?: components["schemas"]["Slug"];
+      from_sensor?: components["schemas"]["Slug"];
+      /** @description With `from_sensor`: which item of the sensor's output to use. */
+      item?: number;
       /** @description Index into `GET /api/assist/sessions/{id}/samples`. */
       sample_index?: number;
       event_id?: components["schemas"]["Ulid"];
@@ -7935,7 +7963,6 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
-      423: components["responses"]["Paused"];
       default: components["responses"]["Error"];
     };
   };
@@ -8006,7 +8033,6 @@ export interface operations {
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
-      423: components["responses"]["Paused"];
       default: components["responses"]["Error"];
     };
   };

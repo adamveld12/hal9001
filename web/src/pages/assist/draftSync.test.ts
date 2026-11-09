@@ -25,6 +25,7 @@ function draft(
     flow_id: null,
     tool_id: null,
     prompts: [],
+    sensors: [],
     diagnostics: [],
     updated_at: "2026-11-05T10:00:00Z",
     updated_by: by,

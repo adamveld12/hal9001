@@ -9,7 +9,7 @@ import type { RunOverlay } from "../../flow/overlay";
 import { buildRunOverlay, type OverlayNodeRun } from "../../flow/runOverlay";
 import { diagnosticsOf, type Diagnostic } from "../files/diagnostics";
 
-export type TestSource = "sample" | "event" | "json";
+export type TestSource = "sample" | "event" | "json" | "sensor";
 
 export interface TestInputState {
   source: TestSource;
@@ -17,6 +17,10 @@ export interface TestInputState {
   sampleIndex: string;
   eventId: string;
   json: string;
+  /** A draft sensor of the session whose output is the input ("" = none). */
+  fromSensor: string;
+  /** Which item of that sensor's output, as typed (0 is the first). */
+  item: string;
 }
 
 export const INITIAL_TEST_INPUT: TestInputState = {
@@ -24,6 +28,8 @@ export const INITIAL_TEST_INPUT: TestInputState = {
   sampleIndex: "",
   eventId: "",
   json: "{}",
+  fromSensor: "",
+  item: "0",
 };
 
 export type TestRequestResult =
@@ -51,6 +57,19 @@ export function buildFlowTestRequest(s: TestInputState): TestRequestResult {
           error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
         };
       }
+    }
+    case "sensor": {
+      if (s.fromSensor === "") {
+        return { ok: false, error: "Pick a draft sensor." };
+      }
+      const item = s.item.trim() === "" ? 0 : Number(s.item);
+      if (!Number.isInteger(item) || item < 0) {
+        return {
+          ok: false,
+          error: "The item number must be a whole number, 0 or more.",
+        };
+      }
+      return { ok: true, body: { from_sensor: s.fromSensor, item } };
     }
   }
 }

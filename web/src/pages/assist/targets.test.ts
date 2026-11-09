@@ -26,6 +26,7 @@ function session(
       flow_id: flowId,
       tool_id: null,
       prompts: [],
+      sensors: [],
       diagnostics: [],
       updated_at: updated,
       updated_by: "user",

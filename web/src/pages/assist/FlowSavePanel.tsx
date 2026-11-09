@@ -2,23 +2,31 @@ import { useState } from "react";
 import { useAssistSession } from "../../api/assist";
 import { Button } from "../../components/ui";
 import { hasErrors } from "../files/diagnostics";
+import { useAssistPage } from "./context";
+import { describeSavePlan } from "./flowSave";
+import { findingLabel } from "./sensorDrafts";
 import { isBusy } from "./sessions";
 import { useFlowSave } from "./useFlowSave";
 
 /**
- * "Save flow" in the drawer: writes the prompts the agent drafted that do not
- * exist yet, then the flow file. A new flow opens in its editor with this
- * session still attached. Disabled while the draft has errors or the agent is
- * working on it.
+ * "Save" in the drawer: writes the sensors the agent drafted, then the prompts
+ * it drafted that do not exist yet, then the flow file; the line beside the
+ * button lists them. A new flow opens in its editor with this session still
+ * attached. Disabled while the draft has errors or the agent is working on it.
  */
 export function FlowSavePanel({ sessionId }: { sessionId: string }) {
   const session = useAssistSession(sessionId).data;
   const save = useFlowSave(sessionId);
+  const { targetId } = useAssistPage();
   const [notice, setNotice] = useState<string | null>(null);
   const draft = session?.draft;
-  const newPrompts = (draft?.prompts ?? []).filter((p) => !p.exists);
 
   if (!session || !draft) return null;
+  const hasExtraFiles =
+    draft.sensors.length > 0 || draft.prompts.some((p) => !p.exists);
+  const plan = describeSavePlan(draft, {
+    mode: targetId === null ? "create" : "update",
+  });
   const errors = hasErrors(draft.diagnostics);
   const busy = isBusy(session.status);
   const blocker = errors
@@ -41,15 +49,17 @@ export function FlowSavePanel({ sessionId }: { sessionId: string }) {
           icon="save"
           className="shrink-0 whitespace-nowrap"
           disabled={blocker !== null || save.isPending}
-          title={blocker ?? "Write the draft to flows/"}
+          title={
+            blocker ?? (hasExtraFiles ? plan : "Write the draft to flows/")
+          }
           onClick={() => void run(false)}
         >
-          {save.isPending ? "Saving…" : "Save flow"}
+          {save.isPending ? "Saving…" : hasExtraFiles ? "Save" : "Save flow"}
         </Button>
         <span className="text-[11px] text-muted">
           {blocker ??
-            (newPrompts.length > 0
-              ? `Creates prompt${newPrompts.length === 1 ? "" : "s"} ${newPrompts.map((p) => p.name).join(", ")}, then the flow.`
+            (hasExtraFiles
+              ? `${plan}.`
               : "The flow stays disabled until you enable it.")}
         </span>
       </div>
@@ -65,8 +75,9 @@ export function FlowSavePanel({ sessionId }: { sessionId: string }) {
             <ul className="m-0 list-disc space-y-0.5 pl-4">
               {save.failure.diagnostics.map((d) => (
                 <li
-                  key={`${d.severity}|${d.node_id ?? ""}|${d.path ?? ""}|${d.message}`}
+                  key={`${d.severity}|${d.file ?? ""}|${d.node_id ?? ""}|${d.path ?? ""}|${d.message}`}
                 >
+                  {findingLabel(d)}
                   {d.line ? `line ${d.line}: ` : ""}
                   {d.message}
                 </li>

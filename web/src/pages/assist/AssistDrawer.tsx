@@ -31,6 +31,7 @@ import { startSession } from "./startSession";
 import { useAssistPage } from "./context";
 import { FlowSavePanel } from "./FlowSavePanel";
 import { FlowTestPanel } from "./FlowTestPanel";
+import { SensorDraftCards } from "./SensorDraftCards";
 import { MessageView } from "./MessageView";
 import { traceLinks } from "./messages";
 import {
@@ -374,7 +375,8 @@ function ResumeRow({
  * grows without a new message (a pending approval loads its prompt after the
  * tool call appeared, a test result arrives), so the end is followed by
  * observing both sizes. Approvals render inline; when one is out of view a
- * pill jumps to it. `tail` renders after the last message (test cards).
+ * pill jumps to it. `tail` renders after the last message (draft sensor and
+ * test cards).
  */
 function MessageList({
   messages,
@@ -636,7 +638,10 @@ function SessionView({ id }: { id: string }) {
         runtime={s.runtime}
         tail={
           closed ? null : s.target.kind === "flow" ? (
-            <FlowTestPanel sessionId={id} />
+            <>
+              <SensorDraftCards sessionId={id} />
+              <FlowTestPanel sessionId={id} />
+            </>
           ) : (
             <TestPanel sessionId={id} />
           )
@@ -669,7 +674,7 @@ function SessionView({ id }: { id: string }) {
       ) : (
         <>
           {s.target.kind === "flow" && (
-            <div className="max-h-32 overflow-auto">
+            <div className="max-h-48 overflow-auto">
               <FlowSavePanel sessionId={id} />
             </div>
           )}

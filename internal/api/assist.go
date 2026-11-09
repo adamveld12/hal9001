@@ -34,6 +34,7 @@ type assistDraftView struct {
 	FlowID      *string         `json:"flow_id"`
 	ToolID      *string         `json:"tool_id"`
 	Prompts     json.RawMessage `json:"prompts"`
+	Sensors     json.RawMessage `json:"sensors"`
 	Diagnostics json.RawMessage `json:"diagnostics"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 	UpdatedBy   string          `json:"updated_by"`
@@ -75,7 +76,7 @@ type assistSessionDetailView struct {
 
 func assistDraft(a store.AssistSession) assistDraftView {
 	v := assistDraftView{
-		Kind: a.TargetKind, YAML: a.DraftYAML, Hash: a.DraftHash, Prompts: rawArray(a.DraftPrompts), Diagnostics: rawArray(a.DraftDiagnostics),
+		Kind: a.TargetKind, YAML: a.DraftYAML, Hash: a.DraftHash, Prompts: rawArray(a.DraftPrompts), Sensors: rawArray(a.DraftSensors), Diagnostics: rawArray(a.DraftDiagnostics),
 		UpdatedAt: utc(a.DraftUpdatedAt), UpdatedBy: a.DraftUpdatedBy,
 	}
 	switch a.TargetKind {
@@ -286,6 +287,9 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		EventID     string          `json:"event_id"`
 		Input       json.RawMessage `json:"input"`
 		Args        json.RawMessage `json:"args"`
+		Sensor      string          `json:"sensor"`
+		FromSensor  string          `json:"from_sensor"`
+		Item        *int            `json:"item"`
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return
@@ -293,6 +297,16 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	if req.SampleIndex != nil && *req.SampleIndex < 0 {
 		fieldProblem(w, "sample_index", "sample_index must not be negative")
 		return
+	}
+	if req.Item != nil && *req.Item < 0 {
+		fieldProblem(w, "item", "item must not be negative")
+		return
+	}
+	for field, id := range map[string]string{"sensor": req.Sensor, "from_sensor": req.FromSensor} {
+		if id != "" && !spec.ValidID(id) {
+			fieldProblem(w, field, field+" must be a sensor name")
+			return
+		}
 	}
 	if req.EventID != "" && !ulidRE.MatchString(req.EventID) {
 		fieldProblem(w, "event_id", "event_id must be a ULID")
@@ -309,7 +323,8 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "",
-		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args})
+		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args,
+			Sensor: req.Sensor, FromSensor: req.FromSensor, Item: req.Item})
 	if err != nil {
 		s.writeError(w, r, err)
 		return

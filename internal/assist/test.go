@@ -34,7 +34,25 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool,
 		return core.AssistTestOutcome{}, err
 	}
 	if s.isFlow() {
-		res, err := m.testFlow(ctx, s, byAgent, req)
+		if err := checkFlowRequest(req); err != nil {
+			return core.AssistTestOutcome{}, err
+		}
+		if req.Sensor != "" {
+			res, err := m.testDraftSensor(ctx, s, byAgent, req)
+			if err != nil {
+				return core.AssistTestOutcome{}, err
+			}
+			return core.AssistTestOutcome{Sensor: &res}, nil
+		}
+		gated := false
+		if req.FromSensor != "" {
+			input, err := m.fromSensorInput(ctx, s, byAgent, req)
+			if err != nil {
+				return core.AssistTestOutcome{}, err
+			}
+			req.Input, req.FromSensor, gated = input, "", true // the sensor's approval covers the flow's command nodes too
+		}
+		res, err := m.testFlow(ctx, s, byAgent, gated, req)
 		if err != nil {
 			return core.AssistTestOutcome{}, err
 		}
@@ -82,7 +100,13 @@ func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (cor
 		s.markApprovedLocked(id)
 	}
 	s.mu.Unlock()
+	return m.runSensorDraft(ctx, sensor, target)
+}
 
+// runSensorDraft runs a validated sensor draft like a poll would, with the global env file overlaid by the env file
+// of the saved sensor target ("" for a new sensor), and returns the redacted result. Nothing is recorded.
+func (m *Manager) runSensorDraft(ctx context.Context, sensor *spec.Sensor, target string) (core.AssistTestResult, error) {
+	var zero core.AssistTestResult
 	global, own, red := m.host.Env(target)
 	stateDir, err := os.MkdirTemp("", "hal-assist-state-")
 	if err != nil {

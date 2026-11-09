@@ -81,21 +81,28 @@ func readDraftPrompts(dir string) []draftPrompt {
 // evaluateFlow validates a flow draft like a flow file, with the draft's own prompts counting as existing. A
 // changed id of an existing flow is flagged. Prompt files are validated too; a draft prompt named like a saved
 // one is flagged because Save never overwrites it.
-func (m *Manager) evaluateFlow(yaml, target, dir string) (flowID string, diagnostics, prompts json.RawMessage) {
-	_, flowID, ds, files := m.checkFlow(yaml, target, dir)
+func (m *Manager) evaluateFlow(yaml, target, dir string) (flowID string, diagnostics, prompts, sensors json.RawMessage) {
+	_, flowID, ds, files, sens := m.checkFlow(yaml, target, dir)
 	if files == nil {
 		files = []draftPrompt{}
+	}
+	if sens == nil {
+		sens = []draftSensor{}
 	}
 	pb, err := json.Marshal(files)
 	if err != nil {
 		pb = []byte("[]")
 	}
-	return flowID, marshalDiagnostics(ds), pb
+	sb, err := json.Marshal(sens)
+	if err != nil {
+		sb = []byte("[]")
+	}
+	return flowID, marshalDiagnostics(ds), pb, sb
 }
 
-// checkFlow is evaluateFlow's work: the parsed flow (nil when it does not parse), its id, every diagnostic and the
-// draft prompts.
-func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID string, ds []spec.Diagnostic, files []draftPrompt) {
+// checkFlow is evaluateFlow's work: the parsed flow (nil when it does not parse), its id, every diagnostic, the
+// draft prompts and the draft sensors (which count as existing sensors for the flow).
+func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID string, ds []spec.Diagnostic, files []draftPrompt, sensors []draftSensor) {
 	ws := spec.Load(m.home)
 	refs := ws.Refs()
 	files = readDraftPrompts(dir)
@@ -117,17 +124,19 @@ func (m *Manager) checkFlow(yaml, target, dir string) (flow *spec.Flow, flowID s
 				Message: fmt.Sprintf("a prompt named %q is already saved and Save will not overwrite it: use a new name", files[i].Name)})
 		}
 	}
+	sensors, sds := checkDraftSensors(ws, dir, refs)
 	flow, fds := spec.CheckFlow(target, []byte(yaml), refs)
 	for i := range fds {
 		fds[i].File = FlowDraftFile
 	}
 	ds = append(fds, ds...)
+	ds = append(ds, sds...)
 	if flow != nil {
 		if spec.ValidID(flow.ID) {
 			flowID = flow.ID
 		}
 	}
-	return flow, flowID, ds, files
+	return flow, flowID, ds, files, sensors
 }
 
 // writeReference rebuilds <dir>/reference: sensor definitions, existing prompts, runtime names, the samples and
@@ -280,7 +289,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("You help the user write or change ONE hal9001 flow. hal9001 is a local daemon that polls systems with sensors, ")
 	w("turns what they return into events, and runs flows over those events. A flow is a small graph of nodes: ")
 	w("it subscribes to sensors, reshapes and routes each event, optionally asks an agent, and puts what needs attention in the user's inbox. ")
-	w("This is a private draft (session %s). You have no file or shell access: you work only through the hal tools draft_read, draft_write, draft_test and validate. Your job is the draft `%s`, plus new prompt files `%s/<name>.md` (draft_write with that path).\n\n", sessionID, FlowDraftFile, PromptsDir)
+	w("This is a private draft (session %s). You have no file or shell access: you work only through the hal tools draft_read, draft_write, draft_test and validate. Your job is the draft `%s`, plus new prompt files `%s/<name>.md` and, when the flow needs a source that does not exist, the sensors it subscribes to as `%s/<id>.yaml` (draft_write with those paths).\n\n", sessionID, FlowDraftFile, PromptsDir, SensorsDir)
 
 	if targetID != "" {
 		w("You are EDITING the existing flow `%s`. Do not add an `id:` line: the flow's name is its file name and the user saves the draft over it.\n\n", targetID)
@@ -290,7 +299,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	}
 
 	w("## Rules\n\n")
-	w("- Change only the draft and files under `%s/`, with draft_write. `%s/` is READ-ONLY reference material (draft_read path `%s/...`). The user's own flows, sensors, prompts and settings are not editable from here.\n", PromptsDir, ReferenceDir, ReferenceDir)
+	w("- Change only the draft and files under `%s/` and `%s/`, with draft_write. `%s/` is READ-ONLY reference material (draft_read path `%s/...`). The user's own flows, prompts and settings are not editable from here, and sensors only through a draft (below).\n", PromptsDir, SensorsDir, ReferenceDir, ReferenceDir)
 	w("- NEVER enable a flow: keep `enabled: false` (and `dry_run: true` for a new flow). The user enables it after reading it.\n")
 	w("- Never print, echo, log or ask for a secret value. You only ever see variable names.\n")
 	w("- Reading and writing the draft and validating it never ask the user. Testing it asks only when a command node changed (below).\n")
@@ -307,6 +316,15 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 	w("The test is a dry run: `side_effect` command nodes are skipped, **agent nodes are not run** (they are `skipped` with the reason `assist test: agent nodes are not run`, and their branch ends there) and inbox nodes only report the item they would create. ")
 	w("`transform` and other `command` nodes run for real and follow the edges.\n")
 	w("\n")
+
+	w("## Sensors in this session\n\n")
+	w("The user does not have to leave the flow to get a source. You MAY create or edit sensors here, but PREFER an existing sensor (`%s/sensors/`) when one fits: subscribe to it and do not copy it.\n", ReferenceDir)
+	w("- A NEW sensor: `draft_write` path `%s/<id>.yaml` with the complete sensor file. Pick a short kebab-case id (letters, digits, `-` and `_`); it is the file name and is not stored in the file, so write no `id:` line. Give it a `description:` (one line, what it watches). The sensor format is in the sensor section of `%s/docs/flows.md`; `key` is required, and `first_run: baseline` is the safe default.\n", SensorsDir, ReferenceDir)
+	w("- EDITING a saved sensor: read it (`draft_read` path `%s/<id>.yaml` returns the saved file when there is no draft yet), then `draft_write` the complete changed file to the same path; that copies it into the draft. Other flows may subscribe to that sensor, so change only what this flow needs and tell the user what else is affected.\n", SensorsDir)
+	w("- The flow can `subscribe` to a draft sensor. `validate` and `draft_read` report the diagnostics of the flow and of every draft sensor (file `%s/<id>.yaml`); the user's Save writes the sensors first, then the prompts, then the flow.\n", SensorsDir)
+	w("- Test a draft sensor with `draft_test` and `sensor: \"<id>\"` (it runs like a poll and returns `items` with their dedup keys). To test the flow on what a draft sensor really emits, use `from_sensor: \"<id>\"` (and `item`: which output item, default 0) instead of a sample. ")
+	w("A sensor runs its script with the user's real credentials, so the first test after you change a sensor script asks the user to approve it, like a command node; say what the script does and which credentials it uses before you run it.\n")
+	w("- Sensors from the draft have no events yet, so there are no samples for them: use `from_sensor`, or pass the shape you expect through a sample of another sensor.\n\n")
 
 	w("## Reference material (`%s/`, read-only)\n\n", ReferenceDir)
 	w("- `%s/docs/flows.md`: the full format of sensors, flows, nodes, templates and prompts. Read the flow and node sections before you write a flow.\n", ReferenceDir)

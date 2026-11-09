@@ -28,6 +28,8 @@ type scriptID struct {
 	// Flow marks the identity of a flow draft: Nodes are its command nodes (the other fields stay empty).
 	Flow  bool         `json:"flow,omitempty"`
 	Nodes []nodeScript `json:"nodes,omitempty"`
+	// Sensors are draft sensors that run as part of the same test (a flow test fed by a sensor draft's output).
+	Sensors []nodeScript `json:"sensors,omitempty"`
 	// Tool marks the identity of a custom tool draft (Lang, Script, Command and Env are set).
 	Tool bool `json:"tool,omitempty"`
 }
@@ -68,7 +70,14 @@ func scriptOfFlow(f *spec.Flow, available []string) scriptID {
 }
 
 // empty reports whether the identity runs nothing with credentials (a flow without command nodes).
-func (id scriptID) empty() bool { return id.Flow && len(id.Nodes) == 0 }
+func (id scriptID) empty() bool { return id.Flow && len(id.Nodes) == 0 && len(id.Sensors) == 0 }
+
+// withSensor adds a draft sensor's script to a flow identity: the flow test runs the sensor first to get its input.
+func (id scriptID) withSensor(sensorID string, s *spec.Sensor, available []string) scriptID {
+	one := scriptOf(s, available)
+	id.Sensors = append(id.Sensors, nodeScript{ID: sensorID, Lang: one.Lang, Script: one.Script, Command: one.Command, Cwd: one.Cwd, Env: one.Env})
+	return id
+}
 
 // scriptOf returns the identity of a sensor's script given the credential names available to it.
 func scriptOf(s *spec.Sensor, available []string) scriptID {
@@ -104,6 +113,30 @@ func (id scriptID) text() string {
 			fmt.Fprintf(&b, "# node %s, lang: %s\n", n.ID, n.Lang)
 			if n.Cwd != "" {
 				fmt.Fprintf(&b, "# cwd: %s\n", strings.ReplaceAll(n.Cwd, "\x00", " "))
+			}
+			if len(n.Env) == 0 {
+				b.WriteString("# credentials referenced: none\n")
+			} else {
+				fmt.Fprintf(&b, "# credentials referenced: %s\n", strings.Join(n.Env, ", "))
+			}
+			if len(n.Command) > 0 {
+				b.WriteString("# command (argv, one per line):\n")
+				for _, a := range n.Command {
+					b.WriteString(a + "\n")
+				}
+			}
+			if n.Script != "" {
+				b.WriteString(n.Script)
+				if !strings.HasSuffix(n.Script, "\n") {
+					b.WriteString("\n")
+				}
+			}
+			b.WriteString("\n")
+		}
+		for _, n := range id.Sensors {
+			fmt.Fprintf(&b, "# sensor %s, lang: %s\n", n.ID, n.Lang)
+			if n.Cwd != "" {
+				fmt.Fprintf(&b, "# cwd: %s\n", n.Cwd)
 			}
 			if len(n.Env) == 0 {
 				b.WriteString("# credentials referenced: none\n")
@@ -168,9 +201,12 @@ func (p *pendingTest) content() []json.RawMessage {
 	}
 	if p.id.Flow {
 		subject, path = "the draft flow's command nodes", "flow command nodes"
+		if len(p.id.Sensors) > 0 {
+			subject, path = "the draft flow's command nodes and a draft sensor's script", "flow command nodes and sensor script"
+		}
 		cred = "none of the credentials available to command nodes"
 		env = nil
-		for _, n := range p.id.Nodes {
+		for _, n := range append(append([]nodeScript(nil), p.id.Nodes...), p.id.Sensors...) {
 			for _, e := range n.Env {
 				if !slices.Contains(env, e) {
 					env = append(env, e)

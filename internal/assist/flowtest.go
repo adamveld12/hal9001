@@ -13,28 +13,14 @@ import (
 // nodes run with the global env file, so who asks matters as it does for sensors: the user's test always runs and
 // marks the command nodes approved; the agent's runs only while they are what the user approved (a flow without
 // command nodes needs no approval).
-func (m *Manager) testFlow(ctx context.Context, s *session, byAgent bool, req core.AssistTestRequest) (core.AssistFlowTestResult, error) {
+func (m *Manager) testFlow(ctx context.Context, s *session, byAgent, gated bool, req core.AssistTestRequest) (core.AssistFlowTestResult, error) {
 	var zero core.AssistFlowTestResult
-	n := 0
-	if req.SampleIndex != nil {
-		n++
-	}
-	if req.EventID != "" {
-		n++
-	}
-	if len(req.Input) > 0 {
-		n++
-	}
-	if n > 1 {
-		return zero, invalid("", "give at most one of sample_index, event_id and input")
-	}
-
 	s.mu.Lock()
 	if err := s.usableLocked(); err != nil {
 		s.mu.Unlock()
 		return zero, err
 	}
-	flow, _, ds, _ := m.checkFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
+	flow, _, ds, _, _ := m.checkFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
 	if flow == nil || spec.HasErrors(ds) {
 		s.mu.Unlock()
 		return zero, &core.ValidationError{Diagnostics: ds}
@@ -46,13 +32,16 @@ func (m *Manager) testFlow(ctx context.Context, s *session, byAgent bool, req co
 	}
 	available := m.availableEnv("")
 	id := scriptOfFlow(flow, available)
-	if byAgent {
+	switch {
+	case gated:
+		// A test fed by a draft sensor was approved together with the sensor's script.
+	case byAgent:
 		if approved, _ := s.scriptApprovedLocked(id, available); !approved {
 			s.mu.Unlock()
 			return zero, fmt.Errorf("%w: the draft's command nodes changed since the user last tested or approved them; "+
 				"running them needs the user's approval (the permission request for `hal9001 assist test`)", core.ErrInvalidState)
 		}
-	} else if !id.empty() {
+	case !id.empty():
 		s.markApprovedLocked(id)
 	}
 	s.mu.Unlock()
@@ -83,4 +72,31 @@ func (m *Manager) testInput(dir string, req core.AssistTestRequest) (input json.
 		return nil, "", invalid("sample_index", fmt.Sprintf("sample_index %d is out of range (%d samples)", i, len(samples)))
 	}
 	return samples[i].Payload, "", nil
+}
+
+// checkFlowRequest rejects a flow test request that names more than one input.
+func checkFlowRequest(req core.AssistTestRequest) error {
+	n := 0
+	if req.SampleIndex != nil {
+		n++
+	}
+	if req.EventID != "" {
+		n++
+	}
+	if len(req.Input) > 0 {
+		n++
+	}
+	if req.Sensor != "" {
+		n++
+	}
+	if req.FromSensor != "" {
+		n++
+	}
+	if n > 1 {
+		return invalid("", "give at most one of sample_index, event_id, input, sensor and from_sensor")
+	}
+	if req.Item != nil && req.FromSensor == "" {
+		return invalid("item", "item goes with from_sensor")
+	}
+	return nil
 }

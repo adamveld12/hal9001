@@ -3,7 +3,13 @@ import { useState } from "react";
 import { useAssistSamples, useAssistSession } from "../../api/assist";
 import { errorMessage } from "../../api/client";
 import { flowDraftParseQuery, useRecentEvents } from "../../api/flows";
-import { Button, Field, Select, TextArea } from "../../components/ui";
+import {
+  Button,
+  Field,
+  Select,
+  TextArea,
+  TextInput,
+} from "../../components/ui";
 import { relativeTime } from "../../lib/format";
 import { FlowTestResultView } from "./FlowTestResultView";
 import {
@@ -13,6 +19,7 @@ import {
   type TestInputState,
   type TestSource,
 } from "./flowTest";
+import { findingLabel } from "./sensorDrafts";
 import { useTestDraft } from "./useTestDraft";
 
 const PREVIEW_CHARS = 70;
@@ -24,8 +31,9 @@ function preview(payload: unknown): string {
 
 /**
  * "Test flow" in the drawer: pick an input (a sample of the session, a recent
- * event of a subscribed sensor, or pasted JSON), run the draft once, and read
- * what every node did. The canvas shows the same run as an overlay.
+ * event of a subscribed sensor, pasted JSON, or the output of a draft sensor),
+ * run the draft once, and read what every node did. The canvas shows the same
+ * run as an overlay.
  */
 export function FlowTestPanel({ sessionId }: { sessionId: string }) {
   const test = useTestDraft(sessionId);
@@ -48,14 +56,21 @@ export function FlowTestPanel({ sessionId }: { sessionId: string }) {
     input.source === "event" && sensor !== "",
   );
 
-  // Without a choice the first sample is used, as the daemon does.
+  // Without a choice the first sample is used, as the daemon does; likewise the first draft sensor.
   const firstSample = samples.data?.[0]?.index;
-  const effective: TestInputState =
-    input.source === "sample" &&
-    input.sampleIndex === "" &&
-    firstSample !== undefined
-      ? { ...input, sampleIndex: String(firstSample) }
-      : input;
+  const draftSensors = draft?.sensors ?? [];
+  const effective: TestInputState = {
+    ...input,
+    sampleIndex:
+      input.source === "sample" &&
+      input.sampleIndex === "" &&
+      firstSample !== undefined
+        ? String(firstSample)
+        : input.sampleIndex,
+    fromSensor: draftSensors.some((s) => s.id === input.fromSensor)
+      ? input.fromSensor
+      : (draftSensors[0]?.id ?? ""),
+  };
   const built = buildFlowTestRequest(effective);
   const failure = test.error ? describeTestFailure(test.error) : null;
   const result = test.result?.kind === "flow" ? test.result : undefined;
@@ -95,6 +110,9 @@ export function FlowTestPanel({ sessionId }: { sessionId: string }) {
             <option value="sample">Session sample</option>
             <option value="event">Recent event</option>
             <option value="json">Pasted JSON</option>
+            {(draftSensors.length > 0 || input.source === "sensor") && (
+              <option value="sensor">Draft sensor output</option>
+            )}
           </Select>
         </Field>
 
@@ -175,6 +193,37 @@ export function FlowTestPanel({ sessionId }: { sessionId: string }) {
           />
         )}
 
+        {input.source === "sensor" && (
+          <>
+            <Field label="Draft sensor">
+              <Select
+                value={effective.fromSensor}
+                disabled={draftSensors.length === 0}
+                onChange={(e) => set({ fromSensor: e.target.value })}
+              >
+                {draftSensors.length === 0 && (
+                  <option value="">(the draft has no sensors)</option>
+                )}
+                {draftSensors.map((s) => (
+                  <option key={s.id}>{s.id}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field
+              label="Item"
+              hint="Which item of the sensor's output the flow gets, counting from 0. The sensor runs first."
+            >
+              <TextInput
+                type="number"
+                min={0}
+                step={1}
+                value={input.item}
+                onChange={(e) => set({ item: e.target.value })}
+              />
+            </Field>
+          </>
+        )}
+
         {!built.ok && (
           <p className="m-0 text-[11px] text-muted">{built.error}</p>
         )}
@@ -190,6 +239,7 @@ export function FlowTestPanel({ sessionId }: { sessionId: string }) {
                     className={d.severity === "error" ? undefined : "text-warn"}
                   >
                     {d.node_id ? `${d.node_id}: ` : ""}
+                    {findingLabel(d)}
                     {d.message}
                   </li>
                 ))}

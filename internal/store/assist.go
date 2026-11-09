@@ -60,7 +60,9 @@ type AssistSession struct {
 	DraftID          string          `json:"draft_id,omitempty"`
 	DraftDiagnostics json.RawMessage `json:"draft_diagnostics,omitempty"` // JSON array of diagnostics
 	// DraftPrompts is a JSON array of the prompt files drafted for a flow ({name, yaml, exists}).
-	DraftPrompts   json.RawMessage `json:"draft_prompts,omitempty"`
+	DraftPrompts json.RawMessage `json:"draft_prompts,omitempty"`
+	// DraftSensors is a JSON array of the sensors drafted in a flow session ({id, yaml, exists, base_hash, diagnostics}).
+	DraftSensors   json.RawMessage `json:"draft_sensors,omitempty"`
 	DraftUpdatedAt time.Time       `json:"draft_updated_at"`
 	DraftUpdatedBy string          `json:"draft_updated_by"`
 
@@ -101,7 +103,7 @@ func validAssistRole(r string) bool {
 	return false
 }
 
-const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_id, draft_diagnostics, draft_prompts,
+const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_id, draft_diagnostics, draft_prompts, draft_sensors,
 	draft_updated_at, draft_updated_by, last_agent_run_id, acp_session_id, created_at, updated_at, closed_at,
 	approved_script, approved_script_hash`
 
@@ -109,14 +111,15 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 	var (
 		a                         AssistSession
 		status, diags, prompts    string
+		sensors                   string
 		draftAt, created, updated string
 		closed                    sql.NullString
 	)
 	if err := r.Scan(&a.ID, &a.TargetKind, &a.TargetID, &a.Runtime, &a.Model, &status, &a.Error, &a.DraftYAML, &a.DraftHash, &a.DraftID,
-		&diags, &prompts, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash); err != nil {
+		&diags, &prompts, &sensors, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash); err != nil {
 		return AssistSession{}, scanErr(err)
 	}
-	a.Status, a.DraftDiagnostics, a.DraftPrompts = AssistStatus(status), parseRaw(diags), parseRaw(prompts)
+	a.Status, a.DraftDiagnostics, a.DraftPrompts, a.DraftSensors = AssistStatus(status), parseRaw(diags), parseRaw(prompts), parseRaw(sensors)
 	var err error
 	if a.DraftUpdatedAt, err = parseTS(draftAt); err != nil {
 		return AssistSession{}, err
@@ -176,9 +179,13 @@ func (s *Store) CreateAssistSession(ctx context.Context, a *AssistSession) error
 	if err != nil {
 		return err
 	}
+	sensors, err := rawJSONArray(a.DraftSensors)
+	if err != nil {
+		return err
+	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts,
+		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts, sensors,
 			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash)
 		if err != nil {
 			return fmt.Errorf("store: insert assist_session: %w", err)
@@ -213,12 +220,16 @@ func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error
 	if err != nil {
 		return err
 	}
+	sensors, err := rawJSONArray(a.DraftSensors)
+	if err != nil {
+		return err
+	}
 	a.UpdatedAt = s.Now()
 	return s.write(ctx, func(t *txn) error {
-		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET target_id=?, model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?,
+		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET target_id=?, model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?, draft_sensors=?,
 			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=?,
 			approved_script=?, approved_script_hash=? WHERE id=?`,
-			a.TargetID, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts,
+			a.TargetID, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts, sensors,
 			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.ID)
 		if err != nil {
 			return fmt.Errorf("store: update assist_session: %w", err)

@@ -92,10 +92,10 @@ through hal's MCP tools, and each turn starts with the hal context block (sessio
 
 | Tool | What it does | Approval |
 |---|---|---|
-| `draft_read` | The draft with its validation diagnostics. `path` also reads `instructions` (the authoring guide), `prompts/<name>.md` and, in flow sessions, `reference/<file>` (read-only; a directory lists its entries). | never |
-| `draft_write` | Replaces the draft, or in flow sessions a draft prompt `prompts/<name>.md`; returns the diagnostics. | never |
+| `draft_read` | The draft with its validation diagnostics. `path` also reads `instructions` (the authoring guide), `prompts/<name>.md` and, in flow sessions, `sensors/<id>.yaml` (the draft sensor, else the saved one; `sensors` lists the drafts) and `reference/<file>` (read-only; a directory lists its entries). | never |
+| `draft_write` | Replaces the draft, or in flow sessions a draft prompt `prompts/<name>.md` or draft sensor `sensors/<id>.yaml`; returns the diagnostics. | never |
 | `validate` | The draft's diagnostics. | never |
-| `draft_test` (`sample`, `event` for flows) | Runs the draft like a poll or one flow run with your credentials; redacted result. | **When the script changed** since you last tested or approved it (or since the saved sensor's script): a `tool_call` approval whose chat message carries what runs, which credentials it mentions, and a diff against the last approved version. Allow records that script as approved; unchanged scripts run without asking. |
+| `draft_test` (`sample`, `event`, `sensor`, `from_sensor` + `item` for flows) | Runs the draft like a poll or one flow run with your credentials; redacted result. | **When the script changed** since you last tested or approved it (or since the saved sensor's script): a `tool_call` approval whose chat message carries what runs, which credentials it mentions, and a diff against the last approved version. Allow records that script as approved; unchanged scripts run without asking. |
 | `gh_api`, `pr_view`, `now`, ... | hal's always-available tools. | as for flow agents |
 
 The agent layer allows these tools and rejects every other permission request. Approvals are decided inline in the chat
@@ -108,10 +108,13 @@ the agent: the environment holds no env-file values and `draft_test` redacts the
 |---|---|
 | `flow.yaml` | The draft: the flow's file, or a skeleton with `enabled: false` and `dry_run: true`. The agent keeps the id stable and never enables a flow; you enable it. |
 | `prompts/<name>.md` | New prompt files the agent drafts. They are validated like prompt files and listed in `draft.prompts` (`{name, yaml, exists}`); they do not change `draft.hash`. A name that is already saved is flagged: Save never overwrites it. |
+| `sensors/<id>.yaml` | Sensors the agent drafts so the flow does not need another page: new ones, and edits of saved ones (the first `draft_write` of a saved id copies it in and remembers the saved file's hash). They are validated like sensor files together with the flow, which may subscribe to them, and listed in `draft.sensors` (`{id, yaml, exists, base_hash, diagnostics}`; `base_hash` is null for a new sensor). They do not change `draft.hash`. A new sensor whose name is already saved is an error; a saved sensor that changed since the copy is a warning. |
 | `reference/` | **Read-only** material: `sensors/<id>.yaml` (definitions, no env values), `prompts/<name>.md` (existing prompts), `runtimes.txt` (names only), `samples/<sensor>.jsonl` (up to 5 recent event payloads per sensor, redacted) with `samples/index.txt`, and `docs/flows.md` (the formats). Rebuilt every turn. It is read with `draft_read` and cannot be written. |
 | (`draft_read` path `instructions`) | The instructions: the flow format, the node types, **prefer `transform` nodes** for filtering, routing and reshaping (steps compile to jq; no code, no credentials, no approval), agent nodes (default `mode: readonly`; for inbox triage a prompt with `output: note`), inbox nodes, keep the id, never enable, how to test, and end each turn with a plain summary. |
 
-The agent's tools are the ones above; `draft_write` accepts `flow.yaml` and `prompts/<name>.md` only.
+The agent's tools are the ones above; `draft_write` accepts `flow.yaml`, `prompts/<name>.md` and `sensors/<id>.yaml` only.
+
+**Sensors in a flow session.** `draft_test` with `sensor: <id>` runs a draft sensor like a poll and returns the sensor result (`sensor_id` set), under the same approval rule as a sensor session (the sensor's script, with its own env file when it edits a saved sensor). `from_sensor: <id>` (with `item`, default 0) runs the draft sensor and uses that output item as the input of the flow test; the approval then covers the sensor's script together with the flow's command nodes. Draft sensors have no events, so there are no samples for them. Save writes the sensors first (a new one with `POST /api/sensors` and its `id`, an edit with `PUT /api/sensors/{id}` and `expected_hash` = `base_hash`, which is a 409 when the file changed meanwhile), then the new prompts, then the flow; the drawer shows what will be saved first. CLI: `hal9001 assist test --sensor ID` and `--from-sensor ID [--item N]`.
 
 **Testing a flow** (`POST /api/assist/sessions/{id}/test`, body `{sample_index | event_id | input}`, none: the first
 sample). The draft is validated first (diagnostics, including `prompts/` files, are a 422). It then runs once as a

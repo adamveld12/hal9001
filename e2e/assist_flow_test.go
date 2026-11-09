@@ -25,6 +25,13 @@ type assistFlowDraft struct {
 		YAML   string `json:"yaml"`
 		Exists bool   `json:"exists"`
 	} `json:"prompts"`
+	Sensors []struct {
+		ID          string           `json:"id"`
+		YAML        string           `json:"yaml"`
+		Exists      bool             `json:"exists"`
+		BaseHash    *string          `json:"base_hash"`
+		Diagnostics []map[string]any `json:"diagnostics"`
+	} `json:"sensors"`
 	Diagnostics []map[string]any `json:"diagnostics"`
 	UpdatedBy   string           `json:"updated_by"`
 }

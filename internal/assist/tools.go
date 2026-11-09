@@ -45,19 +45,19 @@ func obj(props map[string]any, required ...string) map[string]any {
 }
 
 func (s *session) draftTools() []tools.Tool {
-	pathDoc := "The draft file: omit it for the draft itself, or use `prompts/<name>.md` (flow sessions: a new prompt)."
+	pathDoc := "The draft file: omit it for the draft itself, or use `prompts/<name>.md` (flow sessions: a new prompt) or `sensors/<id>.yaml` (flow sessions: a new sensor, or an edit of a saved one)."
 	return []tools.Tool{
 		{
 			Name: "draft_read",
 			Description: "Read the session's draft. Without `path` it returns the current draft with its validation diagnostics as JSON. " +
-				"`path` may also be `instructions` (how to author this draft: read it first), `prompts/<name>.md` (a draft prompt) or `reference/<file>` " +
+				"`path` may also be `instructions` (how to author this draft: read it first), `prompts/<name>.md` (a draft prompt), `sensors/<id>.yaml` (flow sessions: a draft sensor, else the saved one) or `sensors` (list the draft sensors) or `reference/<file>` " +
 				"(read-only reference material of a flow session: docs/flows.md, sensors/, prompts/, samples/, runtimes.txt; a directory lists its entries).",
 			InputSchema: obj(map[string]any{"path": map[string]any{"type": "string"}}),
 			Run:         s.runDraftRead,
 		},
 		{
 			Name: "draft_write",
-			Description: "Replace the draft (or a draft prompt) with `content`. It never needs approval; it returns the validation diagnostics of the result. " +
+			Description: "Replace the draft (or a draft prompt or sensor) with `content`. It never needs approval; it returns the validation diagnostics of the result. " +
 				pathDoc,
 			InputSchema: obj(map[string]any{
 				"content": map[string]any{"type": "string", "description": "The complete new file content."},
@@ -68,11 +68,14 @@ func (s *session) draftTools() []tools.Tool {
 		{
 			Name: "draft_test",
 			Description: "Run the draft the way a poll (sensor) or one flow run (flow) would and return the result as JSON; flow sessions can pick the input with `sample` " +
-				"(an index of reference/samples/index.txt) or `event`; tool sessions pass `args` (the tool's arguments, result is stdout/stderr/exit code). It runs the code with the user's credentials: the first test after the script changed asks the user for approval.",
+				"(an index of reference/samples/index.txt) or `event`, or `sensor` (the id of a draft sensor of the session: run it like a poll) or `from_sensor` (+ `item`: run the draft sensor and use its item as the flow's input); tool sessions pass `args` (the tool's arguments, result is stdout/stderr/exit code). It runs the code with the user's credentials: the first test after the script changed asks the user for approval.",
 			InputSchema: obj(map[string]any{
-				"sample": map[string]any{"type": "integer", "minimum": 0},
-				"event":  map[string]any{"type": "string"},
-				"args":   map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
+				"sample":      map[string]any{"type": "integer", "minimum": 0},
+				"event":       map[string]any{"type": "string"},
+				"sensor":      map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor to run like a poll."},
+				"from_sensor": map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor whose output item is the flow test's input."},
+				"item":        map[string]any{"type": "integer", "minimum": 0, "description": "With from_sensor: which output item to use (default 0)."},
+				"args":        map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
 			}),
 			Approval: s.testApproval,
 			Run:      s.runDraftTest,
@@ -109,12 +112,16 @@ type draftView struct {
 	Hash        string          `json:"hash"`
 	Diagnostics json.RawMessage `json:"diagnostics"`
 	Prompts     []string        `json:"prompts,omitempty"`
+	Sensors     []string        `json:"sensors,omitempty"`
 }
 
 func (s *session) viewLocked() draftView {
 	v := draftView{File: draftFileOf(s.row.TargetKind), YAML: s.row.DraftYAML, Hash: s.row.DraftHash, Diagnostics: s.row.DraftDiagnostics}
 	for _, p := range readDraftPrompts(s.dir) {
 		v.Prompts = append(v.Prompts, p.Name)
+	}
+	for _, f := range readDraftSensors(s.dir) {
+		v.Sensors = append(v.Sensors, f.ID)
 	}
 	return v
 }
@@ -142,10 +149,14 @@ func (s *session) runDraftRead(_ context.Context, c tools.Call) (tools.Result, e
 		return tools.Result{Text: text}, err
 	case strings.HasPrefix(p, PromptsDir+"/") && s.isFlow():
 		return s.readUnder(PromptsDir, strings.TrimPrefix(p, PromptsDir+"/"))
+	case s.isFlow() && (p == SensorsDir || p == SensorsDir+"/"):
+		return s.readUnder(SensorsDir, ".")
+	case s.isFlow() && strings.HasPrefix(p, SensorsDir+"/") && strings.HasSuffix(p, draftSensorSuffix):
+		return s.readDraftSensorLocked(strings.TrimSuffix(strings.TrimPrefix(p, SensorsDir+"/"), draftSensorSuffix))
 	case strings.HasPrefix(p, ReferenceDir) && s.isFlow():
 		return s.readUnder(ReferenceDir, strings.TrimPrefix(strings.TrimPrefix(p, ReferenceDir), "/"))
 	}
-	return tools.Result{}, fmt.Errorf("unknown path %q: use no path, instructions, prompts/<name>.md or reference/<file>", a.Path)
+	return tools.Result{}, fmt.Errorf("unknown path %q: use no path, instructions, prompts/<name>.md, sensors/<id>.yaml or reference/<file>", a.Path)
 }
 
 // readUnder reads a file (or lists a directory) inside <draft dir>/<root>, refusing anything outside it.
@@ -222,8 +233,17 @@ func (s *session) runDraftWrite(_ context.Context, c tools.Call) (tools.Result, 
 		if err := s.saveLocked(); err != nil {
 			return tools.Result{}, err
 		}
+	case s.isFlow() && strings.HasPrefix(p, SensorsDir+"/") && strings.HasSuffix(p, draftSensorSuffix):
+		id := strings.TrimSuffix(strings.TrimPrefix(p, SensorsDir+"/"), draftSensorSuffix)
+		if err := s.writeDraftSensorLocked(id, a.Content); err != nil {
+			return tools.Result{}, err
+		}
+		s.applyDraft(s.row.DraftYAML, store.DraftByAgent)
+		if err := s.saveLocked(); err != nil {
+			return tools.Result{}, err
+		}
 	default:
-		return tools.Result{}, fmt.Errorf("cannot write %q: use no path for the draft or prompts/<name>.md in a flow session", a.Path)
+		return tools.Result{}, fmt.Errorf("cannot write %q: use no path for the draft, or prompts/<name>.md or sensors/<id>.yaml in a flow session", a.Path)
 	}
 	b, _ := json.MarshalIndent(s.viewLocked(), "", "  ")
 	return tools.Result{Text: "written. Current state:\n" + string(b)}, nil
@@ -238,7 +258,7 @@ func (s *session) runValidate(_ context.Context, _ tools.Call) (tools.Result, er
 	var diags json.RawMessage
 	switch {
 	case s.isFlow():
-		_, diags, _ = s.m.evaluateFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
+		_, diags, _, _ = s.m.evaluateFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
 	case s.isTool():
 		_, diags = evaluateTool(s.row.DraftYAML, s.row.TargetID)
 	default:
@@ -250,14 +270,33 @@ func (s *session) runValidate(_ context.Context, _ tools.Call) (tools.Result, er
 // testApproval is draft_test's approval rule, the same the assist manager applies to a user-less test: running the
 // draft uses real credentials, so it is allowed without asking only while its script is one the user has tested or
 // approved. A changed script is queued with its text and diff (see approvalPending).
-func (s *session) testApproval(json.RawMessage) (bool, string) {
+func (s *session) testApproval(args json.RawMessage) (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id, available, ok := s.draftScriptLocked()
-	if !ok {
-		return false, "" // a draft that does not validate is not run: the test returns the diagnostics
+	var a struct {
+		Sensor     string `json:"sensor"`
+		FromSensor string `json:"from_sensor"`
 	}
-	approved, base := s.scriptApprovedLocked(id, available)
+	_ = json.Unmarshal(args, &a)
+	var id scriptID
+	var approved bool
+	var base string
+	if s.isFlow() && (a.Sensor != "" || a.FromSensor != "") {
+		p := s.testPlanLocked(core.AssistTestRequest{Sensor: a.Sensor, FromSensor: a.FromSensor})
+		if !p.ok {
+			return false, "" // a draft that does not validate is not run: the test returns the diagnostics
+		}
+		id = p.id
+		approved, base = s.approvedAgainstLocked(p.id, p.saved, p.hasSaved)
+	} else {
+		var available []string
+		var ok bool
+		id, available, ok = s.draftScriptLocked()
+		if !ok {
+			return false, "" // a draft that does not validate is not run: the test returns the diagnostics
+		}
+		approved, base = s.scriptApprovedLocked(id, available)
+	}
 	if approved {
 		return false, ""
 	}
@@ -267,14 +306,18 @@ func (s *session) testApproval(json.RawMessage) (bool, string) {
 
 func (s *session) runDraftTest(ctx context.Context, c tools.Call) (tools.Result, error) {
 	var a struct {
-		Sample *int            `json:"sample"`
-		Event  string          `json:"event"`
-		Args   json.RawMessage `json:"args"`
+		Sample     *int            `json:"sample"`
+		Event      string          `json:"event"`
+		Args       json.RawMessage `json:"args"`
+		Sensor     string          `json:"sensor"`
+		FromSensor string          `json:"from_sensor"`
+		Item       *int            `json:"item"`
 	}
 	if err := json.Unmarshal(c.Args, &a); err != nil {
 		return tools.Result{}, fmt.Errorf("arguments: %w", err)
 	}
-	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event, Args: a.Args})
+	out, err := s.m.TestDraft(ctx, s.id, true, core.AssistTestRequest{SampleIndex: a.Sample, EventID: a.Event, Args: a.Args,
+		Sensor: a.Sensor, FromSensor: a.FromSensor, Item: a.Item})
 	if err != nil {
 		var verr *core.ValidationError
 		if errors.As(err, &verr) {

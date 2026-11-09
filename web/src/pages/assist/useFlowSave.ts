@@ -10,6 +10,11 @@ import {
   type FlowDetail,
 } from "../../api/flows";
 import { qk } from "../../api/keys";
+import {
+  createSensorFromYaml,
+  fetchSensor,
+  updateSensorFromYaml,
+} from "../../api/sensors";
 import { useAssistPage } from "./context";
 import {
   describeSaveFailure,
@@ -20,10 +25,12 @@ import {
 import { targetConfig } from "./targets";
 
 /**
- * Save of the open flow session's draft. A new flow (`page.targetId` null) is
- * created and its editor opens with the session attached; an existing flow is
- * replaced when its file still has the hash it had when the session began, or
- * after `run(true)` when the user chose to overwrite a newer file.
+ * Save of the open flow session's draft: its sensors, its new prompts, then the
+ * flow (see flowSave.ts). A new flow (`page.targetId` null) is created and its
+ * editor opens with the session attached; an existing flow is replaced when its
+ * file still has the hash it had when the session began, and an edited sensor
+ * when its file still has the hash the draft copied it at. `run(true)`
+ * overwrites newer files instead.
  */
 export function useFlowSave(sessionId: string) {
   const page = useAssistPage();
@@ -42,6 +49,9 @@ export function useFlowSave(sessionId: string) {
   const [failure, setFailure] = useState<SaveFailure | null>(null);
 
   const saveApi: FlowSaveApi = {
+    createSensor: createSensorFromYaml,
+    updateSensor: updateSensorFromYaml,
+    currentSensorHash: async (id) => (await fetchSensor(id)).hash,
     createPrompt: (markdown) =>
       unwrap(api.POST("/api/prompts", { body: { markdown } })),
     createFlow: async (yaml) => {
@@ -88,12 +98,23 @@ export function useFlowSave(sessionId: string) {
         target = { mode: "update", id: targetId, expectedHash } as const;
       }
 
-      const result = await saveFlowDraft(saveApi, draft, target);
+      const result = await saveFlowDraft(saveApi, draft, target, {
+        overwrite,
+      });
+      const wroteSensors =
+        result.createdSensors.length + result.updatedSensors.length > 0;
+      if (wroteSensors) {
+        for (const root of ["sensors", "sensor"] as const) {
+          void qc.invalidateQueries({ queryKey: qk(root) });
+        }
+      }
       if (result.createdPrompts.length > 0) {
         for (const root of ["prompts", "prompt"] as const) {
           void qc.invalidateQueries({ queryKey: qk(root) });
         }
-        // Pushing the draft unchanged makes the daemon re-check the prompts and diagnostics.
+      }
+      if (wroteSensors || result.createdPrompts.length > 0) {
+        // Pushing the draft unchanged makes the daemon re-check the sensors, the prompts and the diagnostics.
         await put
           .mutateAsync({ yaml: draft.yaml, expected_hash: draft.hash })
           .catch(() => undefined);

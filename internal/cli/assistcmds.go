@@ -130,14 +130,17 @@ func assistCmds() []*command {
 		return c.doEmit(ctx, http.MethodDelete, "/api/assist/sessions/"+esc(c.args[0]), nil, nil)
 	}}
 
-	var testSample int
-	var testEvent, testArgs string
+	var testSample, testItem int
+	var testEvent, testArgs, testSensor, testFromSensor string
 	test := &leaf{
-		usage: "[--sample N|--event ID|--args JSON] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		usage: "[--sample N|--event ID|--sensor ID|--from-sensor ID [--item N]|--args JSON] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
 		flags: func(fs *flag.FlagSet) {
 			fs.StringVar(&testArgs, "args", "", "tool sessions: the call's arguments as a JSON object (default {})")
 			fs.IntVar(&testSample, "sample", 0, "flow sessions: run the draft on sample N (see `assist samples`)")
 			fs.StringVar(&testEvent, "event", "", "flow sessions: run the draft on this stored event")
+			fs.StringVar(&testSensor, "sensor", "", "flow sessions: run this draft sensor like a poll")
+			fs.StringVar(&testFromSensor, "from-sensor", "", "flow sessions: run this draft sensor and use its output item as the flow's input")
+			fs.IntVar(&testItem, "item", 0, "with --from-sensor: which output item (default 0)")
 		},
 		run: func(ctx context.Context, c *call) error {
 			id, err := c.sessionArg("assist test")
@@ -159,6 +162,15 @@ func assistCmds() []*command {
 			}
 			if testEvent != "" {
 				req["event_id"] = testEvent
+			}
+			if testSensor != "" {
+				req["sensor"] = testSensor
+			}
+			if testFromSensor != "" {
+				req["from_sensor"] = testFromSensor
+			}
+			if c.flagSet("item") {
+				req["item"] = testItem
 			}
 			if testArgs != "" {
 				var obj map[string]any

@@ -41,6 +41,33 @@ export function useSensor(id: string) {
   });
 }
 
+/** The saved sensor with its current hash, read fresh. */
+export async function fetchSensor(id: string): Promise<SensorDetail> {
+  return unwrap(api.GET("/api/sensors/{id}", { params: { path: { id } } }));
+}
+
+/** Creates sensors/<id>.yaml from the YAML text. The file has no id line, so the id travels in the request. */
+export async function createSensorFromYaml(
+  id: string,
+  yaml: string,
+): Promise<SensorDetail> {
+  return unwrap(api.POST("/api/sensors", { body: { id, yaml } }));
+}
+
+/** Replaces sensors/<id>.yaml; conflict when the file's hash is not `expectedHash`. */
+export async function updateSensorFromYaml(
+  id: string,
+  expectedHash: string,
+  yaml: string,
+): Promise<SensorDetail> {
+  return unwrap(
+    api.PUT("/api/sensors/{id}", {
+      params: { path: { id } },
+      body: { expected_hash: expectedHash, yaml },
+    }),
+  );
+}
+
 const hasRunning = (runs: readonly SensorRun[]) =>
   runs.some((r) => r.status === "running");
 

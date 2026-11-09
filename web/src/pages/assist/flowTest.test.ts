@@ -10,6 +10,7 @@ import {
   describeTestFailure,
   INITIAL_TEST_INPUT,
   overlayFromTestResult,
+  type TestInputState,
 } from "./flowTest";
 
 const flow: Flow = {
@@ -119,6 +120,38 @@ describe("buildFlowTestRequest", () => {
     });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.error).toMatch(/Invalid JSON/);
+  });
+
+  it("runs a draft sensor and feeds one of its items to the flow", () => {
+    const picked: TestInputState = {
+      ...INITIAL_TEST_INPUT,
+      source: "sensor",
+      fromSensor: "gh",
+    };
+    expect(buildFlowTestRequest(picked)).toEqual({
+      ok: true,
+      body: { from_sensor: "gh", item: 0 },
+    });
+    expect(buildFlowTestRequest({ ...picked, item: "3" })).toEqual({
+      ok: true,
+      body: { from_sensor: "gh", item: 3 },
+    });
+  });
+
+  it("asks for a draft sensor and a whole item number", () => {
+    const picked: TestInputState = {
+      ...INITIAL_TEST_INPUT,
+      source: "sensor",
+      fromSensor: "gh",
+    };
+    expect(buildFlowTestRequest({ ...picked, fromSensor: "" })).toMatchObject({
+      ok: false,
+    });
+    for (const item of ["-1", "1.5", "two"]) {
+      expect(buildFlowTestRequest({ ...picked, item })).toMatchObject({
+        ok: false,
+      });
+    }
   });
 });
 

@@ -116,9 +116,15 @@ export function usePutAssistDraft(id: string | null) {
 
 const testKey = (id: string) => qk("assist-test", id);
 
+/** A draft sensor's test result in a flow session; kept apart from the session's latest test, so it never replaces the flow test's result (the canvas overlay). */
+const sensorTestKey = (id: string, sensorId: string) =>
+  qk("assist-test", id, "sensor", sensorId);
+
 /**
- * Runs the draft once: a sensor like Poll now, a flow on one input (`body`, see `AssistTestRequest`).
- * Nothing is recorded as a live run. The result is kept for `useAssistTestResult`.
+ * Runs the draft once: a sensor like Poll now, a flow on one input (`body`, see
+ * `AssistTestRequest`). In a flow session `body.sensor` runs one of its draft
+ * sensors; that result is kept for `useAssistSensorTestResult`, any other for
+ * `useAssistTestResult`. Nothing is recorded as a live run.
  */
 export function useTestAssistDraft(id: string | null) {
   const qc = useQueryClient();
@@ -130,7 +136,13 @@ export function useTestAssistDraft(id: string | null) {
           body,
         }),
       ),
-    onSuccess: (result) => qc.setQueryData(testKey(id ?? ""), result),
+    onSuccess: (result, body) =>
+      qc.setQueryData(
+        body?.sensor === undefined
+          ? testKey(id ?? "")
+          : sensorTestKey(id ?? "", body.sensor),
+        result,
+      ),
   });
 }
 
@@ -154,6 +166,16 @@ export function useAssistSamples(id: string | null, enabled: boolean) {
 export function useAssistTestResult(id: string | null) {
   return useQuery<AssistTestResult>({
     queryKey: testKey(id ?? ""),
+    queryFn: skipToken,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+}
+
+/** The latest test result of one draft sensor of a flow session ("Test sensor" on its card). */
+export function useAssistSensorTestResult(id: string | null, sensorId: string) {
+  return useQuery<AssistSensorTestResult>({
+    queryKey: sensorTestKey(id ?? "", sensorId),
     queryFn: skipToken,
     staleTime: Infinity,
     gcTime: Infinity,

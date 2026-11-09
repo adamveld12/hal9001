@@ -84,7 +84,7 @@ func (s *session) applyDraft(yaml, by string) {
 	row.DraftHash = spec.Hash([]byte(yaml))
 	switch {
 	case s.isFlow():
-		row.DraftID, row.DraftDiagnostics, row.DraftPrompts = s.m.evaluateFlow(yaml, row.TargetID, s.dir)
+		row.DraftID, row.DraftDiagnostics, row.DraftPrompts, row.DraftSensors = s.m.evaluateFlow(yaml, row.TargetID, s.dir)
 	case s.isTool():
 		row.DraftID, row.DraftDiagnostics = evaluateTool(yaml, row.TargetID)
 	default:
@@ -126,8 +126,10 @@ func (s *session) initDir() error {
 		return fmt.Errorf("assist: create draft directory: %w", err)
 	}
 	if s.isFlow() {
-		if err := os.MkdirAll(filepath.Join(s.dir, PromptsDir), 0o700); err != nil {
-			return fmt.Errorf("assist: create prompts directory: %w", err)
+		for _, d := range []string{PromptsDir, SensorsDir} {
+			if err := os.MkdirAll(filepath.Join(s.dir, d), 0o700); err != nil {
+				return fmt.Errorf("assist: create %s directory: %w", d, err)
+			}
 		}
 	}
 	if s.isFlow() {
@@ -200,9 +202,10 @@ func (s *session) updateDraft(yaml, expected string) (*store.AssistSession, erro
 		}
 	} else if s.isFlow() {
 		// An unchanged push still refreshes what depends on the workspace: a prompt saved since, a new sensor.
-		id, diags, prompts := s.m.evaluateFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
-		if id != s.row.DraftID || string(diags) != string(s.row.DraftDiagnostics) || string(prompts) != string(s.row.DraftPrompts) {
-			s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = id, diags, prompts
+		id, diags, prompts, sensors := s.m.evaluateFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
+		if id != s.row.DraftID || string(diags) != string(s.row.DraftDiagnostics) || string(prompts) != string(s.row.DraftPrompts) ||
+			string(sensors) != string(s.row.DraftSensors) {
+			s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts, s.row.DraftSensors = id, diags, prompts, sensors
 			if err := s.saveLocked(); err != nil {
 				return nil, err
 			}
@@ -222,7 +225,7 @@ func (s *session) adopt(id string) error {
 	s.row.TargetID = id
 	switch {
 	case s.isFlow():
-		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = s.m.evaluateFlow(s.row.DraftYAML, id, s.dir)
+		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts, s.row.DraftSensors = s.m.evaluateFlow(s.row.DraftYAML, id, s.dir)
 	case s.isTool():
 		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, id)
 	default:
@@ -242,7 +245,7 @@ func (s *session) retarget(oldID, newID string) error {
 	s.row.TargetID = newID
 	switch {
 	case s.isFlow():
-		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts = s.m.evaluateFlow(s.row.DraftYAML, newID, s.dir)
+		s.row.DraftID, s.row.DraftDiagnostics, s.row.DraftPrompts, s.row.DraftSensors = s.m.evaluateFlow(s.row.DraftYAML, newID, s.dir)
 	case s.isTool():
 		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, newID)
 	default:
@@ -535,6 +538,12 @@ func (s *session) onRunUpdated(rec agent.RunRecord) {
 // script of the sensor being edited (which already runs with these credentials). It also returns the text a changed
 // script is shown against. s.mu must be held.
 func (s *session) scriptApprovedLocked(id scriptID, available []string) (approved bool, base string) {
+	saved, ok := s.m.savedScript(s.row.TargetKind, s.row.TargetID, available)
+	return s.approvedAgainstLocked(id, saved, ok)
+}
+
+// approvedAgainstLocked is scriptApprovedLocked with the saved script given (hasSaved false: there is none).
+func (s *session) approvedAgainstLocked(id, saved scriptID, hasSaved bool) (approved bool, base string) {
 	if id.empty() {
 		return true, "" // nothing runs with credentials
 	}
@@ -543,7 +552,7 @@ func (s *session) scriptApprovedLocked(id scriptID, available []string) (approve
 		return true, s.row.ApprovedScript
 	}
 	base = s.row.ApprovedScript
-	if saved, ok := s.m.savedScript(s.row.TargetKind, s.row.TargetID, available); ok {
+	if hasSaved {
 		if saved.hash() == h {
 			return true, saved.text()
 		}
@@ -596,7 +605,7 @@ func (m *Manager) savedScript(kind, target string, available []string) (scriptID
 // credential names available to it. ok is false when the draft does not validate. s.mu must be held.
 func (s *session) draftScriptLocked() (id scriptID, available []string, ok bool) {
 	if s.isFlow() {
-		flow, _, ds, _ := s.m.checkFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
+		flow, _, ds, _, _ := s.m.checkFlow(s.row.DraftYAML, s.row.TargetID, s.dir)
 		if flow == nil || spec.HasErrors(ds) {
 			return scriptID{}, nil, false
 		}
