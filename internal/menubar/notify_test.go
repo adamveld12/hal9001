@@ -313,3 +313,27 @@ func TestOpenErrorsAreReported(t *testing.T) {
 		t.Errorf("err %v failures %v", err, *failures)
 	}
 }
+
+func TestTrackerWithdrawsHandledNotifications(t *testing.T) {
+	var tr Tracker
+	tr.Track(approval("proposal"))
+	tr.Track(note())
+	ev := func(typ, data string) Event {
+		return Event{Type: typ, Data: []byte(`{"type":"` + typ + `","data":` + data + `}`)}
+	}
+	if got := tr.Withdrawn(ev("approval.updated", `{"id":"a1","status":"pending"}`)); got != nil {
+		t.Errorf("a still pending approval keeps its notification: %v", got)
+	}
+	if got := tr.Withdrawn(ev("inbox.updated", `{"id":"i1","read":false,"archived":false}`)); got != nil {
+		t.Errorf("an unread item keeps its notification: %v", got)
+	}
+	if got := tr.Withdrawn(ev("approval.updated", `{"id":"a1","status":"approved"}`)); len(got) != 1 || got[0] != "n2" {
+		t.Errorf("decided approval: %v", got)
+	}
+	if got := tr.Withdrawn(ev("inbox.updated", `{"id":"i1","read":true,"archived":false}`)); len(got) != 1 || got[0] != "n1" {
+		t.Errorf("read item: %v", got)
+	}
+	if got := tr.Withdrawn(ev("inbox.updated", `{"id":"i1","read":true}`)); got != nil {
+		t.Errorf("already withdrawn: %v", got)
+	}
+}

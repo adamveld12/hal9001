@@ -110,8 +110,15 @@ func (a *app) restartStream() {
 }
 
 func (a *app) onEvent(ev menubar.Event) {
-	if ev.Type == menubar.EventNotification {
+	switch ev.Type {
+	case menubar.EventNotification:
 		a.notif.onEvent(ev)
+	case "approval.updated", "inbox.updated":
+		if a.notif.enabled {
+			if ids := a.notif.tracker.Withdrawn(ev); len(ids) > 0 {
+				notifyRemove(ids...)
+			}
+		}
 	}
 	a.poke()
 }

@@ -32,6 +32,7 @@ type notifications struct {
 	sinkOn    bool // what the stream connection was last told
 	requested bool // the authorization prompt was asked for in this session
 	hint      bool // the Alerts-style hint is shown in the menu
+	tracker   menubar.Tracker
 }
 
 // start installs the delegate and categories, and asks for permission the first time (the system shows its prompt
@@ -127,6 +128,7 @@ func (n *notifications) onEvent(ev menubar.Event) {
 		return
 	}
 	n.post(req)
+	n.tracker.Track(note)
 	n.mu.Lock()
 	s := n.settings
 	n.mu.Unlock()
