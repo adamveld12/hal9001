@@ -53,6 +53,7 @@ func (a *app) serviceState() menubar.ServiceState {
 	}
 	st.LaunchAtLogin = smStatusOf(smMainApp, "") == smEnabled
 	a.notif.menuState(&st)
+	a.updateState(&st)
 	return st
 }
 
@@ -95,10 +96,20 @@ func (a *app) recordRegistration() {
 	}
 }
 
+// Registering again after an app update is retried: launchd refuses the new build's daemon for about two minutes
+// (see registerService), so the first try usually fails, and nothing else would try again.
+const (
+	serviceRetryEvery = 30 * time.Second
+	serviceRetryFor   = 4 * time.Minute
+	// serviceRunningCheck is how long a retry looks for a running daemon before it registers the service again.
+	serviceRunningCheck = 5 * time.Second
+)
+
 // ensureService runs at launch. The first time, it registers the daemon service (which launchd starts at once); when
-// the app was replaced by a new build, it registers the service again so that launchd runs the new daemon binary.
-// A service the user stopped stays stopped. Nothing happens while a headless service or an older agent holds the
-// daemon's port; the menu then explains what to do, and the next launch tries again.
+// the app was replaced by a new build, it registers the service again so that launchd runs the new daemon binary, and
+// keeps trying for a few minutes if launchd refuses it at first. A service the user stopped stays stopped. Nothing
+// happens while a headless service or an older agent holds the daemon's port; the menu then explains what to do, and
+// the next launch tries again.
 func (a *app) ensureService(ctx context.Context) {
 	if !a.profile.Bundled() {
 		return
@@ -107,13 +118,39 @@ func (a *app) ensureService(ctx context.Context) {
 		slog.Info("not registering the service: another launch agent is installed", "headless", found.Headless, "legacy", len(found.Legacy))
 		return
 	}
+	// A service action chosen while this runs ends the retries (see stopServiceRetry), even one chosen during the
+	// first attempt, so the cancel function is published before it.
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	a.setServiceRetry(cancel)
+	defer a.setServiceRetry(nil)
+	updated, err := a.registerAtLaunch(ctx)
+	if !updated {
+		return
+	}
+	defer func() {
+		a.setServiceUpdating(false)
+		a.poke()
+	}()
+	if err == nil {
+		return
+	}
+	err = retryEvery(rctx, serviceRetryEvery, serviceRetryFor, err, func() (bool, error) { return a.retryRegistration(rctx) })
+	if err != nil && rctx.Err() == nil {
+		slog.Error("the service did not start after the update", "err", err)
+	}
+}
+
+// registerAtLaunch is the registration ensureService does under the action lock. updated reports that the app was
+// replaced since it registered the service, which is the case that may need retrying.
+func (a *app) registerAtLaunch(ctx context.Context) (updated bool, err error) {
 	a.actMu.Lock()
 	defer a.actMu.Unlock()
 	if ctx.Err() != nil {
-		return
+		return false, nil
 	}
-	recorded, err := os.ReadFile(a.registrationFile())
-	first := errors.Is(err, fs.ErrNotExist)
+	recorded, rerr := os.ReadFile(a.registrationFile())
+	first := errors.Is(rerr, fs.ErrNotExist)
 	st := smStatusOf(smAgent, a.profile.PlistName())
 	registered := st == smEnabled || st == smRequiresApproval
 	current, _ := a.daemonDigest()
@@ -122,22 +159,106 @@ func (a *app) ensureService(ctx context.Context) {
 		slog.Info("first launch: registering the service")
 	case registered && strings.TrimSpace(string(recorded)) != current:
 		slog.Info("the app was updated: registering the service again", "status", st.String())
+		updated = true
+		a.setServiceUpdating(true) // the daemon stays down until launchd accepts the new build: say so in the menu
+		a.poke()
 		if st, err := smUnregister(smAgent, a.profile.PlistName()); err != nil {
 			slog.Warn("unregistering the outdated service failed", "status", st.String(), "err", err)
 		}
 	default:
-		return
+		return false, nil
 	}
-	if err := a.registerService(); err != nil {
+	err = a.registerService()
+	switch {
+	case err == nil:
+	case updated:
+		slog.Warn("the service did not start after the update; trying again", "err", err, "every", serviceRetryEvery)
+	default:
 		// No alert: this runs at every launch. The menu shows the daemon as stopped or not responding, and Start
 		// service reports the same error when the user asks for it.
 		slog.Error("could not start the service at launch", "err", err)
 	}
 	a.poke()
+	return updated, err
+}
+
+// retryEvery calls attempt every `every` until it reports done, and gives up when the next try would start after
+// window or when ctx ends. last is the failure that started the retries. The result is the error of the final attempt
+// (last when there was none), or what the attempt that reported done returned.
+func retryEvery(ctx context.Context, every, window time.Duration, last error, attempt func() (done bool, err error)) error {
+	deadline := time.Now().Add(window)
+	for time.Until(deadline) >= every {
+		t := time.NewTimer(every)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return last
+		case <-t.C:
+		}
+		done, err := attempt()
+		if done {
+			return err
+		}
+		last = err
+	}
+	return last
+}
+
+// retryRegistration is one automatic retry after an app update: it drops the registration launchd refused and
+// registers again. It takes the action lock for this attempt only, so menu actions stay usable between attempts.
+// done reports that nothing more is to be tried: the daemon runs, another launch agent took the port, or ctx ended
+// because the user chose a service action or the app is quitting.
+func (a *app) retryRegistration(ctx context.Context) (done bool, err error) {
+	a.actMu.Lock()
+	defer a.actMu.Unlock()
+	defer a.poke()
+	if ctx.Err() != nil {
+		return true, nil
+	}
+	if found := a.found(); found.Conflicts() {
+		slog.Info("not trying the service again: another launch agent is installed", "headless", found.Headless, "legacy", len(found.Legacy))
+		return true, nil
+	}
+	if a.awaitRunning(serviceRunningCheck) {
+		// launchd accepted the job after all: registering again would only restart a working daemon.
+		slog.Info("the service is running after the update")
+		a.recordRegistration()
+		return true, nil
+	}
+	if st, err := smUnregister(smAgent, a.profile.PlistName()); err != nil {
+		slog.Warn("unregistering the service before trying again failed", "status", st.String(), "err", err)
+	}
+	if err := a.registerService(); err != nil {
+		slog.Warn("the service still does not start after the update", "err", err)
+		return false, err
+	}
+	slog.Info("the service started after the update")
+	return true, nil
+}
+
+// setServiceRetry records the function that ends the automatic retries after an update; nil when none can run.
+func (a *app) setServiceRetry(cancel context.CancelFunc) {
+	a.updMu.Lock()
+	defer a.updMu.Unlock()
+	a.serviceRetry = cancel
+}
+
+// stopServiceRetry ends the automatic retries after an update. A menu action on the service calls it first, so that
+// a retry does not undo what the user chose (stop the service, say).
+func (a *app) stopServiceRetry() {
+	a.updMu.Lock()
+	defer a.updMu.Unlock()
+	if a.serviceRetry != nil {
+		a.serviceRetry()
+	}
 }
 
 // runAction executes the menu action id, one at a time, and refreshes the menu afterwards.
 func (a *app) runAction(id string) {
+	switch id {
+	case menubar.ActionServiceStart, menubar.ActionServiceStop, menubar.ActionServiceRestart, menubar.ActionRemoveLegacy:
+		a.stopServiceRetry() // before waiting for the lock: a retry that is next in line must see it
+	}
 	a.actMu.Lock()
 	defer a.actMu.Unlock()
 	defer a.poke()
@@ -170,6 +291,12 @@ func (a *app) runAction(id string) {
 		a.removeLegacy()
 	case menubar.ActionNotificationSettings:
 		a.notif.openSettings()
+	case menubar.ActionUpdateInstall:
+		a.requestInstall()
+	case menubar.ActionUpdateCheck:
+		if err := a.client.CheckUpdate(a.ctx); err != nil {
+			a.fail("HAL9001 could not check for updates", err)
+		}
 	default:
 		slog.Error("unknown menu action", "id", id)
 	}
@@ -249,7 +376,8 @@ func (a *app) awaitRunning(timeout time.Duration) bool {
 // the daemon process stays up. launchd pins a registered agent to the code hash of its binary. Observed in testing:
 // when the app bundle was replaced by a new build up to 74 seconds ago, a job registered now exits with 78 (EX_CONFIG)
 // and never starts, and registering again does not help; 144 seconds after the replacement it worked. The
-// registration is therefore not recorded on failure, so the next launch (or Start service) registers it again.
+// registration is therefore not recorded on failure, so the next launch (or Start service) registers it again; right
+// after an app update ensureService also retries by itself, every 30 seconds for four minutes.
 func (a *app) registerService() error {
 	a.waitJobGone(20 * time.Second)
 	st, err := smRegister(smAgent, a.profile.PlistName())
