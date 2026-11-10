@@ -30,7 +30,21 @@ const (
 	ActionRemoveLegacy   = "legacy.remove"
 	// ActionNotificationSettings opens the app's pane in System Settings > Notifications.
 	ActionNotificationSettings = "notifications.settings"
+	// ActionUpdateInstall asks the daemon to install the available update; ActionUpdateCheck to look for one now.
+	ActionUpdateInstall = "update.install"
+	ActionUpdateCheck   = "update.check"
 )
+
+// Updater states (UpdateStatus.State) the menu tells apart.
+const (
+	stateInstalling = "installing"
+	stateError      = "error"
+	// phaseRequested is the install phase before the app reported anything: it says nothing worth showing.
+	phaseRequested = "requested"
+)
+
+// maxUpdateErrorLen is how much of a failed update's message fits in a menu line; the log has all of it.
+const maxUpdateErrorLen = 80
 
 // Entry is one menu item.
 type Entry struct {
@@ -74,6 +88,13 @@ type ServiceState struct {
 	NotificationsOff bool
 	// AlertStyleHint suggests the Alerts style, once: an urgent notification came as a banner that disappears by itself.
 	AlertStyleHint bool
+	// UpdateInstalling reports that this app is carrying out an update install right now; UpdatePhase says how far it
+	// got ("downloading 40%"), empty before the first step.
+	UpdateInstalling bool
+	UpdatePhase      string
+	// ServiceUpdating reports that the app is registering the service again after it replaced itself: launchd refuses
+	// the new build's daemon for a while, so the daemon does not answer for up to a couple of minutes.
+	ServiceUpdating bool
 }
 
 // InboxCount matches the web header badge: unread notes plus pending approvals.
@@ -88,6 +109,8 @@ func StatusLine(snap *Snapshot, svc ServiceState) string {
 			v = svc.AppVersion
 		}
 		return withVersion("Running", v)
+	case svc.ServiceUpdating:
+		return "Updating service… (up to 2 min)"
 	case svc.Registered:
 		return withVersion("Not responding", svc.AppVersion)
 	}
@@ -119,7 +142,9 @@ func homeLine(snap *Snapshot, svc ServiceState) string {
 func BuildMenu(snap *Snapshot, ui string, svc ServiceState) Menu {
 	link := func(title, path string) Entry { return Entry{Kind: Link, Title: title, URL: ui + path} }
 	m := Menu{Reachable: snap != nil}
+	var upd *UpdateStatus
 	if snap != nil {
+		upd = snap.Update
 		if n := InboxCount(snap.Status); n > 0 {
 			m.Title = strconv.Itoa(n)
 		}
@@ -133,6 +158,9 @@ func BuildMenu(snap *Snapshot, ui string, svc ServiceState) Menu {
 	}
 	if svc.Bundled && svc.AlertStyleHint {
 		m.Entries = append(m.Entries, Entry{Kind: Action, ID: ActionNotificationSettings, Title: "Urgent notifications vanish as banners — switch to Alerts…"})
+	}
+	if svc.Bundled {
+		m.Entries = append(m.Entries, updateEntries(upd, svc)...)
 	}
 	m.Entries = append(m.Entries, Entry{Kind: Separator})
 
@@ -171,15 +199,73 @@ func BuildMenu(snap *Snapshot, ui string, svc ServiceState) Menu {
 		Entry{Kind: Separator},
 	)
 	if svc.Bundled {
-		m.Entries = append(m.Entries, serviceEntries(svc)...)
+		m.Entries = append(m.Entries, serviceEntries(svc, upd)...)
 		m.Entries = append(m.Entries, Entry{Kind: Separator})
 	}
 	m.Entries = append(m.Entries, Entry{Kind: Quit, Title: "Quit"})
 	return m
 }
 
+// updateEntries is the part of the menu about app updates, below the status lines. upd is nil when the daemon reports
+// nothing (an older daemon, or it does not answer); the entries then reflect only what this app is doing itself.
+func updateEntries(upd *UpdateStatus, svc ServiceState) []Entry {
+	info := func(title string) []Entry { return []Entry{{Kind: Info, Title: title}} }
+	version := upd.latestVersion()
+	switch {
+	case svc.UpdateInstalling || upd != nil && upd.Enabled && upd.State == stateInstalling:
+		return info(installingLine(upd, svc))
+	case upd == nil || !upd.Enabled:
+		return nil
+	case upd.Pending:
+		if version == "" {
+			return info("Update installs when flows finish")
+		}
+		return info("Update " + version + " installs when flows finish")
+	case upd.Available:
+		var es []Entry
+		if upd.State == stateError && upd.Error != "" {
+			es = append(es, Entry{Kind: Info, Title: "Update failed: " + shorten(upd.Error)})
+		}
+		title := "Update available"
+		if version != "" {
+			title += ": " + version
+		}
+		return append(es, Entry{Kind: Action, ID: ActionUpdateInstall, Title: title + " — Install & Restart"})
+	}
+	return nil
+}
+
+// installingLine says an install is running, with how far it is when that is known.
+func installingLine(upd *UpdateStatus, svc ServiceState) string {
+	phase := svc.UpdatePhase
+	if phase == "" && upd != nil && upd.Phase != phaseRequested {
+		phase = upd.Phase
+	}
+	if phase == "" {
+		return "Installing update…"
+	}
+	return "Installing update… (" + phase + ")"
+}
+
+// latestVersion is the version of the newest release the daemon knows, or "".
+func (u *UpdateStatus) latestVersion() string {
+	if u == nil || u.Latest == nil {
+		return ""
+	}
+	return u.Latest.Version
+}
+
+// shorten collapses whitespace and cuts s to maxUpdateErrorLen characters, marking the cut.
+func shorten(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > maxUpdateErrorLen {
+		return string(r[:maxUpdateErrorLen-1]) + "…"
+	}
+	return s
+}
+
 // serviceEntries is the part of the menu about the daemon service and the app's own settings.
-func serviceEntries(svc ServiceState) []Entry {
+func serviceEntries(svc ServiceState, upd *UpdateStatus) []Entry {
 	var es []Entry
 	action := func(id, title string) Entry { return Entry{Kind: Action, ID: id, Title: title} }
 	if svc.Headless {
@@ -202,12 +288,13 @@ func serviceEntries(svc ServiceState) []Entry {
 		start.Disabled = svc.Registered
 		es = append(es, Entry{Kind: Submenu, Title: "Service", Children: []Entry{start, stop, restart}})
 	}
+	es = append(es, action(ActionOpenLogs, "Open logs"))
+	if upd != nil && upd.Enabled {
+		es = append(es, action(ActionUpdateCheck, "Check for updates"))
+	}
 	login := action(ActionLaunchAtLogin, "Launch at login")
 	login.Checked = svc.LaunchAtLogin
-	return append(es,
-		action(ActionOpenLogs, "Open logs"),
-		login,
-		action(ActionInstallCLI, "Install command-line tool…"))
+	return append(es, login, action(ActionInstallCLI, "Install command-line tool…"))
 }
 
 func counted(label string, n int) string {
