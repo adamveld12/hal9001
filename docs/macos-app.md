@@ -66,7 +66,32 @@ Use a flow that raises inbox notes and approvals (the seeded `demo` flow does; t
       daemon" and registers no service of its own. `hal9001 service uninstall` removes it; Start service works again.
 - [ ] `hal9001 service logs -n 20` prints the daemon log.
 
+## 7. Updates
+
+Needs a release app of a CI build in `~/Applications` or `/Applications` (a local build has build number 0 and never
+updates) and a newer build on the feed of its channel.
+
+- [ ] While an update is available the menu shows **Update available: <version> — Install & Restart**, and **Check for
+      updates** sits next to Open logs.
+- [ ] Install & Restart with no flow running: the line becomes **Installing update… (downloading 40%)**, then
+      **(verifying)**; the app quits and opens again by itself within a few seconds.
+- [ ] After the relaunch the menu shows **Updating service… (up to 2 min)** while the daemon is down, then **Running ·
+      <new version>** (up to about 4 minutes, see Known quirk). Launch at login is still ticked and notifications still
+      arrive.
+- [ ] With a flow run in progress, Install & Restart changes the line to **Update <version> installs when flows
+      finish**; once the run ends the install starts by itself.
+- [ ] Check for updates: nothing changes while up to date; a newer build published on the feed shows up as the update
+      item.
+- [ ] After an update `.HAL9001-previous.app` sits next to the app (hidden, see it with `ls -a`) and holds the old
+      version; no `.HAL9001-update-*` folder is left behind. A second update replaces it.
+- [ ] A failed update: run the app from the mounted DMG (or from a folder you cannot write to) and choose Install &
+      Restart. An alert says the folder is not writable and to download the update manually from the releases page; the
+      menu shows **Update failed: …** with Install & Restart again, and the app keeps running.
+- [ ] The dev app (HAL9001 Dev) never shows update items.
+
 ## Known quirk
 
 After replacing an app bundle that has a registered service (a rebuild), launchd can refuse to start the daemon
-(exit 78) for about two minutes. Wait, then Service > Stop service and Start service, or relaunch the app.
+(exit 78) for about two minutes. Wait, then Service > Stop service and Start service, or relaunch the app. After an
+update the app itself retries registering the service every 30 seconds for about 4 minutes (the menu says **Updating
+service…** meanwhile).
