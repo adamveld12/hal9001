@@ -145,6 +145,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		RetentionDays      *int           `json:"retention_days"`
 		DedupRetentionDays *int           `json:"dedup_retention_days"`
 		NotifyMinPriority  *string        `json:"notify_min_priority"`
+		NotifyVia          *string        `json:"notify_via"`
 		ApprovalTimeout    *spec.Duration `json:"approval_timeout"`
 	}
 	if !decodeJSON(w, r, &patch, false) {
@@ -173,6 +174,13 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["notify_min_priority"] = *patch.NotifyMinPriority
+	}
+	if patch.NotifyVia != nil {
+		if !slices.Contains(spec.NotifyVias, *patch.NotifyVia) {
+			fieldProblem(w, "notify_via", "notify_via must be one of "+strings.Join(spec.NotifyVias, ", "))
+			return
+		}
+		set["notify_via"] = *patch.NotifyVia
 	}
 	if patch.ApprovalTimeout != nil {
 		if patch.ApprovalTimeout.Std() <= 0 {

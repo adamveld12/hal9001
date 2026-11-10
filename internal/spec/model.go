@@ -80,6 +80,17 @@ const (
 	OnTimeoutError    = "error"
 )
 
+// Values of Config.NotifyVia.
+const (
+	NotifyViaAuto     = "auto"
+	NotifyViaApp      = "app"
+	NotifyViaTerminal = "terminal-notifier"
+	NotifyViaNone     = "none"
+)
+
+// NotifyVias lists the values of Config.NotifyVia.
+var NotifyVias = []string{NotifyViaAuto, NotifyViaApp, NotifyViaTerminal, NotifyViaNone}
+
 // Priorities lists inbox priorities from lowest to highest.
 var Priorities = []string{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent}
 
@@ -97,6 +108,7 @@ const (
 	DefaultRetentionDays      = 30
 	DefaultDedupRetentionDays = 180
 	DefaultNotifyMinPriority  = PriorityNormal
+	DefaultNotifyVia          = NotifyViaAuto
 	DefaultSessionTTL         = Duration(7 * 24 * time.Hour)
 	DefaultMaxConcurrent      = 2
 	DefaultCommandTimeout     = Duration(time.Minute)
@@ -112,6 +124,9 @@ type Config struct {
 	RetentionDays      int    `yaml:"retention_days,omitempty" json:"retention_days"`
 	DedupRetentionDays int    `yaml:"dedup_retention_days,omitempty" json:"dedup_retention_days"`
 	NotifyMinPriority  string `yaml:"notify_min_priority,omitempty" json:"notify_min_priority"`
+	// NotifyVia routes notifications: auto (the macOS app when one is connected, else terminal-notifier), app,
+	// terminal-notifier, or none (log only).
+	NotifyVia string `yaml:"notify_via,omitempty" json:"notify_via"`
 	// ApprovalTimeout is the default for agent nodes that do not set their own
 	// approval_timeout (see Config.ApprovalTimeoutFor).
 	ApprovalTimeout Duration           `yaml:"approval_timeout,omitempty" json:"approval_timeout"`

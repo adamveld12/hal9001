@@ -44,6 +44,7 @@ tags:
   - {name: agents, description: 'Agent runs, transcripts, permission requests'}
   - {name: approvals, description: Approval queue}
   - {name: inbox, description: Inbox items}
+  - {name: notifications, description: 'Notification log: what the daemon notified, over which channel'}
   - {name: prompts, description: Prompt library}
   - {name: runtimes, description: Configured ACP runtimes}
   - {name: settings, description: Settings and environment keys}
@@ -161,6 +162,11 @@ paths:
         `flow_run_id`, `agent_run_id`, `assist_session_id`) apply to the types that carry that resource and leave other types untouched.
         `stream.ready` and `stream.resync` are always delivered.
 
+        Notification sinks: a client that shows notifications itself (the macOS app) opens this stream with
+        `types=notification.created` and the header `X-Hal9001-Notifier: app`. While at least one such connection is open
+        and `notify_via` is `auto`, the daemon does not run terminal-notifier and routes notifications to channel `app`;
+        the sink renders each `notification.created` event.
+
         Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
         buffers. When the gap is larger than the buffer it sends `stream.resync`; clients must then refetch the
         resources they display.
@@ -188,6 +194,7 @@ paths:
         approval.updated: '#/components/schemas/ApprovalUpdatedEvent'
         inbox.created: '#/components/schemas/InboxCreatedEvent'
         inbox.updated: '#/components/schemas/InboxUpdatedEvent'
+        notification.created: '#/components/schemas/NotificationCreatedEvent'
         auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
         assist.updated: '#/components/schemas/AssistUpdatedEvent'
         assist.message: '#/components/schemas/AssistMessageEvent'
@@ -205,6 +212,10 @@ paths:
         - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: agent_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: assist_session_id, in: query, description: 'Applies to `assist.updated`, `assist.message`, and to the agent run and approval events of that session.', schema: {$ref: '#/components/schemas/Ulid'}}
+        - name: X-Hal9001-Notifier
+          in: header
+          description: '`app` registers this connection as a notification sink (see the description).'
+          schema: {type: string, enum: [app]}
         - name: Last-Event-ID
           in: header
           description: Last sequence number the client saw.
@@ -1954,6 +1965,28 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List logged notifications
+      description: Newest first.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: channel, in: query, schema: {type: string, enum: [app, terminal-notifier, none]}}
+      responses:
+        '200':
+          description: One page of notifications.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         default: {$ref: '#/components/responses/Error'}
   /api/inbox:
     get:
@@ -4009,6 +4042,7 @@ components:
         retention_days: {type: integer, minimum: 1, default: 30}
         dedup_retention_days: {type: integer, minimum: 1, default: 180}
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
+        notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
         session_ttl: {$ref: '#/components/schemas/Duration'}
         allowed_hosts: {type: array, items: {type: string}}
@@ -4558,6 +4592,7 @@ components:
         retention_days: {type: integer, minimum: 1}
         dedup_retention_days: {type: integer, minimum: 1}
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
+        notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
     EnvKeyList:
       type: object
@@ -5251,6 +5286,41 @@ components:
         dry_run: {type: boolean, description: 'Tagged `dry-run` in the UI.'}
         parse_error: {type: boolean, description: 'The note could not be parsed; `summary_md` holds the raw final message.'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
+    NotifyVia:
+      type: string
+      enum: [auto, app, terminal-notifier, none]
+      description: |
+        Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
+        terminal-notifier. `app`: never terminal-notifier. `terminal-notifier`: always. `none`: logged only.
+    Notification:
+      type: object
+      description: A rendered notification as logged and as sent in `notification.created`.
+      required: [id, kind, flow_id, title, subtitle, body, priority, dry_run, thread_id, url, item_id, approval_id, approval_type, editable, created_at, channel, status, error]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        kind: {type: string, enum: [note, proposal, tool_call, request]}
+        flow_id: {type: string, description: 'Flow that raised it; `assistant` for a sensor assistant turn.'}
+        title: {type: string, description: The flow id.}
+        subtitle: {type: string, description: 'The note title, `Approval: ...`, `Tool call: <tool> <args>` or `Request: <title>`; prefixed `[dry run] ` for dry runs.'}
+        body: {type: string, description: 'First one or two lines of the summary, proposal or request body, markdown removed, at most 200 characters.'}
+        priority: {$ref: '#/components/schemas/Priority'}
+        dry_run: {type: boolean}
+        thread_id: {type: string, description: Groups notifications; the flow id.}
+        url: {type: string, description: 'Deep link into the UI: `/inbox/<id>` or `/inbox/approval/<id>`.'}
+        item_id: {type: string, description: Inbox item id (kind `note`); empty otherwise.}
+        approval_id: {type: string, description: Approval id (other kinds); empty for notes.}
+        approval_type: {type: string, enum: ['', proposal, tool_call, request]}
+        editable: {type: boolean, description: True for a request approval with editable fields.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        channel: {type: string, enum: [app, terminal-notifier, none], description: The channel the daemon routed it to.}
+        status: {type: string, enum: [sent, no_sink, failed, logged], description: '`no_sink`: channel `app` but no app was connected.'}
+        error: {type: string, description: Delivery error when `status` is `failed`.}
+    NotificationList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Notification'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
     InboxList:
       type: object
       required: [items, next_cursor]
@@ -5808,6 +5878,7 @@ components:
         - approval.updated
         - inbox.created
         - inbox.updated
+        - notification.created
         - auth_event.created
         - assist.updated
         - assist.message
@@ -5847,6 +5918,7 @@ components:
         - {$ref: '#/components/schemas/ApprovalUpdatedEvent'}
         - {$ref: '#/components/schemas/InboxCreatedEvent'}
         - {$ref: '#/components/schemas/InboxUpdatedEvent'}
+        - {$ref: '#/components/schemas/NotificationCreatedEvent'}
         - {$ref: '#/components/schemas/AuthEventCreatedEvent'}
         - {$ref: '#/components/schemas/AssistUpdatedEvent'}
         - {$ref: '#/components/schemas/AssistMessageEvent'}
@@ -5875,6 +5947,7 @@ components:
           approval.updated: '#/components/schemas/ApprovalUpdatedEvent'
           inbox.created: '#/components/schemas/InboxCreatedEvent'
           inbox.updated: '#/components/schemas/InboxUpdatedEvent'
+          notification.created: '#/components/schemas/NotificationCreatedEvent'
           auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
           assist.updated: '#/components/schemas/AssistUpdatedEvent'
           assist.message: '#/components/schemas/AssistMessageEvent'
@@ -6083,6 +6156,20 @@ components:
           properties:
             type: {enum: [inbox.updated]}
             data: {$ref: '#/components/schemas/InboxItem'}
+    NotificationCreatedEvent:
+      description: |
+        The daemon raised a notification (an inbox note or an approval). `data` is `Notification`, fully rendered, with
+        the `channel` it was routed to. A notification sink (header `X-Hal9001-Notifier: app`) shows it. Example:
+        `{"type":"notification.created","id":"1788000000001","ts":"2026-11-09T12:00:00Z","data":{"id":"01J...","kind":"note",
+        "flow_id":"triage","title":"triage","subtitle":"Deploy is failing","body":"Roll back now.","priority":"high","dry_run":false,
+        "thread_id":"triage","url":"http://localhost:9001/inbox/01J...","item_id":"01J...","approval_id":"","approval_type":"",
+        "editable":false,"created_at":"2026-11-09T12:00:00Z","channel":"app","status":"sent","error":""}}`
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [notification.created]}
+            data: {$ref: '#/components/schemas/Notification'}
     AuthEventCreatedEvent:
       description: An authentication decision was recorded. `data` is `AuthEvent`. Delivered only to callers granted `admin`.
       allOf:

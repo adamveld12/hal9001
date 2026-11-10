@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"hal9001/internal/agent"
-	"hal9001/internal/core"
+	"hal9001/internal/notify"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -396,12 +396,8 @@ func (e *Engine) addInbox(snap *snapshot, it *store.InboxItem) error {
 		return err
 	}
 	if priorityRank(string(it.Priority)) >= priorityRank(snap.cfg.NotifyMinPriority) {
-		e.notify(core.Notification{
-			Kind:  "inbox",
-			Title: it.Title,
-			Body:  truncate(firstLine(it.SummaryMD), 200),
-			URL:   e.url(InboxPath(it.ID)),
-		})
+		flowID, _ := e.flowRunInfo(it.FlowRunID)
+		e.notify(notify.Note(flowID, it, e.url(InboxPath(it.ID))))
 	}
 	return nil
 }

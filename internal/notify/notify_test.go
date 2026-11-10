@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,42 +48,37 @@ func (f *fakeSystem) notifier() core.Notifier {
 }
 
 var inbox = core.Notification{
-	Kind: "inbox", Title: "Large PR needs you", Body: "babylist/web#4120", URL: "http://localhost:9001/inbox/01J",
+	Kind: "note", Title: "triage", Subtitle: "Large PR needs you", Body: "babylist/web#4120", ThreadID: "triage",
+	Priority: "high", URL: "http://localhost:9001/inbox/01J",
 }
 
-func TestTerminalNotifierGetsTitleMessageGroupAndDeepLink(t *testing.T) {
+func TestTerminalNotifierGetsRichFields(t *testing.T) {
 	f := &fakeSystem{have: map[string]bool{"terminal-notifier": true, "osascript": true}}
-	if err := f.notifier().Notify(context.Background(), inbox); err != nil {
+	n := notify.New(notify.WithRunner(f.run), notify.WithLookPath(f.look), notify.WithIcon("/home/data/hal-eye.png"),
+		notify.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if err := n.Notify(context.Background(), inbox); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 1 || f.calls[0].name != "/usr/local/bin/terminal-notifier" {
 		t.Fatalf("calls = %v, want only terminal-notifier", f.calls)
 	}
 	want := []string{
-		"-title", "Large PR needs you", "-message", "babylist/web#4120",
-		"-group", "hal9001:http://localhost:9001/inbox/01J", "-open", "http://localhost:9001/inbox/01J",
+		"-title", "triage", "-subtitle", "Large PR needs you", "-message", "babylist/web#4120", "-group", "hal9001:triage",
+		"-sound", "default", "-contentImage", "/home/data/hal-eye.png", "-open", "http://localhost:9001/inbox/01J",
 	}
 	if !reflect.DeepEqual(f.calls[0].args, want) {
 		t.Errorf("args = %q\nwant %q", f.calls[0].args, want)
 	}
 }
 
-func TestDifferentItemsGetDifferentGroupsSoTheyStack(t *testing.T) {
-	a := notify.TerminalNotifierArgs(core.Notification{Title: "a", Body: "x", URL: "http://localhost:9001/approvals/1"})
-	b := notify.TerminalNotifierArgs(core.Notification{Title: "b", Body: "y", URL: "http://localhost:9001/approvals/2"})
-	if a[5] == b[5] {
-		t.Errorf("both notifications share group %q; the second would replace the first", a[5])
-	}
-}
-
-func TestEmptyBodyUsesTitleAndDashPrefixedTextIsNotAnOption(t *testing.T) {
-	args := notify.TerminalNotifierArgs(core.Notification{Title: "-1 approval pending"})
-	if args[3] != args[1] || !strings.HasPrefix(args[1], " -") {
-		t.Errorf("args = %q; want message = title, with a leading space guarding the dash", args)
+func TestNormalPriorityHasNoSoundAndEmptyBodyUsesSubtitle(t *testing.T) {
+	args := notify.TerminalNotifierArgs(core.Notification{Title: "flow", Subtitle: "-1 approval pending", Priority: "normal"}, "")
+	if !slices.Contains(args, "-message") || args[slices.Index(args, "-message")+1] != " -1 approval pending" {
+		t.Errorf("args = %q; want message = subtitle guarded against a leading dash", args)
 	}
 	for _, a := range args {
-		if a == "-open" {
-			t.Errorf("-open present without a URL: %q", args)
+		if a == "-sound" || a == "-open" || a == "-contentImage" {
+			t.Errorf("unexpected %s in %q", a, args)
 		}
 	}
 }
@@ -98,12 +94,12 @@ func TestFallsBackToOsascriptWhenTerminalNotifierIsMissing(t *testing.T) {
 	}
 	args := f.calls[0].args
 	// The text is passed after "--" as argv items; the script never contains it.
-	script := strings.Join(args[:len(args)-3], " ")
+	script := strings.Join(args[:len(args)-4], " ")
 	if strings.Contains(script, "hi") || strings.Contains(script, "fine") {
 		t.Errorf("notification text was spliced into the script: %q", script)
 	}
-	if tail := args[len(args)-3:]; tail[0] != "--" || tail[1] != n.Body || tail[2] != n.Title {
-		t.Errorf("argv tail = %q, want [-- body title]", tail)
+	if tail := args[len(args)-4:]; tail[0] != "--" || tail[1] != n.Body || tail[2] != n.Title || tail[3] != n.Subtitle {
+		t.Errorf("argv tail = %q, want [-- body title subtitle]", tail)
 	}
 }
 

@@ -365,6 +365,10 @@ func (s *Store) Prune(ctx context.Context, now time.Time, retentionDays, dedupRe
 				return err
 			}
 		}
+		// The notification log is pruned silently: its rows are not shown in lists clients keep in sync.
+		if _, err := t.ExecContext(ctx, `DELETE FROM notifications WHERE created_at < ?`, cutoff); err != nil {
+			return fmt.Errorf("store: prune notifications: %w", err)
+		}
 		if res.OrphanBlobs, err = t.unreferenced(ctx, refs); err != nil {
 			return err
 		}

@@ -177,14 +177,10 @@ type Engine interface {
 	Apply(ws *spec.Workspace)
 }
 
-// Notification is a macOS notification request. URL is an absolute deep link
-// into the UI (e.g. http://localhost:9001/inbox/<id>).
-type Notification struct {
-	Kind  string // "inbox" | "approval"
-	Title string
-	Body  string
-	URL   string
-}
+// Notification is a rendered notification request (see internal/notify for the renderer). URL is an absolute
+// deep link into the UI (e.g. http://localhost:9001/inbox/<id>). Channel, Status and Error are set by the router
+// that delivers it.
+type Notification = store.Notification
 
 // Notifier delivers notifications; implemented by internal/notify.
 type Notifier interface {

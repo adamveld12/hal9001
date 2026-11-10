@@ -45,6 +45,9 @@ func (c *Config) ApplyDefaults() {
 	if c.NotifyMinPriority == "" {
 		c.NotifyMinPriority = DefaultNotifyMinPriority
 	}
+	if c.NotifyVia == "" {
+		c.NotifyVia = DefaultNotifyVia
+	}
 	if c.ApprovalTimeout == 0 {
 		c.ApprovalTimeout = DefaultApprovalTimeout
 	}
@@ -100,6 +103,9 @@ func (c Config) Minimal() Config {
 	}
 	if c.NotifyMinPriority == DefaultNotifyMinPriority {
 		c.NotifyMinPriority = ""
+	}
+	if c.NotifyVia == DefaultNotifyVia {
+		c.NotifyVia = ""
 	}
 	if c.ApprovalTimeout == DefaultApprovalTimeout {
 		c.ApprovalTimeout = 0

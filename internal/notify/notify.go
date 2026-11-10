@@ -45,7 +45,11 @@ type notifier struct {
 	run  Runner
 	look LookPath
 	log  *slog.Logger
+	icon string
 }
+
+// WithIcon sets the PNG terminal-notifier shows as the notification's content image; default none.
+func WithIcon(path string) Option { return func(n *notifier) { n.icon = path } }
 
 // New returns a core.Notifier that shells out to terminal-notifier, with an
 // osascript fallback.
@@ -78,7 +82,7 @@ func (n *notifier) Notify(ctx context.Context, msg core.Notification) error {
 		return nil
 	}
 	err := errors.Join(primary, fallback)
-	n.log.Error("notify: notification not delivered", "err", err, "kind", msg.Kind, "title", msg.Title)
+	n.log.Error("notify: notification not delivered", "err", err, "kind", msg.Kind, "flow", msg.Title)
 	return err
 }
 
@@ -87,7 +91,7 @@ func (n *notifier) viaTerminalNotifier(ctx context.Context, msg core.Notificatio
 	if err != nil {
 		return fmt.Errorf("%s not found on PATH: %w", terminalNotifier, err)
 	}
-	if out, err := n.run(ctx, bin, TerminalNotifierArgs(msg)...); err != nil {
+	if out, err := n.run(ctx, bin, TerminalNotifierArgs(msg, n.icon)...); err != nil {
 		return fmt.Errorf("%s: %w: %s", terminalNotifier, err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -104,31 +108,44 @@ func (n *notifier) viaOsascript(ctx context.Context, msg core.Notification) erro
 	return nil
 }
 
-// TerminalNotifierArgs builds the terminal-notifier argument list. The group
-// is per deep link so a repeated notification for the same item replaces the
-// old one while different items stack. terminal-notifier requires a message,
-// so an empty body falls back to the title.
-func TerminalNotifierArgs(msg core.Notification) []string {
-	title, body := safeArg(msg.Title), safeArg(msg.Body)
-	if strings.TrimSpace(body) == "" {
-		body = title
-	}
+// TerminalNotifierArgs builds the terminal-notifier argument list: the flow as title, the subject as subtitle,
+// the body as message, the flow as group (a new notification of a flow replaces its previous one, flows stack),
+// the default sound for high and urgent priority, icon (when set) as the content image and the deep link to open.
+// terminal-notifier requires a message, so an empty body falls back to the subtitle, then the title.
+func TerminalNotifierArgs(msg core.Notification, icon string) []string {
+	title, subtitle, body := safeArg(msg.Title), safeArg(msg.Subtitle), safeArg(msg.Body)
 	if strings.TrimSpace(title) == "" {
 		title = "hal9001"
 	}
-	group := "hal9001"
-	if msg.URL != "" {
-		group += ":" + msg.URL
+	if strings.TrimSpace(body) == "" {
+		body = subtitle
 	}
-	args := []string{"-title", title, "-message", body, "-group", group}
+	if strings.TrimSpace(body) == "" {
+		body = title
+	}
+	group := "hal9001"
+	if msg.ThreadID != "" {
+		group += ":" + msg.ThreadID
+	}
+	args := []string{"-title", title}
+	if strings.TrimSpace(subtitle) != "" {
+		args = append(args, "-subtitle", subtitle)
+	}
+	args = append(args, "-message", body, "-group", group)
+	if msg.Priority == "high" || msg.Priority == "urgent" {
+		args = append(args, "-sound", "default")
+	}
+	if icon != "" {
+		args = append(args, "-contentImage", icon)
+	}
 	if msg.URL != "" {
 		args = append(args, "-open", msg.URL)
 	}
 	return args
 }
 
-// OsascriptArgs builds the osascript argument list. Title and body travel as
-// argv items, never spliced into the script, so quotes in them are inert.
+// OsascriptArgs builds the osascript argument list. Title, subtitle and body travel as argv items, never spliced
+// into the script, so quotes in them are inert.
 func OsascriptArgs(msg core.Notification) []string {
 	title := msg.Title
 	if strings.TrimSpace(title) == "" {
@@ -136,13 +153,16 @@ func OsascriptArgs(msg core.Notification) []string {
 	}
 	body := msg.Body
 	if strings.TrimSpace(body) == "" {
+		body = msg.Subtitle
+	}
+	if strings.TrimSpace(body) == "" {
 		body = title
 	}
 	return []string{
 		"-e", "on run argv",
-		"-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+		"-e", "display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)",
 		"-e", "end run",
-		"--", body, title,
+		"--", body, title, msg.Subtitle,
 	}
 }
 

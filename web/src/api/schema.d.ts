@@ -121,6 +121,11 @@ export interface paths {
      *     `flow_run_id`, `agent_run_id`, `assist_session_id`) apply to the types that carry that resource and leave other types untouched.
      *     `stream.ready` and `stream.resync` are always delivered.
      *
+     *     Notification sinks: a client that shows notifications itself (the macOS app) opens this stream with
+     *     `types=notification.created` and the header `X-Hal9001-Notifier: app`. While at least one such connection is open
+     *     and `notify_via` is `auto`, the daemon does not run terminal-notifier and routes notifications to channel `app`;
+     *     the sink renders each `notification.created` event.
+     *
      *     Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
      *     buffers. When the gap is larger than the buffer it sends `stream.resync`; clients must then refetch the
      *     resources they display.
@@ -1465,6 +1470,26 @@ export interface paths {
      *     approval is no longer pending.
      */
     post: operations["denyApproval"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/notifications": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List logged notifications
+     * @description Newest first.
+     */
+    get: operations["listNotifications"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3143,6 +3168,7 @@ export interface components {
       /** @default 180 */
       dedup_retention_days?: number;
       notify_min_priority?: components["schemas"]["Priority"];
+      notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
       session_ttl?: components["schemas"]["Duration"];
       allowed_hosts?: string[];
@@ -3601,6 +3627,7 @@ export interface components {
       retention_days?: number;
       dedup_retention_days?: number;
       notify_min_priority?: components["schemas"]["Priority"];
+      notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
     };
     EnvKeyList: {
@@ -4279,6 +4306,57 @@ export interface components {
       parse_error: boolean;
       created_at: components["schemas"]["Timestamp"];
     };
+    /**
+     * @description Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
+     *     terminal-notifier. `app`: never terminal-notifier. `terminal-notifier`: always. `none`: logged only.
+     * @enum {string}
+     */
+    NotifyVia: "auto" | "app" | "terminal-notifier" | "none";
+    /** @description A rendered notification as logged and as sent in `notification.created`. */
+    Notification: {
+      id: components["schemas"]["Ulid"];
+      /** @enum {string} */
+      kind: "note" | "proposal" | "tool_call" | "request";
+      /** @description Flow that raised it; `assistant` for a sensor assistant turn. */
+      flow_id: string;
+      /** @description The flow id. */
+      title: string;
+      /** @description The note title, `Approval: ...`, `Tool call: <tool> <args>` or `Request: <title>`; prefixed `[dry run] ` for dry runs. */
+      subtitle: string;
+      /** @description First one or two lines of the summary, proposal or request body, markdown removed, at most 200 characters. */
+      body: string;
+      priority: components["schemas"]["Priority"];
+      dry_run: boolean;
+      /** @description Groups notifications; the flow id. */
+      thread_id: string;
+      /** @description Deep link into the UI: `/inbox/<id>` or `/inbox/approval/<id>`. */
+      url: string;
+      /** @description Inbox item id (kind `note`); empty otherwise. */
+      item_id: string;
+      /** @description Approval id (other kinds); empty for notes. */
+      approval_id: string;
+      /** @enum {string} */
+      approval_type: "" | "proposal" | "tool_call" | "request";
+      /** @description True for a request approval with editable fields. */
+      editable: boolean;
+      created_at: components["schemas"]["Timestamp"];
+      /**
+       * @description The channel the daemon routed it to.
+       * @enum {string}
+       */
+      channel: "app" | "terminal-notifier" | "none";
+      /**
+       * @description `no_sink`: channel `app` but no app was connected.
+       * @enum {string}
+       */
+      status: "sent" | "no_sink" | "failed" | "logged";
+      /** @description Delivery error when `status` is `failed`. */
+      error: string;
+    };
+    NotificationList: {
+      items: components["schemas"]["Notification"][];
+      next_cursor: components["schemas"]["NextCursor"];
+    };
     InboxList: {
       items: components["schemas"]["InboxItem"][];
       next_cursor: components["schemas"]["NextCursor"];
@@ -4825,6 +4903,7 @@ export interface components {
       | "approval.updated"
       | "inbox.created"
       | "inbox.updated"
+      | "notification.created"
       | "auth_event.created"
       | "assist.updated"
       | "assist.message";
@@ -4862,6 +4941,7 @@ export interface components {
       | components["schemas"]["ApprovalUpdatedEvent"]
       | components["schemas"]["InboxCreatedEvent"]
       | components["schemas"]["InboxUpdatedEvent"]
+      | components["schemas"]["NotificationCreatedEvent"]
       | components["schemas"]["AuthEventCreatedEvent"]
       | components["schemas"]["AssistUpdatedEvent"]
       | components["schemas"]["AssistMessageEvent"];
@@ -5164,6 +5244,25 @@ export interface components {
        * @enum {string}
        */
       type: "inbox.updated";
+    };
+    /**
+     * @description The daemon raised a notification (an inbox note or an approval). `data` is `Notification`, fully rendered, with
+     *     the `channel` it was routed to. A notification sink (header `X-Hal9001-Notifier: app`) shows it. Example:
+     *     `{"type":"notification.created","id":"1788000000001","ts":"2026-11-09T12:00:00Z","data":{"id":"01J...","kind":"note",
+     *     "flow_id":"triage","title":"triage","subtitle":"Deploy is failing","body":"Roll back now.","priority":"high","dry_run":false,
+     *     "thread_id":"triage","url":"http://localhost:9001/inbox/01J...","item_id":"01J...","approval_id":"","approval_type":"",
+     *     "editable":false,"created_at":"2026-11-09T12:00:00Z","channel":"app","status":"sent","error":""}}`
+     */
+    NotificationCreatedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "notification.created";
+      data?: components["schemas"]["Notification"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "notification.created";
     };
     /** @description An authentication decision was recorded. `data` is `AuthEvent`. Delivered only to callers granted `admin`. */
     AuthEventCreatedEvent: components["schemas"]["StreamEnvelope"] & {
@@ -5491,6 +5590,8 @@ export interface operations {
         assist_session_id?: components["schemas"]["Ulid"];
       };
       header?: {
+        /** @description `app` registers this connection as a notification sink (see the description). */
+        "X-Hal9001-Notifier"?: "app";
         /** @description Last sequence number the client saw. */
         "Last-Event-ID"?: string;
       };
@@ -7567,6 +7668,36 @@ export interface operations {
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listNotifications: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor from a previous response's `next_cursor`. */
+        cursor?: components["parameters"]["Cursor"];
+        limit?: components["parameters"]["Limit"];
+        flow_id?: components["schemas"]["Slug"];
+        channel?: "app" | "terminal-notifier" | "none";
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description One page of notifications. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NotificationList"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       default: components["responses"]["Error"];
     };
   };
