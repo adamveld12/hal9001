@@ -84,8 +84,9 @@ Details: [mcp.md](mcp.md).
 - hal9001 is an MCP server on `http://localhost:9001/mcp` (Streamable HTTP) and as a stdio command (`hal9001 mcp`), for
   Claude Code, Codex, omp (Oh My Pi) and pi. Settings → MCP shows the URL, the binary path of the running app and
   copy-paste install commands for each client.
-- Tools: inbox, approvals, flows, runs, sensors and events (read); `flow_run` and `sensor_poll` wait for your approval in
-  the Inbox. No tool can approve or deny. Loopback only, same auth as the API.
+- Tools: inbox, approvals, flows, runs, sensors and events (read); `flow_run`, `sensor_poll`, `flow_create` and
+  `sensor_create` wait for your approval in the Inbox; `request_approval` asks you for a decision and `send_note` leaves a
+  note. No tool can approve or deny. Loopback only, same auth as the API.
 
 ## Chat assistant
 

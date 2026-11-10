@@ -1,8 +1,8 @@
 # hal9001 as an MCP server
 
 hal9001 is an MCP server for other agents and editors on your Mac (Claude Code, Codex, omp, pi, ...). They can read your
-inbox, approvals, flows, runs and sensors, and ask hal9001 to run a flow or poll a sensor. Anything with side effects
-waits for your approval in the Inbox.
+inbox, approvals, flows, runs and sensors, ask hal9001 to run a flow or poll a sensor, propose new flows and sensors, ask
+you for a decision, and leave you notes. Anything with side effects waits for your approval in the Inbox.
 
 This is separate from the MCP server hal9001 injects into the agents *it* runs ([design/agent-access.md](design/agent-access.md)).
 That one is scoped to one run and exposes `gh_api`, `now`, `run_context` and the other run tools. The one on this page is
@@ -36,10 +36,11 @@ Reads run directly:
 |---|---|
 | `status` | Header counters: pending approvals, unread inbox items, queue, kill switch. |
 | `inbox_list`, `inbox_get` | Inbox notes: search, filter by priority/flow/read/starred/archived; read one in full. |
-| `approvals_list`, `approval_get` | The approval queue (default `pending`) and history. Read only. |
+| `approvals_list`, `approval_get` | The approval queue (default `pending`) and history. Read only. For a `request_approval` approval, `approval_get` adds `result` (below). |
 | `flows_list`, `flow_get` | Flows with run statistics; one flow's definition and diagnostics. |
 | `flow_runs_list`, `flow_run_get` | Flow runs; one run with its node runs (`wait` long-polls until it finishes or needs an approval). |
 | `sensors_list`, `sensor_get`, `events_list` | Sensors and their last poll; events with the runs they started. |
+| `flow_validate`, `sensor_validate` | Check a spec without creating anything and without asking anybody (below). |
 
 These call the same REST endpoints as `curl` or the CLI ([api.md](api.md)) and return their JSON.
 
@@ -49,18 +50,89 @@ Side effects wait for your approval:
 |---|---|
 | `flow_run` | Run a flow now: polls its sensors and starts runs of that flow only (`POST /api/flows/{id}/run`). |
 | `sensor_poll` | Poll a sensor outside its schedule; new items start runs of the flows subscribed to it (`POST /api/sensors/{id}/poll`). |
+| `flow_create` | Create a flow from a spec (`POST /api/flows`), after you approve it. |
+| `sensor_create` | Create a sensor from a spec (`POST /api/sensors`), after you approve it. |
 
-A call to one of these creates an approval in the Inbox ("MCP client: flow_run", with the tool and its arguments) and
-holds the client's request open. Approve and it runs; deny (optionally with a comment) and the client gets a tool error and
-nothing runs. After **4 minutes** without an answer it expires and the client gets an error. That is under the 5-minute
-limit Claude Code applies to a silent HTTP call, but over the default tool timeout of some clients (Codex 60 s, omp
-30 s, pi 60 s), so the commands below raise it. Arguments are validated before anyone is asked: an invalid call fails
-without an approval.
+A call to one of these creates an approval in the Inbox ("MCP client: flow_run", with the tool and its arguments; for the
+create tools "Create flow: <id>" with the spec) and holds the client's request open. Approve and it runs; deny (optionally
+with a comment) and the client gets a tool error and nothing runs. After **4 minutes** without an answer it expires and the
+client gets an error. That is under the 5-minute limit Claude Code applies to a silent HTTP call, but over the default tool
+timeout of some clients (Codex 60 s, omp 30 s, pi 60 s), so the commands below raise it. Arguments are validated before
+anyone is asked: an invalid call fails without an approval.
 
-There is no tool to approve or deny, to change a flow, sensor or setting, or to run anything else. Operator approvals
-are ordinary approvals (`type: request`, no `flow_id` or `node_run_id`) and show in the Inbox, the menubar count, native
-notifications and `GET /api/approvals`. They expire when the daemon restarts, like per-tool approvals of agent runs, and
-decided ones are pruned with the retention setting.
+And two tools that talk to you:
+
+| Tool | What it does |
+|---|---|
+| `request_approval` | Ask you for a decision, with optional editable values. Opens an approval in the Inbox. |
+| `send_note` | Post a note to your Inbox and raise a notification. No approval. |
+
+There is no tool to approve or deny, to change or delete a flow, sensor or setting, or to run anything else. Operator
+approvals are ordinary approvals (`type: request`, no `flow_id` or `node_run_id`) and show in the Inbox, the menubar count,
+native notifications (with Approve and Deny) and `GET /api/approvals`. The ones a tool call waits on (`flow_run`,
+`sensor_poll`, the create tools) expire when the daemon restarts, like per-tool approvals of agent runs; a
+`request_approval` one does not (below). Decided ones are pruned with the retention setting.
+
+### Arguments
+
+**`flow_validate`, `sensor_validate`**: `spec` (string, required): the flow or sensor as YAML or JSON text, the same schema as
+a file under `flows/` or `sensors/` ([flows.md](flows.md)); `id` (string, optional): the id (file
+name) it would be stored under, otherwise the spec's top-level `id:`. Returns `{valid, id, id_available, errors, warnings}`;
+each finding has `severity`, `code`, `message` and, where known, `path`, `node_id` and `line`. It runs the validator behind
+`POST /api/flows/validate` (graph, fields, templates, references to sensors and prompts), so a spec that is valid here is
+accepted by `flow_create`, unless something changed in between.
+
+**`flow_create`, `sensor_create`**: the same `spec` and `id`. The spec is validated first. **Errors come back as a tool
+error that lists the findings and nobody is asked**, so the agent can fix the spec and call again. A valid spec raises the
+approval, which shows the id, the description, the spec as YAML and a summary: for a flow whether it is **enabled**, whether
+it is a dry run, the sensors it subscribes to, the prompts and custom tools its nodes use, and which nodes run code or
+start agents; for a sensor its schedule and language. The file is written only if you approve. **An existing id is refused**
+(before the approval and again when the file is written): these tools never overwrite; there is no tool that edits or
+deletes. A JSON spec is stored as block-style YAML.
+
+- **Enabled state.** A flow is created as the spec says. `enabled` defaults to `false` when the spec omits it, so a flow
+  without `enabled: true` is created **disabled** (and runs only when run by hand); the approval says which, so you see
+  `enabled: true` before you approve it. Dry run is likewise the spec's own `dry_run` (default false).
+- **Sensors** do nothing on a schedule until an enabled flow subscribes to them; with neither `interval` nor `cron` they run
+  only when polled. So a sensor created over MCP is inert until a flow you enabled subscribes to it.
+- **References.** Sensors and prompts a flow names must exist (the validator reports them), so create the sensor first.
+
+**`request_approval`**: `title` (string, required, at most 200 characters); `body` (markdown, at most 16 KiB); `priority`
+(`low`, `normal`, `high`, `urgent`; default `normal`); `editable` (up to 20 `{key, value}` entries the approver may change
+before approving: `key` is a dot-path such as `reply` or `draft.subject`, `value` any JSON value shown as the starting value:
+the Request approval node's editable fields); `timeout_seconds` (10 to 604800, default **86400** = 24 hours): how long the
+approval stays open; `wait_seconds` (0 to 240, default **240**): how long this call waits for you.
+
+It returns `{approval_id, status, decision, comment, decided_by, decided_at, values, edited, edits}`:
+
+- `decision` is `approved`, `denied` or `expired`, or `pending` when `wait_seconds` ran out with no decision (`status` is the
+  same word). `comment` is what you typed. `values` (approved only) is the final value of every editable field, `edits`
+  the ones you changed as `{before, after}`; a denial ignores edits.
+- **Polling pattern.** An MCP call must not sit silent for more than about 4 to 5 minutes, so `wait_seconds` is capped at 240
+  (the same limit as the other approvals). If you have not decided by then the call returns
+  `{approval_id, status: "pending", ...}` and the approval **stays open**. The agent polls `approval_get` with the
+  `approval_id` (for example every 30 to 60 s) and reads `result.decision`; `result` has the same shape as the call's own
+  return value. `wait_seconds: 0` creates the approval and returns at once.
+- It expires only after `timeout_seconds` (default 24 hours), then `decision` is `expired`. A daemon restart does not expire
+  it. At most 10 `request_approval` approvals can be open at once.
+- The agent cannot decide it: you approve or deny in the Inbox, the menubar or the notification, like any approval.
+
+**`send_note`**: `title` (required, one line, at most 200 characters); `body` (markdown, at most 16 KiB); `priority`
+(`low`, `normal`, `high`, `urgent`; default `normal`; `high` and `urgent` play the notification sound); `url` (an absolute
+http or https link, at most 2048 characters) with `link_label` (at most 100); `thread` (at most 64 characters: a new
+notification with the same thread replaces the previous native one). It creates an Inbox note, raises a notification through
+the normal path (the app, or terminal-notifier, per `notify_via` in [getting-started.md](getting-started.md)) and returns `{item_id, url}`.
+**Limits:** 5 notes per minute and 60 per hour per client; over that the call fails with a rate-limit error that says when to
+retry.
+
+### Attribution
+
+Everything created through MCP says where it came from: approvals carry `request.source: "mcp"` and `request.client`, notes
+have `source: "mcp"`, `client` and `thread_key` (`flow_id` `mcp`, `node_id` `send_note`), notifications use the flow id `mcp`
+and are titled with the client, and the daemon log records each raised approval, decision and note with the principal. The
+client name is the `clientInfo` the client sent in its MCP `initialize` request (`hal9001 mcp`, the stdio bridge, forwards
+its own client's), or its `User-Agent` when there was none. It is a label the client chooses, not an identity: the caller's
+identity is the authenticated principal, shown as "requested by" on the approval.
 
 ## Security
 
@@ -69,9 +141,11 @@ decided ones are pruned with the retention setting.
   headers (`Forwarded`, `X-Forwarded-*`, `Tailscale-*`). This holds even for a hostname in `allowed_hosts`: it is not
   reachable through `tailscale serve`. This is the DNS-rebinding protection the MCP specification asks for.
 - **Same auth as the API.** `/mcp` needs the `api` service ([auth.md](auth.md)). Each tool then calls its REST endpoint
-  with the same credentials, so `flow_run` and `sensor_poll` also need the `admin` service, exactly as `POST
-  /api/flows/{id}/run` does. With the default stack, `localhost-trust` admits both for any process on this Mac and no
-  credentials are needed.
+  with the same credentials, so `flow_run`, `sensor_poll` and the create tools also need the `admin` service, exactly as
+  `POST /api/flows/{id}/run` and `POST /api/flows` do; so do `request_approval` and `send_note`, which have no REST
+  endpoint of their own but change state the same way. The `admin` check happens before anything is asked or created, so a
+  client that is not admitted gets the 401 at once instead of after your approval. With the default stack,
+  `localhost-trust` admits both services for any process on this Mac and no credentials are needed.
 - **Credentials when your stack asks for a login.** There is no static MCP token: hal9001 authenticates with session
   cookies. Log in as in [auth.md](auth.md#logging-in-from-scripts) and pass the cookie: the `Cookie:
   hal9001_session=<id>` header for HTTP, or `HAL9001_SESSION_COOKIE=<id>` in the environment of the stdio command (the
