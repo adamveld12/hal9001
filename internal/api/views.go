@@ -782,11 +782,14 @@ func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
 }
 
 // requestApprovalView is the view of an approval raised by an approval node: it has no agent run, so its lineage
-// comes from the node run.
+// comes from the node run. An operator approval (an external MCP client's call) has neither, and no lineage.
 func (rv *resolver) requestApprovalView(a store.Approval) (approvalView, error) {
-	l, err := rv.lineageOfNodeRun(a.NodeRunID, "")
-	if err != nil {
-		return approvalView{}, err
+	var l lineage
+	if a.NodeRunID != "" {
+		var err error
+		if l, err = rv.lineageOfNodeRun(a.NodeRunID, ""); err != nil {
+			return approvalView{}, err
+		}
 	}
 	var req store.RequestApproval
 	if err := json.Unmarshal([]byte(a.Request), &req); err != nil {

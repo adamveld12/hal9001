@@ -20,6 +20,7 @@ import (
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 )
 
 // engineDouble stands in for core.Engine. Tests script the call they exercise;
@@ -154,6 +155,10 @@ type envOptions struct {
 	auth   *auth.Config
 	ui     http.Handler
 	assist core.Assist
+	// operator is the operator tool set served at /mcp; port and executable are what /api/mcp/info reports.
+	operator   *tools.Operator
+	port       int
+	executable string
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -188,7 +193,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.reloads.Add(1)
 			e.ws.Store(spec.Load(e.home))
 		},
-		Version: "test", UI: eo.ui, Assist: eo.assist,
+		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, Port: eo.port, Executable: eo.executable,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

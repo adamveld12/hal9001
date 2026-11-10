@@ -32,9 +32,9 @@ type InterruptResult struct {
 // transaction (REQUIREMENTS §7.2, §8):
 //
 //   - sensor runs, node runs, agent runs and flow runs in status running become interrupted;
-//   - pending tool_call approvals become expired (their agent process is gone),
-//     with the linked permission requests expired (decided_by timeout), and the
-//     agent runs and node runs that were waiting on them become interrupted;
+//   - pending tool_call approvals and operator approvals (request approvals with no node run) become expired (the
+//     agent process or MCP client waiting on them is gone), with the linked permission requests expired
+//     (decided_by timeout), and the agent runs and node runs that were waiting on them become interrupted;
 //   - a flow run in awaiting_approval with no node run left awaiting approval
 //     becomes interrupted;
 //   - queued rows and pending proposal approvals (and the runs waiting on
@@ -47,10 +47,10 @@ func (s *Store) MarkInterrupted(ctx context.Context) (InterruptResult, error) {
 		now := ts(s.now())
 		const msg = "daemon restarted"
 
-		// 1. Tool-call approvals die with their agent process.
+		// 1. Tool-call approvals die with their agent process, operator approvals with the MCP call that waited.
 		approvals, err := t.updateReturning(ctx, `UPDATE approvals SET status='expired', decided_by='system',
 			comment = CASE WHEN comment = '' THEN ? ELSE comment END, decided_at=?
-			WHERE status='pending' AND type='tool_call' RETURNING id`, msg, now)
+			WHERE status='pending' AND (type='tool_call' OR (type='request' AND node_run_id IS NULL)) RETURNING id`, msg, now)
 		if err != nil {
 			return fmt.Errorf("store: expire tool approvals: %w", err)
 		}
@@ -364,6 +364,11 @@ func (s *Store) Prune(ctx context.Context, now time.Time, retentionDays, dedupRe
 			if err := del(st.dst, st.resource, st.query, st.args...); err != nil {
 				return err
 			}
+		}
+		// Operator approvals (request approvals with no node run) belong to no run, so the cascade never reaches them.
+		var operatorApprovals int
+		if err := del(&operatorApprovals, ResApproval, `DELETE FROM approvals WHERE type = 'request' AND node_run_id IS NULL AND status <> 'pending' AND created_at < ?`, cutoff); err != nil {
+			return err
 		}
 		// The notification log is pruned silently: its rows are not shown in lists clients keep in sync.
 		if _, err := t.ExecContext(ctx, `DELETE FROM notifications WHERE created_at < ?`, cutoff); err != nil {

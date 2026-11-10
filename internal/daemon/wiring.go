@@ -12,6 +12,7 @@ import (
 	"hal9001/internal/notify"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 )
 
 // runtimeEngine is the engine as the daemon drives it: the core.Engine
@@ -41,17 +42,21 @@ type engineParams struct {
 
 // apiParams are the inputs of api.New (see wiring_engine.go).
 type apiParams struct {
-	Store     *store.Store
-	Home      string
-	Engine    core.Engine
-	Assist    core.Assist
-	Auth      *auth.Manager
-	MCP       api.MCPHub
-	Workspace func() *spec.Workspace
-	Reload    func()
-	BasePATH  string
-	Version   string
-	UI        http.Handler
-	Log       *slog.Logger
-	Sinks     *notify.Sinks
+	Store    *store.Store
+	Home     string
+	Engine   core.Engine
+	Assist   core.Assist
+	Auth     *auth.Manager
+	MCP      api.MCPHub
+	Operator *tools.Operator
+	// Port and Executable are what GET /api/mcp/info reports (see api.Options).
+	Port       int
+	Executable string
+	Workspace  func() *spec.Workspace
+	Reload     func()
+	BasePATH   string
+	Version    string
+	UI         http.Handler
+	Log        *slog.Logger
+	Sinks      *notify.Sinks
 }

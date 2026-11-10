@@ -17,21 +17,26 @@ import (
 // EnvMCPToken is the fallback of `hal9001 mcp --token`.
 const EnvMCPToken = "HAL9001_MCP_TOKEN" //nolint:gosec // an environment variable name, not a credential
 
-// mcpLeaf is the stdio MCP server hal injects into agent sessions. It proxies tools/list and tools/call to the
-// daemon's /api/mcp/ endpoints with the run's capability token; it holds no tool logic.
+// mcpLeaf is hal's stdio MCP server, in two modes. With a run token (`--token`, which hal passes to the agents it
+// starts) it serves that run's tools by proxying tools/list and tools/call to the daemon's /api/mcp/ endpoints. Without
+// one it is for a client the user runs themselves (Claude Code, Codex, omp, pi): it serves the daemon's operator tools
+// by bridging to its Streamable HTTP endpoint (POST /mcp), so both transports expose the same tools and the same
+// approvals. It holds no tool logic either way.
 func mcpLeaf() *leaf {
 	var token string
 	return &leaf{
 		maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
-			fs.StringVar(&token, "token", "", "per-run capability token (env "+EnvMCPToken+")")
+			fs.StringVar(&token, "token", "", "per-run capability token (env "+EnvMCPToken+"); without it, serve the operator tools of the daemon at --url")
 		},
 		run: func(ctx context.Context, c *call) error {
 			if token == "" {
 				token = c.env.Getenv(EnvMCPToken)
 			}
+			rc := io.NopCloser(c.env.Stdin)
+			wc := nopWriteCloser{c.env.Stdout}
 			if token == "" {
-				return usagef("mcp: --token is required")
+				return bridgeOperator(ctx, c, &mcp.IOTransport{Reader: rc, Writer: wc})
 			}
 			if !c.flagSet("url") && c.env.Getenv(EnvURL) == "" {
 				return usagef("mcp: --url is required (the daemon this run belongs to)")
@@ -45,8 +50,6 @@ func mcpLeaf() *leaf {
 			if err != nil {
 				return err
 			}
-			rc := io.NopCloser(c.env.Stdin)
-			wc := nopWriteCloser{c.env.Stdout}
 			return srv.Run(ctx, &mcp.IOTransport{Reader: rc, Writer: wc})
 		},
 	}
@@ -55,6 +58,68 @@ func mcpLeaf() *leaf {
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+// bridgeOperator serves the operator tools of the daemon at c.url over t (stdio): it connects to <url>/mcp with the
+// session cookie, if any, lists the tools once, and forwards each tools/call.
+func bridgeOperator(ctx context.Context, c *call, t mcp.Transport) error {
+	base := strings.TrimRight(c.url, "/")
+	var rt http.RoundTripper
+	if c.env.HTTP != nil {
+		rt = c.env.HTTP.Transport
+	}
+	hc := &http.Client{Transport: cookieTransport{rt: rt, cookie: cookieHeader(c.cookie)}} // no timeout: a call may wait for an approval
+	client := mcp.NewClient(&mcp.Implementation{Name: "hal9001-stdio", Version: "1"}, nil)
+	remote, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: base + "/mcp", HTTPClient: hc, DisableStandaloneSSE: true, MaxRetries: -1}, nil)
+	if err != nil {
+		return fmt.Errorf("mcp: cannot reach hal9001 at %s/mcp (is the daemon running? when its auth stack asks for a login, pass --session-cookie or set %s): %w", base, EnvSessionCookie, err)
+	}
+	defer func() { _ = remote.Close() }()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "hal9001", Version: "1"}, nil)
+	var cursor string
+	for {
+		page, err := remote.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+		if err != nil {
+			return fmt.Errorf("mcp: list tools: %w", err)
+		}
+		for _, tool := range page.Tools {
+			name := tool.Name
+			srv.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var args json.RawMessage
+				if req.Params != nil {
+					args = req.Params.Arguments
+				}
+				res, err := remote.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+				if err != nil {
+					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "hal9001: " + err.Error()}}}, nil
+				}
+				return res, nil
+			})
+		}
+		if cursor = page.NextCursor; cursor == "" {
+			break
+		}
+	}
+	return srv.Run(ctx, t)
+}
+
+// cookieTransport adds the session cookie to every request.
+type cookieTransport struct {
+	rt     http.RoundTripper
+	cookie string
+}
+
+func (t cookieTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rt := t.rt
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	if t.cookie != "" {
+		r = r.Clone(r.Context())
+		r.Header.Set("Cookie", t.cookie)
+	}
+	return rt.RoundTrip(r)
+}
 
 type mcpProxy struct {
 	base, token string

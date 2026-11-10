@@ -193,9 +193,26 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 			}
 			dec.Request = rq
 		}
+		var wait chan agent.ToolDecision
+		if ap.NodeRunID == "" { // an operator approval: an MCP call is blocked on it
+			e.waitMu.Lock()
+			wait = e.waiters[ap.ID]
+			e.waitMu.Unlock()
+			if wait == nil {
+				return nil, fmt.Errorf("%w: the MCP client is no longer waiting for this approval", core.ErrInvalidState)
+			}
+		}
 		decided, err := e.st.DecideApproval(ctx, ap.ID, dec)
 		if err != nil {
 			return nil, mapDecideErr(approvalID, err)
+		}
+		if wait != nil {
+			verdict := agent.VerdictDeny
+			if d.Approve {
+				verdict = agent.VerdictAllow
+			}
+			wait <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment}
+			return decided, nil
 		}
 		e.applyRequestDecision(decided.NodeRunID)
 		return decided, nil

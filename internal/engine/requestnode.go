@@ -209,6 +209,9 @@ func (e *Engine) expireRequests() {
 	}
 	now := time.Now().UTC()
 	for _, ap := range apps.Items {
+		if ap.NodeRunID == "" {
+			continue // an operator approval: the MCP call that waits on it expires it
+		}
 		if ap.ExpiresAt == nil || ap.ExpiresAt.After(now) {
 			continue
 		}
