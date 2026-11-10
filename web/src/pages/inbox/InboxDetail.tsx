@@ -1,3 +1,4 @@
+import { ExternalLink } from "../../components/ExternalLink";
 import { Link } from "react-router";
 import type { InboxItem, InboxPatch } from "../../api/inbox";
 import { CopyButton } from "../../components/CopyButton";
@@ -141,14 +142,9 @@ export function InboxDetail({
               return (
                 <li key={`${i}:${l.url}`} className="flex gap-2">
                   {href ? (
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="text-accent underline"
-                    >
+                    <ExternalLink href={href} className="text-accent underline">
                       {l.label || l.url}
-                    </a>
+                    </ExternalLink>
                   ) : (
                     <span>{l.label}</span>
                   )}
