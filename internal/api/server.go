@@ -352,6 +352,11 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"setEnvValue":    s.setEnvValue,
 		"deleteEnvValue": s.deleteEnvValue,
 
+		"getAgentRunSandboxLog":      s.getAgentRunSandboxLog,
+		"getNodeRunSandboxLog":       s.getNodeRunSandboxLog,
+		"downloadAgentRunSandboxLog": s.downloadAgentRunSandboxLog,
+		"downloadNodeRunSandboxLog":  s.downloadNodeRunSandboxLog,
+
 		"listSandboxes":    s.listSandboxes,
 		"getSandbox":       s.getSandbox,
 		"updateSandbox":    s.updateSandbox,

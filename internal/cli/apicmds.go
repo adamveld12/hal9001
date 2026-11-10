@@ -638,7 +638,10 @@ func nodeRunCmds() []*command {
 			return c.emit(resp)
 		},
 	}
-	return []*command{cmd("get", "show a node run with stdin, stdout, stderr and agent runs", get)}
+	return []*command{
+		cmd("get", "show a node run with stdin, stdout, stderr and agent runs", get),
+		cmd("sandbox-log", "show the sandbox log of a node run", sandboxLogLeaf("/api/node-runs/%s/sandbox-log")),
+	}
 }
 
 func agentRunCmds() []*command {
@@ -681,6 +684,57 @@ func agentRunCmds() []*command {
 		cmd("list", "list agent runs", list),
 		cmd("get", "show an agent run", idGet("/api/agent-runs/%s")),
 		cmd("events", "show an agent run's transcript events", events),
+		cmd("sandbox-log", "show the sandbox log of an agent run", sandboxLogLeaf("/api/agent-runs/%s/sandbox-log")),
+	}
+}
+
+// sandboxLogLeaf shows a run's sandbox log: JSON as the API returns it, a table of entries with --table, or the
+// downloadable text with --raw.
+func sandboxLogLeaf(format string) *leaf {
+	var after, limit int
+	var tail, raw bool
+	return &leaf{
+		usage: "<id> [--after-id N] [--limit N] [--tail] [--raw]", minArgs: 1, maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.IntVar(&after, "after-id", 0, "only entries with a greater id")
+			fs.IntVar(&limit, "limit", 0, "maximum entries to return")
+			fs.BoolVar(&tail, "tail", false, "return the newest entries instead of the oldest")
+			fs.BoolVar(&raw, "raw", false, "print the whole log as text (ignores the other flags)")
+		},
+		run: func(ctx context.Context, c *call) error {
+			path := fmt.Sprintf(format, esc(c.args[0]))
+			if raw {
+				resp, err := c.client().do(ctx, http.MethodGet, path+"/raw", nil, nil)
+				if err != nil {
+					return err
+				}
+				_, err = c.stdout().Write(resp.Body)
+				return err
+			}
+			qv := url.Values{}
+			if after > 0 {
+				qv.Set("after_id", strconv.Itoa(after))
+			}
+			if limit > 0 {
+				qv.Set("limit", strconv.Itoa(limit))
+			}
+			if tail {
+				qv.Set("tail", "true")
+			}
+			resp, err := c.client().do(ctx, http.MethodGet, path, qv, nil)
+			if err != nil {
+				return err
+			}
+			if c.table {
+				var doc struct {
+					Entries json.RawMessage `json:"entries"`
+				}
+				if json.Unmarshal(resp.Body, &doc) == nil && len(doc.Entries) > 0 {
+					return render(c.stdout(), doc.Entries, true, []string{"id", "ts", "level", "kind", "title"})
+				}
+			}
+			return c.emit(resp)
+		},
 	}
 }
 
