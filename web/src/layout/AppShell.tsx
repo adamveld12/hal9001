@@ -8,6 +8,7 @@ import { Badge, Kbd } from "../components/ui";
 import { cx } from "../lib/cx";
 import { isDark, setTheme, useTheme } from "../lib/theme";
 import { KillSwitch } from "./KillSwitch";
+import { UpdateBanner } from "./UpdateBanner";
 
 interface NavItem {
   to: string;
@@ -72,6 +73,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: "/sandboxes", label: "Sandboxes", icon: "box", key: "b" },
       { to: "/settings/auth", label: "Auth", icon: "lock", key: "u" },
       { to: "/settings/mcp", label: "MCP", icon: "code", key: "c" },
+      { to: "/settings/updates", label: "Updates", icon: "refresh" },
     ],
   },
 ];
@@ -390,6 +392,7 @@ export function AppShell() {
           </div>
         )}
         <main className="min-h-0 flex-1 overflow-auto">
+          <UpdateBanner />
           <Outlet />
         </main>
       </div>

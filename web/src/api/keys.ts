@@ -34,6 +34,7 @@ export const QUERY_ROOTS = [
   "prompt",
   "runtimes",
   "settings",
+  "update",
   "env",
   "sandboxes",
   "sandbox",

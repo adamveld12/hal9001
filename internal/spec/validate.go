@@ -185,6 +185,7 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 	}
 	c.enum("notify_min_priority", g.NotifyMinPriority, Priorities, false)
 	c.enum("notify_via", g.NotifyVia, NotifyVias, false)
+	c.enum("update_channel", g.UpdateChannel, UpdateChannels, false)
 	c.positiveDuration("approval_timeout", g.ApprovalTimeout, "approval_timeout")
 	c.positiveDuration("session_ttl", g.SessionTTL, "session_ttl")
 	for i, h := range g.AllowedHosts {

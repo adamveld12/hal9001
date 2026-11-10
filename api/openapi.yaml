@@ -48,6 +48,7 @@ tags:
   - {name: prompts, description: Prompt library}
   - {name: runtimes, description: Configured ACP runtimes}
   - {name: settings, description: Settings and environment keys}
+  - {name: update, description: 'macOS app self-update: state, check, install, installer reports'}
   - {name: sandboxes, description: 'Sandbox backends: config, environment, connectivity check'}
   - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
@@ -167,6 +168,10 @@ paths:
         and `notify_via` is `auto`, the daemon does not run terminal-notifier and routes notifications to channel `app`;
         the sink renders each `notification.created` event.
 
+        Update installer: the macOS app opens the stream with `types` including `update.install` and the header
+        `X-Hal9001-Updater: app` (honoured for callers granted `admin`). It receives `update.install` orders; no other
+        connection does, and they are never replayed. `update.status` goes to every subscriber.
+
         Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
         buffers. When the gap is larger than the buffer it sends `stream.resync`; clients must then refetch the
         resources they display.
@@ -198,6 +203,8 @@ paths:
         auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
         assist.updated: '#/components/schemas/AssistUpdatedEvent'
         assist.message: '#/components/schemas/AssistMessageEvent'
+        update.status: '#/components/schemas/UpdateStatusEvent'
+        update.install: '#/components/schemas/UpdateInstallEvent'
       parameters:
         - name: types
           in: query
@@ -215,6 +222,10 @@ paths:
         - name: X-Hal9001-Notifier
           in: header
           description: '`app` registers this connection as a notification sink (see the description).'
+          schema: {type: string, enum: [app]}
+        - name: X-Hal9001-Updater
+          in: header
+          description: '`app` registers this connection as the update installer (see the description).'
           schema: {type: string, enum: [app]}
         - name: Last-Event-ID
           in: header
@@ -252,6 +263,106 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/update:
+    get:
+      operationId: getUpdate
+      tags: [update]
+      summary: App update state
+      description: |
+        Whether the macOS app can update itself, the channel and auto-install settings, the newest release on the feed,
+        and where an install stands. The daemon checks the feed shortly after start, every 6 hours, on
+        `POST /api/update/check`, and when the channel changes. Changes are pushed as `update.status` on the stream.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Current update state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdateStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/update/check:
+    post:
+      operationId: checkUpdate
+      tags: [update]
+      summary: Check the update feed now
+      description: |
+        Fetches the manifest of the configured channel and returns the resulting state. A failed fetch is not an HTTP error:
+        it is reported in `error`. A check within 10 seconds of the last successful one returns the cached result.
+        Does nothing when updates are disabled.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: State after the check.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdateStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/update/install:
+    post:
+      operationId: installUpdate
+      tags: [update]
+      summary: Install the available update
+      description: |
+        Asks the installer (the macOS app, connected to the stream with `X-Hal9001-Updater: app`) to download, verify and
+        install the available update and relaunch. While flow runs are running a normal request is kept (`state: pending`)
+        and starts when none runs; with `force: true`, or when nothing runs, the order goes out at once (`state: installing`).
+        Requesting again while pending or installing is a no-op. The daemon is down for up to about two minutes after the
+        app relaunches (launchd re-registers the service); running work is interrupted by that restart.
+
+        409 `invalid-state` with `current_state`: `disabled` (updates are off), `not_available` (nothing newer is offered),
+        `no_installer` (the app is not connected: open it, or download the build by hand from `release_url`).
+        With auto-install (`update_auto_install`) the same order goes out by itself once no flow runs.
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateInstallRequest'}
+      responses:
+        '202':
+          description: The install was ordered (`installing`) or is waiting for flows to finish (`pending`).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdateStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/update/report:
+    post:
+      operationId: reportUpdate
+      tags: [update]
+      summary: Report install progress (installer app)
+      description: |
+        The installer app reports `downloading`, `verifying` and `installing` as it goes, and `failed` with an `error`
+        when it gives up. The daemon treats an install as lost after 10 minutes without a report. 409 `invalid-state`
+        (`current_state: not_installing`) when no install is running.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateReportRequest'}
+      responses:
+        '200':
+          description: State after the report.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UpdateStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
   /api/killswitch:
     get:
@@ -3564,6 +3675,7 @@ components:
             expected_hash: {type: string, description: The hash the client sent.}
             current_hash: {$ref: '#/components/schemas/NullableHash'}
             current_state: {type: string, description: 'For `invalid-state`: the state that blocks the operation, such as `approved` or `running`.'}
+            release_url: {type: string, description: 'For an install refused by `POST /api/update/install`: where to download the build by hand.'}
     LoginExpiredProblem:
       allOf:
         - {$ref: '#/components/schemas/Problem'}
@@ -4145,6 +4257,8 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        update_channel: {$ref: '#/components/schemas/UpdateChannel'}
+        update_auto_install: {type: boolean, default: false}
         session_ttl: {$ref: '#/components/schemas/Duration'}
         allowed_hosts: {type: array, items: {type: string}}
         allowed_logins: {type: array, items: {type: string}}
@@ -4207,6 +4321,100 @@ components:
         queued_agent_runs: {type: integer, minimum: 0}
         pending_approvals: {type: integer, minimum: 0}
         unread_inbox: {type: integer, minimum: 0, description: 'Unread, unarchived, non-dry-run items.'}
+    # ---------------------------------------------------------------- app updates (GET /api/update)
+    UpdateState:
+      type: string
+      enum: [disabled, idle, checking, up_to_date, available, pending, installing, error]
+      description: |
+        `disabled`: this daemon cannot update (see `disabled_reason`). `idle`: enabled, no check finished yet.
+        `checking`: a check is running and nothing is known yet. `up_to_date`: the feed offers nothing newer.
+        `available`: a newer build is offered. `pending`: an install was requested while flows run and starts when none
+        runs. `installing`: the macOS app is downloading, verifying or replacing the bundle (see `phase`). `error`: the
+        last install failed, or the last check failed and nothing newer is known (see `error`).
+    UpdateBuild:
+      type: object
+      description: The running app build, read from the Info.plist of the bundle the daemon lives in. Empty strings and 0 outside a bundle.
+      required: [bundle_id, version, build]
+      properties:
+        bundle_id: {type: string, examples: [dev.hal9001]}
+        version: {type: string, description: '`CFBundleShortVersionString`.', examples: [0.1.7]}
+        build: {type: integer, minimum: 0, description: '`CFBundleVersion`, the CI run number; 0 for a local build.'}
+    UpdateRelease:
+      type: object
+      description: A release on a channel's feed, as published in its manifest without the signature.
+      required: [schema, channel, version, build, commit, published_at, min_macos, url, size, sha256, notes_url, notes]
+      properties:
+        schema: {type: integer}
+        channel: {$ref: '#/components/schemas/UpdateChannel'}
+        version: {type: string}
+        build: {type: integer, minimum: 1}
+        commit: {type: string}
+        published_at: {$ref: '#/components/schemas/Timestamp'}
+        min_macos: {type: string, description: 'Lowest macOS version that runs the build; empty when unspecified.'}
+        url: {type: string, format: uri, description: 'The `.app.zip` the app downloads.'}
+        size: {type: integer, minimum: 0}
+        sha256: {type: string, pattern: '^[0-9a-fA-F]{64}$'}
+        notes_url: {type: string}
+        notes: {type: string}
+    UpdateManifest:
+      description: The full manifest of a release, with the Ed25519 `signature` (base64) over the bytes of the `.app.zip`.
+      allOf:
+        - {$ref: '#/components/schemas/UpdateRelease'}
+        - type: object
+          required: [signature]
+          properties:
+            signature: {type: string}
+    UpdateStatus:
+      type: object
+      description: |
+        State of app self-update. The daemon decides (checks the feed, applies the channel, idle detection and the
+        auto-install policy); the macOS app executes (download, verify, replace the bundle, relaunch) after it connects to
+        `GET /api/stream` with `X-Hal9001-Updater: app`. Only the release app (`dev.hal9001`, build > 0, with a signing
+        key) updates; otherwise `enabled` is false and `disabled_reason` says why.
+      required: [enabled, disabled_reason, current, channel, auto_install_when_idle, state, latest, available, pending, phase, busy, installer_connected, last_checked_at, error]
+      properties:
+        enabled: {type: boolean}
+        disabled_reason: {type: [string, 'null'], description: 'Why updates are off: not in an app bundle, dev build, local build (build 0), or no signing key embedded. Null when enabled.'}
+        current: {$ref: '#/components/schemas/UpdateBuild'}
+        channel: {$ref: '#/components/schemas/UpdateChannel'}
+        auto_install_when_idle: {type: boolean, description: 'The `update_auto_install` setting.'}
+        state: {$ref: '#/components/schemas/UpdateState'}
+        latest:
+          description: 'Newest release on the channel feed, even when it is not newer than `current` (`available` false). Null before the first successful check.'
+          oneOf:
+            - {$ref: '#/components/schemas/UpdateRelease'}
+            - {type: 'null'}
+        available: {type: boolean, description: '`latest.build` is greater than `current.build` and this macOS can run it. Downgrades are never offered.'}
+        pending: {type: boolean, description: 'An install was requested while flows run; it starts when none runs. Dropped when the installer app disconnects.'}
+        phase:
+          description: 'While `state` is `installing`: `requested` (the app was told), `downloading`, `verifying`, `installing` (replacing the bundle and relaunching). Null otherwise.'
+          type: [string, 'null']
+          enum: [requested, downloading, verifying, installing, null]
+        busy:
+          type: object
+          required: [running_runs]
+          properties:
+            running_runs: {type: integer, minimum: 0, description: 'Flow runs running now; a normal install waits until it is 0.'}
+        installer_connected: {type: boolean, description: 'The macOS app is connected as installer. Without it installs are refused (409) and auto-install does not fire.'}
+        last_checked_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        error: {type: [string, 'null'], description: 'The last install failure (kept until the next install request) or check failure.'}
+    UpdateInstall:
+      type: object
+      required: [manifest]
+      properties:
+        manifest: {$ref: '#/components/schemas/UpdateManifest'}
+    UpdateInstallRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        force: {type: boolean, default: false, description: 'Install now even while flows run. The daemon restart that follows the update interrupts them. Offered by the web UI only, behind a confirmation.'}
+    UpdateReportRequest:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: {type: string, enum: [downloading, verifying, installing, failed]}
+        error: {type: string, description: 'For `failed`: what went wrong, shown to the user.'}
     # ---------------------------------------------------------------- file resources (sensors, flows, prompts)
     SensorStatus:
       type: object
@@ -4698,6 +4906,8 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        update_channel: {$ref: '#/components/schemas/UpdateChannel'}
+        update_auto_install: {type: boolean, description: 'Install an available app update by itself once no flow is running.'}
     EnvKeyList:
       type: object
       required: [items]
@@ -5400,6 +5610,10 @@ components:
       description: |
         Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
         terminal-notifier. `app`: never terminal-notifier. `terminal-notifier`: always. `none`: logged only.
+    UpdateChannel:
+      type: string
+      enum: [stable, beta]
+      description: Release channel the macOS app updates from. Every main build is published to both; `beta` is where builds may be staged ahead of `stable`.
     Notification:
       type: object
       description: A rendered notification as logged and as sent in `notification.created`.
@@ -5990,6 +6204,8 @@ components:
         - auth_event.created
         - assist.updated
         - assist.message
+        - update.status
+        - update.install
     StreamEnvelope:
       type: object
       description: |
@@ -6030,6 +6246,8 @@ components:
         - {$ref: '#/components/schemas/AuthEventCreatedEvent'}
         - {$ref: '#/components/schemas/AssistUpdatedEvent'}
         - {$ref: '#/components/schemas/AssistMessageEvent'}
+        - {$ref: '#/components/schemas/UpdateStatusEvent'}
+        - {$ref: '#/components/schemas/UpdateInstallEvent'}
       discriminator:
         propertyName: type
         mapping:
@@ -6059,6 +6277,8 @@ components:
           auth_event.created: '#/components/schemas/AuthEventCreatedEvent'
           assist.updated: '#/components/schemas/AssistUpdatedEvent'
           assist.message: '#/components/schemas/AssistMessageEvent'
+          update.status: '#/components/schemas/UpdateStatusEvent'
+          update.install: '#/components/schemas/UpdateInstallEvent'
     StreamReady:
       type: object
       required: [server_time, version, last_event_id]
@@ -6302,3 +6522,22 @@ components:
           properties:
             type: {enum: [assist.message]}
             data: {$ref: '#/components/schemas/AssistStreamMessage'}
+    UpdateStatusEvent:
+      description: The updater state changed (check finished, install requested, started, progressed, failed, installer connected). `data` is `UpdateStatus`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [update.status]}
+            data: {$ref: '#/components/schemas/UpdateStatus'}
+    UpdateInstallEvent:
+      description: |
+        Order to install the available update: download `manifest.url`, verify it against the manifest's size, sha256 and
+        Ed25519 `signature`, replace the app bundle and relaunch. Delivered only to the installer connection (header
+        `X-Hal9001-Updater: app`, caller granted `admin`), never buffered for replay. `data` is `UpdateInstall`.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [update.install]}
+            data: {$ref: '#/components/schemas/UpdateInstall'}

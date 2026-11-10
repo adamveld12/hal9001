@@ -147,6 +147,8 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyMinPriority  *string        `json:"notify_min_priority"`
 		NotifyVia          *string        `json:"notify_via"`
 		ApprovalTimeout    *spec.Duration `json:"approval_timeout"`
+		UpdateChannel      *string        `json:"update_channel"`
+		UpdateAutoInstall  *bool          `json:"update_auto_install"`
 	}
 	if !decodeJSON(w, r, &patch, false) {
 		return
@@ -189,6 +191,16 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		set["approval_timeout"] = patch.ApprovalTimeout.String()
 	}
+	if patch.UpdateChannel != nil {
+		if !slices.Contains(spec.UpdateChannels, *patch.UpdateChannel) {
+			fieldProblem(w, "update_channel", "update_channel must be one of "+strings.Join(spec.UpdateChannels, ", "))
+			return
+		}
+		set["update_channel"] = *patch.UpdateChannel
+	}
+	if patch.UpdateAutoInstall != nil {
+		set["update_auto_install"] = *patch.UpdateAutoInstall
+	}
 	if len(set) == 0 {
 		fieldProblem(w, "", "set at least one setting to change")
 		return
@@ -230,6 +242,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reload()
+	s.pokeUpdate()
 	s.publishFileChange(spec.KindConfig, "")
 	raw, hash, _, err = s.configFile()
 	if err != nil {
@@ -256,8 +269,8 @@ func newErrors(before, after []spec.Diagnostic) []spec.Diagnostic {
 }
 
 // patchYAMLTopLevel sets top-level scalar keys of a YAML mapping document and
-// leaves everything else, comments included, as it was. Values are ints or
-// strings.
+// leaves everything else, comments included, as it was. Values are ints,
+// bools or strings.
 func patchYAMLTopLevel(raw []byte, set map[string]any) ([]byte, error) {
 	var doc yaml.Node
 	if len(bytes.TrimSpace(raw)) > 0 {
@@ -278,6 +291,8 @@ func patchYAMLTopLevel(raw []byte, set map[string]any) ([]byte, error) {
 		switch v := set[k].(type) {
 		case int:
 			val.Tag, val.Value = "!!int", strconv.Itoa(v)
+		case bool:
+			val.Tag, val.Value = "!!bool", strconv.FormatBool(v)
 		default:
 			val.Tag, val.Value = "!!str", fmt.Sprint(v)
 		}

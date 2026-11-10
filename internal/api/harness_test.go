@@ -21,6 +21,7 @@ import (
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
+	"hal9001/internal/update"
 )
 
 // engineDouble stands in for core.Engine. Tests script the call they exercise;
@@ -149,6 +150,7 @@ type env struct {
 	srv     *Server
 	ws      atomic.Pointer[spec.Workspace]
 	reloads atomic.Int32
+	upd     *update.Service // set when the test asked for one (withUpdate)
 }
 
 type envOptions struct {
@@ -159,6 +161,7 @@ type envOptions struct {
 	operator   *tools.Operator
 	port       int
 	executable string
+	update     func(e *env) update.Options
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -186,6 +189,9 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 		t.Fatal(err)
 	}
 	e.ws.Store(spec.Load(e.home))
+	if eo.update != nil {
+		e.upd = update.New(eo.update(e))
+	}
 	e.srv = New(Options{
 		Store: st, Home: e.home, Engine: e.eng, Auth: e.mgr,
 		Workspace: func() *spec.Workspace { return e.ws.Load() },
@@ -193,7 +199,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.reloads.Add(1)
 			e.ws.Store(spec.Load(e.home))
 		},
-		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, Port: eo.port, Executable: eo.executable,
+		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, Port: eo.port, Executable: eo.executable, Update: e.upd,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

@@ -47,8 +47,9 @@ func run() int {
 	api := firstNonEmpty(*apiURL, os.Getenv("HAL9001_URL"), profile.APIURL())
 	ui := strings.TrimRight(firstNonEmpty(os.Getenv("HAL9001_UI_URL"), api), "/")
 	a := &app{profile: profile, client: menubar.NewClient(api), ui: ui, userHome: userHome, exe: exe, launchctl: runLaunchctl}
+	a.installRoot = installRoot(profile, exe)
 	a.notif = &notifications{a: a}
-	slog.Info("hal9001-app starting", "version", version, "bundle", profile.BundleID, "api", api, "ui", ui)
+	slog.Info("hal9001-app starting", "version", version, "bundle", profile.BundleID, "api", api, "ui", ui, "update_installer", a.installRoot != "")
 	systray.Run(a.onReady, func() { a.cancel() })
 	return 0
 }

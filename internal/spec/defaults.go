@@ -48,6 +48,9 @@ func (c *Config) ApplyDefaults() {
 	if c.NotifyVia == "" {
 		c.NotifyVia = DefaultNotifyVia
 	}
+	if c.UpdateChannel == "" {
+		c.UpdateChannel = DefaultUpdateChannel
+	}
 	if c.ApprovalTimeout == 0 {
 		c.ApprovalTimeout = DefaultApprovalTimeout
 	}
@@ -106,6 +109,9 @@ func (c Config) Minimal() Config {
 	}
 	if c.NotifyVia == DefaultNotifyVia {
 		c.NotifyVia = ""
+	}
+	if c.UpdateChannel == DefaultUpdateChannel {
+		c.UpdateChannel = ""
 	}
 	if c.ApprovalTimeout == DefaultApprovalTimeout {
 		c.ApprovalTimeout = 0

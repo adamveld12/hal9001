@@ -50,7 +50,8 @@ func TestEmptyConfigGetsDefaults(t *testing.T) {
 			t.Fatalf("%q: %v %v", in, cfg, ds)
 		}
 		if cfg.MaxAgentRuns != 2 || cfg.MaxCommandRuns != 8 || cfg.RetentionDays != 30 || cfg.DedupRetentionDays != 180 ||
-			cfg.NotifyMinPriority != PriorityNormal || cfg.SessionTTL.Std() != 7*24*time.Hour || cfg.ApprovalTimeout.Std() != time.Hour {
+			cfg.NotifyMinPriority != PriorityNormal || cfg.SessionTTL.Std() != 7*24*time.Hour || cfg.ApprovalTimeout.Std() != time.Hour ||
+			cfg.UpdateChannel != UpdateChannelStable || cfg.UpdateAutoInstall {
 			t.Errorf("defaults wrong: %+v", cfg)
 		}
 	}
@@ -101,6 +102,7 @@ func TestConfigValidationErrors(t *testing.T) {
 		{"negative session ttl", "session_ttl: -1h\n", CodeInvalidValue, "session_ttl", "must not be negative"},
 		{"host with scheme", "allowed_hosts: ['https://x.ts.net']\n", CodeInvalidValue, "allowed_hosts[0]", "bare hostname"},
 		{"runtime without command", "runtimes: {x: {modes: {ask: a}}}\n", CodeRequired, "runtimes.x.command", "needs a command"},
+		{"update channel enum", "update_channel: nightly\n", CodeInvalidEnum, "update_channel", `"nightly" is not valid (one of stable | beta)`},
 		{"unknown module", "auth: {stacks: {default: [{module: pam, control: sufficient}]}}\n", CodeUnknownModule, "auth.stacks.default[0].module", `unknown auth module "pam"`},
 		{"control enum", "auth: {stacks: {default: [{module: password, control: maybe}]}}\n", CodeInvalidEnum, "auth.stacks.default[0].control", `"maybe" is not valid`},
 		{"service to missing stack", "auth: {services: {admin: nope}}\n", CodeUnknownStack, "auth.services.admin", `stack "nope", which is not defined`},

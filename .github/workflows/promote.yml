@@ -1,0 +1,125 @@
+name: promote
+
+# Promote an existing beta build to the stable channel without rebuilding:
+#   git tag stable/v0.1.42 v0.1.42 && git push origin stable/v0.1.42
+on:
+  push:
+    tags: ['stable/v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to promote, e.g. 0.1.42
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      INPUT_VERSION: ${{ inputs.version }}
+      REF_NAME: ${{ github.ref_name }}
+    steps:
+      - name: Resolve version
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="${REF_NAME#stable/v}"
+          fi
+          if ! echo "$version" | grep -Eq '^0\.1\.[0-9]+$'; then
+            echo "::error::cannot derive a version like 0.1.42 from '$version'"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=v$version" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check the release
+        run: |
+          if ! gh release view "$TAG" --json assets -q '.assets[].name' > assets.txt 2>/dev/null; then
+            echo "::error::release $TAG does not exist"
+            exit 1
+          fi
+          grep -qx update.json assets.txt || {
+            echo "::error::release $TAG has no update.json (it was built without the signing key and cannot be promoted)"
+            exit 1
+          }
+          release_commit=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            stable_commit=$(git rev-parse "refs/tags/stable/${TAG}^{commit}")
+            if [ "$stable_commit" != "$release_commit" ]; then
+              echo "::error::stable/$TAG points at $stable_commit but $TAG is $release_commit; create it with: git tag stable/$TAG $TAG && git push origin stable/$TAG"
+              exit 1
+            fi
+          fi
+
+      - name: Stable notes
+        run: |
+          prev=$(git tag --list 'stable/v*' --sort=-v:refname | grep -vx "stable/$TAG" | head -n 1 || true)
+          if [ -n "$prev" ]; then
+            range="$prev..refs/tags/$TAG"
+          else
+            range="refs/tags/$TAG"
+          fi
+          {
+            echo "## Changes since the previous stable release${prev:+ ($prev)}"
+            echo
+            git log --pretty='- %s (%h)' -n 200 "$range"
+          } > stable-notes.md
+
+      - name: Build stable manifest
+        run: |
+          mkdir -p dl manifests
+          gh release download "$TAG" --dir dl --pattern update.json --pattern '*.app.zip'
+          zip=$(ls dl/*.app.zip)
+          go run ./cmd/hal9001-release promote \
+            --manifest dl/update.json \
+            --zip "$zip" \
+            --channel stable \
+            --notes-file stable-notes.md \
+            --out manifests/stable.json
+          grep -q "\"version\": \"$VERSION\"" manifests/stable.json || {
+            echo "::error::update.json does not describe version $VERSION"
+            exit 1
+          }
+
+      - name: Publish stable
+        run: |
+          date=$(date -u +%Y-%m-%d)
+          gh release view "$TAG" --json body -q .body > body-old.md
+          if grep -q '^Promoted to stable on ' body-old.md; then
+            cp body-old.md body-new.md
+          else
+            { echo "Promoted to stable on $date"; echo; cat stable-notes.md; echo; echo "---"; echo; cat body-old.md; } > body-new.md
+          fi
+          if ! gh release view channels >/dev/null 2>&1; then
+            gh release create channels \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Update channels" \
+              --notes "Update manifests (beta.json from every main build, stable.json from stable/v* promotions) read by the HAL9001 app updater. Managed by CI; do not edit."
+          fi
+          gh release upload channels manifests/stable.json --clobber
+          gh release edit "$TAG" --prerelease=false --latest --notes-file body-new.md
+          if [ "$EVENT" = "workflow_dispatch" ] && ! git ls-remote --exit-code --tags origin "stable/$TAG" >/dev/null 2>&1; then
+            git tag "stable/$TAG" "refs/tags/$TAG"
+            git push origin "refs/tags/stable/$TAG"
+          fi

@@ -38,5 +38,6 @@ func newAPI(p apiParams) http.Handler {
 		UI:         p.UI,
 		Log:        p.Log,
 		Sinks:      p.Sinks,
+		Update:     p.Update,
 	})
 }
