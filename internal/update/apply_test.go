@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -111,7 +110,7 @@ func (e *applyEnv) publish(build int, payload []byte) Manifest {
 	return Manifest{
 		Schema: 1, Channel: "stable", Version: fmt.Sprintf("0.1.%d", build), Build: build,
 		URL: srv.URL + "/HAL9001.zip", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:]),
-		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(e.priv, payload)),
+		Signature: Sign(e.priv, payload),
 	}
 }
 
@@ -266,7 +265,7 @@ func TestApplyDiscardsADownloadThatFailsVerification(t *testing.T) {
 		message string // or a text it must contain
 	}{
 		{"signed by another key", func(m *Manifest) {
-			m.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(other, applyPayload(6)))
+			m.Signature = Sign(other, applyPayload(6))
 		}, ErrSignatureMismatch, ""},
 		{"another hash", func(m *Manifest) { m.SHA256 = strings.Repeat("0", 64) }, ErrSHA256Mismatch, ""},
 		{"another size", func(m *Manifest) { m.Size++ }, nil, "announces"},
