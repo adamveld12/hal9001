@@ -49,6 +49,13 @@ Manual checklist for what tests can't cover: [macos-app.md](macos-app.md). Authe
 - DMG installer: drag-to-Applications window with eye-and-arrow background, built without Finder;
   `mise run dmg:check` verifies it.
 
+### How to update
+
+The release app updates itself from GitHub releases. With "Install updates automatically when idle" on (Settings >
+Updates) it installs once no flow is running. Otherwise click **Install & Restart** in the web UI banner or the menu, or
+run `hal9001 update install`; `hal9001 update` shows the state. Without the app (headless), download the new DMG from the
+[Releases page](https://github.com/adamveld12/hal9001/releases). Details: [docs/macos-app.md](macos-app.md#updates).
+
 ## Agents: all access goes through hal9001
 
 Details: [design/agent-access.md](design/agent-access.md), [runtimes.md](runtimes.md).

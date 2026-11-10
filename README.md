@@ -228,6 +228,7 @@ usage: hal9001 <command> [flags]
   approvals   list, approve and deny approvals
   inbox       list items; mark read, starred, archived; clear in bulk
   queue       list the run queue; remove runs from it
+  update      show, check and install app updates
   killswitch  pause and resume the daemon
   runtimes    list and probe ACP runtimes
   settings    show settings
@@ -298,6 +299,9 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `inbox get <id>` | |
 | `inbox read <id>` / `star <id>` / `archive <id>` | `--unread` / `--off` / `--undo` reverse the action. |
 | `inbox archive` / `read` / `delete` (bulk) | Select with `<id>`, `--ids a,b`, `--all` or filter flags `--state read\|unread`, `--starred`, `--archived`, `--priority`, `--max-priority`, `--flow`, `--q`, `--older-than 7d`, `--dry-run-flows`. Starred items are kept unless `--include-starred`. `--preview` only counts; filter-based runs ask for confirmation on a terminal (`--yes` skips it). `archive --undo` unarchives; `read --unread` marks unread. `delete` is permanent and only removes archived items (others are skipped and counted). |
+| `update` / `update status` | App update state as a table; `--json` for the raw response. |
+| `update check` | Check the update feed now. |
+| `update install` | Install the available update once no flow runs (never forces; the web UI offers Force). Prints `pending until flows finish`, `installing`, or the refusal with the download URL when the app is not connected. |
 | `killswitch get` / `resume` | |
 | `killswitch pause` | `--kill` (also terminate running nodes), `--reason text` |
 | `runtimes list` | |

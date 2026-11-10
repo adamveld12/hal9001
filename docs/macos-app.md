@@ -33,6 +33,9 @@ The daemon decides, the menubar app executes; the daemon never replaces the app 
 - **After the swap** launchd refuses to start a daemon binary whose bundle was just replaced (exit 78) for up to about
   two minutes, see Known quirk. The new app registers the service again and retries for about 4 minutes; the menu shows
   **Updating service… (up to 2 min)** and the web UI is unreachable meanwhile.
+- **How to update.** Automatically when idle, if `update_auto_install` is on. Otherwise click **Install & Restart** in the
+  web banner or the menu, run `hal9001 update` (state) and `hal9001 update install`, or change both settings under
+  Settings > Updates. Headless or without the app: download the DMG from the GitHub Releases page.
 - **Headless / no app.** Without the app connected as installer a request is refused with `409` (`no_installer`) and a
   link to download the build by hand; auto-install does not fire. A daemon with no signing key or outside a bundle
   updates by installing a new app manually.
@@ -122,6 +125,17 @@ updates) and a newer build on the feed of its channel.
       Restart. An alert says the folder is not writable and to download the update manually from the releases page; the
       menu shows **Update failed: …** with Install & Restart again, and the app keeps running.
 - [ ] The dev app (HAL9001 Dev) never shows update items.
+- [ ] Web UI: while an update is available a banner above every page reads **Update available: HAL9001 <version>** with
+      **Release notes** and **Install & Restart**; **Dismiss** hides it for that version (it returns for the next).
+- [ ] Web UI with a flow run in progress: Install & Restart turns the banner into **Update <version> will install when N
+      running flow(s) finish** with **Force install now**; Force asks "Running flows will be interrupted" and only
+      installs after you confirm. While installing the banner reads **Installing update (…)… HAL9001 will restart.**
+- [ ] Web UI with the app quit: the banner shows the hint to open the app or download the build; Install & Restart
+      shows the refusal and a link to the release page.
+- [ ] Settings > Updates shows version/build, channel select, the auto-install switch, state, last checked and the
+      latest version with notes; **Check now** refreshes them. On a dev or local build it shows why updates are off.
+- [ ] `hal9001 update` prints the same state; `hal9001 update install` prints "pending until flows finish" or
+      "installing" and never interrupts running flows.
 
 ## Known quirk
 

@@ -564,3 +564,61 @@ func TestVersionPrintsTheBuildVersion(t *testing.T) {
 		t.Errorf("version = %q (exit %d)", res.stdout, res.code)
 	}
 }
+
+func updateStatusBody(state string, available bool) map[string]any {
+	return map[string]any{
+		"enabled": true, "disabled_reason": nil,
+		"current": map[string]any{"bundle_id": "dev.hal9001", "version": "0.1.1", "build": 1},
+		"channel": "stable", "auto_install_when_idle": false, "state": state,
+		"latest": map[string]any{"schema": 1, "channel": "stable", "version": "0.1.2", "build": 2, "commit": "abc",
+			"published_at": "2026-11-10T12:00:00Z", "min_macos": "13.0", "url": "https://example.com/a.zip", "size": 10,
+			"sha256": strings.Repeat("a", 64), "notes_url": "https://example.com/n", "notes": ""},
+		"available": available, "pending": state == "pending", "phase": nil,
+		"busy": map[string]any{"running_runs": 1}, "installer_connected": true,
+		"last_checked_at": nil, "error": nil,
+	}
+}
+
+func TestUpdateCommands(t *testing.T) {
+	t.Run("bare update prints the status table", func(t *testing.T) {
+		f := newFakeDaemon(t)
+		f.on("GET /api/update", ok(updateStatusBody("available", true)))
+		res := f.run(runOpts{}, "update")
+		if res.code != 0 || !strings.Contains(res.stdout, "0.1.2 (build 2)") || !strings.Contains(res.stdout, "available") {
+			t.Fatalf("exit %d stdout %q stderr %q", res.code, res.stdout, res.stderr)
+		}
+	})
+	t.Run("status --json prints the body", func(t *testing.T) {
+		f := newFakeDaemon(t)
+		f.on("GET /api/update", ok(updateStatusBody("up_to_date", false)))
+		res := f.run(runOpts{}, "update", "status", "--json")
+		if res.code != 0 || !strings.Contains(res.stdout, `"state": "up_to_date"`) {
+			t.Fatalf("exit %d stdout %q", res.code, res.stdout)
+		}
+	})
+	t.Run("install never forces and reports pending", func(t *testing.T) {
+		f := newFakeDaemon(t)
+		f.on("POST /api/update/install", canned{status: 202, body: updateStatusBody("pending", true)})
+		res := f.run(runOpts{}, "update", "install")
+		req := f.only()
+		if res.code != 0 || !jsonEqual(t, req.Body, map[string]any{"force": false}) || !strings.Contains(res.stdout, "pending until flows finish") {
+			t.Fatalf("exit %d body %s stdout %q", res.code, req.Body, res.stdout)
+		}
+	})
+	t.Run("install without an installer shows the release URL", func(t *testing.T) {
+		f := newFakeDaemon(t)
+		f.on("POST /api/update/install", problem(409, "invalid-state", "Conflict", "Open the HAL9001 app to install",
+			map[string]any{"current_state": "no_installer", "release_url": "https://example.com/rel"}))
+		res := f.run(runOpts{}, "update", "install")
+		if res.code == 0 || !strings.Contains(res.stderr, "https://example.com/rel") {
+			t.Fatalf("exit %d stderr %q", res.code, res.stderr)
+		}
+	})
+	t.Run("check posts to the check endpoint", func(t *testing.T) {
+		f := newFakeDaemon(t)
+		f.on("POST /api/update/check", ok(updateStatusBody("up_to_date", false)))
+		if res := f.run(runOpts{}, "update", "check"); res.code != 0 {
+			t.Fatalf("exit %d stderr %q", res.code, res.stderr)
+		}
+	})
+}
