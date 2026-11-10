@@ -1,0 +1,82 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      HAL9001_RELEASE_VERSION: 0.1.${{ github.run_number }}
+      HAL9001_RELEASE_BUILD: ${{ github.run_number }}
+      HAL9001_APP_INSTALL_DIR: none
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: Test
+        run: mise exec -- go test -short ./...
+
+      - name: Build app and DMG
+        run: |
+          mise run release
+          mise run dmg:check
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp "bin/HAL9001-${HAL9001_RELEASE_VERSION}.dmg" dist/
+          ditto -c -k --keepParent bin/HAL9001.app "dist/HAL9001-${HAL9001_RELEASE_VERSION}.app.zip"
+          (cd dist && shasum -a 256 *.dmg *.zip > SHA256SUMS)
+
+      - name: Release notes
+        run: |
+          sha=$(git rev-parse HEAD)
+          prev=$(git tag --list 'v0.1.*' --sort=-v:refname | head -n 1)
+          if [ -n "$prev" ]; then
+            range="$prev..HEAD"
+          else
+            range="HEAD"
+          fi
+          {
+            echo "## Changes"
+            echo
+            git log --pretty='- %s (%h)' -n 200 "$range"
+            echo
+            echo "Commit: $sha"
+            echo
+            echo "## Install"
+            echo
+            echo "Open the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: the first time, right-click it and choose Open."
+          } > notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HAL9001-${{ env.HAL9001_RELEASE_VERSION }}
+          path: dist/*
+
+      - name: Publish release
+        run: |
+          gh release create "v${HAL9001_RELEASE_VERSION}" \
+            --target "$GITHUB_SHA" \
+            --title "HAL9001 ${HAL9001_RELEASE_VERSION}" \
+            --notes-file notes.md \
+            dist/*.dmg dist/*.app.zip dist/SHA256SUMS

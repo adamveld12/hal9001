@@ -9,6 +9,8 @@
 #
 # Environment:
 #   HAL9001_APP_INSTALL_DIR  where to install the dev copy (default ~/Applications; "none" skips the install)
+#   HAL9001_RELEASE_VERSION  CI: dotted version (e.g. 0.1.7) used for CFBundleShortVersionString and the full version
+#   HAL9001_RELEASE_BUILD    CI: CFBundleVersion (default: the unix time); must increase with every release
 #   HAL9001_APP_DEV_HOME     dev build only: daemon home its bundled service uses (default ~/.hal9001)
 #   HAL9001_APP_DEV_PORT     dev build only: daemon port its bundled service uses (default 9001)
 set -euo pipefail
@@ -25,7 +27,11 @@ short=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
 [[ $short =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || short=0.0.0
 # CFBundleVersion changes with every build: launchd refreshes the cdhash it pins a registered agent to only when the
 # bundle version changes, so a same-version rebuild would leave the old registration unable to start.
-build=$(date +%s)
+build=${HAL9001_RELEASE_BUILD:-$(date +%s)}
+if [ -n "${HAL9001_RELEASE_VERSION:-}" ]; then
+  version=$HAL9001_RELEASE_VERSION
+  short=$HAL9001_RELEASE_VERSION
+fi
 
 stage=bin/app-build
 rm -rf "$stage"

@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 app=bin/HAL9001.app
 [ -d "$app" ] || { echo "$app is missing: run \`mise run app\` first" >&2; exit 1; }
 
-version=$(git describe --always --dirty | sed 's/^v//')
+version=${HAL9001_RELEASE_VERSION:-$(git describe --always --dirty | sed 's/^v//')}
 out=bin/HAL9001-$version.dmg
 work=bin/dmg-build
 
