@@ -15,7 +15,7 @@ The daemon decides, the menubar app executes; the daemon never replaces the app 
   build (build 0), the dev app, a daemon outside an app bundle (`hal9001 serve`, a headless service) and a build without a
   key report `enabled: false` and a `disabled_reason` in `GET /api/update`.
 - **Channels.** Setting `update_channel`: `stable` (default) or `beta`, each a signed manifest at
-  `https://github.com/adamveld12/hal9001/releases/download/channels/<channel>.json` (override with `HAL9001_UPDATE_FEED_URL`
+  `https://adamveld12.github.io/hal9001/<channel>.json` (GitHub Pages, `gh-pages` branch; override with `HAL9001_UPDATE_FEED_URL`
   for tests). Every main build goes to `beta`; `stable` gets builds promoted with a `stable/v0.1.N` tag (see [releases.md](releases.md)). A channel without a manifest yet (404) counts as up to date. The daemon checks shortly after start, every 6 hours, on
   `POST /api/update/check` (menu: Check for updates) and when the channel changes. An update is offered only when its
   build number is greater than the running build and the Mac's macOS meets `min_macos`; a downgrade is never offered.

@@ -17,8 +17,9 @@ import (
 
 // Feed and timing defaults.
 const (
-	// DefaultFeedBase holds <channel>.json for each channel. The repository is public, so no credentials are sent.
-	DefaultFeedBase = "https://github.com/adamveld12/hal9001/releases/download/channels"
+	// DefaultFeedBase holds <channel>.json for each channel, served by GitHub Pages from the gh-pages branch (releases are
+	// immutable, so they cannot host files CI rewrites). The repository is public, so no credentials are sent.
+	DefaultFeedBase = "https://adamveld12.github.io/hal9001"
 	// EnvFeedURL overrides DefaultFeedBase (tests and the e2e harness).
 	EnvFeedURL = "HAL9001_UPDATE_FEED_URL"
 	// ReleasesURL is where a person downloads a build by hand.

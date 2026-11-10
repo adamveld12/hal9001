@@ -103,27 +103,48 @@ jobs:
           cp manifests/beta.json dist/update.json
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
+      # Releases are immutable once published (assets and tag are locked), so a rerun of this workflow (same run number,
+      # same tag) can neither repair nor replace v0.1.N. If it is complete, reuse it; if not, fail.
       - name: Publish release
         run: |
+          tag="v${HAL9001_RELEASE_VERSION}"
           assets=(dist/*.dmg dist/*.app.zip dist/SHA256SUMS)
+          want=("HAL9001-${HAL9001_RELEASE_VERSION}.dmg" "HAL9001-${HAL9001_RELEASE_VERSION}.app.zip" SHA256SUMS)
           if [ "${{ steps.manifest.outputs.signed }}" = "true" ]; then
             assets+=(dist/update.json)
+            want+=(update.json)
           fi
-          gh release create "v${HAL9001_RELEASE_VERSION}" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "HAL9001 ${HAL9001_RELEASE_VERSION}" \
-            --notes-file notes.md \
-            "${assets[@]}"
+          if gh release view "$tag" --json assets -q '.assets[].name' > existing-assets.txt 2> release-view.err; then
+            missing=""
+            for a in "${want[@]}"; do
+              grep -qxF "$a" existing-assets.txt || missing="$missing $a"
+            done
+            if [ -n "$missing" ]; then
+              echo "::error::release $tag already exists but is missing:$missing. Immutable releases cannot be repaired (assets cannot be added and the tag cannot be reused); push a new commit to get the next build number."
+              exit 1
+            fi
+            echo "release $tag already exists with all assets; not creating it again"
+            if [ "${{ steps.manifest.outputs.signed }}" = "true" ]; then
+              # This build's zip is not byte-identical to the published one, so publish the manifest that ships with the release.
+              gh release download "$tag" --pattern update.json --dir existing-release --clobber
+              cp existing-release/update.json manifests/beta.json
+            fi
+          elif grep -q 'release not found' release-view.err; then
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "HAL9001 ${HAL9001_RELEASE_VERSION}" \
+              --notes-file notes.md \
+              "${assets[@]}"
+          else
+            cat release-view.err
+            echo "::error::could not look up release $tag"
+            exit 1
+          fi
 
-      - name: Publish channel manifests
+      # The update feed lives on GitHub Pages (gh-pages branch), not in a release: immutable releases cannot be updated.
+      # The push retries on its own when promote.yml pushes the other channel at the same time.
+      - name: Publish beta manifest
         if: steps.manifest.outputs.signed == 'true'
         run: |
-          if ! gh release view channels >/dev/null 2>&1; then
-            gh release create channels \
-              --prerelease \
-              --target "$GITHUB_SHA" \
-              --title "Update channels" \
-              --notes "Update manifests (beta.json from every main build, stable.json from stable/v* promotions) read by the HAL9001 app updater. Managed by CI; do not edit."
-          fi
-          gh release upload channels manifests/*.json --clobber
+          scripts/publish-feed.sh manifests/beta.json "beta: ${HAL9001_RELEASE_VERSION}"
