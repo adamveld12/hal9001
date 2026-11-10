@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.8",
-  "build": 8,
-  "commit": "3aea5e4da29366b6c1f32dbab3459c0a40e45760",
-  "published_at": "2026-11-10T22:16:43Z",
+  "version": "0.1.9",
+  "build": 9,
+  "commit": "ca4c07be8174893f9a4554c1217420b63921779c",
+  "published_at": "2026-11-10T22:20:48Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.8/HAL9001-0.1.8.app.zip",
-  "size": 27637622,
-  "sha256": "344845abaf41cd53753b39aa4069d745cde7e259498fcb395dae19db32fd095d",
-  "signature": "2/c1qgHPDdahWV6YNQ9ykTPJzHR6PwI8+R4p6dnV7fyiYCaLna5ZPL8K1r9mWkhzp8yC1HU6ccMdKAHVI+bqDg==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.8",
-  "notes": "## Changes\n\n- Publish update manifests on GitHub Pages (gh-pages); make release.yml rerun-safe (#7) (3aea5e4)\n\nCommit: 3aea5e4da29366b6c1f32dbab3459c0a40e45760\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.9/HAL9001-0.1.9.app.zip",
+  "size": 27637912,
+  "sha256": "7d3dd13ba94aa399af5889ffbec493279f2d341e91c14c535c3218d88c0a4d2f",
+  "signature": "yeth2GkFRM6wRGT98VX2pBdNPOKIDAlXoOTV7cLuO1W+tt+XaTnc+YZf5zfIQFMOVmBepO6Pw8ITTPO9KLFEAg==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.9",
+  "notes": "## Changes\n\n- Assist drawer: keep keyboard focus in the composer after send or approval (#6) (ca4c07b)\n\nCommit: ca4c07be8174893f9a4554c1217420b63921779c\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
