@@ -452,3 +452,26 @@ func TestAgentDyingAtStartupReportsItsStderr(t *testing.T) {
 		t.Errorf("error lacks the agent's stderr: %q", rec.Error)
 	}
 }
+
+// A bare command name resolves against the PATH the agent will get (the login-shell PATH the daemon
+// hands to its children), not the PATH of the daemon process: under launchd that one is minimal.
+func TestRuntimeCommandResolvesAgainstTheChildPATH(t *testing.T) {
+	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{msg("hello")}}}})
+	bin := t.TempDir()
+	if err := os.Symlink(fakeBin, filepath.Join(bin, "agent-on-child-path")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "/usr/bin:/bin") // the daemon's own PATH does not contain it
+	e.exec.Environ = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin")
+	req := e.req(agent.ModeAuto, "")
+	req.Config.Command = []string{"agent-on-child-path", "--script", e.script}
+	if rec := e.run(req); rec.Status != agent.StatusSucceeded {
+		t.Fatalf("status=%s reason=%s err=%q", rec.Status, rec.FailureReason, rec.Error)
+	}
+
+	e.exec.Environ = append(os.Environ(), "PATH=/usr/bin:/bin")
+	rec := e.run(req)
+	if rec.FailureReason != agent.ReasonSpawn || !strings.Contains(rec.Error, "/usr/bin:/bin") || !strings.Contains(rec.Error, "hal9001 runtimes probe") {
+		t.Errorf("reason=%s err=%q: the spawn error must name the PATH searched and the fix", rec.FailureReason, rec.Error)
+	}
+}

@@ -2,15 +2,17 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"hal9001/internal/runner"
 )
 
 // process is a spawned agent in its own process group.
@@ -54,13 +56,26 @@ func startProcess(argv []string, dir string, env []string) (*process, error) {
 		return nil, err
 	}
 	p := &process{stderr: &tailBuffer{max: 64 << 10}, done: make(chan struct{}), stderrDone: make(chan struct{})}
-	cmd := exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // argv is the configured runtime command
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdin = inR
-	cmd.Stdout = outW
-	cmd.Stderr = errW
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Resolve against the PATH the child will get: exec.Command would search the daemon's own PATH
+	// (launchd's minimal one) and ignore cmd.Env.
+	pathEnv := envValue(env, "PATH")
+	path, err := runner.LookPath(argv[0], pathEnv)
+	if err != nil {
+		for _, f := range []*os.File{inR, inW, outR, outW, errR, errW} {
+			_ = f.Close()
+		}
+		return nil, fmt.Errorf("command %q not found on PATH %q (set an absolute command path in the runtime in config.yaml, or run `hal9001 runtimes probe <name>`): %w", argv[0], pathEnv, exec.ErrNotFound)
+	}
+	cmd := &exec.Cmd{
+		Path:        path,
+		Args:        argv,
+		Dir:         dir,
+		Env:         env,
+		Stdin:       inR,
+		Stdout:      outW,
+		Stderr:      errW,
+		SysProcAttr: &syscall.SysProcAttr{Setpgid: true},
+	}
 	if err := cmd.Start(); err != nil {
 		for _, f := range []*os.File{inR, inW, outR, outW, errR, errW} {
 			_ = f.Close()
@@ -232,6 +247,21 @@ func (t *teeReader) Read(b []byte) (int, error) {
 
 // buildEnv layers the base environment, the runtime env, the policy-specific
 // env and per-run extras (later entries win).
+// envValue returns the last value of key in an environ slice (the one a child sees);
+// without the key it falls back to this process's own value.
+func envValue(env []string, key string) string {
+	val, found := "", false
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			val, found = v, true
+		}
+	}
+	if !found {
+		return os.Getenv(key)
+	}
+	return val
+}
+
 func buildEnv(base []string, layers ...map[string]string) []string {
 	env := append([]string(nil), base...)
 	for _, m := range layers {

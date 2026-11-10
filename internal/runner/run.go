@@ -104,7 +104,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	}
 	res.Argv = argv
 
-	path, err := lookPath(argv[0], env["PATH"])
+	path, err := LookPath(argv[0], env["PATH"])
 	if err != nil {
 		return res, err
 	}
@@ -317,9 +317,10 @@ func envSlice(env map[string]string) []string {
 	return out
 }
 
-// lookPath resolves name against the child's PATH (not the daemon's), so a PATH
-// captured from the login shell applies to interpreter lookup too.
-func lookPath(name, pathEnv string) (string, error) {
+// LookPath resolves name against pathEnv (the child's PATH, not the daemon's:
+// exec.LookPath would ignore cmd.Env), so a PATH captured from the login shell
+// applies to command lookup too. A name containing "/" is returned unchanged.
+func LookPath(name, pathEnv string) (string, error) {
 	if strings.Contains(name, "/") {
 		return name, nil // relative paths resolve against cmd.Dir
 	}

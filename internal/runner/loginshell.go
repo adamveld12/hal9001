@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -58,4 +59,45 @@ func LoginShellPATH(ctx context.Context, shell string, timeout time.Duration) (s
 		return "", errors.New("login shell PATH: shell reported an empty PATH")
 	}
 	return path, nil
+}
+
+// WellKnownPATHDirs are the directories where user-level tools (mise, homebrew
+// binaries, curl-installed CLIs) normally live. They are appended to a captured
+// PATH when missing, because a login shell does not see directories that only an
+// interactive rc file adds, and launchd gives the daemon almost nothing.
+func WellKnownPATHDirs(home string) []string {
+	dirs := []string{"/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+	if home != "" {
+		dirs = append([]string{
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, ".local", "share", "mise", "shims"),
+		}, dirs...)
+	}
+	return dirs
+}
+
+// EffectivePATH returns base (the login-shell PATH, or the process PATH when the
+// capture failed) followed by every existing well-known directory it lacks.
+// Entries already in base keep their position, so the user's ordering wins.
+func EffectivePATH(base, home string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range filepath.SplitList(base) {
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	for _, d := range WellKnownPATHDirs(home) {
+		if seen[d] {
+			continue
+		}
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return strings.Join(out, string(os.PathListSeparator))
 }

@@ -78,11 +78,13 @@ func TestServeUnderLaunchdLogsToAFileAndUsesTheLoginShellPATH(t *testing.T) {
 	user := t.TempDir()
 	var got daemon.Options
 	var logged string
+	setenv := map[string]string{}
 	opts := runOpts{
 		env: map[string]string{"HAL9001_LAUNCHD": "1"},
 		hook: func(e *cli.Env) {
 			e.UserHomeDir = func() (string, error) { return user, nil }
 			e.LoginShellPATH = func(context.Context) (string, error) { return "/shims:/opt/homebrew/bin:/usr/bin", nil }
+			e.Setenv = func(k, v string) error { setenv[k] = v; return nil }
 			e.RedirectLog = func(path string) error { logged = path; return nil }
 			e.Serve = func(_ context.Context, o daemon.Options) error { got = o; return nil }
 		},
@@ -96,8 +98,11 @@ func TestServeUnderLaunchdLogsToAFileAndUsesTheLoginShellPATH(t *testing.T) {
 	if st, err := os.Stat(filepath.Join(user, "Library", "Logs", "hal9001")); err != nil || !st.IsDir() {
 		t.Errorf("log directory was not created: %v", err)
 	}
-	if got.BasePATH != "/shims:/opt/homebrew/bin:/usr/bin" {
+	if !strings.HasPrefix(got.BasePATH, "/shims:/opt/homebrew/bin:/usr/bin") {
 		t.Errorf("BasePATH = %q, want the login-shell PATH so mise shims, gh and jq resolve inside nodes", got.BasePATH)
+	}
+	if setenv["PATH"] != got.BasePATH {
+		t.Errorf("process PATH = %q, want the effective PATH %q so the daemon's own lookups (kubectl, gh, tailscale) agree with its children", setenv["PATH"], got.BasePATH)
 	}
 
 	// A bundled agent names its log with a ~ that launchd does not expand.
@@ -113,17 +118,19 @@ func TestServeUnderLaunchdLogsToAFileAndUsesTheLoginShellPATH(t *testing.T) {
 func TestServeUnderLaunchdStillStartsWhenTheLoginShellPATHCannotBeCaptured(t *testing.T) {
 	var got daemon.Options
 	started := false
+	user := t.TempDir()
 	opts := runOpts{
-		env: map[string]string{"HAL9001_LAUNCHD": "1"},
+		env: map[string]string{"HAL9001_LAUNCHD": "1", "PATH": "/usr/bin:/bin"},
 		hook: func(e *cli.Env) {
-			e.UserHomeDir = func() (string, error) { return t.TempDir(), nil }
+			e.UserHomeDir = func() (string, error) { return user, nil }
+			e.Setenv = func(string, string) error { return nil }
 			e.LoginShellPATH = func(context.Context) (string, error) { return "", errors.New("login shell PATH: zsh timed out") }
 			e.RedirectLog = func(string) error { return nil }
 			e.Serve = func(_ context.Context, o daemon.Options) error { got, started = o, true; return nil }
 		},
 	}
-	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 || !started || got.BasePATH != "" {
-		t.Errorf("exit %d, started %v, BasePATH %q: a slow shell rc must not keep the daemon down", res.code, started, got.BasePATH)
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 || !started || !strings.HasPrefix(got.BasePATH, "/usr/bin:/bin") {
+		t.Errorf("exit %d, started %v, BasePATH %q: a slow shell rc must not keep the daemon down, and the PATH launchd gave must survive", res.code, started, got.BasePATH)
 	}
 }
 

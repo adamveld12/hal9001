@@ -61,6 +61,8 @@ type Env struct {
 	Serve func(ctx context.Context, opts daemon.Options) error
 	// LoginShellPATH captures the user's login-shell PATH; nil means runner.LoginShellPATH.
 	LoginShellPATH func(ctx context.Context) (string, error)
+	// Setenv sets a process environment variable (launchd's daemon applies its effective PATH); nil means os.Setenv.
+	Setenv func(key, value string) error
 	// Launchctl runs launchctl; nil means exec.
 	Launchctl func(ctx context.Context, args ...string) ([]byte, error)
 	// OpenURL opens a URL in the browser; nil means `open`.
@@ -96,6 +98,9 @@ func (e *Env) defaults() {
 	}
 	if e.LoginShellPATH == nil {
 		e.LoginShellPATH = func(ctx context.Context) (string, error) { return runner.LoginShellPATH(ctx, "", 0) }
+	}
+	if e.Setenv == nil {
+		e.Setenv = os.Setenv
 	}
 	if e.Launchctl == nil {
 		e.Launchctl = func(ctx context.Context, args ...string) ([]byte, error) {

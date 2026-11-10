@@ -22,6 +22,7 @@ import (
 	"hal9001/content"
 	"hal9001/internal/auth"
 	"hal9001/internal/daemon"
+	"hal9001/internal/runner"
 	"hal9001/internal/service"
 	"hal9001/internal/spec"
 )
@@ -84,10 +85,16 @@ func (c *call) setupLaunchd(ctx context.Context, opts *daemon.Options) error {
 	if err := c.env.RedirectLog(logFile); err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
-	path, err := c.env.LoginShellPATH(ctx)
+	captured, err := c.env.LoginShellPATH(ctx)
 	if err != nil {
-		slog.Warn("login-shell PATH unavailable; nodes get launchd's minimal PATH", "err", err)
-		return nil
+		slog.Warn("login-shell PATH unavailable; using launchd's PATH plus well-known directories", "err", err)
+		captured = c.env.Getenv("PATH")
+	}
+	path := runner.EffectivePATH(captured, user)
+	// The daemon's own lookups (kubectl, gh, tailscale, terminal-notifier, the shell a sandbox runs) use the
+	// process PATH, and exec.LookPath ignores a child's env, so the effective PATH has to be the process's too.
+	if err := c.env.Setenv("PATH", path); err != nil {
+		return fmt.Errorf("set PATH: %w", err)
 	}
 	opts.BasePATH = path
 	slog.Info("running under launchd", "log", logFile, "path", path)

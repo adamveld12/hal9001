@@ -84,3 +84,46 @@ func TestLoginShellPATHWithRealShell(t *testing.T) {
 		t.Errorf("PATH = %q", got)
 	}
 }
+
+func TestEffectivePATHAddsMissingWellKnownDirsAfterTheCapturedOnes(t *testing.T) {
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// ~/.local/share/mise/shims is deliberately absent: only directories that exist are added.
+	got := EffectivePATH("/custom/bin:/usr/bin:/custom/bin", home)
+	parts := filepath.SplitList(got)
+	if parts[0] != "/custom/bin" || parts[1] != "/usr/bin" {
+		t.Errorf("captured entries must keep their order and be deduplicated: %q", got)
+	}
+	idx := map[string]int{}
+	for i, p := range parts {
+		if _, dup := idx[p]; dup {
+			t.Errorf("duplicate entry %q in %q", p, got)
+		}
+		idx[p] = i
+	}
+	if i, ok := idx[localBin]; !ok || i < 2 {
+		t.Errorf("%s should be appended after the captured entries: %q", localBin, got)
+	}
+	if _, ok := idx[filepath.Join(home, ".local", "share", "mise", "shims")]; ok {
+		t.Errorf("a missing directory was added: %q", got)
+	}
+}
+
+func TestLookPathSearchesTheGivenPATHNotTheProcessPATH(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "only-on-effective-path")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "/usr/bin:/bin")
+	got, err := LookPath("only-on-effective-path", "/nonexistent:"+dir)
+	if err != nil || got != exe {
+		t.Errorf("LookPath = %q, %v; want %q", got, err, exe)
+	}
+	if _, err := LookPath("only-on-effective-path", "/usr/bin:/bin"); err == nil {
+		t.Error("resolved a command that is on neither PATH")
+	}
+}
