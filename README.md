@@ -191,6 +191,8 @@ Files are hot-reloaded. A save from the UI or API that is based on a stale copy 
 | `notify_min_priority` | `normal` | Inbox items at or above this raise a macOS notification (`low`, `normal`, `high`, `urgent`). Every new approval notifies. |
 | `HAL9001_UI_URL` (env, not config) | `http://localhost:9001` | Origin of notification deep links. `mise run dev` sets it to the Vite server, `http://localhost:5173`. |
 | `approval_timeout` | `1h` | Default wait for a `per_tool` approval before the run fails (`approval_timeout`). Agent nodes can override it. |
+| `update_channel` | `stable` | Release channel the [macOS app updates itself](docs/macos-app.md#updates) from: `stable` or `beta`. |
+| `update_auto_install` | `false` | Install an available app update by itself once no flow is running. Off: the update is offered (web UI, menubar) and installed on request. |
 | `session_ttl` | `7d` | Sliding lifetime of a login session. |
 | `allowed_hosts` | `[]` | Extra `Host` values the server accepts (your Tailscale hostname). |
 | `allowed_logins` | `[]` | Logins accepted by `tailscale-identity`; empty means the login that owns this Mac. |

@@ -126,6 +126,10 @@ export interface paths {
      *     and `notify_via` is `auto`, the daemon does not run terminal-notifier and routes notifications to channel `app`;
      *     the sink renders each `notification.created` event.
      *
+     *     Update installer: the macOS app opens the stream with `types` including `update.install` and the header
+     *     `X-Hal9001-Updater: app` (honoured for callers granted `admin`). It receives `update.install` orders; no other
+     *     connection does, and they are never replayed. `update.status` goes to every subscriber.
+     *
      *     Resuming: send `Last-Event-ID` (the browser does this automatically). The server replays what it still
      *     buffers. When the gap is larger than the buffer it sends `stream.resync`; clients must then refetch the
      *     resources they display.
@@ -154,6 +158,100 @@ export interface paths {
     get: operations["getBlob"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/update": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * App update state
+     * @description Whether the macOS app can update itself, the channel and auto-install settings, the newest release on the feed,
+     *     and where an install stands. The daemon checks the feed shortly after start, every 6 hours, on
+     *     `POST /api/update/check`, and when the channel changes. Changes are pushed as `update.status` on the stream.
+     */
+    get: operations["getUpdate"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/update/check": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Check the update feed now
+     * @description Fetches the manifest of the configured channel and returns the resulting state. A failed fetch is not an HTTP error:
+     *     it is reported in `error`. A check within 10 seconds of the last successful one returns the cached result.
+     *     Does nothing when updates are disabled.
+     */
+    post: operations["checkUpdate"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/update/install": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Install the available update
+     * @description Asks the installer (the macOS app, connected to the stream with `X-Hal9001-Updater: app`) to download, verify and
+     *     install the available update and relaunch. While flow runs are running a normal request is kept (`state: pending`)
+     *     and starts when none runs; with `force: true`, or when nothing runs, the order goes out at once (`state: installing`).
+     *     Requesting again while pending or installing is a no-op. The daemon is down for up to about two minutes after the
+     *     app relaunches (launchd re-registers the service); running work is interrupted by that restart.
+     *
+     *     409 `invalid-state` with `current_state`: `disabled` (updates are off), `not_available` (nothing newer is offered),
+     *     `no_installer` (the app is not connected: open it, or download the build by hand from `release_url`).
+     *     With auto-install (`update_auto_install`) the same order goes out by itself once no flow runs.
+     */
+    post: operations["installUpdate"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/update/report": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Report install progress (installer app)
+     * @description The installer app reports `downloading`, `verifying` and `installing` as it goes, and `failed` with an `error`
+     *     when it gives up. The daemon treats an install as lost after 10 minutes without a report. 409 `invalid-state`
+     *     (`current_state: not_installing`) when no install is running.
+     */
+    post: operations["reportUpdate"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2607,6 +2705,8 @@ export interface components {
       current_hash?: components["schemas"]["NullableHash"];
       /** @description For `invalid-state`: the state that blocks the operation, such as `approved` or `running`. */
       current_state?: string;
+      /** @description For an install refused by `POST /api/update/install`: where to download the build by hand. */
+      release_url?: string;
     };
     LoginExpiredProblem: components["schemas"]["Problem"] & {
       /** @enum {unknown} */
@@ -3170,6 +3270,9 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      update_channel?: components["schemas"]["UpdateChannel"];
+      /** @default false */
+      update_auto_install?: boolean;
       session_ttl?: components["schemas"]["Duration"];
       allowed_hosts?: string[];
       allowed_logins?: string[];
@@ -3226,6 +3329,111 @@ export interface components {
       pending_approvals: number;
       /** @description Unread, unarchived, non-dry-run items. */
       unread_inbox: number;
+    };
+    /**
+     * @description `disabled`: this daemon cannot update (see `disabled_reason`). `idle`: enabled, no check finished yet.
+     *     `checking`: a check is running and nothing is known yet. `up_to_date`: the feed offers nothing newer.
+     *     `available`: a newer build is offered. `pending`: an install was requested while flows run and starts when none
+     *     runs. `installing`: the macOS app is downloading, verifying or replacing the bundle (see `phase`). `error`: the
+     *     last install failed, or the last check failed and nothing newer is known (see `error`).
+     * @enum {string}
+     */
+    UpdateState:
+      | "disabled"
+      | "idle"
+      | "checking"
+      | "up_to_date"
+      | "available"
+      | "pending"
+      | "installing"
+      | "error";
+    /** @description The running app build, read from the Info.plist of the bundle the daemon lives in. Empty strings and 0 outside a bundle. */
+    UpdateBuild: {
+      /** @example dev.hal9001 */
+      bundle_id: string;
+      /**
+       * @description `CFBundleShortVersionString`.
+       * @example 0.1.7
+       */
+      version: string;
+      /** @description `CFBundleVersion`, the CI run number; 0 for a local build. */
+      build: number;
+    };
+    /** @description A release on a channel's feed, as published in its manifest without the signature. */
+    UpdateRelease: {
+      schema: number;
+      channel: components["schemas"]["UpdateChannel"];
+      version: string;
+      build: number;
+      commit: string;
+      published_at: components["schemas"]["Timestamp"];
+      /** @description Lowest macOS version that runs the build; empty when unspecified. */
+      min_macos: string;
+      /**
+       * Format: uri
+       * @description The `.app.zip` the app downloads.
+       */
+      url: string;
+      size: number;
+      sha256: string;
+      notes_url: string;
+      notes: string;
+    };
+    /** @description The full manifest of a release, with the Ed25519 `signature` (base64) over the bytes of the `.app.zip`. */
+    UpdateManifest: components["schemas"]["UpdateRelease"] & {
+      signature: string;
+    };
+    /**
+     * @description State of app self-update. The daemon decides (checks the feed, applies the channel, idle detection and the
+     *     auto-install policy); the macOS app executes (download, verify, replace the bundle, relaunch) after it connects to
+     *     `GET /api/stream` with `X-Hal9001-Updater: app`. Only the release app (`dev.hal9001`, build > 0, with a signing
+     *     key) updates; otherwise `enabled` is false and `disabled_reason` says why.
+     */
+    UpdateStatus: {
+      enabled: boolean;
+      /** @description Why updates are off: not in an app bundle, dev build, local build (build 0), or no signing key embedded. Null when enabled. */
+      disabled_reason: string | null;
+      current: components["schemas"]["UpdateBuild"];
+      channel: components["schemas"]["UpdateChannel"];
+      /** @description The `update_auto_install` setting. */
+      auto_install_when_idle: boolean;
+      state: components["schemas"]["UpdateState"];
+      /** @description Newest release on the channel feed, even when it is not newer than `current` (`available` false). Null before the first successful check. */
+      latest: components["schemas"]["UpdateRelease"] | null;
+      /** @description `latest.build` is greater than `current.build` and this macOS can run it. Downgrades are never offered. */
+      available: boolean;
+      /** @description An install was requested while flows run; it starts when none runs. Dropped when the installer app disconnects. */
+      pending: boolean;
+      /**
+       * @description While `state` is `installing`: `requested` (the app was told), `downloading`, `verifying`, `installing` (replacing the bundle and relaunching). Null otherwise.
+       * @enum {string|null}
+       */
+      phase: "requested" | "downloading" | "verifying" | "installing" | null;
+      busy: {
+        /** @description Flow runs running now; a normal install waits until it is 0. */
+        running_runs: number;
+      };
+      /** @description The macOS app is connected as installer. Without it installs are refused (409) and auto-install does not fire. */
+      installer_connected: boolean;
+      last_checked_at: components["schemas"]["NullableTimestamp"];
+      /** @description The last install failure (kept until the next install request) or check failure. */
+      error: string | null;
+    };
+    UpdateInstall: {
+      manifest: components["schemas"]["UpdateManifest"];
+    };
+    UpdateInstallRequest: {
+      /**
+       * @description Install now even while flows run. The daemon restart that follows the update interrupts them. Offered by the web UI only, behind a confirmation.
+       * @default false
+       */
+      force?: boolean;
+    };
+    UpdateReportRequest: {
+      /** @enum {string} */
+      state: "downloading" | "verifying" | "installing" | "failed";
+      /** @description For `failed`: what went wrong, shown to the user. */
+      error?: string;
     };
     SensorStatus: {
       /** @description This sensor was paused with `POST /api/sensors/{id}/pause`. Independent of the kill switch: `state` is `paused` for either, `paused` is true only for this one. */
@@ -3629,6 +3837,9 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      update_channel?: components["schemas"]["UpdateChannel"];
+      /** @description Install an available app update by itself once no flow is running. */
+      update_auto_install?: boolean;
     };
     EnvKeyList: {
       items: {
@@ -4312,6 +4523,11 @@ export interface components {
      * @enum {string}
      */
     NotifyVia: "auto" | "app" | "terminal-notifier" | "none";
+    /**
+     * @description Release channel the macOS app updates from. Every main build is published to both; `beta` is where builds may be staged ahead of `stable`.
+     * @enum {string}
+     */
+    UpdateChannel: "stable" | "beta";
     /** @description A rendered notification as logged and as sent in `notification.created`. */
     Notification: {
       id: components["schemas"]["Ulid"];
@@ -4906,7 +5122,9 @@ export interface components {
       | "notification.created"
       | "auth_event.created"
       | "assist.updated"
-      | "assist.message";
+      | "assist.message"
+      | "update.status"
+      | "update.install";
     /**
      * @description Fields shared by every message. `id` equals the SSE `id:` field and increases monotonically within one daemon
      *     run. Records in `data` have text previews truncated to 4 KiB; fetch the resource for full content.
@@ -4944,7 +5162,9 @@ export interface components {
       | components["schemas"]["NotificationCreatedEvent"]
       | components["schemas"]["AuthEventCreatedEvent"]
       | components["schemas"]["AssistUpdatedEvent"]
-      | components["schemas"]["AssistMessageEvent"];
+      | components["schemas"]["AssistMessageEvent"]
+      | components["schemas"]["UpdateStatusEvent"]
+      | components["schemas"]["UpdateInstallEvent"];
     StreamReady: {
       server_time: components["schemas"]["Timestamp"];
       version: string;
@@ -5300,6 +5520,34 @@ export interface components {
        */
       type: "assist.message";
     };
+    /** @description The updater state changed (check finished, install requested, started, progressed, failed, installer connected). `data` is `UpdateStatus`. */
+    UpdateStatusEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "update.status";
+      data?: components["schemas"]["UpdateStatus"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "update.status";
+    };
+    /**
+     * @description Order to install the available update: download `manifest.url`, verify it against the manifest's size, sha256 and
+     *     Ed25519 `signature`, replace the app bundle and relaunch. Delivered only to the installer connection (header
+     *     `X-Hal9001-Updater: app`, caller granted `admin`), never buffered for replay. `data` is `UpdateInstall`.
+     */
+    UpdateInstallEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "update.install";
+      data?: components["schemas"]["UpdateInstall"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "update.install";
+    };
   };
   responses: {
     /** @description Any other error, including 5xx. The `type` URI says which class. */
@@ -5592,6 +5840,8 @@ export interface operations {
       header?: {
         /** @description `app` registers this connection as a notification sink (see the description). */
         "X-Hal9001-Notifier"?: "app";
+        /** @description `app` registers this connection as the update installer (see the description). */
+        "X-Hal9001-Updater"?: "app";
         /** @description Last sequence number the client saw. */
         "Last-Event-ID"?: string;
       };
@@ -5638,6 +5888,114 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getUpdate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Current update state. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UpdateStatus"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  checkUpdate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description State after the check. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UpdateStatus"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  installUpdate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["UpdateInstallRequest"];
+      };
+    };
+    responses: {
+      /** @description The install was ordered (`installing`) or is waiting for flows to finish (`pending`). */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UpdateStatus"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  reportUpdate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateReportRequest"];
+      };
+    };
+    responses: {
+      /** @description State after the report. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UpdateStatus"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };

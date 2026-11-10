@@ -31,6 +31,7 @@ import (
 	"hal9001/internal/notify"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/update"
 )
 
 // Options configures New.
@@ -60,6 +61,9 @@ type Options struct {
 	Log *slog.Logger
 	// Sinks tracks connected notification sinks (stream clients that send NotifierHeader). Optional.
 	Sinks *notify.Sinks
+	// Update serves the /api/update operations and its stream events. Optional: without it GET /api/update reports
+	// updates as disabled and the other operations answer 503.
+	Update *update.Service
 }
 
 // Server is the http.Handler New returns. Besides serving requests it has two
@@ -74,6 +78,7 @@ type Server struct {
 	hub *hub
 
 	prevNotifier func(store.Change)
+	unsubUpdate  func()
 	closeOnce    sync.Once
 
 	// routes are the "METHOD pattern" strings registered from the contract
@@ -111,10 +116,14 @@ func New(opts Options) http.Handler {
 		if prev != nil {
 			prev(c)
 		}
+		if c.Resource == store.ResFlowRun {
+			s.pokeUpdate() // a finished run may let a requested install start
+		}
 		s.bus.publish(c)
 		s.hub.enqueue(c)
 	})
 	go s.hub.run()
+	s.subscribeUpdate()
 	return s
 }
 
@@ -128,6 +137,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.opts.Store.SetNotifier(s.prevNotifier)
+		if s.unsubUpdate != nil {
+			s.unsubUpdate()
+		}
 		s.hub.stop()
 	})
 }
@@ -212,6 +224,11 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listMcpTools": s.listMcpTools,
 		"callMcpTool":  s.callMcpTool,
 		"markMcpReady": s.markMcpReady,
+
+		"getUpdate":     s.getUpdate,
+		"checkUpdate":   s.checkUpdate,
+		"installUpdate": s.installUpdate,
+		"reportUpdate":  s.reportUpdate,
 
 		"getKillSwitch":    s.getKillSwitch,
 		"pauseKillSwitch":  s.pauseKillSwitch,
