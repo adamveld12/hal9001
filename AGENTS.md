@@ -17,6 +17,13 @@ Read `REQUIREMENTS.md` before changing anything. These rules apply to every huma
   2. If the failure is clearly the tooling (a crash in the tool itself, a false positive that can't be fixed in code, a broken environment, a hook that can't run in a worktree), **stop and report it** to the coordinator/user with the exact command, output, and your diagnosis. Do not change `lefthook.yml`, `.golangci.yml`, `mise.toml`, or lint configs to work around it.
 - Pre-commit first fixes and re-stages your staged files (gofmt/goimports on Go, prettier on `web/`, and regenerates `web/src/api/schema.d.ts` from `api/openapi.yaml`), so formatting never fails a commit; unstaged changes are left alone. It then checks: gitleaks, `go mod tidy -diff`, golangci-lint, `go test -short`, and for `web/`: oxlint, `tsc`, vitest. Pre-push runs the sharded e2e suite and the web check. The race detector is opt-in (`mise run race`).
 
+## Never touch the user's machine state (agents)
+
+- Never run app or DMG builds, mounts or installs (`mise run app`, `release`, `dmg`, `dmg:check`, `app:run`), and never launch the menubar/app.
+- Never touch the user's installed HAL9001.app, `~/Applications`, `/Applications`, `~/.hal9001`, `~/Library` (LaunchAgents, logs, Application Support) or their running service.
+- App and DMG builds and checks run in CI (`.github/workflows/release.yml`). `scripts/build-app.sh` installs nothing unless `HAL9001_APP_INSTALL_DIR` is set; that is for the user.
+- Test the daemon with the e2e harness or `mise run sandbox` (temp homes, non-9001 ports).
+
 ## Verification (agents): keep it light
 
 This is a fun side project; iteration speed beats rigor.
