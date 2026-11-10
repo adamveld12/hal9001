@@ -6,6 +6,40 @@ The window layout is written by `dmgbuild` (pinned, via `uv`) straight into `.DS
 These builds are for the user's own machine and CI; `mise run app` installs nothing unless `HAL9001_APP_INSTALL_DIR` is set (to install the dev copy: `HAL9001_APP_INSTALL_DIR=~/Applications mise run app`).
 Use a Mac where no hal9001 agent runs: stop the headless service and remove older launch agents first.
 
+## Updates
+
+HAL9001.app updates itself from signed GitHub releases (CI publishes every main build; see [releases.md](releases.md)).
+The daemon decides, the menubar app executes; the daemon never replaces the app bundle.
+
+- **Who updates.** Only the release app (`dev.hal9001`) with a CI build number above 0 and a signing key embedded. A local
+  build (build 0), the dev app, a daemon outside an app bundle (`hal9001 serve`, a headless service) and a build without a
+  key report `enabled: false` and a `disabled_reason` in `GET /api/update`.
+- **Channels.** Setting `update_channel`: `stable` (default) or `beta`, each a signed manifest at
+  `https://github.com/adamveld12/hal9001/releases/download/channels/<channel>.json` (override with `HAL9001_UPDATE_FEED_URL`
+  for tests). Today CI publishes every main build to both. The daemon checks shortly after start, every 6 hours, on
+  `POST /api/update/check` (menu: Check for updates) and when the channel changes. An update is offered only when its
+  build number is greater than the running build and the Mac's macOS meets `min_macos`; a downgrade is never offered.
+- **Installing.** The menu and the web UI offer **Update available — Install & Restart**. The request goes to the daemon
+  (`POST /api/update/install`), which sends the order over `/api/stream` to the app (connected with the header
+  `X-Hal9001-Updater: app`). The app downloads the `.app.zip`, verifies size, sha256 and the Ed25519 signature against the
+  public key embedded in the app, unpacks it next to the installed app (`.HAL9001-update-<build>/`, same volume), checks
+  bundle id, build and code signature, swaps the bundles atomically (`renamex_np`), keeps the old one as
+  `.HAL9001-previous.app`, and relaunches. Progress and failures come back through `POST /api/update/report`.
+- **Running flows.** A normal request while flow runs are running is **pending** ("installs when flows finish") and the
+  order goes out when none runs. **Force install now** exists only in the web UI (behind a confirmation): it orders the
+  install at once, and the daemon restart that follows interrupts running runs. The CLI and the menu never force.
+- **Automatic.** Setting `update_auto_install` (default off, "Install updates automatically when idle") orders an
+  available update once no flow runs, once per build: a failed install is not retried by itself.
+- **After the swap** launchd refuses to start a daemon binary whose bundle was just replaced (exit 78) for up to about
+  two minutes, see Known quirk. The new app registers the service again and retries for about 4 minutes; the menu shows
+  **Updating service… (up to 2 min)** and the web UI is unreachable meanwhile.
+- **Headless / no app.** Without the app connected as installer a request is refused with `409` (`no_installer`) and a
+  link to download the build by hand; auto-install does not fire. A daemon with no signing key or outside a bundle
+  updates by installing a new app manually.
+- **Trust.** Manifests are fetched unauthenticated from the public repository; integrity comes from the signature, so a
+  tampered feed or download is refused. The app is signed ad hoc, so macOS may still ask for approval where it protects
+  app bundles (App Management): a failed swap is reported and the install dir stays as it was.
+
 ## 1. Install from the DMG
 
 - [ ] Open the DMG. The Finder window shows the red-eye background, the HAL9001 icon on the left and the
