@@ -23,7 +23,10 @@ export function SandboxesPage() {
 
   return (
     <>
-      <PageHeader title="Sandboxes" />
+      <PageHeader
+        title="Sandboxes"
+        subtitle="Run logs appear on the agent run and flow run pages under “Sandbox”."
+      />
       <div className="mx-auto max-w-4xl space-y-4 p-4">
         <div
           role="tablist"

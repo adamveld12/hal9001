@@ -7,9 +7,16 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useCallback, useRef } from "react";
+import {
+  lastEntryId,
+  mergeSandboxLog,
+  type SandboxLogData,
+} from "../pages/runs/sandboxEntries";
 import { lastContiguousSeq, mergeEvents } from "../pages/runs/transcript";
 import { api, unwrap, type Schemas } from "./client";
 import { qk } from "./keys";
+import { useStreamEvents } from "./streamHooks";
 
 export type FlowRunDetail = Schemas["FlowRunDetail"];
 export type NodeRunDetail = Schemas["NodeRunDetail"];
@@ -151,6 +158,103 @@ export function useAgentTranscript(agentRunId: string) {
       return mergeEvents(prev, fresh);
     },
   });
+}
+
+/** Entries loaded at first; "load earlier" raises it to `SANDBOX_LOG_MAX` (the API's page limit). */
+const SANDBOX_TAIL = 500;
+export const SANDBOX_LOG_MAX = 1000;
+
+function fetchSandboxLog(
+  scope: SandboxScope,
+  id: string,
+  query: { after_id?: number; limit: number; tail?: boolean },
+  signal: AbortSignal,
+) {
+  const params = { path: { id }, query };
+  return unwrap(
+    scope === "agent"
+      ? api.GET("/api/agent-runs/{id}/sandbox-log", { params, signal })
+      : api.GET("/api/node-runs/{id}/sandbox-log", { params, signal }),
+  );
+}
+
+export type SandboxScope = "agent" | "node";
+
+/** URL of the log (`raw`: the plain-text download). */
+export function sandboxLogUrl(
+  scope: SandboxScope,
+  id: string,
+  raw = false,
+): string {
+  const base = scope === "agent" ? "agent-runs" : "node-runs";
+  return `/api/${base}/${id}/sandbox-log${raw ? "/raw" : ""}`;
+}
+
+/**
+ * Sandbox log of an agent run or a node run. The first load takes the newest
+ * page; every refetch (a `sandbox_*` stream event, coalesced by the stream
+ * provider) only asks for entries after the last cached id and merges them.
+ * The stream's `sandbox_log.appended` payload has no output, so it is not used
+ * directly. `stream.resync` and `loadEarlier` reload the newest page instead.
+ */
+function useSandboxLog(scope: SandboxScope, id: string | undefined) {
+  const qc = useQueryClient();
+  const key = qk("sandbox-log", scope, id);
+  const limit = useRef(SANDBOX_TAIL);
+  const reload = useRef(false);
+  useStreamEvents(["stream.resync"], () => {
+    reload.current = true;
+  });
+  const q = useQuery({
+    queryKey: key,
+    enabled: id !== undefined,
+    structuralSharing: false,
+    queryFn: async ({ signal }): Promise<SandboxLogData> => {
+      const runId = id as string;
+      const prev = qc.getQueryData<SandboxLogData>(key);
+      if (!prev || reload.current) {
+        const page = await fetchSandboxLog(
+          scope,
+          runId,
+          { tail: true, limit: limit.current },
+          signal,
+        );
+        reload.current = false;
+        return {
+          sessions: page.sessions,
+          entries: page.entries,
+          hasMore: page.has_more,
+        };
+      }
+      let acc = prev;
+      for (;;) {
+        const page = await fetchSandboxLog(
+          scope,
+          runId,
+          { after_id: lastEntryId(acc.entries), limit: SANDBOX_TAIL },
+          signal,
+        );
+        acc = mergeSandboxLog(acc, page);
+        if (!page.has_more || page.entries.length === 0) return acc;
+      }
+    },
+  });
+  const { refetch } = q;
+  const loadEarlier = useCallback(() => {
+    limit.current = SANDBOX_LOG_MAX;
+    reload.current = true;
+    void refetch();
+  }, [refetch]);
+  return { ...q, loadEarlier };
+}
+
+export function useAgentRunSandboxLog(id: string | undefined) {
+  return useSandboxLog("agent", id);
+}
+
+/** Pass `undefined` for nodes that are not agent nodes: nothing is fetched. */
+export function useNodeRunSandboxLog(id: string | undefined) {
+  return useSandboxLog("node", id);
 }
 
 /** One version is immutable, so it never refetches. */

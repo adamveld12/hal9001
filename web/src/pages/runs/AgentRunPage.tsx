@@ -23,6 +23,7 @@ import { Meta, Mono, TextLink } from "./Meta";
 import { PermissionRequests } from "./PermissionRequests";
 import { PhaseTimeline } from "./PhaseTimeline";
 import { TranscriptView } from "./TranscriptView";
+import { SandboxLogSection } from "./SandboxLog";
 import { buildTranscript } from "./transcript";
 
 function Transcript({ runId, active }: { runId: string; active: boolean }) {
@@ -148,6 +149,7 @@ export function AgentRunPage() {
           <Panel title="Transcript">
             <Transcript runId={run.id} active={active} />
           </Panel>
+          <SandboxLogSection scope="agent" id={run.id} variant="panel" />
           <Panel title="Permission requests">
             <PermissionRequests agentRunId={run.id} />
           </Panel>
