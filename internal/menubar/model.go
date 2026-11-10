@@ -35,12 +35,13 @@ const (
 	ActionUpdateCheck   = "update.check"
 )
 
-// Updater states (UpdateStatus.State) the menu tells apart.
+// Updater states (UpdateStatus.State) and install phases the menu tells apart.
 const (
 	stateInstalling = "installing"
 	stateError      = "error"
-	// phaseRequested is the install phase before the app reported anything: it says nothing worth showing.
-	phaseRequested = "requested"
+	// These phases say nothing that "Installing update…" does not: no report yet, and the swap of the bundle itself.
+	phaseRequested  = "requested"
+	phaseInstalling = "installing"
 )
 
 // maxUpdateErrorLen is how much of a failed update's message fits in a menu line; the log has all of it.
@@ -235,13 +236,14 @@ func updateEntries(upd *UpdateStatus, svc ServiceState) []Entry {
 	return nil
 }
 
-// installingLine says an install is running, with how far it is when that is known.
+// installingLine says an install is running, with how far it is when that is worth saying: the phase this app reports
+// itself (with the download percentage), else the daemon's.
 func installingLine(upd *UpdateStatus, svc ServiceState) string {
 	phase := svc.UpdatePhase
-	if phase == "" && upd != nil && upd.Phase != phaseRequested {
+	if phase == "" && upd != nil {
 		phase = upd.Phase
 	}
-	if phase == "" {
+	if phase == "" || phase == phaseRequested || phase == phaseInstalling {
 		return "Installing update…"
 	}
 	return "Installing update… (" + phase + ")"

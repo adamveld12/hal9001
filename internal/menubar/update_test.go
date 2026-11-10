@@ -19,7 +19,8 @@ func TestUpdateWireNamesMatchTheDaemons(t *testing.T) {
 		EventUpdateStatus != update.EventStatus || EventUpdateInstall != update.EventInstall {
 		t.Error("the stream header and event names must be the daemon's")
 	}
-	if stateInstalling != string(update.StateInstalling) || stateError != string(update.StateError) || phaseRequested != update.PhaseRequested {
+	if stateInstalling != string(update.StateInstalling) || stateError != string(update.StateError) ||
+		phaseRequested != update.PhaseRequested || phaseInstalling != update.PhaseInstalling {
 		t.Error("the states the menu tells apart must be the daemon's")
 	}
 
@@ -117,6 +118,22 @@ func TestCheckUpdateSendsNoBody(t *testing.T) {
 	}
 	if len(f.calls) != 1 || strings.Join(strings.Fields(f.calls[0]), " ") != "POST /api/update/check" {
 		t.Fatalf("calls %q: want a POST without content type or body", f.calls)
+	}
+}
+
+func TestCheckUpdateWaitsLongerThanAStatusCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond) // the daemon is fetching the feed
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL)
+	c.HTTP.Timeout = 50 * time.Millisecond
+	if err := c.CheckUpdate(context.Background()); err != nil {
+		t.Fatalf("a check that takes a while is not a failure: %v", err)
+	}
+	if err := c.ReportUpdate(context.Background(), "downloading", ""); err == nil {
+		t.Fatal("the other calls keep the client's own timeout")
 	}
 }
 
@@ -325,6 +342,8 @@ func TestMenuOffersTheUpdateStates(t *testing.T) {
 			[]string{"info: Installing update…", check}},
 		{"installing, requested but nothing reported yet", &UpdateStatus{Enabled: true, State: "installing", Available: true, Phase: "requested"}, ServiceState{},
 			[]string{"info: Installing update…", check}},
+		{"installing, swapping the bundle", &UpdateStatus{Enabled: true, State: "installing", Available: true, Phase: "installing"}, ServiceState{},
+			[]string{"info: Installing update…", check}},
 		{"installing, with the daemon's phase", &UpdateStatus{Enabled: true, State: "installing", Available: true, Phase: "verifying"}, ServiceState{},
 			[]string{"info: Installing update… (verifying)", check}},
 		{"installing in this app", &UpdateStatus{Enabled: true, State: "available", Available: true, Latest: latest("0.2.0")},
@@ -363,8 +382,8 @@ func TestFailedUpdateMessageIsShortenedInTheMenu(t *testing.T) {
 }
 
 func TestMenuShowsAnInstallThisAppRunsEvenWhenTheDaemonDoesNotAnswer(t *testing.T) {
-	m := BuildMenu(nil, "http://ui", ServiceState{Bundled: true, UpdateInstalling: true, UpdatePhase: "installing"})
-	if got := updateLines(m); len(got) != 1 || got[0] != "info: Installing update… (installing)" {
+	m := BuildMenu(nil, "http://ui", ServiceState{Bundled: true, UpdateInstalling: true, UpdatePhase: "verifying"})
+	if got := updateLines(m); len(got) != 1 || got[0] != "info: Installing update… (verifying)" {
 		t.Fatalf("lines %q", got)
 	}
 }

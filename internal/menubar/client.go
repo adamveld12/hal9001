@@ -303,6 +303,10 @@ func problemOf(resp *http.Response) *APIError {
 // send sends a JSON request that expects no response body (none is sent when body is nil); any status of 400 or more
 // is an *APIError naming the daemon's problem document.
 func (c *Client) send(ctx context.Context, method, path string, body any) error {
+	return c.sendVia(ctx, c.HTTP, method, path, body)
+}
+
+func (c *Client) sendVia(ctx context.Context, hc *http.Client, method, path string, body any) error {
 	var payload io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -319,7 +323,7 @@ func (c *Client) send(ctx context.Context, method, path string, body any) error 
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.HTTP.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return err
 	}
@@ -357,9 +361,15 @@ func (c *Client) PatchInbox(ctx context.Context, id string, p InboxPatch) error 
 	return c.send(ctx, http.MethodPatch, "/api/inbox/"+url.PathEscape(id), p)
 }
 
+// checkTimeout is how long CheckUpdate waits: the daemon answers when it has fetched the update feed, which can take
+// longer than the few seconds of a status call, and the check goes on in the daemon even if the app stops waiting.
+const checkTimeout = 30 * time.Second
+
 // CheckUpdate asks the daemon to look for a new build now (POST /api/update/check).
 func (c *Client) CheckUpdate(ctx context.Context) error {
-	return c.send(ctx, http.MethodPost, "/api/update/check", nil)
+	hc := *c.HTTP
+	hc.Timeout = checkTimeout
+	return c.sendVia(ctx, &hc, http.MethodPost, "/api/update/check", nil)
 }
 
 // InstallUpdate asks the daemon to install the available update (POST /api/update/install). It installs at once, or
