@@ -72,6 +72,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: "/tools", label: "Tools", icon: "command", key: "o" },
       { to: "/sandboxes", label: "Sandboxes", icon: "box", key: "b" },
       { to: "/settings/auth", label: "Auth", icon: "lock", key: "u" },
+      { to: "/settings/mcp", label: "MCP", icon: "code", key: "c" },
       { to: "/settings/updates", label: "Updates", icon: "refresh" },
     ],
   },

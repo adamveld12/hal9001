@@ -20,6 +20,7 @@ import (
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 	"hal9001/internal/update"
 )
 
@@ -156,7 +157,11 @@ type envOptions struct {
 	auth   *auth.Config
 	ui     http.Handler
 	assist core.Assist
-	update func(e *env) update.Options
+	// operator is the operator tool set served at /mcp; port and executable are what /api/mcp/info reports.
+	operator   *tools.Operator
+	port       int
+	executable string
+	update     func(e *env) update.Options
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -194,7 +199,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.reloads.Add(1)
 			e.ws.Store(spec.Load(e.home))
 		},
-		Version: "test", UI: eo.ui, Assist: eo.assist, Update: e.upd,
+		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, Port: eo.port, Executable: eo.executable, Update: e.upd,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

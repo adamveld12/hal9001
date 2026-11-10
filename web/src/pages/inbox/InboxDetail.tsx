@@ -11,6 +11,14 @@ import { safeHref, tracePath } from "./model";
 
 function TraceLinks({ item }: { item: InboxItem }) {
   const cls = "text-accent underline";
+  if (item.source === "mcp") {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <span>MCP client{item.client ? ` ${item.client}` : ""}</span>
+        {item.thread_key && <span>thread {item.thread_key}</span>}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
       <Link to={`/flows/${item.flow_id}`} className={cls}>
@@ -85,13 +93,15 @@ export function InboxDetail({
           <Button icon="archive" onClick={onArchive}>
             {item.archived ? "Unarchive" : "Archive"} <Kbd>e</Kbd>
           </Button>
-          <Link
-            to={tracePath(item)}
-            className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 text-xs font-medium no-underline hover:bg-raised"
-          >
-            <Icon name="external" size={14} />
-            Open trace
-          </Link>
+          {item.source !== "mcp" && (
+            <Link
+              to={tracePath(item)}
+              className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 text-xs font-medium no-underline hover:bg-raised"
+            >
+              <Icon name="external" size={14} />
+              Open trace
+            </Link>
+          )}
         </div>
         <TraceLinks item={item} />
       </header>

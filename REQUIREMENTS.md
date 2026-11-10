@@ -270,6 +270,8 @@ Permission policy (harness side, applied to every `session/request_permission`):
 
 Agents run locked down (docs/acp-lockdown.md): no native shell, file or web tools; they act through hal's MCP server, which approves inside itself (docs/design/agent-access.md). Node `allow: {tools: [<regex on tool title/name>]}` lets an agent call tools of MCP servers declared on the node; every other permission request is rejected.
 
+External MCP clients (Claude Code, Codex, omp, pi) reach hal over Streamable HTTP (`POST /mcp`, loopback only, `api` auth service) or the stdio bridge `hal9001 mcp`, and get an operator tool set (inbox, approvals read-only, flows, runs, sensors, events; `flow_run` and `sensor_poll`). Tools with side effects raise a request approval that belongs to no run; no tool can decide an approval (docs/mcp.md).
+
 Limit: a permission request only reaches the client when the agent's own session mode asks for permission. Tools the agent auto-approves, such as an allow-list in the user's Claude `settings.json` or a bypass mode, never reach the harness. Each run must therefore set the agent's most restrictive "ask" mode for read-only/gated policies and must not inherit auto-allow settings. The adapter gate (§13) verifies this per runtime; a runtime that fails it cannot run `readonly` or `approve` nodes until fixed.
 
 ### 7.3 Agent transport: ACP

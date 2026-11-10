@@ -94,6 +94,10 @@ const SettingsAuthPage = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsAuthPage",
 );
+const SettingsMcpPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsMcpPage",
+);
 
 const SettingsUpdatesPage = page(
   () => import("./pages/settings/SettingsPage"),
@@ -169,6 +173,7 @@ function AuthGate() {
           />
           <Route path="settings/runtimes" element={<SettingsRuntimesPage />} />
           <Route path="settings/auth" element={<SettingsAuthPage />} />
+          <Route path="settings/mcp" element={<SettingsMcpPage />} />
           <Route path="settings/updates" element={<SettingsUpdatesPage />} />
           <Route path="sandboxes" element={<SandboxesPage />} />
           <Route path="sandboxes/:backend" element={<SandboxesPage />} />

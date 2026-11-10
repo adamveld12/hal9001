@@ -217,8 +217,13 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}()
 
+	operator, err := tools.NewOperator(eng.OperatorHost(), 0)
+	if err != nil {
+		return fmt.Errorf("daemon: operator tools: %w", err)
+	}
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
+		Operator: operator, Port: port, Executable: opts.Executable,
 		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH,
 		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update,
 	})

@@ -1215,6 +1215,57 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/mcp/info": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * How to connect an MCP client to this daemon
+     * @description The URLs, the stdio command, the auth hints and the tool list of hal's MCP server (docs/mcp.md), built from the
+     *     running daemon (its real port and binary path). The Settings page renders its install instructions from it.
+     */
+    get: operations["getMcpInfo"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/mcp": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Remote MCP server (Streamable HTTP)
+     * @description hal's MCP server for clients that run on this Mac (Claude Code, Codex, omp, pi, ...), in the Streamable HTTP
+     *     transport of the MCP specification (2025-06-18, stateless: no session id, JSON responses; GET and DELETE are
+     *     405). The body is one JSON-RPC message; `tools/list` and `tools/call` serve the operator tools of
+     *     `GET /api/mcp/info`. It needs the `api` auth service like the REST API; each tool then calls the REST API with
+     *     the same credentials. A tool that needs another service (`flow_run`, `sensor_poll`, `flow_create`,
+     *     `sensor_create`, `request_approval`, `send_note`: `admin`) is held to it before anybody is asked. `flow_run`,
+     *     `sensor_poll`, `flow_create` and `sensor_create` wait for the user's approval in the Inbox, `request_approval`
+     *     is an approval the agent asks for, and `send_note` posts an Inbox note. Loopback only, on top of the baseline: Host, Origin
+     *     and the TCP peer must be loopback, and a request with proxy headers (`Forwarded`, `X-Forwarded-*`,
+     *     `Tailscale-*`) is 403, even when the host is in `allowed_hosts`. Not the run-scoped backend of `hal9001 mcp
+     *     --token` (`/api/mcp/tools`, `/api/mcp/call`).
+     */
+    post: operations["serveMcp"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/transform/preview": {
     parameters: {
       query?: never;
@@ -2867,6 +2918,42 @@ export interface components {
       text: string;
       is_error: boolean;
     };
+    /** @description Everything a client needs to connect to hal's MCP server, built from the running daemon. */
+    McpInfo: {
+      /** @description Name to give the server in the client (`hal9001`). */
+      server_name: string;
+      /** @description Streamable HTTP endpoint on this daemon, on localhost and the daemon's actual port. */
+      http_url: string;
+      /** @description The daemon's address; the `--url` of the stdio command. */
+      base_url: string;
+      stdio: {
+        /** @description Absolute path of the running hal9001 binary. */
+        command: string;
+        /** @description Arguments for `command`: `mcp --url <base_url>`. */
+        args: string[];
+      };
+      /** @description Where the app's "Install command-line tool" links the binary (`~/.local/bin/hal9001`), a stable alternative to `stdio.command` that follows app updates. */
+      cli_link: string;
+      auth: {
+        /** @description Whether the stack of the service admits a request from this Mac with no credentials (it lists `localhost-trust`). `api` covers the read tools, `admin` the tools with side effects. */
+        localhost_trust: {
+          api: boolean;
+          admin: boolean;
+        };
+        /** @description Session cookie to send in a `Cookie` header when a stack asks for a login (see docs/auth.md). */
+        cookie_name: string;
+      };
+      /** @description How long a tool call that needs approval waits for the user before it fails. */
+      approval_timeout_seconds: number;
+      tools: {
+        name: string;
+        description: string;
+        /** @description A call waits for the user to approve it in the Inbox. */
+        needs_approval: boolean;
+        /** @description The tool changes state: the MCP request must also be admitted for the `admin` auth service, checked before anybody is asked. */
+        needs_admin: boolean;
+      }[];
+    };
     /**
      * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
      *     `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
@@ -3488,6 +3575,7 @@ export interface components {
       sensor?: components["schemas"]["Sensor"];
     } & (unknown | unknown);
     SensorValidateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       sensor?: components["schemas"]["Sensor"];
     } & (unknown | unknown);
@@ -3714,7 +3802,9 @@ export interface components {
       yaml?: string;
       flow?: components["schemas"]["Flow"];
     } & (unknown | unknown);
+    /** @description Exactly one of `yaml` and `flow`. `id`, when given, is the id the flow would be stored under (an invalid one is an `invalid_id` error; a different `id:` line in the YAML is a warning). */
     FlowValidateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       flow?: components["schemas"]["Flow"];
     } & (unknown | unknown);
@@ -4411,13 +4501,13 @@ export interface components {
     Approval: {
       id: components["schemas"]["Ulid"];
       agent_run_id: components["schemas"]["NullableUlid"];
-      /** @description Null for an approval of an assist session. */
+      /** @description Null for an approval of an assist session and for an operator approval. */
       node_run_id: components["schemas"]["Ulid"] | null;
-      /** @description Null for an approval of an assist session. */
+      /** @description Null for an approval of an assist session and for an operator approval. */
       flow_run_id: components["schemas"]["Ulid"] | null;
-      /** @description Null for an approval of an assist session. */
+      /** @description Null for an approval of an assist session and for an operator approval. */
       flow_id: components["schemas"]["Slug"] | null;
-      /** @description Null for an approval of an assist session. */
+      /** @description Null for an approval of an assist session and for an operator approval. */
       node_id: components["schemas"]["Slug"] | null;
       /** @description Set for a tool-call approval raised by an assist session turn. */
       assist_session_id: components["schemas"]["Ulid"] | null;
@@ -4429,7 +4519,7 @@ export interface components {
       permission_request: components["schemas"]["PermissionRequest"] | null;
       /** @description Set for `proposal` approvals. */
       proposal_md: string | null;
-      /** @description Set for `request` approvals. */
+      /** @description Set for `request` approvals: those of an approval node (with `node_run_id`) and operator approvals, which an external MCP client's call to a tool with side effects raises (no run ids; `docs/mcp.md`). */
       request: components["schemas"]["ApprovalRequestContent"] | null;
       status: components["schemas"]["ApprovalStatus"];
       comment: string | null;
@@ -4470,6 +4560,13 @@ export interface components {
        * @enum {string|null}
        */
       on_timeout: "denied" | "approved" | "error" | null;
+      /**
+       * @description `mcp` when an external MCP client raised the approval (`docs/mcp.md`); null for an approval node.
+       * @enum {string|null}
+       */
+      source?: "mcp" | null;
+      /** @description Name of that MCP client (its `clientInfo` or User-Agent); null when unknown or not an MCP approval. */
+      client?: string | null;
     };
     ApprovalList: {
       items: components["schemas"]["Approval"][];
@@ -4494,11 +4591,17 @@ export interface components {
     };
     InboxItem: {
       id: components["schemas"]["Ulid"];
-      /** @enum {string} */
-      source: "agent_run" | "node_run";
-      source_id: components["schemas"]["Ulid"];
-      flow_run_id: components["schemas"]["Ulid"];
-      node_run_id: components["schemas"]["Ulid"];
+      /**
+       * @description `mcp` is a note an external MCP client posted with `send_note` (`docs/mcp.md`): no run ids, `flow_id` is `mcp`, `node_id` `send_note`.
+       * @enum {string}
+       */
+      source: "agent_run" | "node_run" | "mcp";
+      /** @description ULID of the node run or agent run; empty for source `mcp`. */
+      source_id: string;
+      /** @description Empty for source `mcp`. */
+      flow_run_id: string;
+      /** @description Empty for source `mcp`. */
+      node_run_id: string;
       agent_run_id: components["schemas"]["NullableUlid"];
       flow_id: components["schemas"]["Slug"];
       node_id: components["schemas"]["Slug"];
@@ -4516,6 +4619,10 @@ export interface components {
       /** @description The note could not be parsed; `summary_md` holds the raw final message. */
       parse_error: boolean;
       created_at: components["schemas"]["Timestamp"];
+      /** @description Name of the external MCP client of a note with source `mcp`. */
+      client?: string | null;
+      /** @description Grouping key the MCP client passed with the note. */
+      thread_key?: string | null;
     };
     /**
      * @description Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
@@ -7524,6 +7631,78 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       415: components["responses"]["UnsupportedMediaType"];
       /** @description The daemon has no tool hub (not expected in a normal daemon). */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      default: components["responses"]["Error"];
+    };
+  };
+  getMcpInfo: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The connection details. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["McpInfo"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  serveMcp: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          [key: string]: unknown;
+        };
+      };
+    };
+    responses: {
+      /** @description The JSON-RPC response. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+      /** @description A notification or response was accepted; no body. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      /** @description The daemon has no operator tool set (not expected in a normal daemon). */
       503: {
         headers: {
           [name: string]: unknown;

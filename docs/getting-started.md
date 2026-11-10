@@ -84,6 +84,17 @@ Details: [flows.md](flows.md).
 - Queue view (Flows → Queue): remove one, several or all; removed runs are `cancelled` and stay in history.
 - Runs tab on Flows, per-flow Runs tab, Agent runs page in the sidebar.
 
+## MCP server for your other agents
+
+Details: [mcp.md](mcp.md).
+
+- hal9001 is an MCP server on `http://localhost:9001/mcp` (Streamable HTTP) and as a stdio command (`hal9001 mcp`), for
+  Claude Code, Codex, omp (Oh My Pi) and pi. Settings → MCP shows the URL, the binary path of the running app and
+  copy-paste install commands for each client.
+- Tools: inbox, approvals, flows, runs, sensors and events (read); `flow_run`, `sensor_poll`, `flow_create` and
+  `sensor_create` wait for your approval in the Inbox; `request_approval` asks you for a decision and `send_note` leaves a
+  note. No tool can approve or deny. Loopback only, same auth as the API.
+
 ## Chat assistant
 
 Details: [assist.md](assist.md).
