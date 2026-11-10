@@ -189,10 +189,10 @@ func TestUpdateOffersOnlyNewerBuildsThisMacCanRun(t *testing.T) {
 	}
 }
 
-func TestUpdateCheckFailureIsReportedNotRaised(t *testing.T) {
+func TestUpdateEmptyChannelIsUpToDate(t *testing.T) {
 	u := newUpdateEnv(t)
-	st := u.check() // nothing published: the feed answers 404
-	if st.State != update.StateError || st.Error == nil || !strings.Contains(*st.Error, "stable") {
+	st := u.check() // nothing published: the feed answers 404, which is not an error
+	if st.State != update.StateUpToDate || st.Error != nil {
 		t.Fatalf("status = %+v", st)
 	}
 	u.feed.publish("stable", 6)

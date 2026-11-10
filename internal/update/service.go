@@ -316,19 +316,29 @@ func (s *Service) check(ctx context.Context, onDemand bool) {
 	s.mu.Lock()
 	s.checking = false
 	s.lastChecked = s.opts.Now()
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoRelease):
+		// Nothing published on this channel yet (for example no stable promotion): not a failure.
+		s.checkErr, s.latest, s.latestChannel = "", nil, set.Channel
+	case err != nil:
 		s.checkErr = err.Error()
-	} else {
+	default:
 		s.checkErr, s.latest, s.latestChannel = "", &m, set.Channel
 	}
 	s.mu.Unlock()
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoRelease):
+		s.log.Info("update: no release on channel yet", "channel", set.Channel)
+	case err != nil:
 		s.log.Warn("update: check failed", "channel", set.Channel, "err", err)
-	} else {
+	default:
 		s.log.Info("update: checked", "channel", set.Channel, "latest", m.Version, "build", m.Build, "current", s.cur.Build)
 	}
 	s.publishStatus(ctx)
 }
+
+// errNoRelease means the channel manifest does not exist yet.
+var errNoRelease = errors.New("no release is published on this channel yet")
 
 func (s *Service) fetch(ctx context.Context, channel string) (Manifest, error) {
 	u := strings.TrimRight(s.opts.FeedBase, "/") + "/" + channel + ".json"
@@ -345,7 +355,7 @@ func (s *Service) fetch(ctx context.Context, channel string) (Manifest, error) {
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return Manifest{}, fmt.Errorf("no release is published on the %s channel yet", channel)
+		return Manifest{}, fmt.Errorf("%w: %s", errNoRelease, channel)
 	case resp.StatusCode != http.StatusOK:
 		return Manifest{}, fmt.Errorf("the update feed answered %s", resp.Status)
 	}

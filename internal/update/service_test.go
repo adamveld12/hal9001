@@ -60,3 +60,19 @@ func TestInstallWithoutReportsTimesOut(t *testing.T) {
 		t.Fatalf("a new request after the timeout: %+v, %v", st, err)
 	}
 }
+
+func TestMissingChannelManifestIsNotAnError(t *testing.T) {
+	feed := httptest.NewServer(http.NotFoundHandler())
+	defer feed.Close()
+	s := New(Options{
+		Current:  Current{BundleID: "dev.hal9001", Version: "0.1.5", Build: 5},
+		Settings: func() Settings { return Settings{Channel: ChannelStable} },
+		FeedBase: feed.URL, MinCheckGap: -1,
+	})
+	ctx := context.Background()
+	s.Check(ctx)
+	st := s.Status(ctx)
+	if st.State != StateUpToDate || st.Error != nil || st.Available {
+		t.Fatalf("404 feed: %+v", st)
+	}
+}

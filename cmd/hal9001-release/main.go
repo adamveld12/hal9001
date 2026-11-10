@@ -34,7 +34,7 @@ func main() {
 
 func run(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: hal9001-release keygen|sign|manifest [flags]")
+		return errors.New("usage: hal9001-release keygen|sign|manifest|promote [flags]")
 	}
 	switch args[0] {
 	case "keygen":
@@ -43,6 +43,8 @@ func run(args []string, out io.Writer) error {
 		return sign(args[1:], out)
 	case "manifest":
 		return manifest(args[1:])
+	case "promote":
+		return promote(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
@@ -195,4 +197,52 @@ func manifest(args []string) error {
 		return err
 	}
 	return os.WriteFile(*outPath, append(b, '\n'), 0o600)
+}
+
+// promote rewrites a verified manifest for another channel without re-signing:
+// the signature covers the zip bytes, which do not change. It needs no private key.
+func promote(args []string) error {
+	fs := flag.NewFlagSet("promote", flag.ContinueOnError)
+	in := fs.String("manifest", "", "input manifest (the release's update.json)")
+	channel := fs.String("channel", "stable", "channel to write")
+	zip := fs.String("zip", "", "path to the release .app.zip the manifest describes")
+	notesFile := fs.String("notes-file", "", "markdown notes that replace the manifest notes")
+	outPath := fs.String("out", "", "output manifest path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *in == "" || *zip == "" || *outPath == "" {
+		return errors.New("--manifest, --zip and --out are required")
+	}
+	raw, err := os.ReadFile(*in)
+	if err != nil {
+		return err
+	}
+	m, err := update.ParseManifest(raw)
+	if err != nil {
+		return err
+	}
+	pub, err := embeddedPublicKey()
+	if err != nil {
+		return fmt.Errorf("cannot verify the release without a committed public key (%s): %w", publicKeyPath, err)
+	}
+	if err := update.VerifyFile(*zip, m, pub); err != nil {
+		return fmt.Errorf("refusing to promote: %w", err)
+	}
+	m.Channel = *channel
+	if *notesFile != "" {
+		b, err := os.ReadFile(*notesFile)
+		if err != nil {
+			return err
+		}
+		m.Notes = string(b)
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(*outPath, append(b, '\n'), 0o600) //nolint:gosec // CI-chosen output path
 }

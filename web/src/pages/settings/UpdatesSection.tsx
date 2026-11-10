@@ -55,7 +55,7 @@ export function UpdatesSection() {
           </div>
           <Field
             label="Channel"
-            hint="Beta gets every build; stable gets promoted builds."
+            hint="Beta gets every build from main; stable gets builds promoted with a stable/v0.1.N tag."
           >
             <Select
               value={s.channel}

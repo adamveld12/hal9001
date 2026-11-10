@@ -86,23 +86,21 @@ jobs:
           tag="v${HAL9001_RELEASE_VERSION}"
           zip="dist/HAL9001-${HAL9001_RELEASE_VERSION}.app.zip"
           mkdir -p manifests
-          # Channel policy: space-separated channels that every main build is published to.
-          CHANNELS="stable beta"
-          for channel in $CHANNELS; do
-            mise exec -- go run ./cmd/hal9001-release manifest \
-              --channel "$channel" \
-              --version "$HAL9001_RELEASE_VERSION" \
-              --build "$HAL9001_RELEASE_BUILD" \
-              --commit "$GITHUB_SHA" \
-              --zip "$zip" \
-              --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "$zip")" \
-              --notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}" \
-              --notes-file notes.md \
-              --min-macos 13.0 \
-              --key-env HAL9001_UPDATE_SIGNING_KEY \
-              --out "manifests/${channel}.json"
-          done
-          cp "manifests/${CHANNELS%% *}.json" dist/update.json
+          # Channel policy: main builds go to beta only. Stable is promoted by
+          # pushing a stable/v0.1.N tag (.github/workflows/promote.yml).
+          mise exec -- go run ./cmd/hal9001-release manifest \
+            --channel beta \
+            --version "$HAL9001_RELEASE_VERSION" \
+            --build "$HAL9001_RELEASE_BUILD" \
+            --commit "$GITHUB_SHA" \
+            --zip "$zip" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "$zip")" \
+            --notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}" \
+            --notes-file notes.md \
+            --min-macos 13.0 \
+            --key-env HAL9001_UPDATE_SIGNING_KEY \
+            --out manifests/beta.json
+          cp manifests/beta.json dist/update.json
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
@@ -113,6 +111,7 @@ jobs:
           fi
           gh release create "v${HAL9001_RELEASE_VERSION}" \
             --target "$GITHUB_SHA" \
+            --prerelease \
             --title "HAL9001 ${HAL9001_RELEASE_VERSION}" \
             --notes-file notes.md \
             "${assets[@]}"
@@ -125,6 +124,6 @@ jobs:
               --prerelease \
               --target "$GITHUB_SHA" \
               --title "Update channels" \
-              --notes "Update manifests (stable.json, beta.json) read by the HAL9001 app updater. Managed by CI; do not edit."
+              --notes "Update manifests (beta.json from every main build, stable.json from stable/v* promotions) read by the HAL9001 app updater. Managed by CI; do not edit."
           fi
           gh release upload channels manifests/*.json --clobber
