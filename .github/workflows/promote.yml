@@ -48,6 +48,14 @@ jobs:
           fetch-tags: true
           ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.sha }}
 
+      # The feed publisher comes from the default branch so any build can be promoted, including ones that predate it.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: feed-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -110,14 +118,9 @@ jobs:
           else
             { echo "Promoted to stable on $date"; echo; cat stable-notes.md; echo; echo "---"; echo; cat body-old.md; } > body-new.md
           fi
-          if ! gh release view channels >/dev/null 2>&1; then
-            gh release create channels \
-              --prerelease \
-              --target "$GITHUB_SHA" \
-              --title "Update channels" \
-              --notes "Update manifests (beta.json from every main build, stable.json from stable/v* promotions) read by the HAL9001 app updater. Managed by CI; do not edit."
-          fi
-          gh release upload channels manifests/stable.json --clobber
+          # The update feed lives on GitHub Pages (gh-pages branch), not in a release: immutable releases cannot be updated.
+          # The push retries on its own when release.yml pushes the beta channel at the same time.
+          feed-tools/scripts/publish-feed.sh manifests/stable.json "stable: ${VERSION}"
           gh release edit "$TAG" --prerelease=false --latest --notes-file body-new.md
           if [ "$EVENT" = "workflow_dispatch" ] && ! git ls-remote --exit-code --tags origin "stable/$TAG" >/dev/null 2>&1; then
             git tag "stable/$TAG" "refs/tags/$TAG"
