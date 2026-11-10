@@ -403,7 +403,7 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 		head = toolPreamble(row.TargetID, global, own, summary)
 	}
 	head = tools.Preamble(tools.PreambleData{
-		Info: tools.RunInfo{AgentRunID: t.runID, AssistSessionID: s.id}, Now: s.m.host.Clock().Now(), Tools: ht.Tools(),
+		Info: tools.RunInfo{AgentRunID: t.runID, AssistSessionID: s.id}, Now: s.m.host.Clock().Now(), Tools: ht.Tools(), SystemPrompt: spec.Load(s.m.home).Config.Value.SystemPrompt,
 	}) + head
 	// The turn's own user message is the last one; the recap covers what came before it.
 	var before []store.AssistMessage

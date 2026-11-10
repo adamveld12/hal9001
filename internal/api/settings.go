@@ -147,6 +147,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyMinPriority  *string        `json:"notify_min_priority"`
 		NotifyVia          *string        `json:"notify_via"`
 		ApprovalTimeout    *spec.Duration `json:"approval_timeout"`
+		SystemPrompt       *string        `json:"system_prompt"`
 		UpdateChannel      *string        `json:"update_channel"`
 		UpdateAutoInstall  *bool          `json:"update_auto_install"`
 	}
@@ -190,6 +191,13 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["approval_timeout"] = patch.ApprovalTimeout.String()
+	}
+	if patch.SystemPrompt != nil {
+		if len(*patch.SystemPrompt) > spec.MaxSystemPromptBytes {
+			fieldProblem(w, "system_prompt", fmt.Sprintf("system_prompt is %d bytes, over the %d byte limit", len(*patch.SystemPrompt), spec.MaxSystemPromptBytes))
+			return
+		}
+		set["system_prompt"] = *patch.SystemPrompt
 	}
 	if patch.UpdateChannel != nil {
 		if !slices.Contains(spec.UpdateChannels, *patch.UpdateChannel) {

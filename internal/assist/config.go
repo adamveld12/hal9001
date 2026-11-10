@@ -234,6 +234,7 @@ func settingsText(ws *spec.Workspace) string {
 	w("| `approval_timeout` | %s | How long an agent node waits for the user's approval unless the node sets its own `approval_timeout`. |\n", cfg.ApprovalTimeout.Std())
 	w("| `notify_min_priority` | %s | Lowest inbox priority that sends a notification. |\n", cfg.NotifyMinPriority)
 	w("| `notify_via` | %s | Where notifications go: auto (the macOS app when connected, else terminal-notifier), app, terminal-notifier or none (log only). |\n", cfg.NotifyVia)
+	w("| `system_prompt` | %s | The user's app-wide system prompt (Configure > Settings > Context): markdown added to the start of every agent call, flows and assistant. Its text is already in your prompt when set; you cannot change it, tell the user to edit it. |\n", systemPromptState(cfg.SystemPrompt))
 	w("| `update_channel` | %s | Release channel the macOS app updates from: stable or beta. |\n", cfg.UpdateChannel)
 	w("| `update_auto_install` | %t | Install an available app update by itself once no flow is running (otherwise the user installs it on request). |\n", cfg.UpdateAutoInstall)
 	w("| `retention_days` | %d | Days runs, events and logs are kept. |\n", cfg.RetentionDays)
@@ -356,4 +357,11 @@ func configGuide() string {
 	w("- If the user asks for something that is not configured (for example a sandbox that is disabled, an image that is not listed, a runtime or tool that does not exist), say so plainly, do not write it into the draft, and tell them where to set it up: sandboxes and images in Configure > Sandboxes > <backend> (for example Configure > Sandboxes > Kubernetes), runtimes in Configure > Runtimes, custom tools in Tools. Then offer what works now.\n")
 	w("- Validation diagnostics for an unknown or disabled sandbox, an image not in the list, an unknown tool or an unknown runtime list the valid options: use them to correct the draft.\n\n")
 	return b.String()
+}
+
+func systemPromptState(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "(not set)"
+	}
+	return fmt.Sprintf("set, %d bytes", len(s))
 }

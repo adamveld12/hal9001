@@ -4257,6 +4257,7 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        system_prompt: {type: string, maxLength: 16384, description: 'Markdown added to every agent call (flow agent nodes and assistant sessions); empty adds nothing. At most 16 KiB (16384 bytes).'}
         update_channel: {$ref: '#/components/schemas/UpdateChannel'}
         update_auto_install: {type: boolean, default: false}
         session_ttl: {$ref: '#/components/schemas/Duration'}
@@ -4906,6 +4907,7 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        system_prompt: {type: string, description: 'Markdown added to every agent call. Empty clears it. 422 above 16 KiB (16384 bytes).'}
         update_channel: {$ref: '#/components/schemas/UpdateChannel'}
         update_auto_install: {type: boolean, description: 'Install an available app update by itself once no flow is running.'}
     EnvKeyList:

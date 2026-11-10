@@ -124,6 +124,8 @@ const (
 	DefaultCommandTimeout     = Duration(time.Minute)
 	DefaultAgentTimeout       = Duration(30 * time.Minute)
 	DefaultApprovalTimeout    = Duration(time.Hour)
+	// MaxSystemPromptBytes caps Config.SystemPrompt.
+	MaxSystemPromptBytes = 16 << 10
 )
 
 // Config is config.yaml. Zero numeric values mean "unset" and get the default.
@@ -144,12 +146,14 @@ type Config struct {
 	UpdateAutoInstall bool `yaml:"update_auto_install,omitempty" json:"update_auto_install"`
 	// ApprovalTimeout is the default for agent nodes that do not set their own
 	// approval_timeout (see Config.ApprovalTimeoutFor).
-	ApprovalTimeout Duration           `yaml:"approval_timeout,omitempty" json:"approval_timeout"`
-	SessionTTL      Duration           `yaml:"session_ttl,omitempty" json:"session_ttl"`
-	AllowedHosts    []string           `yaml:"allowed_hosts,omitempty" json:"allowed_hosts"`
-	AllowedLogins   []string           `yaml:"allowed_logins,omitempty" json:"allowed_logins"`
-	Runtimes        map[string]Runtime `yaml:"runtimes,omitempty" json:"runtimes"`
-	Auth            Auth               `yaml:"auth,omitempty" json:"auth"`
+	ApprovalTimeout Duration `yaml:"approval_timeout,omitempty" json:"approval_timeout"`
+	// SystemPrompt is user-written markdown (name, preferences, facts) added to every agent call; see tools.Preamble.
+	SystemPrompt  string             `yaml:"system_prompt,omitempty" json:"system_prompt"`
+	SessionTTL    Duration           `yaml:"session_ttl,omitempty" json:"session_ttl"`
+	AllowedHosts  []string           `yaml:"allowed_hosts,omitempty" json:"allowed_hosts"`
+	AllowedLogins []string           `yaml:"allowed_logins,omitempty" json:"allowed_logins"`
+	Runtimes      map[string]Runtime `yaml:"runtimes,omitempty" json:"runtimes"`
+	Auth          Auth               `yaml:"auth,omitempty" json:"auth"`
 }
 
 // DataPlaceholder in a runtime's command, env values and spawn args/env is

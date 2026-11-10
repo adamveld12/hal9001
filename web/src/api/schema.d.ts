@@ -3357,6 +3357,8 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      /** @description Markdown added to every agent call (flow agent nodes and assistant sessions); empty adds nothing. At most 16 KiB (16384 bytes). */
+      system_prompt?: string;
       update_channel?: components["schemas"]["UpdateChannel"];
       /** @default false */
       update_auto_install?: boolean;
@@ -3927,6 +3929,8 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      /** @description Markdown added to every agent call. Empty clears it. 422 above 16 KiB (16384 bytes). */
+      system_prompt?: string;
       update_channel?: components["schemas"]["UpdateChannel"];
       /** @description Install an available app update by itself once no flow is running. */
       update_auto_install?: boolean;

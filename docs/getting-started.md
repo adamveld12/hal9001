@@ -102,6 +102,7 @@ Details: [assist.md](assist.md).
 - On Sensors, Flows and Tools pages. On Flows it can also draft/edit sensors and prompts and save everything in one
   step.
 - Knows your sandboxes, runtimes, tools and settings, so it doesn't guess ids.
+- Knows what you put in Settings → Context → System Prompt (your name, preferences, facts). That text is added to every agent call, flows included.
 - Fixes: kill switch doesn't block it; errors are shown; typing works immediately; Save disabled until the
   placeholder sensor is changed.
 

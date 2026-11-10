@@ -81,7 +81,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	runOK := false
 	defer func() { ht.sess.CloseWith(runOK) }() // a failed run keeps its sandbox workspace for debugging
 	if prev == nil {
-		prompt = tools.Preamble(tools.PreambleData{Info: e.agentRunInfo(ne, runID), Now: e.clock.Now(), Tools: ht.sess.Tools()}) + prompt
+		prompt = tools.Preamble(tools.PreambleData{Info: e.agentRunInfo(ne, runID), Now: e.clock.Now(), Tools: ht.sess.Tools(), SystemPrompt: ne.snap.cfg.SystemPrompt}) + prompt
 	}
 	req := agent.RunRequest{
 		RunID:           runID,

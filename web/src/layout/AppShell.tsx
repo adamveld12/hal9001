@@ -59,6 +59,12 @@ const NAV_SECTIONS: NavSection[] = [
         key: ",",
       },
       {
+        to: "/settings/context",
+        label: "Context",
+        icon: "prompts",
+        key: "c",
+      },
+      {
         to: "/settings/environment",
         label: "Environment",
         icon: "env",

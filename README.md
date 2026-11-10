@@ -193,6 +193,7 @@ Files are hot-reloaded. A save from the UI or API that is based on a stale copy 
 | `notify_min_priority` | `normal` | Inbox items at or above this raise a macOS notification (`low`, `normal`, `high`, `urgent`). Every new approval notifies. |
 | `HAL9001_UI_URL` (env, not config) | `http://localhost:9001` | Origin of notification deep links. `mise run dev` sets it to the Vite server, `http://localhost:5173`. |
 | `approval_timeout` | `1h` | Default wait for a `per_tool` approval before the run fails (`approval_timeout`). Agent nodes can override it. |
+| `system_prompt` | empty | Markdown you write in Settings → Context → System Prompt (name, preferences, facts). Added to the start of every agent prompt (flow agent nodes, chat assistant) as a "User context" section that hal's own instructions override. Max 16 KiB; applies to new runs and turns without a restart. |
 | `update_channel` | `stable` | Release channel the [macOS app updates itself](docs/macos-app.md#updates) from: `stable` or `beta`. |
 | `update_auto_install` | `false` | Install an available app update by itself once no flow is running. Off: the update is offered (web UI, menubar) and installed on request. |
 | `session_ttl` | `7d` | Sliding lifetime of a login session. |
