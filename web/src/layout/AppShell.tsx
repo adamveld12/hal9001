@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router";
+import { useFaviconActivity } from "./faviconActivity";
 import { eyeLabel, eyeThrobs } from "./halEye";
 import { useStatus } from "../api/status";
 import { useStreamState } from "../api/streamHooks";
@@ -186,6 +187,7 @@ export function AppShell() {
   const stream = useStreamState();
   const theme = useTheme();
   const s = status.data;
+  useFaviconActivity(s?.running_flow_runs);
   const inboxCount =
     s === undefined ? undefined : s.unread_inbox + s.pending_approvals;
   const running = (s?.running_flow_runs ?? 0) + (s?.running_agent_runs ?? 0);
