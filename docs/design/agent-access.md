@@ -73,6 +73,40 @@ Common fields: `enabled`, `lifecycle: per_run | persistent`, `approval` (above),
 - Agent node picks the sandbox and, for Docker/Kubernetes, the `image:` from that sandbox's list (default first).
 - Failed per_run sandboxes are kept for debugging until retention.
 
+## Sandbox run log
+
+Every agent run that uses a sandbox gets a log, so you can see what happened without the backend's own console. It is
+shown under **Sandbox** on the agent run page and on the node run in the flow run detail, updates live while the sandbox
+is in use, and can be copied or downloaded as text. The same data is served by `GET /api/agent-runs/{id}/sandbox-log`
+and `GET /api/node-runs/{id}/sandbox-log` (a provisioning failure has a node run but no agent run), and
+`hal9001 agent-runs sandbox-log <id>`.
+
+Captured:
+- Header: backend, sandbox id or name (Depot sandbox id, container name, pod name, `user@host`, run directory), image,
+  repo and ref (without credentials), lifecycle, workdir, status (`provisioning`, `ready`, `failed`, `closed`,
+  `interrupted`), provisioning time.
+- Lifecycle: provisioning start, the names of the environment variables commands see (never values), clone and
+  checkout, input.json, ready, the backend's error message when provisioning fails, teardown (workspace removed or kept
+  for debugging) and its error.
+- Backend messages, best effort: Docker image pull and container start, Kubernetes pod events (scheduling, image pull,
+  failures), Depot sandbox states.
+- Every `shell` command and the script of a custom tool that runs in the sandbox: command line, cwd, exit code or
+  timeout, duration, stdout, stderr and how it was allowed (`auto: <policy reason>` or `approved by user`).
+- Every `fs_read`, `fs_write`, `fs_list`, `fs_search`: path, size or hit count, duration, error.
+- Calls that were not run: denied by policy, denied by a user (with the comment), expired, or held back because the run is
+  read-only.
+
+Limits and redaction:
+- Secret values (global env, the sandbox's env, custom tool env, the git token) are replaced by `«redacted»` in commands,
+  output, errors and fields, like everywhere else in traces. Encoded values are not caught.
+- Each command's stdout and stderr is capped at 64 KiB: the first and last 32 KiB are kept with a marker between them.
+- A run's log holds at most 5000 entries and 8 MiB. After the byte limit entries keep their metadata but lose output;
+  after the entry limit only lifecycle entries are kept. The header says `truncated`.
+- Stored in `sandbox_sessions` and `sandbox_log_entries`, deleted with the node run by retention pruning. Sandboxes still
+  open when the daemon stops are marked `interrupted` at the next start.
+- Denials of custom tools that run in a sandbox are in the agent run's trace, not in the sandbox log; assist sessions
+  cannot use sandboxes, so they have no log.
+
 ## Workspace seeding
 
 At run start the sandbox workdir gets:

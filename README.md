@@ -292,6 +292,8 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `agent-runs list` | `--flow-run`, `--node-run`, `--runtime`, `--status`, `--limit`, `--cursor` |
 | `agent-runs get <id>` | |
 | `agent-runs events <id>` | `--after-seq N`, `--limit N`, `--kind K` |
+| `agent-runs sandbox-log <id>` | `--after-id N`, `--limit N`, `--tail`, `--raw` (sandbox provisioning, commands and output) |
+| `node-runs sandbox-log <id>` | same |
 | `approvals list` | `--status` (`pending`, `approved`, `denied`, `expired`), `--type` (`proposal`, `tool_call`, `request`), `--flow-run`, `--agent-run`, `--limit`, `--cursor` |
 | `approvals get <id>` | |
 | `approvals approve <id>` | `--comment text` (passed to the agent) |
