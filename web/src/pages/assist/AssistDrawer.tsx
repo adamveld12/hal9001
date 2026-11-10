@@ -23,6 +23,7 @@ import {
   TextInput,
 } from "../../components/ui";
 import { cx } from "../../lib/cx";
+import { noFocusOnClick } from "../../lib/focus";
 import { relativeTime } from "../../lib/format";
 import type { Tone } from "../../lib/status";
 import { ConfirmButton } from "../files/ConfirmButton";
@@ -600,6 +601,7 @@ function SessionView({ id }: { id: string }) {
                 variant="danger"
                 icon="stop"
                 disabled={cancel.isPending}
+                {...noFocusOnClick}
                 onClick={() => cancel.mutate()}
               >
                 Stop
