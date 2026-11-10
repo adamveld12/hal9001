@@ -89,7 +89,13 @@ func bridgeOperator(ctx context.Context, c *call, t mcp.Transport) error {
 				if req.Params != nil {
 					args = req.Params.Arguments
 				}
-				res, err := remote.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+				// The daemon is stateless, so the agent's own clientInfo (from its initialize to this bridge) travels with
+				// every call; approvals and notes then name the agent, not the bridge.
+				params := &mcp.CallToolParams{Name: name, Arguments: args}
+				if info := req.ClientInfo(); info != nil {
+					params.Meta = mcp.Meta{mcp.MetaKeyClientInfo: info}
+				}
+				res, err := remote.CallTool(ctx, params)
 				if err != nil {
 					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "hal9001: " + err.Error()}}}, nil
 				}

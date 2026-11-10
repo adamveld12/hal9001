@@ -737,6 +737,9 @@ type approvalRequestView struct {
 	Priority  store.Priority               `json:"priority"`
 	DryRun    bool                         `json:"dry_run"`
 	OnTimeout *string                      `json:"on_timeout"`
+	// Source is "mcp" when an external MCP client raised the approval, Client its name.
+	Source *string `json:"source"`
+	Client *string `json:"client"`
 }
 
 func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
@@ -801,7 +804,7 @@ func (rv *resolver) requestApprovalView(a store.Approval) (approvalView, error) 
 	if req.Editable == nil {
 		req.Editable = []store.RequestEditable{}
 	}
-	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Editable: req.Editable, Edits: req.Edits, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout)}
+	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Editable: req.Editable, Edits: req.Edits, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout), Source: nonEmpty(req.Source), Client: nonEmpty(req.Client)}
 	return approvalView{
 		ID: a.ID, NodeRunID: nonEmpty(a.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
 		EventID: nonEmpty(l.EventID), Type: string(a.Type), Request: rq, Status: string(a.Status), Comment: nonEmpty(a.Comment),
@@ -832,6 +835,9 @@ type inboxItemView struct {
 	DryRun         bool       `json:"dry_run"`
 	ParseError     bool       `json:"parse_error"`
 	CreatedAt      time.Time  `json:"created_at"`
+	// Client names the external MCP client of a note with source "mcp"; ThreadKey is the grouping key it passed.
+	Client    *string `json:"client"`
+	ThreadKey *string `json:"thread_key"`
 }
 
 func (rv *resolver) inboxView(it store.InboxItem) (inboxItemView, error) {
@@ -840,8 +846,12 @@ func (rv *resolver) inboxView(it store.InboxItem) (inboxItemView, error) {
 		return inboxItemView{}, err
 	}
 	sourceID := it.NodeRunID
-	if it.SourceType == store.SourceAgentRun {
+	switch it.SourceType {
+	case store.SourceAgentRun:
 		sourceID = it.AgentRunID
+	case store.SourceMCP:
+		// A note from an MCP client belongs to no flow or run: it reads as flow "mcp", node "send_note".
+		sourceID, l = "", lineage{FlowID: "mcp", NodeID: "send_note"}
 	}
 	links := make([]linkView, 0, len(it.Links))
 	for _, k := range it.Links {
@@ -852,7 +862,7 @@ func (rv *resolver) inboxView(it store.InboxItem) (inboxItemView, error) {
 		AgentRunID: nonEmpty(it.AgentRunID), FlowID: l.FlowID, NodeID: l.NodeID, EventID: nonEmpty(l.EventID), Title: it.Title,
 		Priority: string(it.Priority), SummaryMD: it.SummaryMD, SuggestedReply: nonEmpty(it.SuggestedReply), Links: links,
 		Read: it.Read, Starred: it.Starred, Archived: it.Archived, DryRun: it.DryRun, ParseError: it.ParseError,
-		CreatedAt: utc(it.CreatedAt),
+		CreatedAt: utc(it.CreatedAt), Client: nonEmpty(it.Client), ThreadKey: nonEmpty(it.ThreadKey),
 	}, nil
 }
 

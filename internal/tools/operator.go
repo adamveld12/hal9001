@@ -19,6 +19,20 @@ import (
 // Code aborts an HTTP call that is silent for 5 minutes, Codex defaults to 60 s per tool call (see docs/mcp.md).
 const DefaultOperatorApprovalTimeout = 4 * time.Minute
 
+// Limits of request_approval (see operator_ask.go): how long one call waits, and how long the approval stays pending.
+const (
+	// MaxRequestWait is the longest a request_approval call blocks. It is also its default: the existing operator
+	// wait limit, which is under the 5 minutes a client allows an HTTP call to stay silent.
+	MaxRequestWait = DefaultOperatorApprovalTimeout
+	// DefaultRequestTimeout is how long a request_approval stays pending when the agent gives no timeout.
+	DefaultRequestTimeout = 24 * time.Hour
+	// MinRequestTimeout and MaxRequestTimeout bound the agent's timeout_seconds.
+	MinRequestTimeout = 10 * time.Second
+	MaxRequestTimeout = 7 * 24 * time.Hour
+	// MaxPendingRequests is how many request_approval approvals may be pending at once.
+	MaxPendingRequests = 10
+)
+
 // maxOperatorText caps one tool result so a long list does not flood the client's context.
 const maxOperatorText = 128 << 10
 
@@ -27,19 +41,70 @@ const maxOperatorText = 128 << 10
 // MCP request authenticated with. It returns the status and body of the response.
 type APIFunc func(ctx context.Context, method, path string, query url.Values, body []byte) (status int, out []byte, err error)
 
-type apiKey struct{}
+// OperatorCaller identifies the MCP client behind one call.
+type OperatorCaller struct {
+	// Principal is the authenticated principal of the MCP request.
+	Principal string
+	// Client is the client's name: the clientInfo of its initialize request, else its User-Agent. Empty when unknown.
+	Client string
+}
 
-// WithAPI returns a context that carries the API an operator tool runs against.
-func WithAPI(ctx context.Context, api APIFunc) context.Context {
-	return context.WithValue(ctx, apiKey{}, api)
+// Label says who asked, for approval text: "Claude Code", or "an MCP client" when the name is not known.
+func (c OperatorCaller) Label() string {
+	if c.Client != "" {
+		return c.Client
+	}
+	return "an MCP client"
+}
+
+// RequestedBy is the principal and client of a call as one line.
+func (c OperatorCaller) RequestedBy() string {
+	switch {
+	case c.Principal != "" && c.Client != "":
+		return c.Principal + " via " + c.Client
+	case c.Client != "":
+		return c.Client
+	case c.Principal != "":
+		return c.Principal
+	}
+	return "an MCP client"
+}
+
+// ServiceAdmin is the auth service of the endpoints that change state. A tool that needs it is refused, before
+// anybody is asked, when the MCP request is not admitted for it.
+const ServiceAdmin = "admin"
+
+// OperatorEnv is what the daemon supplies for one MCP call: the caller's REST API and identity.
+type OperatorEnv struct {
+	API    APIFunc
+	Caller OperatorCaller
+	// Authorize reports whether the MCP request is admitted for an auth service ("admin"); the error is the
+	// refusal. Nil admits everything.
+	Authorize func(ctx context.Context, service string) error
+}
+
+type envKey struct{}
+
+func withEnv(ctx context.Context, env OperatorEnv) context.Context {
+	return context.WithValue(ctx, envKey{}, env)
+}
+
+func envFrom(ctx context.Context) (OperatorEnv, error) {
+	env, ok := ctx.Value(envKey{}).(OperatorEnv)
+	if !ok || env.API == nil {
+		return OperatorEnv{}, errors.New("operator tool called without an API")
+	}
+	return env, nil
 }
 
 func apiFrom(ctx context.Context) (APIFunc, error) {
-	api, ok := ctx.Value(apiKey{}).(APIFunc)
-	if !ok || api == nil {
-		return nil, errors.New("operator tool called without an API")
-	}
-	return api, nil
+	env, err := envFrom(ctx)
+	return env.API, err
+}
+
+// OperatorField is one row of the key/value table of an operator approval.
+type OperatorField struct {
+	Key, Value string
 }
 
 // OperatorApproval asks the host for a user's decision on one operator call.
@@ -48,29 +113,83 @@ type OperatorApproval struct {
 	Args json.RawMessage
 	// Reason says what the call would do.
 	Reason string
-	// Caller is the authenticated principal of the MCP request.
-	Caller string
+	// Title, BodyMD and Fields replace the generic "MCP client: <tool>" approval content when set (flow_create shows
+	// the spec, for example). The host adds the caller's identity.
+	Title  string
+	BodyMD string
+	Fields []OperatorField
+	// Caller identifies the MCP client.
+	Caller OperatorCaller
 	// Timeout is how long to wait; the host returns Decision.Expired when it elapses.
 	Timeout time.Duration
 }
 
-// OperatorHost is what the daemon supplies to the operator tool set: the approval queue.
+// OperatorEditable is one field the approver may edit before approving a request_approval, with its current value
+// (JSON).
+type OperatorEditable struct {
+	Key   string
+	Value json.RawMessage
+}
+
+// OperatorQuestion is a request_approval call: the agent asks the user for a decision.
+type OperatorQuestion struct {
+	Title    string
+	BodyMD   string
+	Priority string
+	Editable []OperatorEditable
+	// Timeout is how long the approval stays pending before it expires.
+	Timeout time.Duration
+	// Wait is how long the call blocks for the decision.
+	Wait   time.Duration
+	Caller OperatorCaller
+}
+
+// OperatorNote is a send_note call.
+type OperatorNote struct {
+	Title    string
+	BodyMD   string
+	Priority string
+	// URL and URLLabel become the note's link.
+	URL, URLLabel string
+	// Thread groups the note's notifications (a new notification of a thread replaces its previous one).
+	Thread string
+	Caller OperatorCaller
+}
+
+// OperatorNoted is the note a send_note call created.
+type OperatorNoted struct {
+	ItemID string
+	// URL is the note's deep link in the web UI.
+	URL string
+}
+
+// OperatorHost is what the daemon supplies to the operator tool set: the approval queue and the inbox.
 type OperatorHost interface {
 	// ApproveOperator registers an approval in the Inbox and blocks until it is decided, the timeout passes, or ctx
-	// ends (then it returns ctx's error).
+	// ends (then it returns ctx's error). The approval belongs to this call: it expires when the call ends.
 	ApproveOperator(ctx context.Context, req OperatorApproval) (Decision, error)
+	// AskOperator registers a request approval in the Inbox that outlives the call (it is decided, and expires, on
+	// its own) and blocks until it is decided, its timeout passes, the wait elapses, or ctx ends. It returns the
+	// approval's id; the caller reads the outcome from the approval.
+	AskOperator(ctx context.Context, q OperatorQuestion) (approvalID string, err error)
+	// PostOperatorNote creates an inbox note and raises its notification.
+	PostOperatorNote(ctx context.Context, n OperatorNote) (OperatorNoted, error)
 }
 
 // Operator is the tool set hal offers to MCP clients that are not inside an agent run (an editor or agent the user
 // runs themselves), over both transports: the daemon's /mcp endpoint serves it, and `hal9001 mcp` without a run token
 // bridges to that endpoint. The tools read through hal's REST API with the caller's own identity. The ones with side
-// effects (flow_run, sensor_poll) wait for an approval in the Inbox first. Nothing here can decide an approval.
+// effects (flow_run, sensor_poll, flow_create, sensor_create) wait for an approval in the Inbox first;
+// request_approval is an approval the agent asks for, and send_note posts an inbox note. Nothing here can decide an
+// approval.
 type Operator struct {
 	reg     *Registry
 	host    OperatorHost
 	timeout time.Duration
-	// approval holds the tools whose calls wait for an approval.
+	// approval holds the tools whose calls wait for an approval; service the auth service a tool needs besides api.
 	approval map[string]bool
+	service  map[string]string
+	notes    noteLimiter
 }
 
 // NewOperator returns the operator tool set. timeout bounds approval waits (default DefaultOperatorApprovalTimeout).
@@ -82,12 +201,13 @@ func NewOperator(host OperatorHost, timeout time.Duration) (*Operator, error) {
 		timeout = DefaultOperatorApprovalTimeout
 	}
 	reg := NewRegistry()
-	o := &Operator{reg: reg, host: host, timeout: timeout, approval: map[string]bool{}}
-	for _, t := range operatorTools() {
+	o := &Operator{reg: reg, host: host, timeout: timeout, approval: map[string]bool{}, service: map[string]string{}}
+	for _, t := range append(operatorTools(), o.hostTools()...) {
 		if err := reg.Register(t.Tool); err != nil {
 			return nil, err
 		}
 		o.approval[t.Name] = t.NeedsApproval
+		o.service[t.Name] = t.Service
 	}
 	return o, nil
 }
@@ -98,12 +218,16 @@ func (o *Operator) Tools() []ToolInfo { return o.reg.List() }
 // NeedsApproval reports whether a call of the named tool waits for the user's approval.
 func (o *Operator) NeedsApproval(name string) bool { return o.approval[name] }
 
+// Service is the auth service the named tool needs besides api (ServiceAdmin), or "" when api is enough.
+func (o *Operator) Service(name string) string { return o.service[name] }
+
 // Timeout is how long a call that needs approval waits for the user.
 func (o *Operator) Timeout() time.Duration { return o.timeout }
 
-// Call runs one tool. A tool with side effects first waits for the user's approval; the returned error is a tool
-// error for the client (ErrUnknownTool, *DeniedError, the API's problem text or the tool's own error).
-func (o *Operator) Call(ctx context.Context, api APIFunc, caller, name string, args json.RawMessage) (Result, error) {
+// Call runs one tool. Arguments are checked first, then the caller's auth service for the tool, so a refused call
+// asks nobody. A tool with side effects then waits for the user's approval; the returned error is a tool error for
+// the client (ErrUnknownTool, *DeniedError, the API's problem text or the tool's own error).
+func (o *Operator) Call(ctx context.Context, env OperatorEnv, name string, args json.RawMessage) (Result, error) {
 	t, ok := o.reg.Get(name)
 	if !ok {
 		return Result{}, fmt.Errorf("%w: %s", ErrUnknownTool, name)
@@ -112,11 +236,16 @@ func (o *Operator) Call(ctx context.Context, api APIFunc, caller, name string, a
 		args = json.RawMessage(`{}`)
 	}
 	verdict, why := approval(t, args)
-	switch verdict {
-	case VerdictDeny:
+	if verdict == VerdictDeny {
 		return Result{}, fmt.Errorf("tool %s: %s", name, why)
-	case VerdictApprove:
-		d, err := o.host.ApproveOperator(ctx, OperatorApproval{Tool: name, Args: args, Reason: why, Caller: caller, Timeout: o.timeout})
+	}
+	if svc := o.service[name]; svc != "" && env.Authorize != nil {
+		if err := env.Authorize(ctx, svc); err != nil {
+			return Result{}, fmt.Errorf("tool %s: %w", name, err)
+		}
+	}
+	if verdict == VerdictApprove {
+		d, err := o.host.ApproveOperator(ctx, OperatorApproval{Tool: name, Args: args, Reason: why, Caller: env.Caller, Timeout: o.timeout})
 		if err != nil {
 			return Result{}, fmt.Errorf("tool %s: approval failed: %w", name, err)
 		}
@@ -124,7 +253,7 @@ func (o *Operator) Call(ctx context.Context, api APIFunc, caller, name string, a
 			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
 		}
 	}
-	return t.Run(WithAPI(ctx, api), Call{Name: name, Args: args, Now: time.Now()})
+	return t.Run(withEnv(ctx, env), Call{Name: name, Args: args, Now: time.Now()})
 }
 
 var idRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -136,10 +265,12 @@ type apiReq struct {
 	body         any
 }
 
-// operatorTool is a Tool of the operator set and whether a call waits for the user's approval.
+// operatorTool is a Tool of the operator set, whether a call waits for the user's approval, and the auth service it
+// needs besides api.
 type operatorTool struct {
 	Tool
 	NeedsApproval bool
+	Service       string
 }
 
 // restTool builds a tool that maps its arguments to one REST request. build validates the arguments; it is also the
@@ -337,6 +468,11 @@ func prop(typ, desc string) map[string]any { return map[string]any{"type": typ, 
 
 func idProp(what string) map[string]any { return prop("string", "The "+what+" id.") }
 
+func adminTool(t operatorTool) operatorTool {
+	t.Service = ServiceAdmin
+	return t
+}
+
 func operatorTools() []operatorTool {
 	get := func(path string) func(map[string]any) (apiReq, error) {
 		return func(map[string]any) (apiReq, error) { return apiReq{method: http.MethodGet, path: path}, nil }
@@ -387,8 +523,6 @@ func operatorTools() []operatorTool {
 				q, err := listQuery(a, []string{"status"}, nil)
 				return apiReq{method: http.MethodGet, path: "/api/approvals", query: q}, err
 			}),
-		restTool("approval_get", "Read one approval: what is being asked, its status and the decision.",
-			obj(map[string]any{"id": idProp("approval")}, "id"), nil, getByID("/api/approvals/")),
 
 		restTool("flows_list", "List flows with run statistics.", obj(map[string]any{}), nil, get("/api/flows")),
 		restTool("flow_get", "Read one flow: its definition, validation diagnostics and subscribed sensors.",
@@ -426,7 +560,7 @@ func operatorTools() []operatorTool {
 				"q":         prop("string", "Case-insensitive substring search over the payload."),
 			})), nil, list("/api/events", []string{"sensor_id", "flow_id", "q"}, nil)),
 
-		restTool("flow_run", "Run a flow now: polls the sensors it subscribes to and starts runs of this flow only. Has side effects, so it waits for the user to approve it in the hal9001 Inbox (up to 4 minutes). Returns the polls and the flow run ids; follow them with flow_run_get.",
+		adminTool(restTool("flow_run", "Run a flow now: polls the sensors it subscribes to and starts runs of this flow only. Has side effects, so it waits for the user to approve it in the hal9001 Inbox (up to 4 minutes). Returns the polls and the flow run ids; follow them with flow_run_get.",
 			obj(map[string]any{
 				"id":         idProp("flow"),
 				"rerun_seen": prop("boolean", "Also replay items already seen into the flow."),
@@ -453,8 +587,8 @@ func operatorTools() []operatorTool {
 					body["rerun_seen"] = *rerun
 				}
 				return apiReq{method: http.MethodPost, path: "/api/flows/" + url.PathEscape(id) + "/run", body: body}, nil
-			}),
-		restTool("sensor_poll", "Poll a sensor now, outside its schedule. New items become events and start runs of the flows subscribed to it. Has side effects, so it waits for the user to approve it in the hal9001 Inbox (up to 4 minutes).",
+			})),
+		adminTool(restTool("sensor_poll", "Poll a sensor now, outside its schedule. New items become events and start runs of the flows subscribed to it. Has side effects, so it waits for the user to approve it in the hal9001 Inbox (up to 4 minutes).",
 			obj(map[string]any{
 				"id":         idProp("sensor"),
 				"rerun_seen": prop("boolean", "Also replay items already seen into the target flows."),
@@ -504,6 +638,6 @@ func operatorTools() []operatorTool {
 					body["flows"] = flows
 				}
 				return apiReq{method: http.MethodPost, path: "/api/sensors/" + url.PathEscape(id) + "/poll", body: body}, nil
-			}),
+			})),
 	}
 }

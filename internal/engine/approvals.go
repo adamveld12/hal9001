@@ -194,11 +194,12 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 			dec.Request = rq
 		}
 		var wait chan agent.ToolDecision
-		if ap.NodeRunID == "" { // an operator approval: an MCP call is blocked on it
+		operator := ap.NodeRunID == "" // an operator approval: an external MCP client raised it
+		if operator {
 			e.waitMu.Lock()
 			wait = e.waiters[ap.ID]
 			e.waitMu.Unlock()
-			if wait == nil {
+			if wait == nil && !isDetached(ap.Request) { // a gated call: it is blocked on this approval
 				return nil, fmt.Errorf("%w: the MCP client is no longer waiting for this approval", core.ErrInvalidState)
 			}
 		}
@@ -206,12 +207,18 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 		if err != nil {
 			return nil, mapDecideErr(approvalID, err)
 		}
-		if wait != nil {
-			verdict := agent.VerdictDeny
-			if d.Approve {
-				verdict = agent.VerdictAllow
+		if operator {
+			if wait != nil {
+				verdict := agent.VerdictDeny
+				if d.Approve {
+					verdict = agent.VerdictAllow
+				}
+				select {
+				case wait <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment}:
+				default:
+				}
 			}
-			wait <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment}
+			e.log.Info("engine: mcp approval decided", "approval", ap.ID, "status", decided.Status, "by", d.Principal)
 			return decided, nil
 		}
 		e.applyRequestDecision(decided.NodeRunID)

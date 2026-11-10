@@ -3,12 +3,16 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -27,8 +31,22 @@ func (s *Server) operatorServer(r *http.Request) *mcp.Server {
 		// The tool set is fixed per request and the endpoint opens no stream, so there is nothing to notify about.
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 	})
-	caller := principal(r)
+	principalName := principal(r)
 	api := s.dispatcher(r)
+	authorize := s.authorizer(r)
+	key := mcpClientKey(r, principalName)
+	// The server is stateless, so a later tools/call does not carry the clientInfo of the initialize that came
+	// before it. Remember it, per caller, for the client name of approvals and notes.
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if p, ok := req.GetParams().(*mcp.InitializeParams); ok && method == "initialize" && p != nil {
+				if name := clientLabel(p.ClientInfo); name != "" {
+					s.mcpClients.set(key, name)
+				}
+			}
+			return next(ctx, method, req)
+		}
+	})
 	for _, info := range s.opts.Operator.Tools() {
 		name := info.Name
 		srv.AddTool(&mcp.Tool{Name: name, Description: info.Description, InputSchema: info.InputSchema},
@@ -37,7 +55,15 @@ func (s *Server) operatorServer(r *http.Request) *mcp.Server {
 				if req.Params != nil {
 					args = req.Params.Arguments
 				}
-				res, err := s.opts.Operator.Call(ctx, api, caller, name, args)
+				client := clientLabel(req.ClientInfo())
+				if client == "" {
+					client = s.mcpClients.get(key)
+				}
+				if client == "" {
+					client = userAgentName(r)
+				}
+				env := tools.OperatorEnv{API: api, Authorize: authorize, Caller: tools.OperatorCaller{Principal: principalName, Client: client}}
+				res, err := s.opts.Operator.Call(ctx, env, name, args)
 				if err != nil {
 					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil
 				}
@@ -45,6 +71,125 @@ func (s *Server) operatorServer(r *http.Request) *mcp.Server {
 			})
 	}
 	return srv
+}
+
+// authorizer returns what lets an operator tool ask, before it does anything, whether this MCP request is admitted for
+// an auth service: it runs the service's own auth stack (the one the REST endpoint of that service uses) over the
+// request and reports the refusal it would have answered.
+func (s *Server) authorizer(orig *http.Request) func(context.Context, string) error {
+	return func(ctx context.Context, service string) error {
+		reached := false
+		inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+		rec := &recorder{header: http.Header{}, status: http.StatusOK}
+		s.opts.Auth.Require(auth.Service(service))(inner).ServeHTTP(rec, orig.Clone(ctx))
+		if reached {
+			return nil
+		}
+		var p struct{ Title, Detail string }
+		_ = json.Unmarshal(rec.body.Bytes(), &p)
+		msg := p.Detail
+		if msg == "" {
+			msg = p.Title
+		}
+		return fmt.Errorf("hal9001: %d %s: this tool needs the %s service, which this MCP request is not admitted for: %s", rec.status, http.StatusText(rec.status), service, msg)
+	}
+}
+
+// maxClientName bounds a client name taken from the request.
+const maxClientName = 64
+
+// clientLabel is the name of an MCP client from its clientInfo ("claude-code 2.1.3"), cleaned of anything that is not
+// printable text.
+func clientLabel(info *mcp.Implementation) string {
+	if info == nil {
+		return ""
+	}
+	name := info.Title
+	if name == "" {
+		name = info.Name
+	}
+	if info.Version != "" && name != "" {
+		name += " " + info.Version
+	}
+	return cleanName(name)
+}
+
+// userAgentName is the product of the request's User-Agent ("claude-code/2.1.3 (cli)" gives "claude-code/2.1.3"), the
+// client name when the client never said who it is.
+func userAgentName(r *http.Request) string {
+	ua, _, _ := strings.Cut(strings.TrimSpace(r.Header.Get("User-Agent")), " ")
+	return cleanName(ua)
+}
+
+func cleanName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+	if len(s) > maxClientName {
+		s = strings.ToValidUTF8(s[:maxClientName], "")
+	}
+	return s
+}
+
+// mcpClientKey identifies a caller across the requests of one MCP connection that has no session: the principal, the
+// peer address without its port and the User-Agent.
+func mcpClientKey(r *http.Request, principal string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return principal + "|" + host + "|" + r.Header.Get("User-Agent")
+}
+
+// clientNames remembers the client name of recent initialize requests, by caller key. It is a label for people, not
+// a credential: a client can claim any name.
+type clientNames struct {
+	mu sync.Mutex
+	m  map[string]clientName
+}
+
+type clientName struct {
+	name string
+	at   time.Time
+}
+
+const (
+	clientNameTTL = time.Hour
+	clientNameCap = 64
+)
+
+func (c *clientNames) set(key, name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string]clientName{}
+	}
+	now := time.Now()
+	for k, v := range c.m {
+		if now.Sub(v.at) > clientNameTTL {
+			delete(c.m, k)
+		}
+	}
+	if _, ok := c.m[key]; !ok && len(c.m) >= clientNameCap {
+		for k := range c.m { // evict an arbitrary entry
+			delete(c.m, k)
+			break
+		}
+	}
+	c.m[key] = clientName{name: name, at: now}
+}
+
+func (c *clientNames) get(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.m[key]
+	if !ok || time.Since(v.at) > clientNameTTL {
+		return ""
+	}
+	return v.name
 }
 
 // dispatcher returns the API an operator tool runs against: this server's own routes, called in-process with the
@@ -176,6 +321,8 @@ type mcpToolView struct {
 	Name          string `json:"name"`
 	Description   string `json:"description"`
 	NeedsApproval bool   `json:"needs_approval"`
+	// NeedsAdmin is true for a tool that changes state: the request must be admitted for the admin service too.
+	NeedsAdmin bool `json:"needs_admin"`
 }
 
 func (s *Server) getMcpInfo(w http.ResponseWriter, _ *http.Request) {
@@ -200,7 +347,7 @@ func (s *Server) getMcpInfo(w http.ResponseWriter, _ *http.Request) {
 	if s.opts.Operator != nil {
 		v.ApprovalTimeoutSeconds = int(s.opts.Operator.Timeout().Seconds())
 		for _, t := range s.opts.Operator.Tools() {
-			v.Tools = append(v.Tools, mcpToolView{Name: t.Name, Description: t.Description, NeedsApproval: s.opts.Operator.NeedsApproval(t.Name)})
+			v.Tools = append(v.Tools, mcpToolView{Name: t.Name, Description: t.Description, NeedsApproval: s.opts.Operator.NeedsApproval(t.Name), NeedsAdmin: s.opts.Operator.Service(t.Name) != ""})
 		}
 	}
 	writeJSON(w, http.StatusOK, v)

@@ -1578,8 +1578,10 @@ paths:
         transport of the MCP specification (2025-06-18, stateless: no session id, JSON responses; GET and DELETE are
         405). The body is one JSON-RPC message; `tools/list` and `tools/call` serve the operator tools of
         `GET /api/mcp/info`. It needs the `api` auth service like the REST API; each tool then calls the REST API with
-        the same credentials, so a tool that needs another service (`flow_run`, `sensor_poll`: `admin`) is held to it,
-        and those also wait for the user's approval in the Inbox. Loopback only, on top of the baseline: Host, Origin
+        the same credentials. A tool that needs another service (`flow_run`, `sensor_poll`, `flow_create`,
+        `sensor_create`, `request_approval`, `send_note`: `admin`) is held to it before anybody is asked. `flow_run`,
+        `sensor_poll`, `flow_create` and `sensor_create` wait for the user's approval in the Inbox, `request_approval`
+        is an approval the agent asks for, and `send_note` posts an Inbox note. Loopback only, on top of the baseline: Host, Origin
         and the TCP peer must be loopback, and a request with proxy headers (`Forwarded`, `X-Forwarded-*`,
         `Tailscale-*`) is 403, even when the host is in `allowed_hosts`. Not the run-scoped backend of `hal9001 mcp
         --token` (`/api/mcp/tools`, `/api/mcp/call`).
@@ -3777,11 +3779,12 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [name, description, needs_approval]
+            required: [name, description, needs_approval, needs_admin]
             properties:
               name: {type: string}
               description: {type: string}
               needs_approval: {type: boolean, description: 'A call waits for the user to approve it in the Inbox.'}
+              needs_admin: {type: boolean, description: 'The tool changes state: the MCP request must also be admitted for the `admin` auth service, checked before anybody is asked.'}
     AgentNode:
       type: object
       description: |
@@ -4278,6 +4281,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         sensor: {$ref: '#/components/schemas/Sensor'}
       oneOf:
@@ -4524,8 +4528,10 @@ components:
         - {required: [flow]}
     FlowValidateRequest:
       type: object
+      description: Exactly one of `yaml` and `flow`. `id`, when given, is the id the flow would be stored under (an invalid one is an `invalid_id` error; a different `id:` line in the YAML is a warning).
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         flow: {$ref: '#/components/schemas/Flow'}
       oneOf:
@@ -5341,6 +5347,8 @@ components:
         priority: {$ref: '#/components/schemas/Priority'}
         dry_run: {type: boolean, description: 'The approval belongs to a dry run: deciding only exercises the flow''s branches.'}
         on_timeout: {type: [string, 'null'], enum: [denied, approved, error, null], description: 'What expiry does; null without a timeout (`expires_at`).'}
+        source: {type: [string, 'null'], enum: [mcp, null], description: '`mcp` when an external MCP client raised the approval (`docs/mcp.md`); null for an approval node.'}
+        client: {type: [string, 'null'], description: 'Name of that MCP client (its `clientInfo` or User-Agent); null when unknown or not an MCP approval.'}
     ApprovalList:
       type: object
       required: [items, next_cursor]
@@ -5365,10 +5373,10 @@ components:
       required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
-        source: {type: string, enum: [agent_run, node_run]}
-        source_id: {$ref: '#/components/schemas/Ulid'}
-        flow_run_id: {$ref: '#/components/schemas/Ulid'}
-        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        source: {type: string, enum: [agent_run, node_run, mcp], description: '`mcp` is a note an external MCP client posted with `send_note` (`docs/mcp.md`): no run ids, `flow_id` is `mcp`, `node_id` `send_note`.'}
+        source_id: {type: string, pattern: '^([0-9A-HJKMNP-TV-Z]{26})?$', description: 'ULID of the node run or agent run; empty for source `mcp`.'}
+        flow_run_id: {type: string, pattern: '^([0-9A-HJKMNP-TV-Z]{26})?$', description: 'Empty for source `mcp`.'}
+        node_run_id: {type: string, pattern: '^([0-9A-HJKMNP-TV-Z]{26})?$', description: 'Empty for source `mcp`.'}
         agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
         flow_id: {$ref: '#/components/schemas/Slug'}
         node_id: {$ref: '#/components/schemas/Slug'}
@@ -5384,6 +5392,8 @@ components:
         dry_run: {type: boolean, description: 'Tagged `dry-run` in the UI.'}
         parse_error: {type: boolean, description: 'The note could not be parsed; `summary_md` holds the raw final message.'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
+        client: {type: [string, 'null'], description: 'Name of the external MCP client of a note with source `mcp`.'}
+        thread_key: {type: [string, 'null'], description: 'Grouping key the MCP client passed with the note.'}
     NotifyVia:
       type: string
       enum: [auto, app, terminal-notifier, none]

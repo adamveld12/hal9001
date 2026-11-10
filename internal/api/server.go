@@ -91,6 +91,8 @@ type Server struct {
 
 	// mcpHandler is the Streamable HTTP transport of the operator MCP server (POST /mcp).
 	mcpHandler http.Handler
+	// mcpClients remembers the client name of recent MCP initialize requests.
+	mcpClients clientNames
 
 	probeMu sync.Mutex
 	probes  map[string]probeResultView

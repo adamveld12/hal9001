@@ -3,11 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,15 +24,34 @@ import (
 	"hal9001/internal/tools"
 )
 
-// operatorApprover answers every operator approval the same way.
+// operatorApprover answers every operator approval the same way and records the notes and questions it is given.
 type operatorApprover struct {
 	allow bool
 	asked atomic.Int32
+
+	mu        sync.Mutex
+	notes     []tools.OperatorNote
+	approvals []tools.OperatorApproval
 }
 
-func (a *operatorApprover) ApproveOperator(context.Context, tools.OperatorApproval) (tools.Decision, error) {
+func (a *operatorApprover) ApproveOperator(_ context.Context, req tools.OperatorApproval) (tools.Decision, error) {
 	a.asked.Add(1)
+	a.mu.Lock()
+	a.approvals = append(a.approvals, req)
+	a.mu.Unlock()
 	return tools.Decision{Allowed: a.allow, Comment: "not now"}, nil
+}
+
+func (a *operatorApprover) AskOperator(context.Context, tools.OperatorQuestion) (string, error) {
+	a.asked.Add(1)
+	return "", errors.New("not used in this test")
+}
+
+func (a *operatorApprover) PostOperatorNote(_ context.Context, n tools.OperatorNote) (tools.OperatorNoted, error) {
+	a.mu.Lock()
+	a.notes = append(a.notes, n)
+	a.mu.Unlock()
+	return tools.OperatorNoted{ItemID: "item1"}, nil
 }
 
 func newOperatorEnv(t *testing.T, allow bool, mods ...func(*envOptions)) (*env, *operatorApprover) {
@@ -145,12 +168,12 @@ func TestMcpHTTPDeniedSideEffectDoesNotRun(t *testing.T) {
 }
 
 // Tools carry the caller's credentials: a stack that admits the MCP request for `api` but not `admin` lets the read
-// tools work and refuses flow_run, even after an approval.
+// tools work and refuses every tool that changes state, before anybody is asked.
 func TestMcpToolsAreHeldToTheServiceOfTheEndpointTheyCall(t *testing.T) {
 	cfg := lockedConfig()
 	cfg.Stacks["local"] = []auth.StackEntry{{Module: "localhost-trust", Control: auth.Sufficient}}
 	cfg.Services[auth.ServiceAPI] = "local"
-	e, _ := newOperatorEnv(t, true, func(o *envOptions) { o.auth = &cfg })
+	e, host := newOperatorEnv(t, true, func(o *envOptions) { o.auth = &cfg })
 	e.eng.runFlow = func(context.Context, string, core.RunFlowOptions) (core.RunFlowResult, error) {
 		t.Error("flow_run ran without the admin service")
 		return core.RunFlowResult{}, nil
@@ -159,9 +182,130 @@ func TestMcpToolsAreHeldToTheServiceOfTheEndpointTheyCall(t *testing.T) {
 	if out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: "flows_list", Arguments: map[string]any{}}); err != nil || out.IsError {
 		t.Fatalf("flows_list: %v %+v", err, out)
 	}
-	out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: "flow_run", Arguments: map[string]any{"id": "demo"}})
-	if err != nil || !out.IsError || !strings.Contains(textOf(out), "401") {
-		t.Fatalf("flow_run without admin: %v %+v", err, out)
+	if out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: "flow_validate", Arguments: map[string]any{"spec": demoFlowYAML}}); err != nil || out.IsError {
+		t.Fatalf("flow_validate needs only the api service: %v %+v", err, out)
+	}
+	for tool, args := range map[string]map[string]any{
+		"flow_run":         {"id": "demo"},
+		"flow_create":      {"id": "fresh", "spec": demoFlowYAML},
+		"sensor_create":    {"id": "fresh", "spec": "lang: bash\nscript: echo\nkey: x"},
+		"request_approval": {"title": "ok?"},
+		"send_note":        {"title": "hi"},
+	} {
+		out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
+		if err != nil || !out.IsError || !strings.Contains(textOf(out), "401") || !strings.Contains(textOf(out), "admin") {
+			t.Errorf("%s without admin: %v %+v", tool, err, out)
+		}
+	}
+	if host.asked.Load() != 0 || len(host.notes) != 0 {
+		t.Errorf("a refused call reached the host: asked=%d notes=%d", host.asked.Load(), len(host.notes))
+	}
+	if _, err := os.Stat(filepath.Join(e.home, "flows", "fresh.yaml")); err == nil {
+		t.Error("flow_create wrote a file without the admin service")
+	}
+}
+
+const newFlowYAML = `description: Created over MCP
+enabled: false
+nodes:
+  - id: note
+    type: inbox
+    title: hello
+    summary_md: hi
+edges: []
+`
+
+func callTool(t *testing.T, s *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return out
+}
+
+func fileExists(e *env, rel string) bool {
+	_, err := os.Stat(filepath.Join(e.home, rel))
+	return err == nil
+}
+
+// flow_create and sensor_create go through the router: invalid specs come back as tool errors without an approval,
+// a valid one is created only after the approval is allowed, and an existing id is refused.
+func TestMcpCreateToolsValidateApproveAndNeverOverwrite(t *testing.T) {
+	e, host := newOperatorEnv(t, true)
+	s := connect(t, serveHTTP(t, e.srv).URL+"/mcp")
+
+	// Invalid: an edge to a node that does not exist.
+	bad := "nodes:\n  - id: a\n    type: inbox\n    title: t\nedges:\n  - {from: a, to: ghost}\n"
+	out := callTool(t, s, "flow_create", map[string]any{"id": "broken", "spec": bad})
+	if !out.IsError || !strings.Contains(textOf(out), "unknown_node") || !strings.Contains(textOf(out), "nobody was asked") {
+		t.Fatalf("invalid flow_create: %+v", out)
+	}
+	if host.asked.Load() != 0 || fileExists(e, "flows/broken.yaml") {
+		t.Fatalf("an invalid flow reached approval (%d) or disk", host.asked.Load())
+	}
+	if out = callTool(t, s, "flow_validate", map[string]any{"id": "broken", "spec": bad}); out.IsError || !strings.Contains(textOf(out), `"valid":false`) || !strings.Contains(textOf(out), "unknown_node") {
+		t.Errorf("flow_validate of an invalid flow: %s", textOf(out))
+	}
+
+	// Valid and approved: created, disabled as the spec says.
+	out = callTool(t, s, "flow_create", map[string]any{"id": "fresh", "spec": newFlowYAML})
+	if out.IsError || !strings.Contains(textOf(out), `"created":true`) || !strings.Contains(textOf(out), `"enabled":false`) {
+		t.Fatalf("flow_create: %+v", out)
+	}
+	if host.asked.Load() != 1 || !fileExists(e, "flows/fresh.yaml") {
+		t.Fatalf("asked=%d file=%v", host.asked.Load(), fileExists(e, "flows/fresh.yaml"))
+	}
+	ask := host.approvals[0]
+	if ask.Title != "Create flow: fresh" || !strings.Contains(ask.BodyMD, "Created over MCP") || !strings.Contains(ask.BodyMD, "test 1") || ask.Caller.Client != "test 1" {
+		t.Errorf("approval = %+v", ask)
+	}
+	e.get("/api/flows/fresh").want(200)
+
+	// An existing id is refused, before an approval.
+	out = callTool(t, s, "flow_create", map[string]any{"id": "fresh", "spec": newFlowYAML})
+	if !out.IsError || !strings.Contains(textOf(out), "already exists") || host.asked.Load() != 1 {
+		t.Errorf("duplicate flow_create: %+v (asked %d)", out, host.asked.Load())
+	}
+
+	// A JSON spec works too and is stored as YAML.
+	out = callTool(t, s, "sensor_create", map[string]any{"spec": `{"lang":"bash","script":"echo '{}'","key":"{{ .id }}","description":"d"}`, "id": "probe"})
+	if out.IsError || !strings.Contains(textOf(out), `"created":true`) {
+		t.Fatalf("sensor_create: %+v", out)
+	}
+	raw, err := os.ReadFile(filepath.Join(e.home, "sensors", "probe.yaml"))
+	if err != nil || !strings.Contains(string(raw), "lang: bash") {
+		t.Errorf("sensor file: %q %v", raw, err)
+	}
+	out = callTool(t, s, "sensor_create", map[string]any{"spec": "lang: bash\nscript: echo\nkey: x\n", "id": "probe"})
+	if !out.IsError || !strings.Contains(textOf(out), "already exists") {
+		t.Errorf("duplicate sensor_create: %+v", out)
+	}
+	if out = callTool(t, s, "sensor_create", map[string]any{"spec": "lang: cobol\n", "id": "weird"}); !out.IsError || fileExists(e, "sensors/weird.yaml") {
+		t.Errorf("invalid sensor_create: %+v", out)
+	}
+}
+
+func TestMcpDeniedCreateWritesNothing(t *testing.T) {
+	e, host := newOperatorEnv(t, false)
+	s := connect(t, serveHTTP(t, e.srv).URL+"/mcp")
+	out := callTool(t, s, "flow_create", map[string]any{"id": "nope", "spec": newFlowYAML})
+	if !out.IsError || !strings.Contains(textOf(out), "denied by the user: not now") || host.asked.Load() != 1 || fileExists(e, "flows/nope.yaml") {
+		t.Errorf("denied flow_create: %+v asked=%d file=%v", out, host.asked.Load(), fileExists(e, "flows/nope.yaml"))
+	}
+}
+
+// The caller's name (the clientInfo of the initialize request) and principal travel to the host.
+func TestMcpNotesCarryTheClientAndPrincipal(t *testing.T) {
+	e, host := newOperatorEnv(t, true)
+	s := connect(t, serveHTTP(t, e.srv).URL+"/mcp")
+	out := callTool(t, s, "send_note", map[string]any{"title": "Build finished", "body": "green", "priority": "high"})
+	if out.IsError || !strings.Contains(textOf(out), "item1") {
+		t.Fatalf("send_note: %+v", out)
+	}
+	n := host.notes[0]
+	if n.Title != "Build finished" || n.Priority != "high" || n.Caller.Client != "test 1" || n.Caller.Principal == "" {
+		t.Errorf("note = %+v", n)
 	}
 }
 

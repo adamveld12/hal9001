@@ -1153,8 +1153,10 @@ export interface paths {
      *     transport of the MCP specification (2025-06-18, stateless: no session id, JSON responses; GET and DELETE are
      *     405). The body is one JSON-RPC message; `tools/list` and `tools/call` serve the operator tools of
      *     `GET /api/mcp/info`. It needs the `api` auth service like the REST API; each tool then calls the REST API with
-     *     the same credentials, so a tool that needs another service (`flow_run`, `sensor_poll`: `admin`) is held to it,
-     *     and those also wait for the user's approval in the Inbox. Loopback only, on top of the baseline: Host, Origin
+     *     the same credentials. A tool that needs another service (`flow_run`, `sensor_poll`, `flow_create`,
+     *     `sensor_create`, `request_approval`, `send_note`: `admin`) is held to it before anybody is asked. `flow_run`,
+     *     `sensor_poll`, `flow_create` and `sensor_create` wait for the user's approval in the Inbox, `request_approval`
+     *     is an approval the agent asks for, and `send_note` posts an Inbox note. Loopback only, on top of the baseline: Host, Origin
      *     and the TCP peer must be loopback, and a request with proxy headers (`Forwarded`, `X-Forwarded-*`,
      *     `Tailscale-*`) is 403, even when the host is in `allowed_hosts`. Not the run-scoped backend of `hal9001 mcp
      *     --token` (`/api/mcp/tools`, `/api/mcp/call`).
@@ -2848,6 +2850,8 @@ export interface components {
         description: string;
         /** @description A call waits for the user to approve it in the Inbox. */
         needs_approval: boolean;
+        /** @description The tool changes state: the MCP request must also be admitted for the `admin` auth service, checked before anybody is asked. */
+        needs_admin: boolean;
       }[];
     };
     /**
@@ -3363,6 +3367,7 @@ export interface components {
       sensor?: components["schemas"]["Sensor"];
     } & (unknown | unknown);
     SensorValidateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       sensor?: components["schemas"]["Sensor"];
     } & (unknown | unknown);
@@ -3589,7 +3594,9 @@ export interface components {
       yaml?: string;
       flow?: components["schemas"]["Flow"];
     } & (unknown | unknown);
+    /** @description Exactly one of `yaml` and `flow`. `id`, when given, is the id the flow would be stored under (an invalid one is an `invalid_id` error; a different `id:` line in the YAML is a warning). */
     FlowValidateRequest: {
+      id?: components["schemas"]["Slug"];
       yaml?: string;
       flow?: components["schemas"]["Flow"];
     } & (unknown | unknown);
@@ -4342,6 +4349,13 @@ export interface components {
        * @enum {string|null}
        */
       on_timeout: "denied" | "approved" | "error" | null;
+      /**
+       * @description `mcp` when an external MCP client raised the approval (`docs/mcp.md`); null for an approval node.
+       * @enum {string|null}
+       */
+      source?: "mcp" | null;
+      /** @description Name of that MCP client (its `clientInfo` or User-Agent); null when unknown or not an MCP approval. */
+      client?: string | null;
     };
     ApprovalList: {
       items: components["schemas"]["Approval"][];
@@ -4366,11 +4380,17 @@ export interface components {
     };
     InboxItem: {
       id: components["schemas"]["Ulid"];
-      /** @enum {string} */
-      source: "agent_run" | "node_run";
-      source_id: components["schemas"]["Ulid"];
-      flow_run_id: components["schemas"]["Ulid"];
-      node_run_id: components["schemas"]["Ulid"];
+      /**
+       * @description `mcp` is a note an external MCP client posted with `send_note` (`docs/mcp.md`): no run ids, `flow_id` is `mcp`, `node_id` `send_note`.
+       * @enum {string}
+       */
+      source: "agent_run" | "node_run" | "mcp";
+      /** @description ULID of the node run or agent run; empty for source `mcp`. */
+      source_id: string;
+      /** @description Empty for source `mcp`. */
+      flow_run_id: string;
+      /** @description Empty for source `mcp`. */
+      node_run_id: string;
       agent_run_id: components["schemas"]["NullableUlid"];
       flow_id: components["schemas"]["Slug"];
       node_id: components["schemas"]["Slug"];
@@ -4388,6 +4408,10 @@ export interface components {
       /** @description The note could not be parsed; `summary_md` holds the raw final message. */
       parse_error: boolean;
       created_at: components["schemas"]["Timestamp"];
+      /** @description Name of the external MCP client of a note with source `mcp`. */
+      client?: string | null;
+      /** @description Grouping key the MCP client passed with the note. */
+      thread_key?: string | null;
     };
     /**
      * @description Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
