@@ -94,6 +94,10 @@ const SettingsAuthPage = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsAuthPage",
 );
+const SettingsMcpPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsMcpPage",
+);
 
 function makeQueryClient(): QueryClient {
   const client: QueryClient = new QueryClient({
@@ -164,6 +168,7 @@ function AuthGate() {
           />
           <Route path="settings/runtimes" element={<SettingsRuntimesPage />} />
           <Route path="settings/auth" element={<SettingsAuthPage />} />
+          <Route path="settings/mcp" element={<SettingsMcpPage />} />
           <Route path="sandboxes" element={<SandboxesPage />} />
           <Route path="sandboxes/:backend" element={<SandboxesPage />} />
           <Route path="*" element={<Navigate to="/inbox" replace />} />

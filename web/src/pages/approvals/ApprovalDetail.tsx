@@ -21,7 +21,7 @@ import { Countdown } from "./Countdown";
 import { timeLeft, useNow } from "./timeLeft";
 import { diffsFromToolContent, extractCommand, extractDiffs } from "./diff";
 import { DiffView } from "./DiffView";
-import { approvalTitle, describeDecision } from "./queue";
+import { approvalTitle, describeDecision, isOperatorApproval } from "./queue";
 import { EditFields } from "./EditFields";
 import { initialDrafts } from "./edits";
 
@@ -37,6 +37,7 @@ function Context({ a }: { a: Approval }) {
         </Link>
       )}
       {a.node_id && <span>node {a.node_id}</span>}
+      {isOperatorApproval(a) && <span>MCP client</span>}
       {a.assist_session_id && (
         <Link to={`/sensors?assist=${a.assist_session_id}`} className={cls}>
           assist session {shortId(a.assist_session_id)}

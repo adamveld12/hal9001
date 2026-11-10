@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Approval, ApprovalList } from "../../api/approvals";
 import {
+  approvalOrigin,
   approvalTitle,
   describeDecision,
   mergeApprovalPages,
@@ -236,5 +237,24 @@ describe("request approvals", () => {
         }),
       ),
     ).toBe("Timed out; the flow continued on the error port");
+  });
+});
+
+describe("approvalOrigin", () => {
+  it("names the flow and node, the MCP client, or the sensor assist", () => {
+    expect(approvalOrigin(approval({ id: "a" }))).toBe("flow / node");
+    const unowned = {
+      flow_id: null,
+      node_id: null,
+      node_run_id: null,
+      flow_run_id: null,
+      agent_run_id: null,
+    };
+    expect(
+      approvalOrigin(approval({ id: "b", type: "request", ...unowned })),
+    ).toBe("MCP client");
+    expect(
+      approvalOrigin(approval({ id: "c", type: "tool_call", ...unowned })),
+    ).toBe("sensor assist");
   });
 });
