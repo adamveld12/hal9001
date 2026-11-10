@@ -25,11 +25,3 @@ func TestDMGBackground(t *testing.T) {
 		}
 	}
 }
-
-func TestDMGGlyphsCoverText(t *testing.T) {
-	for _, r := range DMGText {
-		if _, ok := glyphs[r]; !ok {
-			t.Errorf("no glyph for %q", r)
-		}
-	}
-}

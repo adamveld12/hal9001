@@ -7,6 +7,11 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/gomedium"
+	"golang.org/x/image/font/opentype"
+	"golang.org/x/image/math/fixed"
 )
 
 // DMG window geometry in points; scripts/make-dmg.sh positions the Finder icons with the same numbers.
@@ -33,9 +38,9 @@ func DMGBackground(scale int) []byte {
 		}
 	}
 
-	eye := 76 * scale
+	eye := 56 * scale
 	if src, err := png.Decode(bytes.NewReader(Icon(eye, false))); err == nil {
-		draw.Draw(img, image.Rect(w/2-eye/2, 28*scale, w/2+eye/2, 28*scale+eye), src, image.Point{}, draw.Over)
+		draw.Draw(img, image.Rect(w/2-eye/2, 18*scale, w/2+eye/2, 18*scale+eye), src, image.Point{}, draw.Over)
 	}
 
 	red := color.NRGBA{220, 38, 38, 255}
@@ -51,7 +56,7 @@ func DMGBackground(scale int) []byte {
 		return x > x1-head && x <= x1 && math.Abs(y-cy) <= (x1-x)/head*head*0.7
 	}, red)
 
-	drawText(img, DMGText, w/2, 330*scale, 3*scale, color.NRGBA{235, 235, 240, 255})
+	drawText(img, DMGText, w/2, 348*scale, float64(28*scale), color.NRGBA{200, 202, 210, 255})
 
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
@@ -70,44 +75,18 @@ func fill(img *image.NRGBA, in func(x, y float64) bool, c color.NRGBA) {
 	}
 }
 
-// drawText draws s centred on cx with its top at y, in the 5x7 bitmap font below, each font pixel being px×px.
-func drawText(img *image.NRGBA, s string, cx, y, px int, c color.NRGBA) {
-	total := len(s)*6*px - px
-	x := cx - total/2
-	for _, r := range s {
-		g, ok := glyphs[r]
-		if ok {
-			for row, bits := range g {
-				for col := range 5 {
-					if bits&(1<<(4-col)) != 0 {
-						draw.Draw(img, image.Rect(x+col*px, y+row*px, x+(col+1)*px, y+(row+1)*px), image.NewUniform(c), image.Point{}, draw.Over)
-					}
-				}
-			}
-		}
-		x += 6 * px
+// drawText draws s anti-aliased in Go Medium, centred on cx with its baseline at y; size is the font size in pixels.
+func drawText(img *image.NRGBA, s string, cx, y int, size float64, c color.NRGBA) {
+	f, err := opentype.Parse(gomedium.TTF)
+	if err != nil {
+		return
 	}
-}
-
-// glyphs covers the characters of DMGText: 7 rows of 5 bits each.
-var glyphs = map[rune][7]uint8{
-	' ': {},
-	'D': {0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110},
-	'H': {0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001},
-	'A': {0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001},
-	'L': {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111},
-	'9': {0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100},
-	'0': {0b01110, 0b10011, 0b10101, 0b10101, 0b10101, 0b11001, 0b01110},
-	'1': {0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110},
-	'r': {0b00000, 0b00000, 0b10110, 0b11001, 0b10000, 0b10000, 0b10000},
-	'a': {0b00000, 0b00000, 0b01110, 0b00001, 0b01111, 0b10001, 0b01111},
-	'g': {0b00000, 0b01111, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110},
-	't': {0b01000, 0b01000, 0b11100, 0b01000, 0b01000, 0b01001, 0b00110},
-	'o': {0b00000, 0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110},
-	'p': {0b00000, 0b00000, 0b11110, 0b10001, 0b11110, 0b10000, 0b10000},
-	'l': {0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110},
-	'i': {0b00100, 0b00000, 0b01100, 0b00100, 0b00100, 0b00100, 0b01110},
-	'c': {0b00000, 0b00000, 0b01110, 0b10000, 0b10000, 0b10001, 0b01110},
-	'n': {0b00000, 0b00000, 0b10110, 0b11001, 0b10001, 0b10001, 0b10001},
-	's': {0b00000, 0b00000, 0b01111, 0b10000, 0b01110, 0b00001, 0b11110},
+	face, err := opentype.NewFace(f, &opentype.FaceOptions{Size: size, DPI: 72, Hinting: font.HintingFull})
+	if err != nil {
+		return
+	}
+	defer func() { _ = face.Close() }()
+	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face}
+	d.Dot = fixed.P(cx, y).Sub(fixed.Point26_6{X: d.MeasureString(s) / 2})
+	d.DrawString(s)
 }
