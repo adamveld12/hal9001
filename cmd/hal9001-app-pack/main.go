@@ -2,6 +2,7 @@
 // LaunchAgent plist. scripts/build-app.sh runs it and copies the binaries in and signs the bundle.
 //
 //	hal9001-app-pack icon -o AppIcon.icns
+//	hal9001-app-pack dmg-background -dir stage/.background   (writes background.png and background@2x.png)
 //	hal9001-app-pack bundle -app HAL9001.app -bundle-id dev.hal9001 -name HAL9001 -version 0.1.0 -build 42 -full-version v0.1.0-3-gabc
 package main
 
@@ -28,6 +29,8 @@ func main() {
 	switch os.Args[1] {
 	case "icon":
 		err = runIcon(os.Args[2:])
+	case "dmg-background":
+		err = runDMGBackground(os.Args[2:])
 	case "bundle":
 		err = runBundle(os.Args[2:])
 	default:
@@ -173,4 +176,21 @@ func runBundle(args []string) error {
 		}
 	}
 	return nil
+}
+
+// runDMGBackground writes the installer window background (1x and 2x) into -dir.
+func runDMGBackground(args []string) error {
+	fs := flag.NewFlagSet("dmg-background", flag.ExitOnError)
+	dir := fs.String("dir", "", "output directory")
+	_ = fs.Parse(args)
+	if *dir == "" {
+		return fmt.Errorf("dmg-background: -dir is required")
+	}
+	if err := os.MkdirAll(*dir, 0o750); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(*dir, "background.png"), menubar.DMGBackground(1), 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(*dir, "background@2x.png"), menubar.DMGBackground(2), 0o600)
 }

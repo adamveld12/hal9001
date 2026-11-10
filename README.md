@@ -325,6 +325,8 @@ mise run app          # builds bin/HAL9001.app (release id dev.hal9001) and bin/
 mise run app:run      # (alias: menubar) run from source, outside a bundle: menu and API client only, no service management
 ```
 
+**Installing:** open `HAL9001-<version>.dmg` and drag HAL9001 onto Applications. The app is signed ad hoc, so for a copy downloaded from the internet Gatekeeper blocks the first launch: right-click the app, choose Open, then Open again (or run `xattr -dr com.apple.quarantine /Applications/HAL9001.app`).
+
 The bundle holds the app (`Contents/MacOS/HAL9001`, cgo: `fyne.io/systray` plus an Objective-C bridge for `SMAppService` and alerts), the daemon and CLI built with the UI embedded (`Contents/Resources/hal9001`), `AppIcon.icns` (rendered from the menubar eye by `cmd/hal9001-app-pack`) and the LaunchAgent plist. It needs macOS 13 or later. Signing is ad hoc (`codesign -s -`, nested binary first, then the bundle); never use a self-signed certificate. Notifications only work when the app lives in `/Applications` or `~/Applications`, which is why the dev copy is installed there.
 
 **Dev builds** never touch the real app's state: the dev bundle id gives its own LaunchAgent label (`dev.hal9001.dev.daemon`), log directory (`~/Library/Logs/hal9001-dev/`), notification permission, login item and CLI link name (`hal9001-dev`). Two build-time variables pin the dev build's service to another daemon home and port, for running next to your real daemon: `HAL9001_APP_DEV_HOME=/tmp/hal-dev HAL9001_APP_DEV_PORT=19001 mise run app` (the port reaches the daemon as `HAL9001_DEV_PORT`; `HAL9001_APP_INSTALL_DIR` changes where the dev copy is installed, `none` skips it). After you rebuild, the app registers the service again on its next launch; launchd can refuse to start a freshly replaced binary for a minute or two (exit 78), in which case wait and use Service > Stop service, then Start service.
@@ -351,6 +353,8 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 |---|---|
 | Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
 | Build UI, binary and the macOS app | `mise run build:all` (outputs `bin/hal9001`, `bin/HAL9001.app` and `bin/HAL9001 Dev.app`); `mise run app` builds just the app bundles |
+| Build the DMG installer | `mise run dmg` (after `mise run app`; outputs `bin/HAL9001-<version>.dmg`: the app, an `Applications` link and a background; the Finder layout needs a GUI session, else a plain DMG with a warning); `mise run dmg:check` mounts it read-only and verifies the contents |
+| App then DMG | `mise run release` |
 | Hot-reload dev loop (UI on :5173, daemon restarts on Go changes) | `mise run dev` |
 | Everything the hooks run, on the whole tree | `mise run check` (static checks, `race`, sharded `e2e` and the web check, in parallel) |
 | Race detector on all packages but e2e | `mise run race` |
