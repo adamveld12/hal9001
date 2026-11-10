@@ -98,6 +98,17 @@ func (s *Server) removeFile(w http.ResponseWriter, r *http.Request, k spec.Kind,
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// idDiagnostics is the finding for a proposed id that cannot be a file name; none for an empty or valid id.
+func idDiagnostics(id string) []spec.Diagnostic {
+	if id == "" || spec.ValidID(id) {
+		return nil
+	}
+	return []spec.Diagnostic{{
+		Severity: spec.SeverityError, Code: spec.CodeInvalidID, Path: "id",
+		Message: "id must use letters, digits, - and _ (max 64) and start with a letter or digit",
+	}}
+}
+
 // checkID rejects ids that cannot be file names with a 422.
 func checkID(w http.ResponseWriter, id string) bool {
 	if spec.ValidID(id) {
@@ -398,6 +409,7 @@ func (s *Server) deleteSensor(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) validateSensor(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID     string       `json:"id"`
 		YAML   *string      `json:"yaml"`
 		Sensor *spec.Sensor `json:"sensor"`
 	}
@@ -408,7 +420,8 @@ func (s *Server) validateSensor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sensor, ds := spec.CheckSensor("", raw)
+	sensor, ds := spec.CheckSensor(req.ID, raw)
+	ds = append(ds, idDiagnostics(req.ID)...)
 	out := struct {
 		Valid       bool              `json:"valid"`
 		Diagnostics []spec.Diagnostic `json:"diagnostics"`
@@ -643,6 +656,7 @@ func (s *Server) deleteFlow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID   string     `json:"id"`
 		YAML *string    `json:"yaml"`
 		Flow *spec.Flow `json:"flow"`
 	}
@@ -653,7 +667,8 @@ func (s *Server) validateFlow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	flow, ds := spec.CheckFlow("", raw, s.refs())
+	flow, ds := spec.CheckFlow(req.ID, raw, s.refs())
+	ds = append(ds, idDiagnostics(req.ID)...)
 	hash := spec.Hash(raw)
 	text := string(raw)
 	writeJSON(w, http.StatusOK, struct {

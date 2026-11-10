@@ -118,12 +118,28 @@ export function approvalTitle(a: Approval): string {
   return "Proposal";
 }
 
+/**
+ * An operator approval: an external MCP client's call to a tool with side
+ * effects. It is a `request` with no flow or node (`docs/mcp.md`).
+ */
+export function isOperatorApproval(a: Approval): boolean {
+  return a.type === "request" && a.flow_id === null && a.node_run_id === null;
+}
+
+/** Where an approval comes from, for the muted label in list rows. */
+export function approvalOrigin(a: Approval): string {
+  if (a.flow_id !== null) return `${a.flow_id} / ${a.node_id ?? ""}`;
+  if (!isOperatorApproval(a)) return "sensor assist";
+  return a.request?.client ? `MCP: ${a.request.client}` : "MCP client";
+}
+
 /** What was decided and how, for the decision panel and history rows. */
 export function describeDecision(a: Approval): string {
   switch (a.status) {
     case "pending":
       return "Waiting for a decision";
     case "expired":
+      if (isOperatorApproval(a)) return "Timed out; the MCP client was told";
       return a.type === "request" && a.request?.on_timeout
         ? `Timed out; the flow continued on ${a.request.on_timeout === "error" ? "the error port" : `port ${a.request.on_timeout}`}`
         : "Timed out without a decision";

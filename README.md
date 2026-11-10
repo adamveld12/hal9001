@@ -401,6 +401,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Full specification and acceptance scenarios. |
 | [docs/flows.md](docs/flows.md) | Writing sensors, flows and prompts: the node contract, routing, templates, agent nodes, dry-run, replay, test-node. |
 | [docs/auth.md](docs/auth.md) | Auth stacks, modules, Tailscale setup, threat notes. |
+| [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
 | [docs/assist.md](docs/assist.md) | AI-assisted sensor authoring: draft, permission policy, secret model, lifecycle. |

@@ -56,6 +56,23 @@ func Request(flowID, approvalID string, req store.RequestApproval, url string) s
 	})
 }
 
+// MCPFlowID is the flow id of the notifications an external MCP client causes (they belong to no flow).
+const MCPFlowID = "mcp"
+
+// FromMCP marks a notification as raised for an external MCP client: the title names the client (or "MCP client")
+// and notifications of one thread replace each other (the thread is "mcp" when the client gave none).
+func FromMCP(n store.Notification, client, thread string) store.Notification {
+	n.Title = "MCP client"
+	if client != "" {
+		n.Title = client + " (MCP)"
+	}
+	n.ThreadID = MCPFlowID
+	if thread != "" {
+		n.ThreadID += ":" + thread
+	}
+	return n
+}
+
 // DryRunNotice is the first line of the body of a dry run's request approval; the renderer drops it from the body.
 const DryRunNotice = "This is a dry run: approving or denying only exercises the flow's branches."
 

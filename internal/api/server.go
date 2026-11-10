@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"hal9001/internal/apispec"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
@@ -31,6 +33,7 @@ import (
 	"hal9001/internal/notify"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tools"
 	"hal9001/internal/update"
 )
 
@@ -46,6 +49,12 @@ type Options struct {
 	Auth   *auth.Manager
 	// MCP serves the /api/mcp/ operations (hal's per-run MCP server backend). Optional: without it they answer 503.
 	MCP MCPHub
+	// Operator is the tool set served to external MCP clients at /mcp (docs/mcp.md). Optional: without it /mcp answers 503.
+	Operator *tools.Operator
+	// Port is the loopback port the daemon listens on, for the URLs GET /api/mcp/info reports (default httpsec.DefaultPort).
+	Port int
+	// Executable is the hal9001 binary GET /api/mcp/info reports for the stdio transport; empty means this process's.
+	Executable string
 	// Workspace returns the currently loaded configuration.
 	Workspace func() *spec.Workspace
 	// Reload re-reads the home directory and applies it, synchronously. The
@@ -85,6 +94,11 @@ type Server struct {
 	// (excluding /api/auth/*, which auth.Manager mounts).
 	routes []string
 
+	// mcpHandler is the Streamable HTTP transport of the operator MCP server (POST /mcp).
+	mcpHandler http.Handler
+	// mcpClients remembers the client name of recent MCP initialize requests.
+	mcpClients clientNames
+
 	probeMu sync.Mutex
 	probes  map[string]probeResultView
 
@@ -105,8 +119,10 @@ func New(opts Options) http.Handler {
 		opts: opts, mux: http.NewServeMux(), started: time.Now().UTC(), bus: newChangeBus(),
 		probes: map[string]probeResultView{}, heartbeat: heartbeatInterval,
 	}
+	s.mcpHandler = mcp.NewStreamableHTTPHandler(s.operatorServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	s.mountContract()
 	opts.Auth.Routes(s.mux, httpsec.DefaultPort)
+	s.mux.HandleFunc("/mcp", s.mcpMethodNotAllowed) // POST /mcp, the more specific pattern, is a contract operation
 	s.mux.HandleFunc("/", s.fallback)
 
 	s.hub = newHub(s)
@@ -224,6 +240,8 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listMcpTools": s.listMcpTools,
 		"callMcpTool":  s.callMcpTool,
 		"markMcpReady": s.markMcpReady,
+		"getMcpInfo":   s.getMcpInfo,
+		"serveMcp":     s.serveMcp,
 
 		"getUpdate":     s.getUpdate,
 		"checkUpdate":   s.checkUpdate,

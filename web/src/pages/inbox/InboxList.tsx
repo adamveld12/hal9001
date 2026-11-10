@@ -7,7 +7,7 @@ import { Badge } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import { Countdown } from "../approvals/Countdown";
 import { TypeBadge } from "../approvals/ApprovalList";
-import { approvalTitle } from "../approvals/queue";
+import { approvalOrigin, approvalTitle } from "../approvals/queue";
 import type { InboxRow } from "./merge";
 import {
   groupByPriority,
@@ -139,11 +139,7 @@ function ApprovalRow({
         <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
           <Badge tone="warn">needs action</Badge>
           <TypeBadge type={a.type} />
-          <span className="truncate">
-            {a.flow_id !== null
-              ? `${a.flow_id} / ${a.node_id}`
-              : "sensor assist"}
-          </span>
+          <span className="truncate">{approvalOrigin(a)}</span>
         </div>
       </Link>
     </div>

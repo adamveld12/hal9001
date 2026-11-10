@@ -209,6 +209,13 @@ func (e *Engine) expireRequests() {
 	}
 	now := time.Now().UTC()
 	for _, ap := range apps.Items {
+		if ap.NodeRunID == "" { // an operator approval
+			if ap.ExpiresAt != nil && !ap.ExpiresAt.After(now) && isDetached(ap.Request) {
+				// request_approval: nobody has to be waiting. A gated call's own wait expires its approval.
+				e.expireOperatorApproval(ap.ID, "no decision before the approval's timeout")
+			}
+			continue
+		}
 		if ap.ExpiresAt == nil || ap.ExpiresAt.After(now) {
 			continue
 		}

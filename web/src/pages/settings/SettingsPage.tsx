@@ -5,6 +5,7 @@ import { AuthStackPanel, TailscalePanel } from "./AuthConfigPanels";
 import { ContextSection } from "./ContextSection";
 import { EnvSection } from "./EnvSection";
 import { GeneralSection } from "./GeneralSection";
+import { McpSection } from "./McpSection";
 import { PasskeysPanel } from "./PasskeysPanel";
 import { RuntimesSection } from "./RuntimesSection";
 import { SessionsPanel } from "./SessionsPanel";
@@ -89,6 +90,14 @@ export function SettingsAuthPage() {
       <AuthStackPanel />
       <TailscalePanel />
       <AuthEventsPanel />
+    </SettingsPageShell>
+  );
+}
+
+export function SettingsMcpPage() {
+  return (
+    <SettingsPageShell title="MCP">
+      <McpSection />
     </SettingsPageShell>
   );
 }

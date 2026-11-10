@@ -52,7 +52,7 @@ tags:
   - {name: sandboxes, description: 'Sandbox backends: config, environment, connectivity check'}
   - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
-  - {name: mcp, description: 'hal MCP server backend: tool list and calls, authorized by a per-run capability token'}
+  - {name: mcp, description: 'hal MCP server: the remote endpoint and connection info for external clients, and the per-run backend of the stdio server hal injects into agent sessions (authorized by a capability token)'}
 paths:
   /:
     get:
@@ -1657,6 +1657,64 @@ paths:
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '503':
           description: The daemon has no tool hub (not expected in a normal daemon).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/mcp/info:
+    get:
+      operationId: getMcpInfo
+      tags: [mcp]
+      summary: How to connect an MCP client to this daemon
+      description: |
+        The URLs, the stdio command, the auth hints and the tool list of hal's MCP server (docs/mcp.md), built from the
+        running daemon (its real port and binary path). The Settings page renders its install instructions from it.
+      x-hal-service: api
+      responses:
+        '200':
+          description: The connection details.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/McpInfo'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /mcp:
+    post:
+      operationId: serveMcp
+      tags: [mcp]
+      summary: Remote MCP server (Streamable HTTP)
+      description: |
+        hal's MCP server for clients that run on this Mac (Claude Code, Codex, omp, pi, ...), in the Streamable HTTP
+        transport of the MCP specification (2025-06-18, stateless: no session id, JSON responses; GET and DELETE are
+        405). The body is one JSON-RPC message; `tools/list` and `tools/call` serve the operator tools of
+        `GET /api/mcp/info`. It needs the `api` auth service like the REST API; each tool then calls the REST API with
+        the same credentials. A tool that needs another service (`flow_run`, `sensor_poll`, `flow_create`,
+        `sensor_create`, `request_approval`, `send_note`: `admin`) is held to it before anybody is asked. `flow_run`,
+        `sensor_poll`, `flow_create` and `sensor_create` wait for the user's approval in the Inbox, `request_approval`
+        is an approval the agent asks for, and `send_note` posts an Inbox note. Loopback only, on top of the baseline: Host, Origin
+        and the TCP peer must be loopback, and a request with proxy headers (`Forwarded`, `X-Forwarded-*`,
+        `Tailscale-*`) is 403, even when the host is in `allowed_hosts`. Not the run-scoped backend of `hal9001 mcp
+        --token` (`/api/mcp/tools`, `/api/mcp/call`).
+      x-hal-service: api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true, description: 'A JSON-RPC 2.0 request or notification.'}
+      responses:
+        '200':
+          description: The JSON-RPC response.
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '202': {description: 'A notification or response was accepted; no body.'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '503':
+          description: The daemon has no operator tool set (not expected in a normal daemon).
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -3796,6 +3854,49 @@ components:
       properties:
         text: {type: string, description: 'The tool output, or the error message when `is_error` is true.'}
         is_error: {type: boolean}
+    McpInfo:
+      type: object
+      description: Everything a client needs to connect to hal's MCP server, built from the running daemon.
+      additionalProperties: false
+      required: [server_name, http_url, base_url, stdio, cli_link, auth, approval_timeout_seconds, tools]
+      properties:
+        server_name: {type: string, description: 'Name to give the server in the client (`hal9001`).'}
+        http_url: {type: string, description: 'Streamable HTTP endpoint on this daemon, on localhost and the daemon''s actual port.'}
+        base_url: {type: string, description: 'The daemon''s address; the `--url` of the stdio command.'}
+        stdio:
+          type: object
+          additionalProperties: false
+          required: [command, args]
+          properties:
+            command: {type: string, description: 'Absolute path of the running hal9001 binary.'}
+            args: {type: array, items: {type: string}, description: 'Arguments for `command`: `mcp --url <base_url>`.'}
+        cli_link: {type: string, description: 'Where the app''s "Install command-line tool" links the binary (`~/.local/bin/hal9001`), a stable alternative to `stdio.command` that follows app updates.'}
+        auth:
+          type: object
+          additionalProperties: false
+          required: [localhost_trust, cookie_name]
+          properties:
+            localhost_trust:
+              type: object
+              additionalProperties: false
+              required: [api, admin]
+              description: 'Whether the stack of the service admits a request from this Mac with no credentials (it lists `localhost-trust`). `api` covers the read tools, `admin` the tools with side effects.'
+              properties:
+                api: {type: boolean}
+                admin: {type: boolean}
+            cookie_name: {type: string, description: 'Session cookie to send in a `Cookie` header when a stack asks for a login (see docs/auth.md).'}
+        approval_timeout_seconds: {type: integer, description: 'How long a tool call that needs approval waits for the user before it fails.'}
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, description, needs_approval, needs_admin]
+            properties:
+              name: {type: string}
+              description: {type: string}
+              needs_approval: {type: boolean, description: 'A call waits for the user to approve it in the Inbox.'}
+              needs_admin: {type: boolean, description: 'The tool changes state: the MCP request must also be admitted for the `admin` auth service, checked before anybody is asked.'}
     AgentNode:
       type: object
       description: |
@@ -4389,6 +4490,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         sensor: {$ref: '#/components/schemas/Sensor'}
       oneOf:
@@ -4635,8 +4737,10 @@ components:
         - {required: [flow]}
     FlowValidateRequest:
       type: object
+      description: Exactly one of `yaml` and `flow`. `id`, when given, is the id the flow would be stored under (an invalid one is an `invalid_id` error; a different `id:` line in the YAML is a warning).
       additionalProperties: false
       properties:
+        id: {$ref: '#/components/schemas/Slug'}
         yaml: {type: string}
         flow: {$ref: '#/components/schemas/Flow'}
       oneOf:
@@ -5423,10 +5527,10 @@ components:
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
-        node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
-        flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
-        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
-        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session.'}
+        node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
+        flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
+        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
         assist_session_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: Set for a tool-call approval raised by an assist session turn.}
         event_id: {$ref: '#/components/schemas/NullableUlid'}
         runtime: {$ref: '#/components/schemas/Slug'}
@@ -5434,7 +5538,7 @@ components:
         permission_request_id: {$ref: '#/components/schemas/NullableUlid'}
         permission_request: {oneOf: [{$ref: '#/components/schemas/PermissionRequest'}, {type: 'null'}], description: 'Embedded for `tool_call` approvals.'}
         proposal_md: {type: [string, 'null'], description: 'Set for `proposal` approvals.'}
-        request: {oneOf: [{$ref: '#/components/schemas/ApprovalRequestContent'}, {type: 'null'}], description: 'Set for `request` approvals.'}
+        request: {oneOf: [{$ref: '#/components/schemas/ApprovalRequestContent'}, {type: 'null'}], description: 'Set for `request` approvals: those of an approval node (with `node_run_id`) and operator approvals, which an external MCP client''s call to a tool with side effects raises (no run ids; `docs/mcp.md`).'}
         status: {$ref: '#/components/schemas/ApprovalStatus'}
         comment: {type: [string, 'null']}
         cancel_run: {type: [boolean, 'null'], description: 'For a denied `tool_call`, whether the run was cancelled.'}
@@ -5455,6 +5559,8 @@ components:
         priority: {$ref: '#/components/schemas/Priority'}
         dry_run: {type: boolean, description: 'The approval belongs to a dry run: deciding only exercises the flow''s branches.'}
         on_timeout: {type: [string, 'null'], enum: [denied, approved, error, null], description: 'What expiry does; null without a timeout (`expires_at`).'}
+        source: {type: [string, 'null'], enum: [mcp, null], description: '`mcp` when an external MCP client raised the approval (`docs/mcp.md`); null for an approval node.'}
+        client: {type: [string, 'null'], description: 'Name of that MCP client (its `clientInfo` or User-Agent); null when unknown or not an MCP approval.'}
     ApprovalList:
       type: object
       required: [items, next_cursor]
@@ -5479,10 +5585,10 @@ components:
       required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
-        source: {type: string, enum: [agent_run, node_run]}
-        source_id: {$ref: '#/components/schemas/Ulid'}
-        flow_run_id: {$ref: '#/components/schemas/Ulid'}
-        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        source: {type: string, enum: [agent_run, node_run, mcp], description: '`mcp` is a note an external MCP client posted with `send_note` (`docs/mcp.md`): no run ids, `flow_id` is `mcp`, `node_id` `send_note`.'}
+        source_id: {type: string, pattern: '^([0-9A-HJKMNP-TV-Z]{26})?$', description: 'ULID of the node run or agent run; empty for source `mcp`.'}
+        flow_run_id: {type: string, pattern: '^([0-9A-HJKMNP-TV-Z]{26})?$', description: 'Empty for source `mcp`.'}
+        node_run_id: {type: string, pattern: '^([0-9A-HJKMNP-TV-Z]{26})?$', description: 'Empty for source `mcp`.'}
         agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
         flow_id: {$ref: '#/components/schemas/Slug'}
         node_id: {$ref: '#/components/schemas/Slug'}
@@ -5498,6 +5604,8 @@ components:
         dry_run: {type: boolean, description: 'Tagged `dry-run` in the UI.'}
         parse_error: {type: boolean, description: 'The note could not be parsed; `summary_md` holds the raw final message.'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
+        client: {type: [string, 'null'], description: 'Name of the external MCP client of a note with source `mcp`.'}
+        thread_key: {type: [string, 'null'], description: 'Grouping key the MCP client passed with the note.'}
     NotifyVia:
       type: string
       enum: [auto, app, terminal-notifier, none]

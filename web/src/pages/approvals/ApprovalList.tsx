@@ -3,7 +3,7 @@ import type { Approval } from "../../api/approvals";
 import { Time } from "../../components/Time";
 import { Badge, StatusBadge } from "../../components/ui";
 import { Countdown } from "./Countdown";
-import { approvalTitle } from "./queue";
+import { approvalOrigin, approvalTitle } from "./queue";
 
 export function TypeBadge({ type }: { type: Approval["type"] }) {
   return (
@@ -41,9 +41,7 @@ function Row({ approval: a }: { approval: Approval }) {
         {a.type === "tool_call" && a.permission_request && (
           <span>{a.permission_request.tool_kind}</span>
         )}
-        <span className="truncate">
-          {a.flow_id !== null ? `${a.flow_id} / ${a.node_id}` : "sensor assist"}
-        </span>
+        <span className="truncate">{approvalOrigin(a)}</span>
         {pending && !a.expires_at && <Time ts={a.created_at} />}
       </div>
     </Link>

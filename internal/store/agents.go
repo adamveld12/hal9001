@@ -499,12 +499,13 @@ func scanApproval(r rowScanner) (Approval, error) {
 }
 
 // CreateApproval inserts a, assigning ID, Status (pending) and CreatedAt.
-// A tool_call approval must reference its permission request.
+// A tool_call approval must reference its permission request. A request approval has no agent run; it belongs to the
+// node run of an approval node, or to none at all (an operator approval, raised for an external MCP client's call).
 func (s *Store) CreateApproval(ctx context.Context, a *Approval) error {
 	switch a.Type {
 	case ApprovalRequest:
-		if a.NodeRunID == "" || a.AgentRunID != "" || a.Request == "" {
-			return fmt.Errorf("%w: request approval requires node_run_id and request, and no agent_run_id", ErrInvalid)
+		if a.AgentRunID != "" || a.Request == "" {
+			return fmt.Errorf("%w: request approval requires request and no agent_run_id", ErrInvalid)
 		}
 	case ApprovalProposal:
 	case ApprovalToolCall:

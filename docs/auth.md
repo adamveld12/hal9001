@@ -14,6 +14,8 @@ Applied to every request before auth:
   hosts); otherwise `403 origin-not-allowed`. No CORS headers are ever sent.
 - Mutating requests (POST, PUT, PATCH, DELETE) must be `Content-Type: application/json`; otherwise `415`. A cross-site
   form cannot send that without a preflight, which the server never grants.
+- `POST /mcp` (the remote MCP endpoint, [mcp.md](mcp.md)) is stricter: the TCP peer, `Host` and `Origin` must be loopback
+  and proxy headers (`Forwarded`, `X-Forwarded-*`, `Tailscale-*`) are refused (`403`), even for an `allowed_hosts` entry.
 - Session cookies (`hal9001_session`) are `HttpOnly`, `SameSite=Strict`, and `Secure` over HTTPS.
 
 ## Services
@@ -23,7 +25,7 @@ Each API operation declares the service it needs (`x-hal-service` in [`api/opena
 | Service | Covers |
 |---|---|
 | `ui` | Loading the web UI and establishing a browser session. |
-| `api` | Read endpoints and the event stream. |
+| `api` | Read endpoints, the event stream and the MCP endpoint `POST /mcp` (its tools then call the REST API with the same credentials, so `flow_run` and `sensor_poll` need `admin` like the endpoints they call). |
 | `approve` | Approving and denying proposals and tool calls. |
 | `admin` | Writing flows, sensors, prompts, env and settings; kill switch; event injection, replay and test-node; runtime probes. **Equivalent to running code on this Mac.** |
 
