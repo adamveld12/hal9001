@@ -75,7 +75,7 @@ func bridgeOperator(ctx context.Context, c *call, t mcp.Transport) error {
 	}
 	defer func() { _ = remote.Close() }()
 
-	srv := mcp.NewServer(&mcp.Implementation{Name: "hal9001", Version: "1"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "hal9001", Version: "1"}, &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}})
 	var cursor string
 	for {
 		page, err := remote.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})

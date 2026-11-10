@@ -23,7 +23,10 @@ const McpServerName = "hal9001"
 // operatorServer builds the MCP server of one request to POST /mcp: hal's operator tools (internal/tools), bound to the
 // caller's identity. The endpoint is stateless, so a server is built per request; it holds no state.
 func (s *Server) operatorServer(r *http.Request) *mcp.Server {
-	srv := mcp.NewServer(&mcp.Implementation{Name: McpServerName, Version: s.opts.Version}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: McpServerName, Version: s.opts.Version}, &mcp.ServerOptions{
+		// The tool set is fixed per request and the endpoint opens no stream, so there is nothing to notify about.
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
+	})
 	caller := principal(r)
 	api := s.dispatcher(r)
 	for _, info := range s.opts.Operator.Tools() {
