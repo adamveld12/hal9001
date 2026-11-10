@@ -67,14 +67,16 @@ run = "scripts/e2e.sh"
 description = "Throwaway daemon on a free port with a fake agent runtime (--port, --script, --web-dir, --keep)"
 run = "go run ./cmd/hal9001-sandbox"
 
-[tasks.menubar]
-description = "Run the macOS menubar app (HAL9001_URL / HAL9001_UI_URL override the daemon and UI URLs)"
-run = "go run ./cmd/hal9001-menubar"
+[tasks.app]
+description = "Build bin/HAL9001.app (release id) and bin/HAL9001 Dev.app (dev id), ad-hoc signed; installs the dev copy to ~/Applications/HAL9001 Dev.app (HAL9001_APP_INSTALL_DIR, HAL9001_APP_DEV_HOME, HAL9001_APP_DEV_PORT: see scripts/build-app.sh)"
+depends = ["build"]
+run = "scripts/build-app.sh"
 
-[tasks."menubar:build"]
-description = "Build the macOS menubar app (bin/hal9001-menubar)"
-run = "go build -o bin/hal9001-menubar ./cmd/hal9001-menubar"
+[tasks."app:run"]
+description = "Run the macOS app from source, outside a bundle: menu and API client only, no service management (HAL9001_URL / HAL9001_UI_URL override the daemon and UI URLs)"
+alias = "menubar"
+run = "go run ./cmd/hal9001-app"
 
 [tasks."build:all"]
-description = "Build everything: hal9001 with embedded UI and the menubar app"
-depends = ["build", "menubar:build"]
+description = "Build everything: hal9001 with embedded UI and the macOS app bundles"
+depends = ["build", "app"]

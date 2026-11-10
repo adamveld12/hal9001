@@ -8,17 +8,21 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"hal9001/content"
 	"hal9001/internal/auth"
 	"hal9001/internal/daemon"
+	"hal9001/internal/service"
 	"hal9001/internal/spec"
 )
 
@@ -44,11 +48,50 @@ func serveLeaf() *leaf {
 			if webDir == "" {
 				webDir = c.env.Getenv(EnvWebDir)
 			}
+			opts := daemon.Options{Home: home, Version: c.env.Version, WebDir: webDir, Log: nil}
+			if p := c.env.Getenv(service.EnvDevPort); p != "" {
+				if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+					return fmt.Errorf("%s=%q is not a port number", service.EnvDevPort, p)
+				}
+				opts.ListenAddr = net.JoinHostPort("127.0.0.1", p)
+			}
+			if c.env.Getenv(service.EnvLaunchd) == "1" {
+				if err := c.setupLaunchd(ctx, &opts); err != nil {
+					return err
+				}
+			}
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return c.env.Serve(ctx, daemon.Options{Home: home, Version: c.env.Version, WebDir: webDir, Log: nil})
+			return c.env.Serve(ctx, opts)
 		},
 	}
+}
+
+// setupLaunchd prepares a daemon that launchd started (HAL9001_LAUNCHD=1): launchd gives it no log file, a minimal
+// PATH and no terminal, so it writes its own log and hands the login shell's PATH to the processes it spawns.
+func (c *call) setupLaunchd(ctx context.Context, opts *daemon.Options) error {
+	user, err := c.env.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve user home: %w", err)
+	}
+	logFile := service.ExpandTilde(c.env.Getenv(service.EnvLogFile), user)
+	if logFile == "" {
+		logFile = service.LogFile(user)
+	}
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o750); err != nil {
+		return err
+	}
+	if err := c.env.RedirectLog(logFile); err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	path, err := c.env.LoginShellPATH(ctx)
+	if err != nil {
+		slog.Warn("login-shell PATH unavailable; nodes get launchd's minimal PATH", "err", err)
+		return nil
+	}
+	opts.BasePATH = path
+	slog.Info("running under launchd", "log", logFile, "path", path)
+	return nil
 }
 
 func openLeaf() *leaf {

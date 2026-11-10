@@ -37,14 +37,40 @@ func ThrobIcons(size int) [][]byte {
 func ShouldThrob(snap *Snapshot) bool { return snap != nil && snap.Status.RunningFlowRuns > 0 }
 
 func render(size int, dim bool, glow float64) []byte {
+	return supersample(size, func(u, v float64) (color.NRGBA, bool) { return eyePixel(math.Hypot(u, v), dim, glow) })
+}
+
+// AppIcon renders the application icon at size×size pixels: the eye on a dark rounded tile that follows the macOS icon
+// grid (the tile spans 824 of 1024 units, with transparent margin around it). The iconset needs 16 to 1024.
+func AppIcon(size int) []byte {
+	const (
+		tile   = 824.0 / 1024 // tile half-width relative to the canvas half-width
+		eyeRad = 0.5          // eye radius relative to the canvas half-width
+	)
+	top, bottom := color.NRGBA{60, 60, 66, 255}, color.NRGBA{20, 20, 24, 255}
+	return supersample(size, func(u, v float64) (color.NRGBA, bool) {
+		x, y := math.Abs(u/tile), math.Abs(v/tile)
+		x2, y2 := x*x, y*y
+		if x2*x2*x+y2*y2*y > 1 { // |x|^5 + |y|^5 > 1: outside the squircle
+			return color.NRGBA{}, false
+		}
+		if eye, ok := eyePixel(math.Hypot(u, v)/eyeRad, false, 1); ok {
+			return eye, true
+		}
+		return lerp(top, bottom, (v/tile+1)/2), true
+	})
+}
+
+// supersample renders shade, which maps a point of the canvas (u, v in -1..1, from its centre) to a colour, at 4x
+// resolution and averages it down to size×size pixels.
+func supersample(size int, shade func(u, v float64) (color.NRGBA, bool)) []byte {
 	const ss = 4
 	big := size * ss
 	hi := image.NewNRGBA(image.Rect(0, 0, big, big))
 	c := float64(big) / 2
 	for y := range big {
 		for x := range big {
-			d := math.Hypot(float64(x)+0.5-c, float64(y)+0.5-c) / c // 0 centre .. 1 edge
-			if col, ok := eyePixel(d, dim, glow); ok {
+			if col, ok := shade((float64(x)+0.5-c)/c, (float64(y)+0.5-c)/c); ok {
 				hi.SetNRGBA(x, y, col)
 			}
 		}

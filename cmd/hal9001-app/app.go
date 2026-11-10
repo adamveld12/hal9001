@@ -1,51 +1,33 @@
-// Command hal9001-menubar is a macOS menubar client of the hal9001 daemon: the red eye, the inbox count and quick
-// links into the web UI. It only calls the public REST API.
+//go:build darwin
+
 package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
 	"fyne.io/systray"
 
 	"hal9001/internal/menubar"
+	"hal9001/internal/service"
 )
 
-const defaultURL = "http://127.0.0.1:9001"
-
-func main() {
-	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "install" {
-		os.Exit(runInstall(args[1:]))
-	}
-	fs := flag.NewFlagSet("hal9001-menubar", flag.ExitOnError)
-	apiURL := fs.String("url", envOr("HAL9001_URL", defaultURL), "daemon base URL (env HAL9001_URL)")
-	_ = fs.Parse(args)
-	ui := envOr("HAL9001_UI_URL", *apiURL)
-
-	app := &app{client: menubar.NewClient(*apiURL), ui: strings.TrimRight(ui, "/")}
-	slog.Info("hal9001-menubar starting", "api", *apiURL, "ui", app.ui)
-	systray.Run(app.onReady, func() { app.cancel() })
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 type app struct {
-	client *menubar.Client
-	ui     string
-	cancel context.CancelFunc
+	profile   service.Profile
+	client    *menubar.Client
+	ui        string
+	userHome  string
+	exe       string // this executable: <bundle>/Contents/MacOS/HAL9001 when bundled
+	launchctl service.Launchctl
+	ctx       context.Context
+	cancel    context.CancelFunc
+	poke      func() // asks the refresh loop to refresh now
+
+	actMu sync.Mutex // serializes menu actions
 
 	mu       sync.Mutex
 	last     menubar.Menu
@@ -57,19 +39,20 @@ type app struct {
 }
 
 func (a *app) onReady() {
-	var ctx context.Context
-	ctx, a.cancel = context.WithCancel(context.Background())
+	a.ctx, a.cancel = context.WithCancel(context.Background())
+	ctx := a.ctx
 	systray.SetTooltip("hal9001")
-	a.refresh(ctx)
 
 	refresh := make(chan struct{}, 1)
-	poke := func() {
+	a.poke = func() {
 		select {
 		case refresh <- struct{}{}:
 		default:
 		}
 	}
-	go a.streamLoop(ctx, poke)
+	a.refresh(ctx)
+
+	go a.streamLoop(ctx, a.poke)
 	go func() {
 		t := time.NewTicker(10 * time.Second) // fallback when the stream is down; also detects daemon death
 		defer t.Stop()
@@ -84,6 +67,7 @@ func (a *app) onReady() {
 			}
 		}
 	}()
+	go a.ensureService(ctx)
 }
 
 func (a *app) streamLoop(ctx context.Context, poke func()) {
@@ -107,10 +91,10 @@ func (a *app) refresh(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		slog.Warn("daemon unreachable", "err", err)
+		slog.Debug("daemon unreachable", "err", err)
 		snap = nil
 	}
-	m := menubar.BuildMenu(snap, a.ui)
+	m := menubar.BuildMenu(snap, a.ui, a.serviceState())
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -184,9 +168,14 @@ func (a *app) add(parent *systray.MenuItem, e menubar.Entry) {
 		return
 	}
 	var it *systray.MenuItem
-	if parent == nil {
+	switch {
+	case parent == nil && e.Checked:
+		it = systray.AddMenuItemCheckbox(e.Title, "", true)
+	case parent == nil:
 		it = systray.AddMenuItem(e.Title, "")
-	} else {
+	case e.Checked:
+		it = parent.AddSubMenuItemCheckbox(e.Title, "", true)
+	default:
 		it = parent.AddSubMenuItem(e.Title, "")
 	}
 	switch e.Kind {
@@ -196,7 +185,11 @@ func (a *app) add(parent *systray.MenuItem, e menubar.Entry) {
 		for _, c := range e.Children {
 			a.add(it, c)
 		}
-	case menubar.Link, menubar.Quit:
+	case menubar.Link, menubar.Quit, menubar.Action:
+		if e.Disabled {
+			it.Disable()
+			return
+		}
 		done := a.done
 		go func() {
 			for {
@@ -204,13 +197,17 @@ func (a *app) add(parent *systray.MenuItem, e menubar.Entry) {
 				case <-done:
 					return
 				case <-it.ClickedCh:
-					if e.Kind == menubar.Quit {
+					switch e.Kind {
+					case menubar.Quit:
 						systray.Quit()
 						return
-					}
-					//nolint:gosec // URL is built from the operator-configured UI base URL
-					if err := exec.CommandContext(context.Background(), "open", e.URL).Run(); err != nil {
-						slog.Error("open failed", "url", e.URL, "err", err)
+					case menubar.Action:
+						a.runAction(e.ID)
+					default:
+						//nolint:gosec // URL is built from the operator-configured UI base URL
+						if err := exec.CommandContext(context.Background(), "open", e.URL).Run(); err != nil {
+							slog.Error("open failed", "url", e.URL, "err", err)
+						}
 					}
 				}
 			}

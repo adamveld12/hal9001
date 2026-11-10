@@ -97,8 +97,7 @@ func cmd(name, summary string, l *leaf) *command {
 func (a *app) tree() *command {
 	root := &command{name: "hal9001", subs: []*command{
 		cmd("serve", "run the daemon in the foreground", serveLeaf()),
-		cmd("install", "install and start the launchd LaunchAgent", installLeaf()),
-		cmd("uninstall", "stop and remove the launchd LaunchAgent", uninstallLeaf()),
+		serviceGroup(),
 		cmd("open", "open the web UI in the browser", openLeaf()),
 		cmd("validate", "check sensors, flows, prompts and config offline", validateLeaf()),
 		startersGroup(),

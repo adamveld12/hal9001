@@ -63,7 +63,7 @@ type stackOpts struct {
 
 // startStack seeds a temp home from the shipped content, quiets the starter
 // sensors and flows, and runs the real daemon on 127.0.0.1:0 with the PATH that
-// `hal9001 install` would capture from the login shell.
+// `hal9001 serve` captures from the login shell under launchd.
 func startStack(t *testing.T, o stackOpts) *stack {
 	t.Helper()
 	adapters := adapterPaths(t) // resolved in the repo, where mise.toml pins them
@@ -121,7 +121,7 @@ func startStack(t *testing.T, o stackOpts) *stack {
 	defer cancelPath()
 	basePATH, err := runner.LoginShellPATH(pathCtx, "", 0)
 	if err != nil {
-		t.Fatalf("login shell PATH (what `hal9001 install` captures): %v", err)
+		t.Fatalf("login shell PATH (what `hal9001 serve` captures under launchd): %v", err)
 	}
 
 	if o.binDir != "" {

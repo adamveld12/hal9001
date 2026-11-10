@@ -113,22 +113,29 @@ While developing, use the hot-reload loop instead: `mise run dev`, then open htt
 instantly (Vite HMR); Go, `api/` or `content/` edits rebuild and restart the daemon on 127.0.0.1:9001 (it uses your
 normal `~/.hal9001` home; stop any other `hal9001 serve` first). Ctrl-C stops both.
 
-`serve` listens on `127.0.0.1:9001` (fixed; not configurable) and on first run seeds `~/.hal9001` from the starter
+`serve` listens on `127.0.0.1:9001` (fixed; the only override is `HAL9001_DEV_PORT`, for dev builds and tests: see
+[macOS app](#macos-app)) and on first run seeds `~/.hal9001` from the starter
 content, only when the home is new (no `config.yaml`); deleted starters stay deleted, and `hal9001 starters list` /
 `hal9001 starters add [name...]` show or restore them without overwriting (use `--home <dir>` or `HAL9001_HOME` for another directory). Open the UI with `bin/hal9001 open`, or go to
 <http://localhost:9001>.
 
-To run it permanently as a launchd LaunchAgent (starts at login, restarts on exit):
+To keep it running (starts at login, restarts on exit) use the [macOS app](#macos-app), which manages the daemon's
+LaunchAgent for you, or install a headless service without the app:
 
 ```sh
-bin/hal9001 install     # writes ~/Library/LaunchAgents/com.hal9001.daemon.plist and starts it
-bin/hal9001 uninstall   # stops it and removes the plist; your home directory is left alone
-bin/hal9001 install --dry-run   # print the plist only
+bin/hal9001 service install     # writes ~/Library/LaunchAgents/dev.hal9001.daemon.headless.plist and starts it
+bin/hal9001 service status      # installed? loaded (pid, last exit code)? answering?
+bin/hal9001 service logs -f     # tail ~/Library/Logs/hal9001/hal9001.log
+bin/hal9001 service uninstall   # stops it and removes the plist; your home directory is left alone
+bin/hal9001 service install --dry-run   # print the plist only
 ```
 
-`install` records the path of the binary you ran, so copy `bin/hal9001` to its permanent location first. It also
-copies your login-shell `PATH` into the plist so mise shims, `gh` and `jq` resolve inside nodes. Logs go to
-`~/Library/Logs/hal9001/hal9001.log`.
+`service install` records the path of the binary you ran, so copy `bin/hal9001` to its permanent location first. Under
+launchd the daemon writes its own log to `~/Library/Logs/hal9001/hal9001.log` and copies your login-shell `PATH` for
+the processes it spawns (mise shims, `gh` and `jq` resolve inside nodes); both are triggered by `HAL9001_LAUNCHD=1`,
+which the plist sets. The command replaces the agent of older versions (`com.hal9001.daemon`, written by the removed
+`hal9001 install`). Do not run a headless service next to the app's own: both want port 9001; the app notices and
+leaves the daemon to the headless service.
 
 ### Demo flow (no credentials)
 
@@ -199,8 +206,7 @@ machine-readable diagnostics).
 usage: hal9001 <command> [flags]
 
   serve       run the daemon in the foreground
-  install     install and start the launchd LaunchAgent
-  uninstall   stop and remove the launchd LaunchAgent
+  service     run the daemon without the macOS app: a headless launchd LaunchAgent
   open        open the web UI in the browser
   validate    check sensors, flows, prompts and config offline
   version     print the version
@@ -233,8 +239,10 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | Command | Flags | Purpose |
 |---|---|---|
 | `serve` | `--home`, `--web-dir` (serve the UI from a directory instead of the embedded one; env `HAL9001_WEB_DIR`) | Run the daemon in the foreground. |
-| `install` | `--home`, `--dry-run` | Install and start the LaunchAgent (label `com.hal9001.daemon`). |
-| `uninstall` | `--home` | Stop and remove the LaunchAgent. |
+| `service install` | `--home`, `--dry-run` | Install and start the headless LaunchAgent (label `dev.hal9001.daemon.headless`); replaces the older `com.hal9001.daemon`. |
+| `service uninstall` | | Stop and remove the headless LaunchAgent (and the older `com.hal9001.daemon`). |
+| `service status` | | Installed? Loaded (state, pid, last exit code)? Answering on `HAL9001_URL`? Where are the logs? |
+| `service logs` | `-n` (lines, default 50), `-f` (follow) | Print the log the daemon writes under launchd. |
 | `open [path]` | `--home` | Open the UI (or a UI path) in the browser. |
 | `validate` | `--home`, `--json` | Lint sensors, flows, prompts and config. |
 | `version` | `--home` | Print the version. |
@@ -298,17 +306,28 @@ the UI, or written through the API (see [docs/api.md](docs/api.md)). The CLI aut
 default auth config local requests need nothing; otherwise pass a session cookie obtained from
 `POST /api/auth/{service}/begin` ([docs/auth.md](docs/auth.md#logging-in-from-scripts)).
 
-## Menubar (macOS)
+## macOS app
 
-`cmd/hal9001-menubar` is a menubar client of the daemon's REST API: the HAL 9000 eye (dimmed when the daemon is down), the inbox count (unread notes plus pending approvals, hidden at 0), and quick links to the Inbox, enabled flows, sensors and Settings. It refreshes from `GET /api/stream` and polls every 10 s as a fallback.
+`cmd/hal9001-app` is the HAL9001 menubar app, a client of the daemon's REST API that also owns the daemon's LaunchAgent. It shows the HAL 9000 eye (dimmed when the daemon is down, throbbing while flows run), the inbox count (unread notes plus pending approvals, hidden at 0), a status line (Running or Stopped, the version, the home directory) and quick links to the Inbox, Approvals, enabled flows, sensors and Settings. It refreshes from `GET /api/stream` and polls every 10 s as a fallback. The service menu entries:
+
+- **Service**: Start, Stop, Restart the daemon. Start and Stop register and unregister the LaunchAgent bundled in the app (`Contents/Library/LaunchAgents/dev.hal9001.daemon.plist`, started at login and kept alive) through `SMAppService`; Restart is `launchctl kickstart -k gui/$UID/dev.hal9001.daemon`. The first time the app runs it registers the service. A service you stopped stays stopped.
+- **Open logs**: `~/Library/Logs/hal9001/hal9001.log` (the app's own log is `app.log` next to it).
+- **Launch at login**: the app itself, as a login item (`SMAppService.mainApp`).
+- **Install command-line tool**: symlinks `~/.local/bin/hal9001` to the `hal9001` inside the app, so it updates with the app, and says so when `~/.local/bin` is not on your login-shell `PATH`.
+
+Older installs: the app notices the agents of previous versions (`com.hal9001.daemon` from the removed `hal9001 install`, `dev.hal9001.menubar` from the removed `hal9001-menubar install`) and offers **Remove older launch agents…**; it does not start its own service while they hold port 9001. If a headless service (`hal9001 service install`) is installed, the app does not register its own and the menu says to run `hal9001 service uninstall` first.
 
 ```sh
-mise run menubar                         # run from source
-mise run menubar:build                   # bin/hal9001-menubar
-bin/hal9001-menubar install --dry-run    # print the LaunchAgent plist; without --dry-run, install it (starts at login)
+mise run app          # builds bin/HAL9001.app (release id dev.hal9001) and bin/HAL9001 Dev.app (dev.hal9001.dev), signed ad hoc,
+                      # and installs the dev copy to ~/Applications/HAL9001 Dev.app
+mise run app:run      # (alias: menubar) run from source, outside a bundle: menu and API client only, no service management
 ```
 
-Set `--url` / `HAL9001_URL` for the API (default `http://127.0.0.1:9001`) and `HAL9001_UI_URL` for the pages it opens (for example `http://localhost:5173` under `mise run dev`). It uses cgo (fyne.io/systray) and runs only on macOS.
+The bundle holds the app (`Contents/MacOS/HAL9001`, cgo: `fyne.io/systray` plus an Objective-C bridge for `SMAppService` and alerts), the daemon and CLI built with the UI embedded (`Contents/Resources/hal9001`), `AppIcon.icns` (rendered from the menubar eye by `cmd/hal9001-app-pack`) and the LaunchAgent plist. It needs macOS 13 or later. Signing is ad hoc (`codesign -s -`, nested binary first, then the bundle); never use a self-signed certificate. Notifications only work when the app lives in `/Applications` or `~/Applications`, which is why the dev copy is installed there.
+
+**Dev builds** never touch the real app's state: the dev bundle id gives its own LaunchAgent label (`dev.hal9001.dev.daemon`), log directory (`~/Library/Logs/hal9001-dev/`), notification permission, login item and CLI link name (`hal9001-dev`). Two build-time variables pin the dev build's service to another daemon home and port, for running next to your real daemon: `HAL9001_APP_DEV_HOME=/tmp/hal-dev HAL9001_APP_DEV_PORT=19001 mise run app` (the port reaches the daemon as `HAL9001_DEV_PORT`; `HAL9001_APP_INSTALL_DIR` changes where the dev copy is installed, `none` skips it). After you rebuild, the app registers the service again on its next launch; launchd can refuse to start a freshly replaced binary for a minute or two (exit 78), in which case wait and use Service > Stop service, then Start service.
+
+Set `--url` / `HAL9001_URL` for the API (default `http://127.0.0.1:9001`) and `HAL9001_UI_URL` for the pages it opens (for example `http://localhost:5173` under `mise run dev`).
 
 ## Development
 
@@ -329,7 +348,7 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 | Task | Command |
 |---|---|
 | Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
-| Build UI, binary and menubar app | `mise run build:all` (outputs `bin/hal9001` and `bin/hal9001-menubar`) |
+| Build UI, binary and the macOS app | `mise run build:all` (outputs `bin/hal9001`, `bin/HAL9001.app` and `bin/HAL9001 Dev.app`); `mise run app` builds just the app bundles |
 | Hot-reload dev loop (UI on :5173, daemon restarts on Go changes) | `mise run dev` |
 | Everything the hooks run, on the whole tree | `mise run check` (static checks, `race`, sharded `e2e` and the web check, in parallel) |
 | Race detector on all packages but e2e | `mise run race` |

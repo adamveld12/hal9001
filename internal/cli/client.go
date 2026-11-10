@@ -107,7 +107,7 @@ type unreachableError struct {
 }
 
 func (e *unreachableError) Error() string {
-	return fmt.Sprintf("cannot reach the daemon at %s: %v (is it running? try `hal9001 serve`, or `launchctl print gui/$UID/com.hal9001.daemon`)", e.url, e.err)
+	return fmt.Sprintf("cannot reach the daemon at %s: %v (is it running? try `hal9001 serve`, or `hal9001 service status` for a headless service, or the HAL9001 app's menu)", e.url, e.err)
 }
 
 func (e *unreachableError) Unwrap() error { return e.err }

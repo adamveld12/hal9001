@@ -1,5 +1,5 @@
 // Package cli implements the hal9001 command line. Apart from `serve`,
-// `install`/`uninstall`, `open`, `validate`, `auth set-password` and `version`,
+// `service`, `open`, `validate`, `auth set-password` and `version`,
 // every command is a thin client of the daemon's REST API (REQUIREMENTS
 // §10.2): it builds one request, prints the response (JSON by default, a table
 // with --table), and exits non-zero on problem+json errors. It holds no
@@ -68,8 +68,11 @@ type Env struct {
 	// ReadPassword reads a secret from the terminal without echo; nil means
 	// the controlling terminal via stty.
 	ReadPassword func(prompt string) (string, error)
-	// Executable returns the path of the running binary for the LaunchAgent; nil means os.Executable.
+	// Executable returns the path of the running binary for the headless LaunchAgent; nil means os.Executable.
 	Executable func() (string, error)
+	// RedirectLog sends the process's stdout and stderr to the file at path (a daemon started by launchd logs there);
+	// nil means duplicate the file onto file descriptors 1 and 2.
+	RedirectLog func(path string) error
 }
 
 func (e *Env) defaults() {
@@ -112,6 +115,9 @@ func (e *Env) defaults() {
 	}
 	if e.Executable == nil {
 		e.Executable = os.Executable
+	}
+	if e.RedirectLog == nil {
+		e.RedirectLog = redirectStdio
 	}
 }
 

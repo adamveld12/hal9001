@@ -51,7 +51,7 @@ type Options struct {
 	// ./web/dist one.
 	WebDir string
 	// BasePATH is the PATH handed to node processes; default: this process's PATH
-	// (under launchd, the login-shell PATH captured by `hal9001 install`).
+	// (under launchd, `hal9001 serve` captures the login-shell PATH and passes it here).
 	BasePATH string
 	// UIURL is the origin notification deep links point at. Empty: $HAL9001_UI_URL,
 	// else http://localhost:<port> (the daemon's own port, 9001 by default).

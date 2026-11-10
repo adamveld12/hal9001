@@ -3,12 +3,10 @@ package cli_test
 import (
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"hal9001/content"
@@ -17,276 +15,6 @@ import (
 	"hal9001/internal/daemon"
 	"hal9001/internal/spec"
 )
-
-// ---- install / uninstall ----
-
-type launchctlLog struct {
-	mu    sync.Mutex
-	calls [][]string
-	fail  map[string]string // subcommand -> error output
-}
-
-func (l *launchctlLog) run(_ context.Context, args ...string) ([]byte, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.calls = append(l.calls, args)
-	if out, bad := l.fail[args[0]]; bad {
-		return []byte(out), errors.New("exit status 5")
-	}
-	return nil, nil
-}
-
-type installEnv struct {
-	user    string
-	exe     string
-	launchd *launchctlLog
-	opts    runOpts
-}
-
-const loginPATH = "/Users/adam/.local/share/mise/shims:/opt/homebrew/bin:/usr/bin:/weird&dir"
-
-func newInstallEnv(t *testing.T) *installEnv {
-	t.Helper()
-	user := t.TempDir()
-	exe := filepath.Join(user, "bin", "hal9001")
-	if err := os.MkdirAll(filepath.Dir(exe), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// macOS resolves temp dirs through /var -> /private/var; the CLI resolves symlinks too.
-	exe, err := filepath.EvalSymlinks(exe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ie := &installEnv{user: user, exe: exe, launchd: &launchctlLog{fail: map[string]string{}}}
-	ie.opts = runOpts{hook: func(e *cli.Env) {
-		e.UserHomeDir = func() (string, error) { return user, nil }
-		e.Executable = func() (string, error) { return exe, nil }
-		e.Getuid = func() int { return 501 }
-		e.LoginShellPATH = func(context.Context) (string, error) { return loginPATH, nil }
-		e.Launchctl = ie.launchd.run
-	}}
-	return ie
-}
-
-// plistDict decodes the top-level <dict> of a property list into Go values:
-// strings, bools, []string for string arrays and nested map[string]any.
-func plistDict(t *testing.T, data string) map[string]any {
-	t.Helper()
-	dec := xml.NewDecoder(strings.NewReader(data))
-	var parseValue func(start xml.StartElement) any
-	parseDict := func() map[string]any {
-		m := map[string]any{}
-		var key string
-		for {
-			tok, err := dec.Token()
-			if err != nil {
-				t.Fatalf("plist is not well-formed XML: %v", err)
-			}
-			switch el := tok.(type) {
-			case xml.StartElement:
-				if el.Name.Local == "key" {
-					var k string
-					if err := dec.DecodeElement(&k, &el); err != nil {
-						t.Fatal(err)
-					}
-					key = k
-				} else {
-					m[key] = parseValue(el)
-				}
-			case xml.EndElement:
-				return m
-			}
-		}
-	}
-	parseValue = func(start xml.StartElement) any {
-		switch start.Name.Local {
-		case "string":
-			var s string
-			if err := dec.DecodeElement(&s, &start); err != nil {
-				t.Fatal(err)
-			}
-			return s
-		case "true":
-			_ = dec.Skip()
-			return true
-		case "false":
-			_ = dec.Skip()
-			return false
-		case "array":
-			var out []string
-			for {
-				tok, err := dec.Token()
-				if err != nil {
-					t.Fatal(err)
-				}
-				switch el := tok.(type) {
-				case xml.StartElement:
-					var s string
-					if err := dec.DecodeElement(&s, &el); err != nil {
-						t.Fatal(err)
-					}
-					out = append(out, s)
-				case xml.EndElement:
-					return out
-				}
-			}
-		case "dict":
-			return parseDict()
-		}
-		t.Fatalf("unexpected plist element %q", start.Name.Local)
-		return nil
-	}
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			t.Fatalf("no <dict> in plist: %v", err)
-		}
-		if el, ok := tok.(xml.StartElement); ok && el.Name.Local == "dict" {
-			return parseDict()
-		}
-	}
-}
-
-func TestInstallDryRunPrintsPlistWithLoginShellPATHAndTouchesNothing(t *testing.T) {
-	ie := newInstallEnv(t)
-	home := filepath.Join(ie.user, ".hal9001")
-	res := run(t, ie.opts, "install", "--dry-run", "--home", home)
-	if res.code != 0 {
-		t.Fatalf("exit %d: %s", res.code, res.stderr)
-	}
-	d := plistDict(t, res.stdout)
-
-	if d["Label"] != "com.hal9001.daemon" {
-		t.Errorf("Label = %v", d["Label"])
-	}
-	if d["KeepAlive"] != true || d["RunAtLoad"] != true {
-		t.Errorf("KeepAlive = %v, RunAtLoad = %v; the daemon must start at login and restart when it exits", d["KeepAlive"], d["RunAtLoad"])
-	}
-	args, _ := d["ProgramArguments"].([]string)
-	if strings.Join(args, " ") != ie.exe+" serve --home "+home {
-		t.Errorf("ProgramArguments = %v", args)
-	}
-	envVars, _ := d["EnvironmentVariables"].(map[string]any)
-	if envVars["PATH"] != loginPATH {
-		t.Errorf("PATH = %q, want the captured login-shell PATH %q (so mise shims, gh and jq resolve)", envVars["PATH"], loginPATH)
-	}
-	logDir := filepath.Join(ie.user, "Library", "Logs", "hal9001")
-	for _, k := range []string{"StandardOutPath", "StandardErrorPath"} {
-		if p, _ := d[k].(string); filepath.Dir(p) != logDir {
-			t.Errorf("%s = %q, want a file under %s", k, p, logDir)
-		}
-	}
-
-	if _, err := os.Stat(filepath.Join(ie.user, "Library")); !os.IsNotExist(err) {
-		t.Errorf("--dry-run created files under the user home: %v", err)
-	}
-	if n := len(ie.launchd.calls); n != 0 {
-		t.Errorf("--dry-run ran launchctl %d times", n)
-	}
-}
-
-func TestInstallWritesPlistBootstrapsAndWaitsForTheDaemon(t *testing.T) {
-	ie := newInstallEnv(t)
-	f := newFakeDaemon(t)
-	f.on("GET /api/health", ok(map[string]any{"status": "ok", "version": "test"}))
-	ie.opts.env = map[string]string{cli.EnvURL: f.srv.URL}
-
-	home := filepath.Join(ie.user, "hal-home")
-	res := run(t, ie.opts, "install", "--home", home)
-	if res.code != 0 {
-		t.Fatalf("exit %d: %s", res.code, res.stderr)
-	}
-
-	plist := filepath.Join(ie.user, "Library", "LaunchAgents", "com.hal9001.daemon.plist")
-	data, err := os.ReadFile(plist)
-	if err != nil {
-		t.Fatalf("plist not written: %v", err)
-	}
-	if d := plistDict(t, string(data)); d["Label"] != "com.hal9001.daemon" {
-		t.Errorf("written plist = %v", d)
-	}
-	if st, _ := os.Stat(filepath.Join(ie.user, "Library", "Logs", "hal9001")); st == nil || !st.IsDir() {
-		t.Error("log directory was not created; launchd would fail to open the log files")
-	}
-	if _, err := os.Stat(home); err != nil {
-		t.Errorf("home directory (the agent's WorkingDirectory) was not created: %v", err)
-	}
-
-	want := [][]string{
-		{"bootout", "gui/501/com.hal9001.daemon"},
-		{"bootstrap", "gui/501", plist},
-	}
-	if len(ie.launchd.calls) != 2 || strings.Join(ie.launchd.calls[0], " ") != strings.Join(want[0], " ") ||
-		strings.Join(ie.launchd.calls[1], " ") != strings.Join(want[1], " ") {
-		t.Errorf("launchctl calls = %v, want %v (replace any running instance, then load the new plist)", ie.launchd.calls, want)
-	}
-	if !strings.Contains(res.stdout, "is running") {
-		t.Errorf("stdout = %q", res.stdout)
-	}
-}
-
-func TestInstallFailsWhenLaunchctlBootstrapFails(t *testing.T) {
-	ie := newInstallEnv(t)
-	ie.launchd.fail["bootstrap"] = "Bootstrap failed: 5: Input/output error"
-	res := run(t, ie.opts, "install", "--home", filepath.Join(ie.user, "h"))
-	if res.code != cli.ExitError || !strings.Contains(res.stderr, "Input/output error") {
-		t.Errorf("exit %d stderr %q", res.code, res.stderr)
-	}
-}
-
-func TestInstallFailsBeforeWritingWhenLoginShellPATHCannotBeCaptured(t *testing.T) {
-	ie := newInstallEnv(t)
-	inner := ie.opts.hook
-	ie.opts.hook = func(e *cli.Env) {
-		inner(e)
-		e.LoginShellPATH = func(context.Context) (string, error) { return "", errors.New("login shell PATH: zsh timed out") }
-	}
-	res := run(t, ie.opts, "install", "--home", filepath.Join(ie.user, "h"))
-	if res.code != cli.ExitError || !strings.Contains(res.stderr, "timed out") {
-		t.Errorf("exit %d stderr %q", res.code, res.stderr)
-	}
-	if _, err := os.Stat(filepath.Join(ie.user, "Library")); !os.IsNotExist(err) {
-		t.Error("files were written despite the failure")
-	}
-	if len(ie.launchd.calls) != 0 {
-		t.Errorf("launchctl ran: %v", ie.launchd.calls)
-	}
-}
-
-func TestUninstallBootsOutAndRemovesThePlistButKeepsTheHome(t *testing.T) {
-	ie := newInstallEnv(t)
-	f := newFakeDaemon(t)
-	f.on("GET /api/health", ok(map[string]any{"status": "ok", "version": "test"}))
-	ie.opts.env = map[string]string{cli.EnvURL: f.srv.URL}
-	home := filepath.Join(ie.user, "h")
-	if res := run(t, ie.opts, "install", "--home", home); res.code != 0 {
-		t.Fatalf("install: %s", res.stderr)
-	}
-	ie.launchd.calls = nil
-
-	res := run(t, ie.opts, "uninstall")
-	if res.code != 0 {
-		t.Fatalf("exit %d: %s", res.code, res.stderr)
-	}
-	if len(ie.launchd.calls) != 1 || strings.Join(ie.launchd.calls[0], " ") != "bootout gui/501/com.hal9001.daemon" {
-		t.Errorf("launchctl calls = %v", ie.launchd.calls)
-	}
-	if _, err := os.Stat(filepath.Join(ie.user, "Library", "LaunchAgents", "com.hal9001.daemon.plist")); !os.IsNotExist(err) {
-		t.Errorf("plist still present: %v", err)
-	}
-	if _, err := os.Stat(home); err != nil {
-		t.Errorf("uninstall removed the home directory: %v", err)
-	}
-
-	// Uninstalling again is not an error.
-	ie.launchd.fail["bootout"] = "Boot-out failed: 3: No such process"
-	if res := run(t, ie.opts, "uninstall"); res.code != 0 {
-		t.Errorf("second uninstall: exit %d: %s", res.code, res.stderr)
-	}
-}
 
 // ---- open / serve / version ----
 
@@ -343,6 +71,88 @@ func TestServeFailureExitsNonZero(t *testing.T) {
 	}}
 	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != cli.ExitError || !strings.Contains(res.stderr, "address already in use") {
 		t.Errorf("exit %d stderr %q", res.code, res.stderr)
+	}
+}
+
+func TestServeUnderLaunchdLogsToAFileAndUsesTheLoginShellPATH(t *testing.T) {
+	user := t.TempDir()
+	var got daemon.Options
+	var logged string
+	opts := runOpts{
+		env: map[string]string{"HAL9001_LAUNCHD": "1"},
+		hook: func(e *cli.Env) {
+			e.UserHomeDir = func() (string, error) { return user, nil }
+			e.LoginShellPATH = func(context.Context) (string, error) { return "/shims:/opt/homebrew/bin:/usr/bin", nil }
+			e.RedirectLog = func(path string) error { logged = path; return nil }
+			e.Serve = func(_ context.Context, o daemon.Options) error { got = o; return nil }
+		},
+	}
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+	if want := filepath.Join(user, "Library", "Logs", "hal9001", "hal9001.log"); logged != want {
+		t.Errorf("log file = %q, want %q", logged, want)
+	}
+	if st, err := os.Stat(filepath.Join(user, "Library", "Logs", "hal9001")); err != nil || !st.IsDir() {
+		t.Errorf("log directory was not created: %v", err)
+	}
+	if got.BasePATH != "/shims:/opt/homebrew/bin:/usr/bin" {
+		t.Errorf("BasePATH = %q, want the login-shell PATH so mise shims, gh and jq resolve inside nodes", got.BasePATH)
+	}
+
+	// A bundled agent names its log with a ~ that launchd does not expand.
+	opts.env["HAL9001_LOG_FILE"] = "~/Library/Logs/hal9001-dev/hal9001.log"
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+	if want := filepath.Join(user, "Library", "Logs", "hal9001-dev", "hal9001.log"); logged != want {
+		t.Errorf("log file = %q, want %q", logged, want)
+	}
+}
+
+func TestServeUnderLaunchdStillStartsWhenTheLoginShellPATHCannotBeCaptured(t *testing.T) {
+	var got daemon.Options
+	started := false
+	opts := runOpts{
+		env: map[string]string{"HAL9001_LAUNCHD": "1"},
+		hook: func(e *cli.Env) {
+			e.UserHomeDir = func() (string, error) { return t.TempDir(), nil }
+			e.LoginShellPATH = func(context.Context) (string, error) { return "", errors.New("login shell PATH: zsh timed out") }
+			e.RedirectLog = func(string) error { return nil }
+			e.Serve = func(_ context.Context, o daemon.Options) error { got, started = o, true; return nil }
+		},
+	}
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 || !started || got.BasePATH != "" {
+		t.Errorf("exit %d, started %v, BasePATH %q: a slow shell rc must not keep the daemon down", res.code, started, got.BasePATH)
+	}
+}
+
+func TestServeWithoutLaunchdLeavesLogsAndPATHAlone(t *testing.T) {
+	opts := runOpts{hook: func(e *cli.Env) {
+		e.RedirectLog = func(string) error { t.Error("stdout/stderr were redirected outside launchd"); return nil }
+		e.LoginShellPATH = func(context.Context) (string, error) {
+			t.Error("login shell was consulted outside launchd")
+			return "", nil
+		}
+		e.Serve = func(context.Context, daemon.Options) error { return nil }
+	}}
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+}
+
+func TestServeDevPortOverridesTheListenPort(t *testing.T) {
+	var got daemon.Options
+	opts := runOpts{
+		env:  map[string]string{"HAL9001_DEV_PORT": "19001"},
+		hook: func(e *cli.Env) { e.Serve = func(_ context.Context, o daemon.Options) error { got = o; return nil } },
+	}
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != 0 || got.ListenAddr != "127.0.0.1:19001" {
+		t.Errorf("exit %d, ListenAddr %q", res.code, got.ListenAddr)
+	}
+	opts.env["HAL9001_DEV_PORT"] = "nine"
+	if res := run(t, opts, "serve", "--home", t.TempDir()); res.code != cli.ExitError || !strings.Contains(res.stderr, "not a port number") {
+		t.Errorf("bad port: exit %d stderr %q", res.code, res.stderr)
 	}
 }
 

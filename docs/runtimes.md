@@ -90,7 +90,7 @@ claude:
   command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]
 ```
 
-This needs only `mise` on the daemon's PATH (`hal9001 install` captures the login-shell PATH). When you bump an adapter in
+This needs only `mise` on the daemon's PATH (under launchd, `hal9001 serve` captures the login-shell PATH). When you bump an adapter in
 `mise.toml`, bump the version in `config.yaml` too. Check that each command resolves for the daemon with
 `bin/hal9001 runtimes probe <name>`: it returns `ok: false` with the error and the tail of the agent's stderr when the
 command cannot start. An absolute path also works:

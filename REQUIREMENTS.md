@@ -105,7 +105,7 @@ Environment injected into every process:
 | `HAL_DRY_RUN` | `1` in dry-run |
 | `HAL_LAST_SUCCESS_AT` | sensors only: RFC3339 of last successful poll (for incremental fetch) |
 
-PATH: the daemon runs under launchd, which has a minimal PATH. `hal9001 install` captures the user's login-shell `PATH` into the launchd plist so mise shims, `gh`, `jq`, etc. resolve.
+PATH: the daemon runs under launchd, which has a minimal PATH. When launchd starts it (the agent plists set `HAL9001_LAUNCHD=1`), `hal9001 serve` captures the user's login-shell `PATH` and hands it to the processes it spawns, so mise shims, `gh`, `jq`, etc. resolve.
 
 ## 5. Sensors
 
@@ -370,7 +370,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 ### 10.1 Daemon
 
 - Single Go binary, frontend embedded via `go:embed`.
-- CLI: `hal9001 serve`, `install` / `uninstall` (launchd LaunchAgent, `KeepAlive`, logs to `~/Library/Logs/hal9001/`), `open` (opens UI), `validate` (lint sensors/flows/prompts). Every other subcommand is a thin client of the REST API (§10.2).
+- CLI: `hal9001 serve`, `service install` / `uninstall` / `status` / `logs` (headless launchd LaunchAgent, `KeepAlive`, logs to `~/Library/Logs/hal9001/`), `open` (opens UI), `validate` (lint sensors/flows/prompts). Every other subcommand is a thin client of the REST API (§10.2). The macOS app (README, "macOS app") registers the daemon's own LaunchAgent bundled in the app through `SMAppService` and replaces the removed `hal9001 install`.
 - Notifications via `terminal-notifier` (installed) with `-open http://localhost:9001/...` deep links; fallback `osascript`. Sent for inbox items with priority ≥ configured threshold (default `normal`) and every new approval.
 
 ### 10.2 API-first
@@ -500,7 +500,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 
 ## 12. Acceptance scenarios (what I will test)
 
-1. `hal9001 install` → daemon running after login; `localhost:9001` loads; `gh`/`jq` resolve inside nodes.
+1. Open the macOS app (or `hal9001 service install`) → daemon running after login; `localhost:9001` loads; `gh`/`jq` resolve inside nodes.
 2. A test sensor (`lang: bash`, emits 3 items) with `first_run: fire` creates 3 events; next poll with the same output creates 0; changing an item's `updated_at` with key `{{.id}}:{{.updated_at}}` creates 1.
 3. `first_run: baseline` on GitHub notifications creates no events on first poll; a new notification afterwards creates exactly one.
 4. Flow with jq filter: non-matching events show `dropped` with reason in the run detail; matching continue.

@@ -28,8 +28,8 @@ It applies to sensors and `command` nodes.
 | `jq` | `script` run as `jq -c -f <file>` |
 | `exec` | `command: [argv...]` run directly (no shell, no `script`) |
 
-The interpreter is looked up on the `PATH` the daemon was given (under launchd: the login-shell `PATH` captured by
-`hal9001 install`). The process starts in its own process group. On timeout or kill-switch the group gets SIGTERM and,
+The interpreter is looked up on the `PATH` the daemon was given (under launchd: the login-shell `PATH` that
+`hal9001 serve` captures when `HAL9001_LAUNCHD=1`). The process starts in its own process group. On timeout or kill-switch the group gets SIGTERM and,
 after 10 seconds, SIGKILL.
 
 **Streams.** stdin is the node's input payload (JSON): the sensor item for an entry node, or the upstream node's output.

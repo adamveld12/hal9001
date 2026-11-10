@@ -1,5 +1,5 @@
-// Package menubar holds the platform-independent parts of the macOS menubar app: the daemon API client, the menu
-// model and the icon renderer. The cgo systray glue lives in cmd/hal9001-menubar.
+// Package menubar holds the platform-independent parts of the macOS app: the daemon API client, the menu model, the
+// icon renderer and the native-notification interface. The cgo glue lives in cmd/hal9001-app.
 package menubar
 
 import (
@@ -17,6 +17,12 @@ type Status struct {
 	UnreadInbox      int `json:"unread_inbox"`
 	PendingApprovals int `json:"pending_approvals"`
 	RunningFlowRuns  int `json:"running_flow_runs"`
+}
+
+// Version is the subset of GET /api/version the menubar uses.
+type Version struct {
+	Version string `json:"version"`
+	Home    string `json:"home"`
 }
 
 // Flow is the subset of a FlowSummary the menubar uses.
@@ -39,6 +45,7 @@ type Sensor struct {
 // Snapshot is everything one menu render needs. A nil Snapshot means the daemon is unreachable.
 type Snapshot struct {
 	Status  Status
+	Version Version
 	Flows   []Flow
 	Sensors []Sensor
 }
@@ -70,7 +77,8 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// Fetch loads status, flows and sensors. Any failure means the daemon is unusable and is returned as an error.
+// Fetch loads status, flows and sensors. Any failure means the daemon is unusable and is returned as an error. The
+// version is informational: a daemon that cannot report it still counts as running.
 func (c *Client) Fetch(ctx context.Context) (*Snapshot, error) {
 	var s Snapshot
 	var flows struct {
@@ -88,6 +96,7 @@ func (c *Client) Fetch(ctx context.Context) (*Snapshot, error) {
 	if err := c.get(ctx, "/api/sensors", &sensors); err != nil {
 		return nil, err
 	}
+	_ = c.get(ctx, "/api/version", &s.Version)
 	s.Flows, s.Sensors = flows.Items, sensors.Items
 	return &s, nil
 }

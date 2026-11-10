@@ -100,13 +100,14 @@ poll to `status: failed`, `exit_code: 1`, stderr naming the cause (`SLACK_USER_T
 sensor `state: failing`, `last_success_at: null`. Real polls with credentials (scenario 19) were not run: no Slack, Linear
 or Gmail credentials exist here (`gog` is not installed).
 
-## 3. `hal9001 install --dry-run` (`TestLiveInstallDryRunPATH`)
+## 3. `hal9001 service install --dry-run` (`TestLiveServiceInstallDryRunPATH`)
 
 Builds the binary and runs it from a bare environment (`PATH=/usr/bin:/bin:/usr/sbin:/sbin`). The plist has
-`RunAtLoad` and `KeepAlive`, `ProgramArguments: [<binary>, serve, --home, ~/.hal9001]`, `WorkingDirectory: ~/.hal9001`, logs under
-`~/Library/Logs/hal9001/`, and a `PATH` that starts with the mise tool dirs and `~/.local/share/mise/shims`, followed by
+`RunAtLoad` and `KeepAlive`, `ProgramArguments: [<binary>, serve, --home, ~/.hal9001]`, and `HAL9001_LAUNCHD=1` in its environment, which
+makes `hal9001 serve` log to `~/Library/Logs/hal9001/` and capture the login-shell `PATH` itself. The test then captures that PATH from the
+same bare environment: it starts with the mise tool dirs and `~/.local/share/mise/shims`, followed by
 `/opt/homebrew/bin` and the system dirs. With that PATH, from a non-repo directory, `gh`, `jq`, `git`, `node` and `mise` resolve
-and run. Run it by hand: `hal9001 install --dry-run`.
+and run. Run it by hand: `hal9001 service install --dry-run`.
 
 ## 4. AI-assisted sensor authoring (`TestLiveAssistClaudeAuthorsASensor`)
 
