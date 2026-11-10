@@ -50,8 +50,9 @@ func (b *localBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error)
 	}
 	s := &localSession{
 		dir: phys, root: root, perRun: lifecycle == spec.LifecyclePerRun, timeout: b.timeout,
-		env: mergeEnv(b.env, rs.Env),
+		env: mergeEnv(b.env, rs.Env), info: SessionInfo{Name: phys, Workdir: phys},
 	}
+	logStep(rs.Log, "Created workdir "+phys, nil)
 	if err := seed(ctx, s, rs); err != nil {
 		_ = s.Close(ctx, false)
 		return nil, err
@@ -82,9 +83,12 @@ type localSession struct {
 	perRun  bool
 	timeout time.Duration
 	env     map[string]string
+	info    SessionInfo
 }
 
 func (s *localSession) Workdir() string { return s.dir }
+
+func (s *localSession) Describe() SessionInfo { return s.info }
 
 func (s *localSession) Exec(ctx context.Context, cmd string, stdin []byte, timeout time.Duration) (ExecResult, error) {
 	if timeout <= 0 {

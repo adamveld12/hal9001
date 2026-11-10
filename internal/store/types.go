@@ -240,6 +240,8 @@ const (
 	ResNodeRun           = "node_run"
 	ResAgentRun          = "agent_run"
 	ResAgentEvent        = "agent_event" // id is "<agent_run_id>/<seq>"
+	ResSandboxSession    = "sandbox_session"
+	ResSandboxLog        = "sandbox_log" // id is the entry id
 	ResPermissionRequest = "permission_request"
 	ResApproval          = "approval"
 	ResInboxItem         = "inbox_item"

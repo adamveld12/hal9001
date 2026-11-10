@@ -360,10 +360,16 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 			}
 			s.finish(id, "not run: denied by policy")
 		}
+		blocked(t, Blocked{Tool: name, Args: args, By: BlockedPolicy, Reason: why})
 		return Result{}, fmt.Errorf("tool %s was denied by policy: %s", name, why)
+	}
+	approvedBy := "auto"
+	if why != "" {
+		approvedBy += ": " + why
 	}
 	if verdict == VerdictApprove {
 		if s.spec.ReadOnly || info.DryRun {
+			blocked(t, Blocked{Tool: name, Args: args, By: BlockedReadOnly, Reason: why})
 			return Result{}, fmt.Errorf("tool %s was not run: %s; this run is read-only", name, why)
 		}
 		if info.AgentRunID == "" {
@@ -373,12 +379,22 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 			RunID: info.AgentRunID, NodeRunID: info.NodeRunID, Tool: name, Args: args, Reason: why, Timeout: s.spec.ApprovalTimeout,
 		})
 		if err != nil {
+			blocked(t, Blocked{Tool: name, Args: args, By: BlockedError, Reason: err.Error()})
 			return Result{}, fmt.Errorf("tool %s: approval failed: %w", name, err)
 		}
 		recordID = d.RecordID
 		if !d.Allowed {
 			s.finish(recordID, "not run: denied")
+			by := BlockedUser
+			if d.Expired {
+				by = BlockedExpired
+			}
+			blocked(t, Blocked{Tool: name, Args: args, By: by, Reason: why, Comment: d.Comment})
 			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
+		}
+		approvedBy = "approved by user"
+		if d.Comment != "" {
+			approvedBy += ": " + d.Comment
 		}
 	} else if info.AgentRunID != "" {
 		id, err := s.h.opt.Host.Record(ctx, CallRecord{RunID: info.AgentRunID, NodeRunID: info.NodeRunID, Tool: name, Args: args, Reason: "hal tool allowed without approval"})
@@ -387,7 +403,7 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 		}
 		recordID = id
 	}
-	res, err := t.Run(ctx, Call{Name: name, Args: args, Info: info, Now: s.h.opt.Clock(), Sandbox: s.sandbox})
+	res, err := t.Run(ctx, Call{Name: name, Args: args, Info: info, Now: s.h.opt.Clock(), Sandbox: s.sandbox, Approval: approvedBy})
 	switch {
 	case err != nil:
 		s.finish(recordID, "error: "+err.Error())
@@ -395,6 +411,12 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 		s.finish(recordID, "ok")
 	}
 	return res, err
+}
+
+func blocked(t Tool, b Blocked) {
+	if t.OnBlocked != nil {
+		t.OnBlocked(b)
+	}
 }
 
 func (s *Session) finish(recordID, outcome string) {

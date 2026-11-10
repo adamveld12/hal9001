@@ -26,6 +26,7 @@ type InterruptResult struct {
 	ExpiredApprovals   int `json:"expired_approvals"`
 	ExpiredPermissions int `json:"expired_permissions"`
 	AssistSessions     int `json:"assist_sessions"`
+	SandboxSessions    int `json:"sandbox_sessions"`
 }
 
 // MarkInterrupted reconciles persisted state after a daemon restart, in one
@@ -38,6 +39,7 @@ type InterruptResult struct {
 //     (decided_by timeout), and the agent runs and node runs that were waiting on them become interrupted;
 //   - a flow run in awaiting_approval with no node run left awaiting approval
 //     becomes interrupted;
+//   - sandbox sessions still provisioning or ready become interrupted;
 //   - queued rows and pending proposal approvals (and the runs waiting on
 //     them) are left untouched: queues resume, proposals survive restarts.
 //
@@ -140,6 +142,18 @@ func (s *Store) MarkInterrupted(ctx context.Context) (InterruptResult, error) {
 			t.note(ResAssistSession, id, OpUpdate)
 		}
 		res.AssistSessions = len(assists)
+
+		// 8. Sandboxes that were open: the run that held them is gone.
+		boxes, err := t.updateReturning(ctx, `UPDATE sandbox_sessions SET status='interrupted', ended_at=?,
+			error = CASE WHEN error = '' THEN ? ELSE error END
+			WHERE status IN ('provisioning','ready') RETURNING id`, now, msg)
+		if err != nil {
+			return fmt.Errorf("store: interrupt sandbox sessions: %w", err)
+		}
+		for _, id := range boxes {
+			t.note(ResSandboxSession, id, OpUpdate)
+		}
+		res.SandboxSessions = len(boxes)
 		return nil
 	})
 	return res, err

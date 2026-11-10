@@ -15,6 +15,8 @@
 //	agent_runs            per agent phase: runtime, info, capabilities, mode, style, policy, phase, session, resume, cwd,
 //	                      worktree, prompt, argv, status, result, raw JSON-RPC
 //	agent_events          transcript, (agent_run_id, seq)
+//	sandbox_sessions      per sandbox an agent run opened: backend, ids, image, repo, status, timing; follows its node run
+//	sandbox_log_entries   that sandbox's log: lifecycle, commands with output, file operations, denied calls
 //	permission_requests   every session/request_permission and its decision
 //	approvals             proposal and tool_call approvals
 //	inbox_items           notes; links to runs by plain ids so they can outlive pruning

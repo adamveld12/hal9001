@@ -102,7 +102,7 @@ func (b *dockerBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error
 		name = "hal-persistent-" + shortHash(img)
 	}
 	b.mu.Lock()
-	err = b.ensureContainer(ctx, name, img, rs.RunID)
+	id, err := b.ensureContainer(ctx, name, img, rs.RunID, rs.Log)
 	b.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -122,6 +122,7 @@ func (b *dockerBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error
 	}
 	s := &remoteSession{
 		workdir: strings.TrimSpace(string(res.Stdout)), run: run, timeout: b.timeout,
+		info: SessionInfo{ID: id, Name: name, Image: img},
 		closeFn: func(ctx context.Context, success bool) error {
 			if perRun {
 				if success {
@@ -149,20 +150,26 @@ func (b *dockerBackend) removeOnFailure(ctx context.Context, name string, perRun
 	}
 }
 
-// ensureContainer makes sure container name exists and is running, creating it from img if needed.
-func (b *dockerBackend) ensureContainer(ctx context.Context, name, img, runID string) error {
-	var info struct{ State struct{ Running bool } }
+// ensureContainer makes sure container name exists and is running, creating it from img if needed. It returns the
+// container's short id.
+func (b *dockerBackend) ensureContainer(ctx context.Context, name, img, runID string, log RunLog) (string, error) {
+	var info struct {
+		ID    string `json:"Id"`
+		State struct{ Running bool }
+	}
 	err := b.cli.json(ctx, http.MethodGet, "/containers/"+name+"/json", nil, &info)
 	switch {
 	case err == nil && info.State.Running:
-		return nil
+		logBackend(log, "Reusing running container "+name, map[string]string{"container": name})
+		return shortID(info.ID), nil
 	case err == nil:
-		return b.cli.startContainer(ctx, name)
+		logBackend(log, "Starting existing container "+name, map[string]string{"container": name})
+		return shortID(info.ID), b.cli.startContainer(ctx, name)
 	case !isNotFound(err):
-		return err
+		return "", err
 	}
-	if err := b.cli.ensureImage(ctx, img); err != nil {
-		return err
+	if err := b.cli.ensureImage(ctx, img, log); err != nil {
+		return "", err
 	}
 	host := map[string]any{"NetworkMode": "default"}
 	if !b.cfg.Network {
@@ -183,13 +190,26 @@ func (b *dockerBackend) ensureContainer(ctx context.Context, name, img, runID st
 	}
 	var created struct{ Id string }
 	if err := b.cli.json(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(name), body, &created); err != nil {
-		return fmt.Errorf("create container: %w", err)
+		return "", fmt.Errorf("create container: %w", err)
 	}
 	if err := b.cli.startContainer(ctx, name); err != nil {
 		_ = b.cli.removeContainer(ctx, name)
-		return err
+		return "", err
 	}
-	return nil
+	fields := map[string]string{"container": name, "id": shortID(created.Id), "image": img, "network": fmt.Sprint(host["NetworkMode"])}
+	if b.cfg.Resources.MemoryMB > 0 {
+		fields["memory_mb"] = fmt.Sprint(b.cfg.Resources.MemoryMB)
+	}
+	if b.cfg.Resources.CPUs > 0 {
+		fields["cpus"] = fmt.Sprint(b.cfg.Resources.CPUs)
+	}
+	logBackend(log, "Started container "+name, fields)
+	return shortID(created.Id), nil
+}
+
+func shortID(id string) string {
+	id = strings.TrimPrefix(id, "sha256:")
+	return id[:min(len(id), 12)]
 }
 
 // Sweep removes stopped per_run containers left by failed runs.
@@ -314,32 +334,41 @@ func (c *dockerClient) removeContainer(ctx context.Context, id string) error {
 }
 
 // ensureImage pulls img unless it is present.
-func (c *dockerClient) ensureImage(ctx context.Context, img string) error {
+func (c *dockerClient) ensureImage(ctx context.Context, img string, log RunLog) error {
 	err := c.json(ctx, http.MethodGet, "/images/"+img+"/json", nil, nil)
 	if err == nil {
+		logBackend(log, "Image "+img+" is present locally", map[string]string{"image": img})
 		return nil
 	}
 	if !isNotFound(err) {
 		return err
 	}
+	logBackend(log, "Pulling image "+img, map[string]string{"image": img})
+	start := time.Now()
 	resp, err := c.do(ctx, http.MethodPost, "/images/create?fromImage="+url.QueryEscape(img), nil)
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", img, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	dec := json.NewDecoder(resp.Body)
+	var last string
 	for {
 		var m struct {
-			Error string `json:"error"`
+			Error  string `json:"error"`
+			Status string `json:"status"`
 		}
 		if err := dec.Decode(&m); err != nil {
 			if errors.Is(err, io.EOF) {
+				logBackend(log, "Pulled image "+img+" in "+time.Since(start).Round(time.Millisecond).String(), map[string]string{"image": img, "status": last})
 				return nil
 			}
 			return err
 		}
 		if m.Error != "" {
 			return fmt.Errorf("pull %s: %s", img, m.Error)
+		}
+		if m.Status != "" && !strings.HasPrefix(m.Status, "Pulling fs layer") && !strings.HasPrefix(m.Status, "Waiting") && !strings.HasPrefix(m.Status, "Downloading") && !strings.HasPrefix(m.Status, "Extracting") {
+			last = m.Status
 		}
 	}
 }

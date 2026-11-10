@@ -125,7 +125,7 @@ func (s depotSandbox) state() string {
 	return ""
 }
 
-func (b *depotBackend) create(ctx context.Context, runID string) (string, error) {
+func (b *depotBackend) create(ctx context.Context, runID string, log RunLog) (string, error) {
 	var out struct {
 		Sandbox depotSandbox `json:"sandbox"`
 	}
@@ -133,6 +133,7 @@ func (b *depotBackend) create(ctx context.Context, runID string) (string, error)
 		return "", fmt.Errorf("create depot sandbox: %w", err)
 	}
 	id := out.Sandbox.ID
+	logBackend(log, "Created Depot sandbox "+id, map[string]string{"sandbox_id": id, "state": out.Sandbox.state()})
 	deadline := time.Now().Add(5 * time.Minute)
 	for st := out.Sandbox.state(); st != "running"; {
 		switch st {
@@ -154,7 +155,10 @@ func (b *depotBackend) create(ctx context.Context, runID string) (string, error)
 		if err := b.cli.unary(ctx, "GetSandbox", map[string]any{"id": id}, &got); err != nil {
 			return "", err
 		}
-		st = got.Sandbox.state()
+		if next := got.Sandbox.state(); next != st {
+			logBackend(log, "Depot sandbox "+id+" is "+next, map[string]string{"sandbox_id": id, "state": next})
+			st = next
+		}
 	}
 	return id, nil
 }
@@ -165,7 +169,7 @@ func (b *depotBackend) stop(ctx context.Context, id string) error {
 
 // persistentSandbox returns the kept-alive sandbox, creating it when it is missing or ended, and extends its
 // lifetime.
-func (b *depotBackend) persistentSandbox(ctx context.Context) (string, error) {
+func (b *depotBackend) persistentSandbox(ctx context.Context, log RunLog) (string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.persistent != "" {
@@ -182,7 +186,7 @@ func (b *depotBackend) persistentSandbox(ctx context.Context) (string, error) {
 		}
 		b.persistent = ""
 	}
-	id, err := b.create(ctx, "persistent")
+	id, err := b.create(ctx, "persistent", log)
 	if err != nil {
 		return "", err
 	}
@@ -198,9 +202,9 @@ func (b *depotBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error)
 	var id string
 	var err error
 	if perRun {
-		id, err = b.create(ctx, rs.RunID)
+		id, err = b.create(ctx, rs.RunID, rs.Log)
 	} else {
-		id, err = b.persistentSandbox(ctx)
+		id, err = b.persistentSandbox(ctx, rs.Log)
 	}
 	if err != nil {
 		return nil, err
@@ -222,6 +226,7 @@ func (b *depotBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error)
 	workdir := strings.TrimSpace(string(res.Stdout))
 	s := &remoteSession{
 		workdir: workdir, run: run, timeout: b.timeout, noStdin: true, b64Read: true,
+		info: SessionInfo{ID: id},
 		closeFn: func(ctx context.Context, success bool) error {
 			switch {
 			case perRun:

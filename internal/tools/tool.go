@@ -26,7 +26,31 @@ type Tool struct {
 	Policy func(args json.RawMessage) (Verdict, string)
 	// Run executes the tool. A returned error is reported to the agent as a tool error.
 	Run func(ctx context.Context, c Call) (Result, error)
+	// OnBlocked, when set, is told about every call that was not run: refused by policy, denied or left unanswered by
+	// a user, or held back because the run is read-only.
+	OnBlocked func(Blocked)
 }
+
+// Blocked describes a call that was not run.
+type Blocked struct {
+	Tool string
+	Args json.RawMessage
+	// By is why: BlockedPolicy, BlockedUser, BlockedExpired, BlockedReadOnly or BlockedError.
+	By string
+	// Reason is the policy's or approval's reason, or the error.
+	Reason string
+	// Comment is the approver's comment.
+	Comment string
+}
+
+// Blocked.By values.
+const (
+	BlockedPolicy   = "policy"    // denied by the tool's policy
+	BlockedUser     = "user"      // denied by the user (Comment may say why)
+	BlockedExpired  = "expired"   // nobody decided before the approval timeout
+	BlockedReadOnly = "read_only" // needs approval, but the run is read-only
+	BlockedError    = "error"     // the approval wait failed (the run was cancelled)
+)
 
 // Verdict is the outcome of a tool's Policy for one call.
 type Verdict int
@@ -50,6 +74,8 @@ type Call struct {
 	Now time.Time
 	// Sandbox is the run's sandbox session when the node has one (an extension supplied it), else nil.
 	Sandbox sandbox.Session
+	// Approval says how the call was allowed: "auto: <reason>" or "approved by user".
+	Approval string
 }
 
 // Result is what a tool returns to the agent.

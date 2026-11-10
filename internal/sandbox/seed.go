@@ -33,8 +33,22 @@ if [ -d "$T/.git" ]; then ` + prefix + `git -C "$T" fetch --quiet origin; else `
 		if rs.Ref != "" {
 			script += `git -C "$T" checkout --quiet ` + shQuote(rs.Ref) + " --\n"
 		}
+		repo := CleanRepo(rs.Repo)
+		title := "Cloning " + repo
+		fields := map[string]string{"repo": repo}
+		if rs.Ref != "" {
+			title += " at " + rs.Ref
+			fields["ref"] = rs.Ref
+		}
+		logStep(rs.Log, title, fields)
+		start := time.Now()
 		res, err := s.Exec(ctx, script, nil, cloneTimeout)
+		logFail := func(msg string) {
+			stderr, _ := CapText(res.Stderr, LogOutputLimit)
+			logAdd(rs.Log, LogEntry{Kind: KindLifecycle, Level: LevelError, Title: "Clone failed: " + oneLine(msg), Error: msg, Stderr: stderr, Duration: time.Since(start), Fields: fields})
+		}
 		if err != nil {
+			logFail(err.Error())
 			return fmt.Errorf("clone %s: %w", rs.Repo, err)
 		}
 		if res.ExitCode != 0 || res.TimedOut {
@@ -42,13 +56,16 @@ if [ -d "$T/.git" ]; then ` + prefix + `git -C "$T" fetch --quiet origin; else `
 			if res.TimedOut {
 				msg = "timed out"
 			}
+			logFail(msg)
 			return fmt.Errorf("clone %s: %s", rs.Repo, msg)
 		}
+		logAdd(rs.Log, LogEntry{Kind: KindLifecycle, Title: "Cloned in " + time.Since(start).Round(time.Millisecond).String(), Duration: time.Since(start), Fields: fields})
 	}
 	if rs.Input != nil {
 		if err := s.WriteFile(ctx, "input.json", rs.Input); err != nil {
 			return fmt.Errorf("write input.json: %w", err)
 		}
+		logStep(rs.Log, fmt.Sprintf("Wrote input.json (%d bytes)", len(rs.Input)), nil)
 	}
 	return nil
 }
