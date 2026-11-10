@@ -33,7 +33,8 @@ type InterruptResult struct {
 //
 //   - sensor runs, node runs, agent runs and flow runs in status running become interrupted;
 //   - pending tool_call approvals and operator approvals (request approvals with no node run) become expired (the
-//     agent process or MCP client waiting on them is gone), with the linked permission requests expired
+//     agent process or MCP client waiting on them is gone), except detached ones (request_approval: they outlive
+//     the call that raised them), with the linked permission requests expired
 //     (decided_by timeout), and the agent runs and node runs that were waiting on them become interrupted;
 //   - a flow run in awaiting_approval with no node run left awaiting approval
 //     becomes interrupted;
@@ -50,7 +51,7 @@ func (s *Store) MarkInterrupted(ctx context.Context) (InterruptResult, error) {
 		// 1. Tool-call approvals die with their agent process, operator approvals with the MCP call that waited.
 		approvals, err := t.updateReturning(ctx, `UPDATE approvals SET status='expired', decided_by='system',
 			comment = CASE WHEN comment = '' THEN ? ELSE comment END, decided_at=?
-			WHERE status='pending' AND (type='tool_call' OR (type='request' AND node_run_id IS NULL)) RETURNING id`, msg, now)
+			WHERE status='pending' AND (type='tool_call' OR (type='request' AND node_run_id IS NULL AND COALESCE(json_extract(request, '$.detached'), 0) = 0)) RETURNING id`, msg, now)
 		if err != nil {
 			return fmt.Errorf("store: expire tool approvals: %w", err)
 		}

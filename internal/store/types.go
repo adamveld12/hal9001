@@ -137,6 +137,8 @@ const (
 
 	SourceAgentRun SourceType = "agent_run"
 	SourceNodeRun  SourceType = "node_run"
+	// SourceMCP is a note an external MCP client posted (send_note, docs/mcp.md); it belongs to no run.
+	SourceMCP SourceType = "mcp"
 
 	ServiceUI      AuthService = "ui"
 	ServiceAPI     AuthService = "api"
@@ -486,6 +488,9 @@ type InboxItem struct {
 	Archived       bool        `json:"archived"`
 	DryRun         bool        `json:"dry_run"`
 	CreatedAt      time.Time   `json:"created_at"`
+	// Client names the external MCP client of a SourceMCP item, ThreadKey is the grouping key it passed.
+	Client    string `json:"client,omitempty"`
+	ThreadKey string `json:"thread_key,omitempty"`
 }
 
 // ModuleResult is one auth module's outcome inside an AuthEvent.
@@ -563,6 +568,14 @@ type RequestApproval struct {
 	DryRun   bool                   `json:"dry_run"`
 	// OnTimeout is what an expiry does: denied, approved or error. Empty without a timeout.
 	OnTimeout string `json:"on_timeout,omitempty"`
+	// Source is "mcp" when an external MCP client raised the approval (an operator approval, docs/mcp.md) and Client
+	// the client's name; Principal is the authenticated caller of its MCP request.
+	Source    string `json:"source,omitempty"`
+	Client    string `json:"client,omitempty"`
+	Principal string `json:"principal,omitempty"`
+	// Detached marks an approval that outlives the MCP call that raised it (request_approval): it is decided and
+	// expires on its own, survives a daemon restart, and nobody has to be waiting on it.
+	Detached bool `json:"detached,omitempty"`
 }
 
 // RequestEditable is one input path of a request approval the approver may edit, with its current value.

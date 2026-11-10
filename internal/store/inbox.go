@@ -9,7 +9,7 @@ import (
 )
 
 const inboxCols = `id, source_type, flow_run_id, node_run_id, agent_run_id, title, priority, summary_md, suggested_reply, links,
-	parse_error, is_read, starred, archived, dry_run, created_at`
+	parse_error, is_read, starred, archived, dry_run, created_at, client, thread_key`
 
 func scanInbox(r rowScanner) (InboxItem, error) {
 	var (
@@ -18,7 +18,7 @@ func scanInbox(r rowScanner) (InboxItem, error) {
 		parseErr, read, starred, arch, dry int
 	)
 	if err := r.Scan(&it.ID, &src, &it.FlowRunID, &it.NodeRunID, &it.AgentRunID, &it.Title, &prio, &it.SummaryMD, &it.SuggestedReply, &links,
-		&parseErr, &read, &starred, &arch, &dry, &created); err != nil {
+		&parseErr, &read, &starred, &arch, &dry, &created, &it.Client, &it.ThreadKey); err != nil {
 		return InboxItem{}, scanErr(err)
 	}
 	it.SourceType, it.Priority = SourceType(src), Priority(prio)
@@ -36,9 +36,9 @@ func scanInbox(r rowScanner) (InboxItem, error) {
 }
 
 // CreateInboxItem inserts it, assigning ID, Priority (normal) and CreatedAt.
-// SourceType must name the id that is set (AgentRunID or NodeRunID). FlowRunID
-// is filled in from the node/agent run when empty, so a starred item always
-// protects its whole trace from pruning.
+// SourceType must name the id that is set (AgentRunID or NodeRunID), or be SourceMCP, which has no run ids and
+// names the external client in Client. FlowRunID is filled in from the node/agent run when empty, so a starred item
+// always protects its whole trace from pruning.
 func (s *Store) CreateInboxItem(ctx context.Context, it *InboxItem) error {
 	if it.Title == "" {
 		return fmt.Errorf("%w: inbox title required", ErrInvalid)
@@ -52,6 +52,7 @@ func (s *Store) CreateInboxItem(ctx context.Context, it *InboxItem) error {
 	switch {
 	case it.SourceType == SourceAgentRun && it.AgentRunID != "":
 	case it.SourceType == SourceNodeRun && it.NodeRunID != "":
+	case it.SourceType == SourceMCP && it.AgentRunID == "" && it.NodeRunID == "" && it.FlowRunID == "":
 	default:
 		return fmt.Errorf("%w: inbox source_type %q does not match the source id provided", ErrInvalid, it.SourceType)
 	}
@@ -69,9 +70,9 @@ func (s *Store) CreateInboxItem(ctx context.Context, it *InboxItem) error {
 		if err := t.resolveInboxLinks(ctx, it); err != nil {
 			return err
 		}
-		_, err := t.ExecContext(ctx, `INSERT INTO inbox_items (`+inboxCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err := t.ExecContext(ctx, `INSERT INTO inbox_items (`+inboxCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			it.ID, it.SourceType, it.FlowRunID, it.NodeRunID, it.AgentRunID, it.Title, it.Priority, it.SummaryMD, it.SuggestedReply, links,
-			b2i(it.ParseError), b2i(it.Read), b2i(it.Starred), b2i(it.Archived), b2i(it.DryRun), ts(it.CreatedAt))
+			b2i(it.ParseError), b2i(it.Read), b2i(it.Starred), b2i(it.Archived), b2i(it.DryRun), ts(it.CreatedAt), it.Client, it.ThreadKey)
 		if err != nil {
 			return fmt.Errorf("store: insert inbox_item: %w", err)
 		}
