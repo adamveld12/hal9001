@@ -1,5 +1,7 @@
 # hal9001
 
+New here? Start with [docs/getting-started.md](docs/getting-started.md).
+
 A local macOS daemon that watches Slack, GitHub, Linear and Gmail, runs each new item through flows you write
 (shell-command nodes in any language), and hands the ones that matter to a coding agent (Claude Code, Codex, omp)
 under one of three autonomy modes. A web UI on `localhost:9001` shows every event, decision, agent transcript and

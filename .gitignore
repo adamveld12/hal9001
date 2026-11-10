@@ -1,12 +1,27 @@
 /bin/
 /dist/
+*.app/
+*.dmg
 *.test
 *.out
 coverage.*
+*.coverprofile
 .DS_Store
 
-web/node_modules/
+node_modules/
 web/dist/
+
+# Local env files (templates like content/env.example stay tracked)
+.env
+.env.*
+!.env.example
+
+# Script scratch dirs and caches
+/bin/dmg-build/
+/bin/app-build/
+.uv-cache/
+.venv/
+*.tmp
 
 # Global gitignores on this machine ignore *.sql; migrations must be tracked.
 !internal/store/migrations/*.sql
