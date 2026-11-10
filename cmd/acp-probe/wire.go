@@ -173,8 +173,10 @@ type teeWriter struct {
 func (t *teeWriter) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	n, err := t.dst.Write(p)
-	t.buf = append(t.buf, p[:n]...)
+	// Log before delivering: a fast agent can answer while this call is still
+	// returning, and fromAgent needs the request recorded to attribute the
+	// response to its method.
+	t.buf = append(t.buf, p...)
 	for {
 		i := bytes.IndexByte(t.buf, '\n')
 		if i < 0 {
@@ -183,7 +185,7 @@ func (t *teeWriter) Write(p []byte) (int, error) {
 		t.log.toAgent(t.buf[:i])
 		t.buf = t.buf[i+1:]
 	}
-	return n, err
+	return t.dst.Write(p)
 }
 
 // reader wraps the agent's stdout. A goroutine splits it into lines, logs each,

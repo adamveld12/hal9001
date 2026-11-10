@@ -239,10 +239,12 @@ edges:
 
 // Removing a run that waits in the queue (the cancelled end of a run) takes the
 // follow-ups of a node that finished a moment before. The run waits behind a
-// full command pool; the split node is held where its record becomes visible
-// and the run is removed then. With the follow-up committed together with the
-// node it is cancelled with the rest; committed afterwards it joined a run that
-// was already cancelled and stayed queued behind the kill switch.
+// full command pool (max_command_runs: 1). The engine is paused as split is
+// claimed, so the slot split frees is not given to the other node before the
+// test acts; the run is then removed where split's record becomes visible.
+// With the follow-up committed together with the node it is cancelled with the
+// rest; committed afterwards it joined a run that was already cancelled and
+// stayed queued behind the kill switch.
 func TestRemoveQueuedTakesTheFollowUpsOfTheNodeThatFinishedLast(t *testing.T) {
 	h := newHarness(t, withConfig("max_command_runs: 1\n"))
 	h.idleSensor()
@@ -263,24 +265,31 @@ nodes:
 edges:
   - {from: split, to: note}
 `)
-	var once sync.Once
+	var paused, removed sync.Once
 	h.st.SetNotifier(func(c store.Change) {
 		if c.Resource != store.ResNodeRun || c.Op != store.OpUpdate {
 			return
 		}
 		nr, err := h.st.GetNodeRun(context.Background(), c.ID)
-		if err != nil || nr.NodeID != "split" || nr.Status != store.NodeDone {
+		if err != nil || nr.NodeID != "split" {
 			return
 		}
-		once.Do(func() {
-			// Nothing starts while paused, so the queue stands still under the test.
-			if _, err := h.eng.Pause(context.Background(), false, "test"); err != nil {
-				t.Errorf("pause: %v", err)
-			}
-			if _, err := h.eng.RemoveQueued(context.Background(), nr.FlowRunID, "test"); err != nil {
-				t.Errorf("remove from the queue: %v", err)
-			}
-		})
+		switch nr.Status {
+		case store.NodeRunning:
+			// Runs on the dispatcher, before split starts: once paused, nothing
+			// else is claimed, however long split and the test take.
+			paused.Do(func() {
+				if _, err := h.eng.Pause(context.Background(), false, "test"); err != nil {
+					t.Errorf("pause: %v", err)
+				}
+			})
+		case store.NodeDone:
+			removed.Do(func() {
+				if _, err := h.eng.RemoveQueued(context.Background(), nr.FlowRunID, "test"); err != nil {
+					t.Errorf("remove from the queue: %v", err)
+				}
+			})
+		}
 	})
 	h.start()
 
