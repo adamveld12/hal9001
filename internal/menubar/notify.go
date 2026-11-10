@@ -24,23 +24,215 @@ type Notification struct {
 	Error        string `json:"error"`
 }
 
-// NotificationAction is the user's response to a delivered notification: a click on it (Action is the system's default
-// action identifier) or on one of its buttons, with Text when the button took typed input.
+// ChannelApp is the Notification.Channel the app shows.
+const ChannelApp = "app"
+
+// Request is a notification as the native layer posts it. Everything the app needs to act on a response travels in
+// UserInfo, because the response arrives without the original Notification.
+type Request struct {
+	ID       string            `json:"id"`
+	Title    string            `json:"title"`
+	Subtitle string            `json:"subtitle"`
+	Body     string            `json:"body"`
+	Thread   string            `json:"thread"`   // groups notifications (UNNotificationContent.threadIdentifier)
+	Category string            `json:"category"` // one of the Category* ids, or empty for a notification without buttons
+	Sound    bool              `json:"sound"`
+	UserInfo map[string]string `json:"userInfo"`
+}
+
+// UserInfo keys of a Request.
+const (
+	InfoURL          = "url"
+	InfoKind         = "kind"
+	InfoItemID       = "item_id"
+	InfoApprovalID   = "approval_id"
+	InfoApprovalType = "approval_type"
+	InfoEditable     = "editable"
+)
+
+// Category ids registered with the notification center.
+const (
+	CategoryNote     = "hal.note"
+	CategoryApproval = "hal.approval"
+	CategoryEditable = "hal.request.editable"
+)
+
+// Notification action ids (buttons).
+const (
+	ActOpen           = "open"
+	ActMarkRead       = "mark_read"
+	ActArchive        = "archive"
+	ActApprove        = "approve"
+	ActDeny           = "deny"
+	ActApproveComment = "approve_comment"
+	ActDenyComment    = "deny_comment"
+)
+
+// DefaultAction is the action id of a click on the notification itself (UNNotificationDefaultActionIdentifier).
+const DefaultAction = "com.apple.UNNotificationDefaultActionIdentifier"
+
+// ActionDef is one button of a category. Text buttons take typed input; its text is sent as the comment.
+type ActionDef struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Destructive bool   `json:"destructive,omitempty"`
+	Text        bool   `json:"text,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	SendTitle   string `json:"sendTitle,omitempty"`
+}
+
+// CategoryDef is a set of buttons registered under an id.
+type CategoryDef struct {
+	ID      string      `json:"id"`
+	Actions []ActionDef `json:"actions"`
+}
+
+// Categories is every category the app registers: notes get Open, Mark read, Archive; approvals (proposals, tool calls,
+// requests) get Approve, Deny and the same two with a typed comment; a request whose fields can be edited gets
+// Approve as-is, Deny and Open to edit.
+func Categories() []CategoryDef {
+	comment := func(id, title string) ActionDef {
+		return ActionDef{ID: id, Title: title, Text: true, Placeholder: "Comment", SendTitle: "Send"}
+	}
+	return []CategoryDef{
+		{ID: CategoryNote, Actions: []ActionDef{
+			{ID: ActOpen, Title: "Open"},
+			{ID: ActMarkRead, Title: "Mark read"},
+			{ID: ActArchive, Title: "Archive"},
+		}},
+		{ID: CategoryApproval, Actions: []ActionDef{
+			{ID: ActApprove, Title: "Approve"},
+			{ID: ActDeny, Title: "Deny", Destructive: true},
+			comment(ActApproveComment, "Approve with comment…"),
+			func() ActionDef { d := comment(ActDenyComment, "Deny with comment…"); d.Destructive = true; return d }(),
+		}},
+		{ID: CategoryEditable, Actions: []ActionDef{
+			{ID: ActApprove, Title: "Approve as-is"},
+			{ID: ActDeny, Title: "Deny", Destructive: true},
+			{ID: ActOpen, Title: "Open to edit"},
+		}},
+	}
+}
+
+// CategoryFor picks the category of a notification; empty for a kind this app does not know (it is then shown without
+// buttons and a click still opens its URL).
+func CategoryFor(n Notification) string {
+	switch n.Kind {
+	case "note":
+		return CategoryNote
+	case "request":
+		if n.Editable {
+			return CategoryEditable
+		}
+		return CategoryApproval
+	case "proposal", "tool_call":
+		return CategoryApproval
+	}
+	return ""
+}
+
+// PlanNotification turns a stream event into what to post. ok is false when the notification is not the app's to show:
+// another channel (terminal-notifier) already delivered it.
+func PlanNotification(n Notification) (Request, bool) {
+	if n.Channel != ChannelApp {
+		return Request{}, false
+	}
+	return Request{
+		ID:       n.ID,
+		Title:    n.Title,
+		Subtitle: n.Subtitle,
+		Body:     n.Body,
+		Thread:   n.ThreadID,
+		Category: CategoryFor(n),
+		Sound:    n.Priority == "high" || n.Priority == "urgent",
+		UserInfo: map[string]string{
+			InfoURL:          n.URL,
+			InfoKind:         n.Kind,
+			InfoItemID:       n.ItemID,
+			InfoApprovalID:   n.ApprovalID,
+			InfoApprovalType: n.ApprovalType,
+			InfoEditable:     boolString(n.Editable),
+		},
+	}, true
+}
+
+func boolString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// NotificationAction is the user's response to a delivered notification: a click on it (Action is DefaultAction) or on
+// one of its buttons, with Text when the button took typed input.
 type NotificationAction struct {
 	Action    string
 	Text      string
-	RequestID string // the id the notification was posted with
-	ThreadID  string
+	RequestID string            // the id the notification was posted with
+	ThreadID  string            // the thread the notification was posted with
+	UserInfo  map[string]string // the Request.UserInfo it was posted with
 }
 
-// Notifier shows native macOS notifications and reports the user's responses. The implementation lives in the cgo
-// bridge of cmd/hal9001-app (UNUserNotificationCenter); this interface is the seam between it and the Go logic, and
-// has no implementation yet.
+// Notifier shows native macOS notifications and reports the user's responses. The implementation is the cgo bridge of
+// cmd/hal9001-app (UNUserNotificationCenter).
 type Notifier interface {
-	// Post delivers n; posting an id that is already delivered replaces it.
-	Post(n Notification) error
+	// Post delivers r; posting an id that is already delivered replaces it.
+	Post(r Request) error
 	// Remove withdraws delivered notifications, for example once the item was handled elsewhere.
 	Remove(ids ...string)
 	// OnAction registers the handler called (on its own goroutine) for every response; it replaces any earlier one.
 	OnAction(handle func(NotificationAction))
+}
+
+// AuthStatus is UNAuthorizationStatus.
+type AuthStatus int
+
+const (
+	AuthNotDetermined AuthStatus = 0
+	AuthDenied        AuthStatus = 1
+	AuthAuthorized    AuthStatus = 2
+	AuthProvisional   AuthStatus = 3
+	AuthEphemeral     AuthStatus = 4
+)
+
+// AlertStyle is UNAlertStyle: how a delivered notification is presented.
+type AlertStyle int
+
+const (
+	StyleNone   AlertStyle = 0
+	StyleBanner AlertStyle = 1
+	StyleAlert  AlertStyle = 2
+)
+
+// NotifySettings is what the user has decided about this app's notifications (System Settings > Notifications),
+// read from getNotificationSettings, never inferred from errors of adding a request.
+type NotifySettings struct {
+	Auth AuthStatus
+	// Style is how notifications are presented.
+	Style AlertStyle
+	// AlertEnabled and CenterEnabled report the "alert" and "notification center" switches.
+	AlertEnabled, CenterEnabled bool
+}
+
+// Pending reports that the user has not been asked yet (or has not answered).
+func (s NotifySettings) Pending() bool { return s.Auth == AuthNotDetermined }
+
+// Allowed reports that notifications can be shown: authorized, with at least one way to show them.
+func (s NotifySettings) Allowed() bool {
+	granted := s.Auth == AuthAuthorized || s.Auth == AuthProvisional || s.Auth == AuthEphemeral
+	return granted && (s.AlertEnabled || s.CenterEnabled)
+}
+
+// Off reports that the user turned notifications off: denied, or allowed with every way of showing them disabled.
+func (s NotifySettings) Off() bool { return !s.Pending() && !s.Allowed() }
+
+// Sink reports whether the app should register as the daemon's notification sink. Only while notifications can really
+// be shown: with the sink registered the daemon stops running terminal-notifier, so anything the app cannot show
+// would be lost, which includes the time before the user answers the authorization prompt.
+func (s NotifySettings) Sink() bool { return s.Allowed() }
+
+// HintAlertStyle reports whether to suggest the Alerts style: an urgent notification was shown as a banner, which
+// disappears by itself, while an alert stays until it is dealt with.
+func (s NotifySettings) HintAlertStyle(n Notification) bool {
+	return s.Allowed() && s.Style == StyleBanner && n.Priority == "urgent"
 }

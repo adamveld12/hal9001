@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -36,6 +35,10 @@ type app struct {
 	stopAnim chan struct{} // closes to stop the throb ticker; nil when idle
 	frames   [][]byte      // precomputed throb frames, built on first use
 	done     chan struct{} // closed to stop click goroutines of the current menu
+
+	streamMu     sync.Mutex
+	streamCancel context.CancelFunc // ends the current stream connection; nil before the first
+	notif        *notifications
 }
 
 func (a *app) onReady() {
@@ -68,13 +71,25 @@ func (a *app) onReady() {
 		}
 	}()
 	go a.ensureService(ctx)
+	go a.notif.start()
 }
 
+// streamLoop keeps the event stream connected. Whether it registers as the daemon's notification sink follows the
+// notification settings; when they change, restartStream drops the connection and it reconnects at once.
 func (a *app) streamLoop(ctx context.Context, poke func()) {
 	for ctx.Err() == nil {
-		err := a.client.Stream(ctx, func(string) { poke() })
+		cctx, cancel := context.WithCancel(ctx)
+		a.streamMu.Lock()
+		a.streamCancel = cancel
+		a.streamMu.Unlock()
+		err := a.client.Stream(cctx, menubar.StreamOptions{Notifications: a.notif.sink()}, a.onEvent)
+		restarted := cctx.Err() != nil
+		cancel()
 		if ctx.Err() != nil {
 			return
+		}
+		if restarted {
+			continue
 		}
 		slog.Warn("stream dropped; polling until it reconnects", "err", err)
 		poke()
@@ -83,6 +98,22 @@ func (a *app) streamLoop(ctx context.Context, poke func()) {
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+// restartStream drops the current stream connection so that the loop reconnects with fresh options.
+func (a *app) restartStream() {
+	a.streamMu.Lock()
+	defer a.streamMu.Unlock()
+	if a.streamCancel != nil {
+		a.streamCancel()
+	}
+}
+
+func (a *app) onEvent(ev menubar.Event) {
+	if ev.Type == menubar.EventNotification {
+		a.notif.onEvent(ev)
+	}
+	a.poke()
 }
 
 func (a *app) refresh(ctx context.Context) {
@@ -204,8 +235,7 @@ func (a *app) add(parent *systray.MenuItem, e menubar.Entry) {
 					case menubar.Action:
 						a.runAction(e.ID)
 					default:
-						//nolint:gosec // URL is built from the operator-configured UI base URL
-						if err := exec.CommandContext(context.Background(), "open", e.URL).Run(); err != nil {
+						if err := openURL(e.URL); err != nil {
 							slog.Error("open failed", "url", e.URL, "err", err)
 						}
 					}

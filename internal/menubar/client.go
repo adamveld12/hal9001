@@ -4,10 +4,13 @@ package menubar
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -104,14 +107,52 @@ func (c *Client) Fetch(ctx context.Context) (*Snapshot, error) {
 // refreshEvents are the SSE event types that can change what the menu shows.
 const refreshEvents = "status.changed,killswitch.changed,sensor.changed,config.changed,inbox.created,inbox.updated,flow_run.created,flow_run.updated,approval.created,approval.updated"
 
-// Stream connects to GET /api/stream and calls onEvent for each event type received (including stream.resync)
-// until the connection ends or ctx is done. It returns the connection error, never nil.
-func (c *Client) Stream(ctx context.Context, onEvent func(typ string)) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/api/stream?types="+refreshEvents, nil)
+// Stream header and event type of a notification sink.
+const (
+	NotifierHeader    = "X-Hal9001-Notifier"
+	NotifierApp       = "app"
+	EventNotification = "notification.created"
+)
+
+// StreamOptions configures Stream.
+type StreamOptions struct {
+	// Notifications registers the connection as the daemon's notification sink: it adds notification.created to the
+	// event types and announces the app with the X-Hal9001-Notifier header. While a sink is connected the daemon stops
+	// running terminal-notifier itself, so set it only when the app can really show notifications.
+	Notifications bool
+}
+
+// Event is one message of the stream.
+type Event struct {
+	Type string
+	// Data is the JSON envelope of the message (`{"type":...,"data":{...}}`); empty for events without one.
+	Data []byte
+}
+
+// Notification decodes the payload of a notification.created event.
+func (e Event) Notification() (Notification, error) {
+	var env struct {
+		Data Notification `json:"data"`
+	}
+	err := json.Unmarshal(e.Data, &env)
+	return env.Data, err
+}
+
+// Stream connects to GET /api/stream and calls onEvent for each message received (including stream.resync) until the
+// connection ends or ctx is done. It returns the connection error, never nil.
+func (c *Client) Stream(ctx context.Context, opts StreamOptions, onEvent func(Event)) error {
+	types := refreshEvents
+	if opts.Notifications {
+		types += "," + EventNotification
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/api/stream?types="+types, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if opts.Notifications {
+		req.Header.Set(NotifierHeader, NotifierApp)
+	}
 	hc := &http.Client{} // no overall timeout: the stream is long-lived
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -123,13 +164,87 @@ func (c *Client) Stream(ctx context.Context, onEvent func(typ string)) error {
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	var ev Event
 	for sc.Scan() {
-		if typ, ok := strings.CutPrefix(sc.Text(), "event: "); ok {
-			onEvent(typ)
+		line := sc.Text()
+		switch {
+		case line == "": // end of a message
+			if ev.Type != "" {
+				onEvent(ev)
+			}
+			ev = Event{}
+		case strings.HasPrefix(line, "event: "):
+			ev.Type = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			ev.Data = []byte(strings.TrimPrefix(line, "data: "))
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return err
 	}
 	return fmt.Errorf("stream closed")
+}
+
+// send sends a JSON request that expects no response body; any status of 400 or more is an error naming the daemon's
+// problem document.
+func (c *Client) send(ctx context.Context, method, path string, body any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.Base+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 400 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	var problem struct {
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	_ = json.Unmarshal(raw, &problem)
+	msg := strings.TrimSpace(problem.Detail)
+	if msg == "" {
+		msg = strings.TrimSpace(problem.Title)
+	}
+	if msg == "" {
+		msg = http.StatusText(resp.StatusCode)
+	}
+	return fmt.Errorf("%s (%d)", msg, resp.StatusCode)
+}
+
+// Decision is the body of an approve or deny request.
+type Decision struct {
+	Comment string `json:"comment,omitempty"`
+}
+
+// Approve approves a proposal, tool call or request as it is (POST /api/approvals/{id}/approve).
+func (c *Client) Approve(ctx context.Context, id, comment string) error {
+	return c.send(ctx, http.MethodPost, "/api/approvals/"+url.PathEscape(id)+"/approve", Decision{Comment: comment})
+}
+
+// Deny denies an approval (POST /api/approvals/{id}/deny).
+func (c *Client) Deny(ctx context.Context, id, comment string) error {
+	return c.send(ctx, http.MethodPost, "/api/approvals/"+url.PathEscape(id)+"/deny", Decision{Comment: comment})
+}
+
+// InboxPatch changes flags of an inbox item; nil fields stay as they are.
+type InboxPatch struct {
+	Read     *bool `json:"read,omitempty"`
+	Archived *bool `json:"archived,omitempty"`
+}
+
+// PatchInbox updates an inbox item (PATCH /api/inbox/{id}).
+func (c *Client) PatchInbox(ctx context.Context, id string, p InboxPatch) error {
+	return c.send(ctx, http.MethodPatch, "/api/inbox/"+url.PathEscape(id), p)
 }

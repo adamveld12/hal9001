@@ -117,7 +117,7 @@ func TestStreamReportsEventsThenEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var got []string
-	err := NewClient(srv.URL).Stream(ctx, func(typ string) { got = append(got, typ) })
+	err := NewClient(srv.URL).Stream(ctx, StreamOptions{}, func(e Event) { got = append(got, e.Type) })
 	if err == nil {
 		t.Fatal("stream end must be reported as an error so the caller reconnects")
 	}

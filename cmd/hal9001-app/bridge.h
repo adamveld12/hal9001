@@ -30,4 +30,30 @@ void hal_open_login_items(void);
 // for an alert with a single button. Safe to call from any thread.
 int hal_alert(const char *title, const char *message, const char *ok, const char *cancel);
 
+// ---- notifications (UNUserNotificationCenter) ----
+// Implemented in Go (bridge.go, //export). goNotifyAction reports a click or button press with the userInfo the
+// notification was posted with, as JSON. goNotifyAuth reports the answer of the authorization prompt.
+void goLog(char *msg);
+void goNotifyAction(char *action, char *text, char *requestID, char *threadID, char *userInfoJSON);
+void goNotifyAuth(int granted, char *error);
+
+// The user's choices, from getNotificationSettings: UNAuthorizationStatus, UNAlertStyle, and UNNotificationSetting
+// (0 not supported, 1 disabled, 2 enabled) of the alert and notification center switches.
+typedef struct {
+  long auth;
+  long alertStyle;
+  long alertSetting;
+  long centerSetting;
+} hal_notify_settings;
+
+// Installs the delegate and registers the categories (a JSON array of menubar.CategoryDef). Returns an error or NULL.
+char *hal_notify_setup(const char *categoriesJSON);
+// Blocks until the system answers; not for the main thread.
+hal_notify_settings hal_notify_settings_read(void);
+// Shows the system's authorization prompt (only the first time); the answer arrives in goNotifyAuth.
+void hal_notify_request_auth(void);
+// Posts a notification from JSON (menubar.Request). Returns an error or NULL; delivery errors go to goLog.
+char *hal_notify_post(const char *json);
+void hal_notify_remove(const char *id);
+
 #endif

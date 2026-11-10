@@ -52,6 +52,7 @@ func (a *app) serviceState() menubar.ServiceState {
 		st.Registered, st.NeedsApproval = true, true
 	}
 	st.LaunchAtLogin = smStatusOf(smMainApp, "") == smEnabled
+	a.notif.menuState(&st)
 	return st
 }
 
@@ -167,6 +168,8 @@ func (a *app) runAction(id string) {
 		a.installCLI()
 	case menubar.ActionRemoveLegacy:
 		a.removeLegacy()
+	case menubar.ActionNotificationSettings:
+		a.notif.openSettings()
 	default:
 		slog.Error("unknown menu action", "id", id)
 	}

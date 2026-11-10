@@ -28,6 +28,8 @@ const (
 	ActionApproveLogin   = "login.approve" // opens System Settings > Login Items
 	ActionInstallCLI     = "cli.install"
 	ActionRemoveLegacy   = "legacy.remove"
+	// ActionNotificationSettings opens the app's pane in System Settings > Notifications.
+	ActionNotificationSettings = "notifications.settings"
 )
 
 // Entry is one menu item.
@@ -68,6 +70,10 @@ type ServiceState struct {
 	AppVersion string
 	// Home is the daemon home shown while the daemon does not answer; UserHome abbreviates it to ~.
 	Home, UserHome string
+	// NotificationsOff reports that the user turned this app's notifications off; terminal-notifier shows them instead.
+	NotificationsOff bool
+	// AlertStyleHint suggests the Alerts style, once: an urgent notification came as a banner that disappears by itself.
+	AlertStyleHint bool
 }
 
 // InboxCount matches the web header badge: unread notes plus pending approvals.
@@ -121,6 +127,12 @@ func BuildMenu(snap *Snapshot, ui string, svc ServiceState) Menu {
 	m.Entries = append(m.Entries, Entry{Kind: Info, Title: StatusLine(snap, svc)})
 	if h := homeLine(snap, svc); h != "" {
 		m.Entries = append(m.Entries, Entry{Kind: Info, Title: h})
+	}
+	if svc.Bundled && svc.NotificationsOff {
+		m.Entries = append(m.Entries, Entry{Kind: Action, ID: ActionNotificationSettings, Title: "Notifications are off — Open Settings"})
+	}
+	if svc.Bundled && svc.AlertStyleHint {
+		m.Entries = append(m.Entries, Entry{Kind: Action, ID: ActionNotificationSettings, Title: "Urgent notifications vanish as banners — switch to Alerts…"})
 	}
 	m.Entries = append(m.Entries, Entry{Kind: Separator})
 

@@ -56,7 +56,7 @@ export interface paths {
     };
     /**
      * Liveness probe
-     * @description Minimal and public so launchd, scripts, and `hal9001 install` can check that the daemon is up.
+     * @description Minimal and public so launchd, scripts, `hal9001 service install` and the macOS app can check that the daemon is up.
      */
     get: operations["getHealth"];
     put?: never;

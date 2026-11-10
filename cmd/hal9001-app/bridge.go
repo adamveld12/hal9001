@@ -11,8 +11,13 @@ package main
 import "C"
 
 import (
+	"encoding/json"
 	"errors"
+	"log/slog"
+	"sync"
 	"unsafe"
+
+	"hal9001/internal/menubar"
 )
 
 // goString converts a malloc'd C string to a Go string and frees it; NULL gives "".
@@ -116,4 +121,104 @@ func alert(title, message, ok, cancel string) bool {
 	c, fc := cString(cancel)
 	defer fc()
 	return C.hal_alert(t, m, o, c) != 0
+}
+
+// ---- notifications ----
+
+var (
+	notifyMu       sync.Mutex
+	notifyOnAction func(menubar.NotificationAction)
+	notifyOnAuth   func(granted bool, errMsg string)
+)
+
+// setNotifyHandlers registers where responses to notifications and the answer of the authorization prompt go.
+func setNotifyHandlers(onAction func(menubar.NotificationAction), onAuth func(granted bool, errMsg string)) {
+	notifyMu.Lock()
+	defer notifyMu.Unlock()
+	notifyOnAction, notifyOnAuth = onAction, onAuth
+}
+
+//export goLog
+func goLog(msg *C.char) { slog.Info("objc", "msg", C.GoString(msg)) }
+
+//export goNotifyAction
+func goNotifyAction(action, text, requestID, threadID, userInfo *C.char) {
+	a := menubar.NotificationAction{
+		Action: C.GoString(action), Text: C.GoString(text), RequestID: C.GoString(requestID), ThreadID: C.GoString(threadID),
+		UserInfo: map[string]string{},
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(C.GoString(userInfo)), &raw); err == nil {
+		for k, v := range raw {
+			if s, ok := v.(string); ok {
+				a.UserInfo[k] = s
+			}
+		}
+	}
+	notifyMu.Lock()
+	h := notifyOnAction
+	notifyMu.Unlock()
+	if h != nil {
+		go h(a) // this runs on the main thread: never block it on the network
+	}
+}
+
+//export goNotifyAuth
+func goNotifyAuth(granted C.int, errMsg *C.char) {
+	notifyMu.Lock()
+	h := notifyOnAuth
+	notifyMu.Unlock()
+	if h != nil {
+		go h(granted != 0, C.GoString(errMsg))
+	}
+}
+
+// notifySetup installs the notification delegate and registers the categories.
+func notifySetup(categories []menubar.CategoryDef) error {
+	data, err := json.Marshal(categories)
+	if err != nil {
+		return err
+	}
+	p, free := cString(string(data))
+	defer free()
+	if msg := goString(C.hal_notify_setup(p)); msg != "" {
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// notifySettings reads what the user decided about this app's notifications.
+func notifySettings() menubar.NotifySettings {
+	r := C.hal_notify_settings_read()
+	return menubar.NotifySettings{
+		Auth:          menubar.AuthStatus(r.auth),
+		Style:         menubar.AlertStyle(r.alertStyle),
+		AlertEnabled:  r.alertSetting == 2,
+		CenterEnabled: r.centerSetting == 2,
+	}
+}
+
+// notifyRequestAuth shows the system's authorization prompt; the answer arrives through the handler set by
+// setNotifyHandlers.
+func notifyRequestAuth() { C.hal_notify_request_auth() }
+
+func notifyPost(r menubar.Request) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	p, free := cString(string(data))
+	defer free()
+	if msg := goString(C.hal_notify_post(p)); msg != "" {
+		return errors.New(msg)
+	}
+	return nil
+}
+
+func notifyRemove(ids ...string) {
+	for _, id := range ids {
+		p, free := cString(id)
+		C.hal_notify_remove(p)
+		free()
+	}
 }
