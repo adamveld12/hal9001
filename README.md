@@ -355,7 +355,7 @@ Rules for humans and agents are in [AGENTS.md](AGENTS.md). In short:
 |---|---|
 | Build UI and binary | `mise run build` (outputs `bin/hal9001`) |
 | Build UI, binary and the macOS app | `mise run build:all` (outputs `bin/hal9001`, `bin/HAL9001.app` and `bin/HAL9001 Dev.app`); `mise run app` builds just the app bundles |
-| Build the DMG installer | `mise run dmg` (after `mise run app`; outputs `bin/HAL9001-<version>.dmg`: the app, an `Applications` link and a background; the Finder layout needs a GUI session, else a plain DMG with a warning); `mise run dmg:check` mounts it read-only and verifies the contents |
+| Build the DMG installer | `mise run dmg` (after `mise run app`; outputs `bin/HAL9001-<version>.dmg`: the app, an `Applications` link and a background; the window layout is written by pinned `dmgbuild` via `uv`, no Finder or GUI session needed); `mise run dmg:check` mounts it read-only and verifies the contents |
 | App then DMG | `mise run release` |
 | Hot-reload dev loop (UI on :5173, daemon restarts on Go changes) | `mise run dev` |
 | Everything the hooks run, on the whole tree | `mise run check` (static checks, `race`, sharded `e2e` and the web check, in parallel) |

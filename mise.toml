@@ -8,6 +8,7 @@ pnpm = "11.28.8"
 "npm:@agentclientprotocol/claude-agent-acp" = "0.100.0"
 "npm:@agentclientprotocol/codex-acp" = "2.5.0"
 watchexec = "2.8.0"
+uv = "0.13.7"
 
 [tasks.setup]
 description = "Install git hooks and web dependencies"
@@ -82,7 +83,7 @@ description = "Build everything: hal9001 with embedded UI and the macOS app bund
 depends = ["build", "app"]
 
 [tasks.dmg]
-description = "Build bin/HAL9001-<version>.dmg (drag-to-Applications installer) from bin/HAL9001.app; run `mise run app` first. Finder layout needs a GUI session, otherwise a plain DMG is made with a warning"
+description = "Build bin/HAL9001-<version>.dmg (drag-to-Applications installer) from bin/HAL9001.app; run `mise run app` first.  Layout is written by dmgbuild (uvx, pinned), no Finder needed; fails if dmgbuild fails"
 run = "scripts/make-dmg.sh"
 
 [tasks.release]
@@ -91,5 +92,5 @@ depends = ["app"]
 run = "scripts/make-dmg.sh"
 
 [tasks."dmg:check"]
-description = "Mount the newest bin/HAL9001-*.dmg read-only and verify the app, Applications symlink and background"
+description = "Mount the newest bin/HAL9001-*.dmg read-only and verify the app, Applications symlink, background and .DS_Store layout (background set, icon positions)"
 run = "scripts/check-dmg.sh"

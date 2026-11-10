@@ -14,7 +14,7 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// DMG window geometry in points; scripts/make-dmg.sh positions the Finder icons with the same numbers.
+// DMG window geometry in points; scripts/dmg-settings.py positions the icons with the same numbers.
 const (
 	DMGWidth, DMGHeight = 640, 400
 	DMGAppX, DMGAppY    = 170, 190 // icon centres

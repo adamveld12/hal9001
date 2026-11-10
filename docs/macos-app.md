@@ -1,7 +1,8 @@
 # macOS app: manual checklist
 
 Things the automated tests cannot cover (GUI, system prompts, Finder, Settings). Build first: `mise run release`
-(outputs `bin/HAL9001.app` and `bin/HAL9001-<version>.dmg`); `mise run dmg:check` verifies the DMG contents.
+(outputs `bin/HAL9001.app` and `bin/HAL9001-<version>.dmg`); `mise run dmg:check` verifies the DMG contents and layout.
+The window layout is written by `dmgbuild` (pinned, via `uv`) straight into `.DS_Store`; no Finder automation or GUI session is needed.
 Use a Mac where no hal9001 agent runs: stop the headless service and remove older launch agents first.
 
 ## 1. Install from the DMG
