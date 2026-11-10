@@ -2,10 +2,12 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"hal9001/internal/daemon"
+	"hal9001/internal/update"
 )
 
 type running struct {
@@ -144,5 +147,61 @@ func TestEditingConfigOnDiskIsHotReloaded(t *testing.T) {
 			t.Fatal("allowed_hosts edit was not picked up")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// json requests path with method and decodes the 200 JSON answer into out.
+func (r *running) json(t *testing.T, method, path string, out any) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), method, "http://"+r.addr.String()+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodGet {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("%s %s = %d", method, path, resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunUpdatesAreOffOutsideAnAppBundle(t *testing.T) {
+	r := start(t, t.TempDir())
+	var st update.Status
+	r.json(t, http.MethodGet, "/api/update", &st)
+	if st.Enabled || st.State != update.StateDisabled || st.DisabledReason == nil || !strings.Contains(*st.DisabledReason, "app bundle") {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+// The daemon wires the build override, the feed override, the settings and the flow-run count into the service.
+func TestRunChecksTheConfiguredFeedForTheOverriddenBuild(t *testing.T) {
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/stable.json" {
+			http.NotFound(w, req)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"schema": 1, "channel": "stable", "version": "0.1.9", "build": 9, "commit": "c", "published_at": "2026-11-10T12:00:00Z",
+			"url": "https://example.com/a.zip", "size": 1, "sha256": strings.Repeat("a", 64), "signature": "c2ln",
+		})
+	}))
+	defer feed.Close()
+	t.Setenv(update.EnvCurrent, "dev.hal9001:0.1.5:5")
+	t.Setenv(update.EnvFeedURL, feed.URL)
+
+	r := start(t, t.TempDir())
+	var st update.Status
+	r.json(t, http.MethodPost, "/api/update/check", &st)
+	if !st.Enabled || st.State != update.StateAvailable || st.Latest == nil || st.Latest.Build != 9 || st.Channel != "stable" || st.Busy.RunningRuns != 0 {
+		t.Fatalf("status = %+v", st)
 	}
 }
