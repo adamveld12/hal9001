@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import { cx } from "../lib/cx";
+import { ExternalLink } from "./ExternalLink";
 
 /** Renders trusted-or-not markdown without raw HTML (react-markdown drops it). */
 export function Markdown({
@@ -19,7 +20,11 @@ export function Markdown({
         className,
       )}
     >
-      <ReactMarkdown>{children}</ReactMarkdown>
+      <ReactMarkdown
+        components={{ a: ({ node: _node, ...p }) => <ExternalLink {...p} /> }}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   );
 }

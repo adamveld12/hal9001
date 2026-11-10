@@ -1,3 +1,4 @@
+import { ExternalLink } from "../components/ExternalLink";
 import { useState, type ReactNode } from "react";
 import {
   useCheckUpdate,
@@ -31,14 +32,9 @@ function ManualHint({
       {releaseUrl && (
         <>
           {" "}
-          <a
-            className="underline"
-            href={releaseUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
+          <ExternalLink className="underline" href={releaseUrl}>
             from the release page
-          </a>
+          </ExternalLink>
         </>
       )}
       .
@@ -148,14 +144,9 @@ export function UpdateBanner() {
             {view.notesUrl && (
               <>
                 {" "}
-                <a
-                  className="underline"
-                  href={view.notesUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
+                <ExternalLink className="underline" href={view.notesUrl}>
                   Release notes
-                </a>
+                </ExternalLink>
               </>
             )}
           </span>

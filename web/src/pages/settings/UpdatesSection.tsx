@@ -1,3 +1,4 @@
+import { ExternalLink } from "../../components/ExternalLink";
 import { errorMessage } from "../../api/client";
 import { useSettings, useUpdateSettings } from "../../api/settings";
 import { useCheckUpdate, useUpdateStatus } from "../../api/update";
@@ -92,14 +93,9 @@ export function UpdatesSection() {
               {s.latest.notes_url && (
                 <>
                   {" "}
-                  <a
-                    className="underline"
-                    href={s.latest.notes_url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
+                  <ExternalLink className="underline" href={s.latest.notes_url}>
                     Release notes
-                  </a>
+                  </ExternalLink>
                 </>
               )}
             </div>
