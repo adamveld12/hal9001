@@ -30,6 +30,7 @@ import (
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
+	"hal9001/internal/update"
 	"hal9001/internal/webui"
 )
 
@@ -161,6 +162,7 @@ func Run(ctx context.Context, opts Options) error {
 	d.auth = mgr
 	d.lastGoodConfig = ws.Config
 	d.ws.Store(ws)
+	d.update = d.newUpdate(st, log)
 
 	// Sandbox manager: one backend per sandbox config, rebuilt on reload; sweeps failed per_run workspaces.
 	d.sandboxes = sandbox.NewManager(sandbox.ManagerOptions{
@@ -203,6 +205,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("daemon: start engine: %w", err)
 	}
 	d.sandboxes.Start(runCtx)
+	go d.update.Run(runCtx)
 	engineRunning := true
 	defer func() {
 		if engineRunning {
@@ -217,7 +220,7 @@ func Run(ctx context.Context, opts Options) error {
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
 		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH,
-		Version: opts.Version, UI: ui, Log: log, Sinks: sinks,
+		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update,
 	})
 	// The API server announces on-disk edits to SSE clients and owns the
 	// stream hub, which must be closed on shutdown.
@@ -306,6 +309,8 @@ type daemon struct {
 	auth   *auth.Manager
 	// sandboxes is set by Run; tests that build a daemon directly leave it nil.
 	sandboxes *sandbox.Manager
+	// update serves app self-update; set by Run, nil in tests that build a daemon directly.
+	update *update.Service
 
 	ws atomic.Pointer[spec.Workspace]
 
@@ -339,6 +344,9 @@ func (d *daemon) reload() {
 	d.engine.Apply(eff)
 	if err := d.auth.Reload(AuthConfig(eff.Config.Value)); err != nil {
 		d.log.Error("auth config rejected; keeping the previous one", "err", err)
+	}
+	if d.update != nil {
+		d.update.Poke() // the channel or auto-install setting may have changed
 	}
 }
 

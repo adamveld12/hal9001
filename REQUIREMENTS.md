@@ -372,13 +372,14 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 - Single Go binary, frontend embedded via `go:embed`.
 - CLI: `hal9001 serve`, `service install` / `uninstall` / `status` / `logs` (headless launchd LaunchAgent, `KeepAlive`, logs to `~/Library/Logs/hal9001/`), `open` (opens UI), `validate` (lint sensors/flows/prompts). Every other subcommand is a thin client of the REST API (§10.2). The macOS app (README, "macOS app") registers the daemon's own LaunchAgent bundled in the app through `SMAppService` and replaces the removed `hal9001 install`.
 - Notifications via `terminal-notifier` (installed) with `-open http://localhost:9001/...` deep links; fallback `osascript`. Sent for inbox items with priority ≥ configured threshold (default `normal`) and every new approval.
+- App self-update (macOS app only): the daemon is the brain and the menubar app the executor. The daemon reads its build from the app bundle's `Info.plist`, checks a per-channel signed manifest (`stable`/`beta`, setting `update_channel`) at startup, every 6 hours and on demand, offers only builds newer than its own, and decides when an install may start: a normal request waits until no flow run is running; `force` (web UI only) does not; `update_auto_install` installs when idle. It orders the install over `/api/stream` to the app (`X-Hal9001-Updater: app`), which downloads, verifies (size, sha256, Ed25519 signature) and swaps the bundle, then relaunches. Only the release app (`dev.hal9001`, CI build number > 0, signing key embedded) updates; the daemon never replaces the bundle. See `docs/macos-app.md`.
 
 ### 10.2 API-first
 
 The backend is a JSON REST API; the web UI and the CLI are both clients of it and have no private endpoints. Everything the tool does can be driven and verified with `curl` or the CLI.
 
 - Contract: `api/openapi.yaml` (OpenAPI 3.1), updated in the same commit as handlers. TS types for the UI are generated from it.
-- Resources: sensors (incl. `POST /api/sensors/{id}/poll` and `/reset`), events, flows (CRUD on YAML + `validate`, `POST /api/flows/{id}/run`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), auth.
+- Resources: sensors (incl. `POST /api/sensors/{id}/poll` and `/reset`), events, flows (CRUD on YAML + `validate`, `POST /api/flows/{id}/run`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), auth, app updates (`GET /api/update`, `POST /api/update/check|install|report`).
 - Test entry points:
   - `POST /api/events` injects an event for a sensor id without polling (body = item JSON); goes through dedup and fan-out exactly like a polled item.
   - `POST /api/flows/{id}/test-node` runs one node on a supplied input (same as "Run node on sample").
@@ -526,6 +527,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 22. A request carrying `X-Forwarded-For` or `Tailscale-User-Login`, or with a non-localhost Host, is not accepted by `localhost-trust`.
 23. Tailscale: after `tailscale serve --bg --https=443 http://127.0.0.1:9001` and adding the hostname to `allowed_hosts`, the UI loads from a phone on the tailnet and signs in via `tailscale-identity` without a prompt; with `tailscale-identity` removed from the stack it demands passkey or password, and a passkey registered for the ts.net hostname works.
 24. `tailscale-identity` (automated, with a fake whois): header login matching whois and in `allowed_logins` → success; header login not matching whois → fail; login not in `allowed_logins` → fail; tagged device → fail; localhost Host or missing header → ignore; `tailscale` CLI missing → ignore with reason. Live check: a client-supplied `Tailscale-User-Login` sent through serve is overwritten.
+25. App self-update (automated with a fake feed; the manual run is in `docs/macos-app.md`): a feed build newer than the app's build is offered (`GET /api/update`: `available`), the same or an older build never is; switching `update_channel` re-checks the other feed; `POST /api/update/install` while flows run is `pending` and orders the install when none runs, with `force` it orders at once; with `update_auto_install` on, an available update is ordered once no flow runs (once per build); without the app connected as installer the request is a `409` that points at the download; only the installer connection receives the order, and the daemon never replaces the bundle itself.
 
 ## 13. Prerequisites and open items
 

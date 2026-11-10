@@ -91,6 +91,15 @@ const (
 // NotifyVias lists the values of Config.NotifyVia.
 var NotifyVias = []string{NotifyViaAuto, NotifyViaApp, NotifyViaTerminal, NotifyViaNone}
 
+// Values of Config.UpdateChannel.
+const (
+	UpdateChannelStable = "stable"
+	UpdateChannelBeta   = "beta"
+)
+
+// UpdateChannels lists the values of Config.UpdateChannel.
+var UpdateChannels = []string{UpdateChannelStable, UpdateChannelBeta}
+
 // Priorities lists inbox priorities from lowest to highest.
 var Priorities = []string{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent}
 
@@ -109,6 +118,7 @@ const (
 	DefaultDedupRetentionDays = 180
 	DefaultNotifyMinPriority  = PriorityNormal
 	DefaultNotifyVia          = NotifyViaAuto
+	DefaultUpdateChannel      = UpdateChannelStable
 	DefaultSessionTTL         = Duration(7 * 24 * time.Hour)
 	DefaultMaxConcurrent      = 2
 	DefaultCommandTimeout     = Duration(time.Minute)
@@ -129,6 +139,11 @@ type Config struct {
 	// NotifyVia routes notifications: auto (the macOS app when one is connected, else terminal-notifier), app,
 	// terminal-notifier, or none (log only).
 	NotifyVia string `yaml:"notify_via,omitempty" json:"notify_via"`
+	// UpdateChannel is the release channel the macOS app updates from: stable or beta.
+	UpdateChannel string `yaml:"update_channel,omitempty" json:"update_channel"`
+	// UpdateAutoInstall installs an available app update by itself once no flow is running (default off: the update
+	// is offered and installed on request).
+	UpdateAutoInstall bool `yaml:"update_auto_install,omitempty" json:"update_auto_install"`
 	// ApprovalTimeout is the default for agent nodes that do not set their own
 	// approval_timeout (see Config.ApprovalTimeoutFor).
 	ApprovalTimeout Duration `yaml:"approval_timeout,omitempty" json:"approval_timeout"`

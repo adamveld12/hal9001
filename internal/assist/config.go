@@ -235,6 +235,8 @@ func settingsText(ws *spec.Workspace) string {
 	w("| `notify_min_priority` | %s | Lowest inbox priority that sends a notification. |\n", cfg.NotifyMinPriority)
 	w("| `notify_via` | %s | Where notifications go: auto (the macOS app when connected, else terminal-notifier), app, terminal-notifier or none (log only). |\n", cfg.NotifyVia)
 	w("| `system_prompt` | %s | The user's app-wide system prompt (Configure > Settings > Context): markdown added to the start of every agent call, flows and assistant. Its text is already in your prompt when set; you cannot change it, tell the user to edit it. |\n", systemPromptState(cfg.SystemPrompt))
+	w("| `update_channel` | %s | Release channel the macOS app updates from: stable or beta. |\n", cfg.UpdateChannel)
+	w("| `update_auto_install` | %t | Install an available app update by itself once no flow is running (otherwise the user installs it on request). |\n", cfg.UpdateAutoInstall)
 	w("| `retention_days` | %d | Days runs, events and logs are kept. |\n", cfg.RetentionDays)
 	w("| `dedup_retention_days` | %d | Days dedup keys are kept. |\n", cfg.DedupRetentionDays)
 	return b.String()

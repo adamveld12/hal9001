@@ -15,6 +15,7 @@ import (
 	"hal9001/internal/auth"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/update"
 )
 
 // SSE hub design (GET /api/stream)
@@ -79,6 +80,9 @@ type streamMsg struct {
 	data  []byte // the JSON envelope
 	meta  map[string]string
 	admin bool // only for callers granted the admin service
+	// installer messages go to installer connections only and are never replayed: a stale install order must not
+	// start a second install after a reconnect.
+	installer bool
 }
 
 type envelope struct {
@@ -92,6 +96,8 @@ type client struct {
 	types   map[string]bool // nil: every type
 	filters map[string]string
 	admin   bool
+	// installer marks the connection that executes updates (header X-Hal9001-Updater: app).
+	installer bool
 
 	mu      sync.Mutex
 	q       []streamMsg
@@ -104,6 +110,9 @@ func (c *client) wants(m streamMsg) bool {
 		return true
 	}
 	if m.admin && !c.admin {
+		return false
+	}
+	if m.installer && !c.installer {
 		return false
 	}
 	if c.types != nil && !c.types[m.typ] {
@@ -190,6 +199,10 @@ func (h *hub) stop() {
 
 // publish stamps and delivers one message.
 func (h *hub) publish(typ string, data any, meta map[string]string, admin bool) {
+	h.publishMsg(typ, data, meta, admin, false)
+}
+
+func (h *hub) publishMsg(typ string, data any, meta map[string]string, admin, installer bool) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		h.s.log().Error("api: encode stream event", "type", typ, "err", err)
@@ -203,12 +216,14 @@ func (h *hub) publish(typ string, data any, meta map[string]string, admin bool) 
 		h.mu.Unlock()
 		return
 	}
-	m := streamMsg{seq: h.seq, typ: typ, data: body, meta: meta, admin: admin}
-	if len(h.ring) >= ringSize {
-		h.ring[0] = streamMsg{}
-		h.ring = h.ring[1:]
+	m := streamMsg{seq: h.seq, typ: typ, data: body, meta: meta, admin: admin, installer: installer}
+	if !installer {
+		if len(h.ring) >= ringSize {
+			h.ring[0] = streamMsg{}
+			h.ring = h.ring[1:]
+		}
+		h.ring = append(h.ring, m)
 	}
-	h.ring = append(h.ring, m)
 	for c := range h.clients {
 		c.push(m)
 	}
@@ -605,6 +620,11 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	if types == nil || types["auth_event.created"] {
 		c.admin = s.callerIsAdmin(r)
 	}
+	// The installer (the macOS app, which downloads and swaps the bundle) announces itself with a header and must be
+	// granted the admin service, since it acts on update.install. It is counted as connected only after it is
+	// subscribed, so an install order cannot be published before it can receive it.
+	c.installer = s.opts.Update != nil && r.Header.Get(update.InstallerHeader) == update.InstallerApp &&
+		(types == nil || types[update.EventInstall]) && s.callerIsAdmin(r)
 
 	// A notification sink (the macOS app) announces itself with a header; while it is connected the daemon leaves
 	// notification delivery to it (notify_via: auto).
@@ -644,6 +664,9 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 		if !writeSSE(w, rc, strconv.FormatUint(m.seq, 10), m.typ, m.data) {
 			return
 		}
+	}
+	if c.installer {
+		defer s.opts.Update.ConnectInstaller(r.Context())()
 	}
 
 	tick := time.NewTicker(s.heartbeat)

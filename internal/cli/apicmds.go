@@ -118,6 +118,7 @@ func (a *app) tree() *command {
 		group("approvals", "list, approve and deny approvals", approvalCmds()...),
 		group("inbox", "list items; mark read, starred, archived", inboxCmds()...),
 		group("queue", "list the run queue; remove runs from it", queueCmds()...),
+		updateGroup(),
 		group("killswitch", "pause and resume the daemon", killswitchCmds()...),
 		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),

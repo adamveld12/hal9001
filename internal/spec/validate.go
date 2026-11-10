@@ -185,6 +185,7 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 	}
 	c.enum("notify_min_priority", g.NotifyMinPriority, Priorities, false)
 	c.enum("notify_via", g.NotifyVia, NotifyVias, false)
+	c.enum("update_channel", g.UpdateChannel, UpdateChannels, false)
 	c.positiveDuration("approval_timeout", g.ApprovalTimeout, "approval_timeout")
 	if len(g.SystemPrompt) > MaxSystemPromptBytes {
 		c.errorf(CodeInvalidValue, "system_prompt", "system_prompt is %d bytes, over the %d byte limit", len(g.SystemPrompt), MaxSystemPromptBytes)

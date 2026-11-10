@@ -25,3 +25,6 @@ web/dist/
 
 # Global gitignores on this machine ignore *.sql; migrations must be tracked.
 !internal/store/migrations/*.sql
+
+# Update signing private key (from mise run update:keygen)
+/update-signing-key.txt

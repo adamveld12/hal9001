@@ -59,6 +59,8 @@ flowchart LR
 
 Authoring details: [docs/flows.md](docs/flows.md).
 
+Release and auto-update setup: [docs/releases.md](docs/releases.md).
+
 ## Prerequisites
 
 macOS, [mise](https://mise.jdx.dev/), and the tools below. Everything pinned in [`mise.toml`](mise.toml) (Go, Node,
@@ -192,6 +194,8 @@ Files are hot-reloaded. A save from the UI or API that is based on a stale copy 
 | `HAL9001_UI_URL` (env, not config) | `http://localhost:9001` | Origin of notification deep links. `mise run dev` sets it to the Vite server, `http://localhost:5173`. |
 | `approval_timeout` | `1h` | Default wait for a `per_tool` approval before the run fails (`approval_timeout`). Agent nodes can override it. |
 | `system_prompt` | empty | Markdown you write in Settings → Context → System Prompt (name, preferences, facts). Added to the start of every agent prompt (flow agent nodes, chat assistant) as a "User context" section that hal's own instructions override. Max 16 KiB; applies to new runs and turns without a restart. |
+| `update_channel` | `stable` | Release channel the [macOS app updates itself](docs/macos-app.md#updates) from: `stable` or `beta`. |
+| `update_auto_install` | `false` | Install an available app update by itself once no flow is running. Off: the update is offered (web UI, menubar) and installed on request. |
 | `session_ttl` | `7d` | Sliding lifetime of a login session. |
 | `allowed_hosts` | `[]` | Extra `Host` values the server accepts (your Tailscale hostname). |
 | `allowed_logins` | `[]` | Logins accepted by `tailscale-identity`; empty means the login that owns this Mac. |
@@ -225,6 +229,7 @@ usage: hal9001 <command> [flags]
   approvals   list, approve and deny approvals
   inbox       list items; mark read, starred, archived; clear in bulk
   queue       list the run queue; remove runs from it
+  update      show, check and install app updates
   killswitch  pause and resume the daemon
   runtimes    list and probe ACP runtimes
   settings    show settings
@@ -295,6 +300,9 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `inbox get <id>` | |
 | `inbox read <id>` / `star <id>` / `archive <id>` | `--unread` / `--off` / `--undo` reverse the action. |
 | `inbox archive` / `read` / `delete` (bulk) | Select with `<id>`, `--ids a,b`, `--all` or filter flags `--state read\|unread`, `--starred`, `--archived`, `--priority`, `--max-priority`, `--flow`, `--q`, `--older-than 7d`, `--dry-run-flows`. Starred items are kept unless `--include-starred`. `--preview` only counts; filter-based runs ask for confirmation on a terminal (`--yes` skips it). `archive --undo` unarchives; `read --unread` marks unread. `delete` is permanent and only removes archived items (others are skipped and counted). |
+| `update` / `update status` | App update state as a table; `--json` for the raw response. |
+| `update check` | Check the update feed now. |
+| `update install` | Install the available update once no flow runs (never forces; the web UI offers Force). Prints `pending until flows finish`, `installing`, or the refusal with the download URL when the app is not connected. |
 | `killswitch get` / `resume` | |
 | `killswitch pause` | `--kill` (also terminate running nodes), `--reason text` |
 | `runtimes list` | |
@@ -317,6 +325,7 @@ default auth config local requests need nothing; otherwise pass a session cookie
 - **Open logs**: `~/Library/Logs/hal9001/hal9001.log` (the app's own log is `app.log` next to it).
 - **Launch at login**: the app itself, as a login item (`SMAppService.mainApp`).
 - **Install command-line tool**: symlinks `~/.local/bin/hal9001` to the `hal9001` inside the app, so it updates with the app, and says so when `~/.local/bin` is not on your login-shell `PATH`.
+- **Updates**: the release app updates itself from signed GitHub releases: **Update available: <version> — Install & Restart** when a newer build is on your `update_channel` (`stable` or `beta`), **Check for updates**, and an install that waits for running flows ("installs when flows finish"). The daemon decides, the app downloads, verifies and swaps itself in; see [docs/macos-app.md](docs/macos-app.md#updates).
 
 Older installs: the app notices the agents of previous versions (`com.hal9001.daemon` from the removed `hal9001 install`, `dev.hal9001.menubar` from the removed `hal9001-menubar install`) and offers **Remove older launch agents…**; it does not start its own service while they hold port 9001. If a headless service (`hal9001 service install`) is installed, the app does not register its own and the menu says to run `hal9001 service uninstall` first.
 
