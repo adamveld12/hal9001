@@ -93,7 +93,7 @@ func TestScenario7ProposalApproveResumesSameSession(t *testing.T) {
 	if !strings.Contains(h.text(runs[0].Prompt), "Review 42") {
 		t.Errorf("rendered prompt not stored: %q", h.text(runs[0].Prompt))
 	}
-	notes := h.notes.kind("approval")
+	notes := h.notes.kind("proposal")
 	if len(notes) != 1 || notes[0].URL != uiBase+"/inbox/approval/"+ap.ID || !strings.Contains(notes[0].Body, "Plan: create hello.txt") {
 		t.Fatalf("approval notifications: %+v", notes)
 	}
@@ -239,8 +239,8 @@ nodes:
 		it.SourceType != store.SourceAgentRun || it.AgentRunID != run.ID || it.FlowRunID != runID || it.ParseError || it.DryRun {
 		t.Errorf("inbox item: %+v", it)
 	}
-	notes := h.notes.kind("inbox")
-	if len(notes) != 1 || notes[0].URL != uiBase+"/inbox/"+it.ID || notes[0].Title != "Deploy is failing" {
+	notes := h.notes.kind("note")
+	if len(notes) != 1 || notes[0].URL != uiBase+"/inbox/"+it.ID || notes[0].Subtitle != "Deploy is failing" {
 		t.Errorf("notifications: %+v", notes)
 	}
 	if run.Mode != store.ModeReadonly || run.Policy != store.PolicyReadonly || run.Status != store.AgentSucceeded || run.AgentInfo == nil ||

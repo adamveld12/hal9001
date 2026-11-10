@@ -9,6 +9,7 @@ import (
 	"hal9001/internal/api"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/notify"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 )
@@ -52,4 +53,5 @@ type apiParams struct {
 	Version   string
 	UI        http.Handler
 	Log       *slog.Logger
+	Sinks     *notify.Sinks
 }

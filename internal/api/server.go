@@ -28,6 +28,7 @@ import (
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
 	"hal9001/internal/httpsec"
+	"hal9001/internal/notify"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 )
@@ -57,6 +58,8 @@ type Options struct {
 	// /api/. Nil answers those routes with a problem saying the UI is not built.
 	UI  http.Handler
 	Log *slog.Logger
+	// Sinks tracks connected notification sinks (stream clients that send NotifierHeader). Optional.
+	Sinks *notify.Sinks
 }
 
 // Server is the http.Handler New returns. Besides serving requests it has two
@@ -282,10 +285,11 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"approveApproval": s.approveApproval,
 		"denyApproval":    s.denyApproval,
 
-		"listInbox":       s.listInbox,
-		"getInboxItem":    s.getInboxItem,
-		"updateInboxItem": s.updateInboxItem,
-		"bulkInbox":       s.bulkInbox,
+		"listNotifications": s.listNotifications,
+		"listInbox":         s.listInbox,
+		"getInboxItem":      s.getInboxItem,
+		"updateInboxItem":   s.updateInboxItem,
+		"bulkInbox":         s.bulkInbox,
 
 		"listPrompts":  s.listPrompts,
 		"createPrompt": s.createPrompt,

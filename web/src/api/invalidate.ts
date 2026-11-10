@@ -53,6 +53,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   // The open session is updated in place from the event (pages/assist/useAssistLive.ts); only the lists refetch.
   "assist.updated": ["assist-sessions"],
   "assist.message": [],
+  "notification.created": [],
 };
 
 export function rootsFor(type: DataStreamType): readonly QueryRoot[] {

@@ -518,8 +518,8 @@ nodes:
 				t.Fatalf("inbox items: %d, want 4 regardless of the threshold", len(byTitle))
 			}
 			got := map[string]core.Notification{}
-			for _, n := range h.notes.kind("inbox") {
-				got[n.Title] = n
+			for _, n := range h.notes.kind("note") {
+				got[n.Subtitle] = n
 			}
 			if len(got) != len(tc.want) {
 				t.Fatalf("notified %v, want %v", got, tc.want)

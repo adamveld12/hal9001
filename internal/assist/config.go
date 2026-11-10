@@ -233,6 +233,7 @@ func settingsText(ws *spec.Workspace) string {
 	w("| `max_command_runs` | %d | Command (script) runs that may execute at once. |\n", cfg.MaxCommandRuns)
 	w("| `approval_timeout` | %s | How long an agent node waits for the user's approval unless the node sets its own `approval_timeout`. |\n", cfg.ApprovalTimeout.Std())
 	w("| `notify_min_priority` | %s | Lowest inbox priority that sends a notification. |\n", cfg.NotifyMinPriority)
+	w("| `notify_via` | %s | Where notifications go: auto (the macOS app when connected, else terminal-notifier), app, terminal-notifier or none (log only). |\n", cfg.NotifyVia)
 	w("| `retention_days` | %d | Days runs, events and logs are kept. |\n", cfg.RetentionDays)
 	w("| `dedup_retention_days` | %d | Days dedup keys are kept. |\n", cfg.DedupRetentionDays)
 	return b.String()

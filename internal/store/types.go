@@ -241,6 +241,7 @@ const (
 	ResPermissionRequest = "permission_request"
 	ResApproval          = "approval"
 	ResInboxItem         = "inbox_item"
+	ResNotification      = "notification"
 	ResAuthEvent         = "auth_event"
 	ResAssistSession     = "assist_session"
 	ResAssistMessage     = "assist_message"

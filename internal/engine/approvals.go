@@ -9,6 +9,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/core"
+	"hal9001/internal/notify"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -29,12 +30,8 @@ func (b *storeBroker) SubmitProposal(_ context.Context, p agent.ProposalApproval
 	if err := e.st.CreateApproval(e.dbCtx, a); err != nil {
 		return "", err
 	}
-	e.notify(core.Notification{
-		Kind:  "approval",
-		Title: "Approve proposal: " + e.nodeLabel(p.NodeRunID),
-		Body:  truncate(firstLine(p.Proposal), 200),
-		URL:   e.url(ApprovalPath(a.ID)),
-	})
+	flowID, dry := e.flowOfNodeRun(p.NodeRunID)
+	e.notify(notify.Proposal(flowID, a.ID, p.Proposal, dry, e.url(ApprovalPath(a.ID))))
 	return a.ID, nil
 }
 
@@ -64,12 +61,12 @@ func (b *storeBroker) AwaitToolApproval(ctx context.Context, t agent.ToolApprova
 	e.toolApprovalPending(t.RunID, t.ToolCallID, a.ID)
 	allowed := false
 	defer func() { e.toolApprovalResolved(t.RunID, a.ID, allowed) }()
-	e.notify(core.Notification{
-		Kind:  "approval",
-		Title: "Approve tool call: " + e.nodeLabel(t.NodeRunID),
-		Body:  truncate(t.Title, 200),
-		URL:   e.url(ApprovalPath(a.ID)),
-	})
+	flowID, dry := e.flowOfNodeRun(t.NodeRunID)
+	tool := t.Title
+	if tool == "" {
+		tool = t.ToolKind
+	}
+	e.notify(notify.ToolCall(flowID, a.ID, tool, t.RawInput, dry, e.url(ApprovalPath(a.ID))))
 	select {
 	case d := <-ch:
 		allowed = d.Verdict == agent.VerdictAllow
@@ -95,24 +92,25 @@ func cancelText(ctx context.Context) string {
 	return "cancelled"
 }
 
-// nodeLabel is "<flow>/<node>" for notification titles.
-func (e *Engine) nodeLabel(nodeRunID string) string {
+// flowOfNodeRun is the flow id and dry-run flag of a node run's flow run, for notifications. A turn of an assist
+// session has no node run: it is reported as "assistant".
+func (e *Engine) flowOfNodeRun(nodeRunID string) (flowID string, dryRun bool) {
 	if nodeRunID == "" {
-		return "sensor assistant" // a turn of an assist session has no node run
+		return "assistant", false
 	}
 	nr, err := e.st.GetNodeRun(e.dbCtx, nodeRunID)
 	if err != nil {
-		return "agent"
+		return "?", false
 	}
-	return e.flowIDOf(nr.FlowRunID) + "/" + nr.NodeID
+	return e.flowRunInfo(nr.FlowRunID)
 }
 
-func (e *Engine) flowIDOf(flowRunID string) string {
+func (e *Engine) flowRunInfo(flowRunID string) (flowID string, dryRun bool) {
 	fr, err := e.st.GetFlowRun(e.dbCtx, flowRunID)
 	if err != nil {
-		return "?"
+		return "?", false
 	}
-	return fr.FlowID
+	return fr.FlowID, fr.DryRun
 }
 
 // markToolWait flips a node and its agent run between running and

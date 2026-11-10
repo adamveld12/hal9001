@@ -78,7 +78,7 @@ func TestApprovalNodeApprove(t *testing.T) {
 	}
 	d.Eventually("the approval notification", func() bool {
 		for _, n := range d.Notifications() {
-			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/inbox/approval/"+ap.ID && n["title"] == "Ship api?" {
+			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/inbox/approval/"+ap.ID && n["subtitle"] == "Request: Ship api?" {
 				return true
 			}
 		}
@@ -209,7 +209,7 @@ func TestApprovalNodeDryRun(t *testing.T) {
 	d.Eventually("the dry-run notification", func() bool {
 		for _, n := range d.Notifications() {
 			if strings.HasSuffix(n["open"], "/inbox/approval/"+ap.ID) {
-				return n["title"] == "[dry run] Ship api?"
+				return n["subtitle"] == "[dry run] Request: Ship api?"
 			}
 		}
 		return false

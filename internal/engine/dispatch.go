@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"hal9001/internal/runner"
@@ -310,14 +309,6 @@ func (e *Engine) readContent(c store.Content) string {
 		return ""
 	}
 	return string(b)
-}
-
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return s
 }
 
 func truncate(s string, n int) string {

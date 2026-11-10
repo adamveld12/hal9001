@@ -141,7 +141,7 @@ nodes:
 		}
 		return false
 	})
-	if want := "http://localhost:" + strconv.Itoa(d.Port()) + "/inbox/" + it.ID; note["open"] != want || !strings.Contains(note["title"], "Deploy is failing") {
+	if want := "http://localhost:" + strconv.Itoa(d.Port()) + "/inbox/" + it.ID; note["open"] != want || note["subtitle"] != "Deploy is failing" || note["title"] != "triage" {
 		t.Errorf("notification %v, want open=%s", note, want)
 	}
 }

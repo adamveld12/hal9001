@@ -184,6 +184,7 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 		c.warnf(CodeInvalidValue, "dedup_retention_days", "dedup_retention_days (%d) is shorter than retention_days (%d): pruned items could re-fire", g.DedupRetentionDays, g.RetentionDays)
 	}
 	c.enum("notify_min_priority", g.NotifyMinPriority, Priorities, false)
+	c.enum("notify_via", g.NotifyVia, NotifyVias, false)
 	c.positiveDuration("approval_timeout", g.ApprovalTimeout, "approval_timeout")
 	c.positiveDuration("session_ttl", g.SessionTTL, "session_ttl")
 	for i, h := range g.AllowedHosts {

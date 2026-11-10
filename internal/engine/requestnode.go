@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"hal9001/internal/core"
+	"hal9001/internal/notify"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -25,7 +25,7 @@ const (
 	errApprovalTimeout = "approval_timeout"
 
 	// dryRunNotice is the first line of the body of a dry run's approval.
-	dryRunNotice = "This is a dry run: approving or denying only exercises the flow's branches."
+	dryRunNotice = notify.DryRunNotice
 
 	// requestExpiryInterval is how often pending request approvals are checked for their timeout.
 	requestExpiryInterval = 500 * time.Millisecond
@@ -107,14 +107,7 @@ func (e *Engine) runApproval(ne *nodeEnv) nodeOutcome {
 	if err := e.st.CreateApproval(e.dbCtx, ap); err != nil {
 		return failure(errConfig, "create approval: "+err.Error())
 	}
-	title = req.Title
-	if req.DryRun {
-		title = "[dry run] " + title
-	}
-	e.notify(core.Notification{
-		Kind: "approval", Title: title, Body: truncate(firstLine(strings.TrimSpace(strings.TrimPrefix(req.BodyMD, dryRunNotice))), 200),
-		URL: e.url(ApprovalPath(ap.ID)),
-	})
+	e.notify(notify.Request(ne.fr.FlowID, ap.ID, req, e.url(ApprovalPath(ap.ID))))
 	return nodeOutcome{status: store.NodeAwaitingApproval, reason: "awaiting approval " + ap.ID}
 }
 

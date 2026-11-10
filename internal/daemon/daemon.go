@@ -24,6 +24,7 @@ import (
 	"hal9001/internal/auth"
 	"hal9001/internal/authstore"
 	"hal9001/internal/httpsec"
+	"hal9001/internal/menubar"
 	"hal9001/internal/notify"
 	"hal9001/internal/sandbox"
 	"hal9001/internal/spec"
@@ -135,9 +136,15 @@ func Run(ctx context.Context, opts Options) error {
 	if basePATH == "" {
 		basePATH = os.Getenv("PATH")
 	}
+	sinks := &notify.Sinks{}
+	notifier := notify.NewRouter(notify.RouterOptions{
+		Log: st, Sinks: sinks, Logger: log,
+		Via:      func() string { return d.effective(d.workspace()).Config.Value.NotifyVia },
+		Terminal: notify.New(notify.WithLogger(log), notify.WithIcon(writeNotifyIcon(home, log))),
+	})
 	eng, err := newEngine(engineParams{
 		Store: st, Home: home, BasePATH: basePATH, Log: log,
-		Notifier:  notify.New(notify.WithLogger(log)),
+		Notifier:  notifier,
 		UIBaseURL: uiBaseURL(opts.UIURL, os.Getenv(EnvUIURL), port),
 		Clock:     opts.Clock,
 		MCPURL:    "http://127.0.0.1:" + strconv.Itoa(port), Executable: opts.Executable,
@@ -210,7 +217,7 @@ func Run(ctx context.Context, opts Options) error {
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
 		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH,
-		Version: opts.Version, UI: ui, Log: log,
+		Version: opts.Version, UI: ui, Log: log, Sinks: sinks,
 	})
 	// The API server announces on-disk edits to SSE clients and owns the
 	// stream hub, which must be closed on shutdown.
@@ -390,4 +397,23 @@ func uiBaseURL(opt, env string, port int) string {
 		}
 	}
 	return "http://localhost:" + strconv.Itoa(port)
+}
+
+// notifyIconFile is the HAL eye PNG terminal-notifier shows in notifications, under <home>/data.
+const notifyIconFile = "hal-eye.png"
+
+// writeNotifyIcon renders the menu-bar eye at notification size into the data directory and returns its path, or ""
+// when it cannot be written (notifications then go without an image).
+func writeNotifyIcon(home string, log *slog.Logger) string {
+	dir := filepath.Join(home, spec.DirData)
+	path := filepath.Join(dir, notifyIconFile)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Warn("notify icon", "err", err)
+		return ""
+	}
+	if err := os.WriteFile(path, menubar.Icon(256, false), 0o600); err != nil {
+		log.Warn("notify icon", "err", err)
+		return ""
+	}
+	return path
 }

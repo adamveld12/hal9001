@@ -49,6 +49,12 @@ const (
 	ingestBuffer      = 8192
 )
 
+// NotifierHeader marks a stream connection as a notification sink when its value is NotifierApp.
+const (
+	NotifierHeader = "X-Hal9001-Notifier"
+	NotifierApp    = "app"
+)
+
 // controlTypes are always delivered, whatever `types` says.
 var controlTypes = map[string]bool{"stream.ready": true, "stream.resync": true}
 
@@ -455,6 +461,14 @@ func (h *hub) handle(c store.Change) bool {
 		}
 		h.publish("inbox."+kind, v, map[string]string{"flow_run_id": v.FlowRunID, "flow_id": v.FlowID}, false)
 		return true
+	case store.ResNotification:
+		n, err := st.GetNotification(ctx, c.ID)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		h.publish("notification.created", n, optionalMeta(map[string]string{"flow_id": n.FlowID}), false)
+		return false
 	case store.ResAssistSession:
 		a, err := st.GetAssistSession(ctx, c.ID)
 		if err != nil {
@@ -590,6 +604,12 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	c := &client{types: types, filters: filters, wake: make(chan struct{}, 1)}
 	if types == nil || types["auth_event.created"] {
 		c.admin = s.callerIsAdmin(r)
+	}
+
+	// A notification sink (the macOS app) announces itself with a header; while it is connected the daemon leaves
+	// notification delivery to it (notify_via: auto).
+	if r.Header.Get(NotifierHeader) == NotifierApp && s.opts.Sinks != nil && (types == nil || types["notification.created"]) {
+		defer s.opts.Sinks.Connect()()
 	}
 
 	rc := http.NewResponseController(w)

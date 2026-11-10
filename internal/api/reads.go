@@ -790,6 +790,24 @@ func (s *Server) getApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, v)
 }
 
+// ---- notifications ----
+
+func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	opts := q.page()
+	flowID := q.slug("flow_id")
+	channel := q.enum("channel", store.ChannelApp, store.ChannelTerminalNotifier, store.ChannelNone)
+	if !q.ok(w) {
+		return
+	}
+	page, err := s.opts.Store.ListNotifications(r.Context(), store.NotificationFilter{FlowID: flowID, Channel: channel, ListOpts: opts})
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, pageView[store.Notification]{Items: page.Items, NextCursor: nextCursor(page.NextCursor)})
+}
+
 // ---- inbox ----
 
 func (s *Server) listInbox(w http.ResponseWriter, r *http.Request) {
