@@ -16,6 +16,9 @@ Status: design agreed with the user (2026-11-06); runtime lockdown details pendi
   `mcpServers`, absolute path to the running binary). It proxies `tools/list` and `tools/call` to the daemon over
   HTTP using a per-run capability token (random, stored hashed, scoped to that run's tool set, revoked at run end).
 - The runtime is configured to auto-allow hal's own MCP tools (no second prompt at the agent layer).
+- Clients the user starts themselves (Claude Code, Codex, omp, pi) get a separate operator tool set, over Streamable HTTP
+  (`POST /mcp`) and over stdio (`hal9001 mcp` without `--token`, a bridge to `/mcp`); see [../mcp.md](../mcp.md). Its tools
+  with side effects wait for an approval in the Inbox that belongs to no run.
 
 ## Tool sets
 
