@@ -2,6 +2,7 @@ import { Navigate, useSearchParams } from "react-router";
 import { PageHeader } from "../../components/ui";
 import { AuthEventsPanel } from "./AuthEventsPanel";
 import { AuthStackPanel, TailscalePanel } from "./AuthConfigPanels";
+import { ContextSection } from "./ContextSection";
 import { EnvSection } from "./EnvSection";
 import { GeneralSection } from "./GeneralSection";
 import { PasskeysPanel } from "./PasskeysPanel";
@@ -26,6 +27,7 @@ function SettingsPageShell({
 /** Old `/settings?tab=<key>` links map to the per-tab routes. */
 const LEGACY_TAB_ROUTES: Record<string, string> = {
   general: "/settings/general",
+  context: "/settings/context",
   env: "/settings/environment",
   runtimes: "/settings/runtimes",
   auth: "/settings/auth",
@@ -42,6 +44,14 @@ export function SettingsGeneralPage() {
   return (
     <SettingsPageShell title="General">
       <GeneralSection />
+    </SettingsPageShell>
+  );
+}
+
+export function SettingsContextPage() {
+  return (
+    <SettingsPageShell title="Context">
+      <ContextSection />
     </SettingsPageShell>
   );
 }

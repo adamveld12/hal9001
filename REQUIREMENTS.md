@@ -496,7 +496,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 | Flows | List (enabled, dry-run, last run, error rate; "Run now"). Editor: canvas with node palette (command, transform, agent, inbox) and sensor subscription nodes; drag/drop, connect ports; side panel config + CodeMirror; validation errors inline; "Run node on sample" with input picker and result pane; "Run now" (saved version; disabled with unsaved changes or without subscribed sensors); save writes YAML. |
 | Sensors | List with status (incl. manual), last poll, new items, errors; edit (same code editor), "Run now" with "Re-run items already seen", "Reset dedup state…", recent SensorRuns. |
 | Prompts | List / edit prompt files with preview rendered against a sample event. |
-| Settings | Concurrency, retention, notification threshold, env file keys (names and secret flag; secret values masked, plain values shown, per-key Secret toggle), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |
+| Settings | Context (System Prompt: app-wide markdown added to every agent prompt, max 16 KiB), concurrency, retention, notification threshold, env file keys (names and secret flag; secret values masked, plain values shown, per-key Secret toggle), kill switch. Auth: active sessions (revoke), passkeys per hostname (register/remove), auth stack config (read-only view), recent auth events. |
 
 ## 12. Acceptance scenarios (what I will test)
 

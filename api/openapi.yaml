@@ -4044,6 +4044,7 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        system_prompt: {type: string, maxLength: 16384, description: 'Markdown added to every agent call (flow agent nodes and assistant sessions); empty adds nothing. At most 16 KiB (16384 bytes).'}
         session_ttl: {$ref: '#/components/schemas/Duration'}
         allowed_hosts: {type: array, items: {type: string}}
         allowed_logins: {type: array, items: {type: string}}
@@ -4594,6 +4595,7 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        system_prompt: {type: string, description: 'Markdown added to every agent call. Empty clears it. 422 above 16 KiB (16384 bytes).'}
     EnvKeyList:
       type: object
       required: [items]

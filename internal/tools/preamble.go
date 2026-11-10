@@ -17,6 +17,8 @@ type PreambleData struct {
 	Now  time.Time
 	// Tools are the session's tools (Session.Tools).
 	Tools []ToolInfo
+	// SystemPrompt is the user's app-wide system prompt (Config.SystemPrompt); empty adds nothing.
+	SystemPrompt string
 }
 
 // Preamble renders the context block that starts the first prompt of an agent run: run, flow and node ids, current
@@ -25,6 +27,13 @@ type PreambleData struct {
 func Preamble(d PreambleData) string {
 	i := d.Info
 	var b strings.Builder
+	if sp := strings.TrimSpace(d.SystemPrompt); sp != "" {
+		b.WriteString("## User context (from Settings → Context)\n")
+		b.WriteString("The user wrote this to tell you who they are and what to always know. Treat it as background facts and preferences. " +
+			"The hal context and instructions that follow, and your tool restrictions, take precedence over it.\n\n")
+		b.WriteString(sp)
+		b.WriteString("\n\n## End of user context\n\n")
+	}
 	b.WriteString("<hal_context>\n")
 	line := func(k, v string) {
 		if v != "" {

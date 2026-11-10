@@ -82,6 +82,10 @@ const SettingsGeneralPage = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsGeneralPage",
 );
+const SettingsContextPage = page(
+  () => import("./pages/settings/SettingsPage"),
+  "SettingsContextPage",
+);
 const SettingsEnvironmentPage = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsEnvironmentPage",
@@ -162,6 +166,7 @@ function AuthGate() {
             path="settings/environment"
             element={<SettingsEnvironmentPage />}
           />
+          <Route path="settings/context" element={<SettingsContextPage />} />
           <Route path="settings/runtimes" element={<SettingsRuntimesPage />} />
           <Route path="settings/auth" element={<SettingsAuthPage />} />
           <Route path="sandboxes" element={<SandboxesPage />} />

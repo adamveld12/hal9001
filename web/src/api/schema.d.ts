@@ -3170,6 +3170,8 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      /** @description Markdown added to every agent call (flow agent nodes and assistant sessions); empty adds nothing. At most 16 KiB (16384 bytes). */
+      system_prompt?: string;
       session_ttl?: components["schemas"]["Duration"];
       allowed_hosts?: string[];
       allowed_logins?: string[];
@@ -3629,6 +3631,8 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      /** @description Markdown added to every agent call. Empty clears it. 422 above 16 KiB (16384 bytes). */
+      system_prompt?: string;
     };
     EnvKeyList: {
       items: {
