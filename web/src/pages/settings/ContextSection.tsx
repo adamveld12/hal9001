@@ -51,7 +51,7 @@ function SystemPromptPanel({ saved }: { saved: string }) {
     <Panel title="System Prompt">
       <Field
         label="System Prompt"
-        hint="Added to every agent call: flows, chat assistant, transforms. Use it for your name, preferences and facts agents should always know."
+        hint="Added to every agent call: flow agent nodes and the chat assistant (including Create with AI). Use it for your name, preferences and facts agents should always know."
         error={error ? [error] : undefined}
       >
         <TextArea
