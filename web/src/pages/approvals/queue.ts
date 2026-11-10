@@ -129,7 +129,8 @@ export function isOperatorApproval(a: Approval): boolean {
 /** Where an approval comes from, for the muted label in list rows. */
 export function approvalOrigin(a: Approval): string {
   if (a.flow_id !== null) return `${a.flow_id} / ${a.node_id ?? ""}`;
-  return isOperatorApproval(a) ? "MCP client" : "sensor assist";
+  if (!isOperatorApproval(a)) return "sensor assist";
+  return a.request?.client ? `MCP: ${a.request.client}` : "MCP client";
 }
 
 /** What was decided and how, for the decision panel and history rows. */
@@ -138,6 +139,7 @@ export function describeDecision(a: Approval): string {
     case "pending":
       return "Waiting for a decision";
     case "expired":
+      if (isOperatorApproval(a)) return "Timed out; the MCP client was told";
       return a.type === "request" && a.request?.on_timeout
         ? `Timed out; the flow continued on ${a.request.on_timeout === "error" ? "the error port" : `port ${a.request.on_timeout}`}`
         : "Timed out without a decision";

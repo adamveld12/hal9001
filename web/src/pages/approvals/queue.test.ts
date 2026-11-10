@@ -256,5 +256,25 @@ describe("approvalOrigin", () => {
     expect(
       approvalOrigin(approval({ id: "c", type: "tool_call", ...unowned })),
     ).toBe("sensor assist");
+    expect(
+      approvalOrigin(
+        approval({
+          id: "d",
+          type: "request",
+          ...unowned,
+          request: {
+            title: "t",
+            body_md: "",
+            fields: [],
+            editable: [],
+            priority: "normal",
+            dry_run: false,
+            on_timeout: "denied",
+            source: "mcp",
+            client: "claude-code 2.1",
+          },
+        }),
+      ),
+    ).toBe("MCP: claude-code 2.1");
   });
 });

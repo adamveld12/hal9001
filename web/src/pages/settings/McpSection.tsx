@@ -48,6 +48,9 @@ function joinNames(names: readonly string[]): string {
 function McpDetails({ info }: { info: McpInfo }) {
   const approvalTools = info.tools.filter((t) => t.needs_approval);
   const names = joinNames(approvalTools.map((t) => t.name));
+  const adminNames = joinNames(
+    info.tools.filter((t) => t.needs_admin).map((t) => t.name),
+  );
   return (
     <div className="space-y-4">
       <Panel>
@@ -57,15 +60,18 @@ function McpDetails({ info }: { info: McpInfo }) {
           {approvalTools.length > 0 && (
             <>
               {" "}
-              <span className={code}>{names}</span> wait for your approval in
-              the Inbox, for up to {info.approval_timeout_seconds} s.
+              <span className={code}>{names}</span> raise an approval in the
+              Inbox and wait for your decision (the tools that create or run
+              things for up to {info.approval_timeout_seconds} s;{" "}
+              <span className={code}>request_approval</span> waits at most that
+              long per call and the approval stays open).
             </>
           )}{" "}
-          No tool can approve or deny anything.
+          Other tools post notes. No tool can approve or deny anything.
         </p>
       </Panel>
       <ConnectionPanel info={info} />
-      <AuthPanel info={info} approvalNames={names} />
+      <AuthPanel info={info} adminNames={adminNames} />
       <ToolsPanel info={info} />
       <InstallPanel info={info} />
     </div>
@@ -98,10 +104,10 @@ function ConnectionPanel({ info }: { info: McpInfo }) {
 
 function AuthPanel({
   info,
-  approvalNames,
+  adminNames,
 }: {
   info: McpInfo;
-  approvalNames: string;
+  adminNames: string;
 }) {
   const { api, admin } = info.auth.localhost_trust;
   return (
@@ -112,7 +118,7 @@ function AuthPanel({
             <p className="m-0">Clients on this Mac need no credentials.</p>
             {!admin && (
               <p className="m-0 text-muted">
-                {approvalNames || "The tools with side effects"} call endpoints
+                {adminNames || "The tools with side effects"} call endpoints
                 that need the admin service, which does not trust this Mac.
                 Those tools fail with 401 unless the client sends a session
                 cookie (see the lines under each client below).
