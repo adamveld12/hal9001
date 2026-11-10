@@ -2,13 +2,13 @@
 # Builds the macOS app bundles from bin/hal9001 (run `mise run build` first; `mise run app` does):
 #   bin/HAL9001.app        release identity dev.hal9001
 #   bin/HAL9001 Dev.app    dev identity dev.hal9001.dev: its own launchd label, notification permission, login item
-#                          and CLI name, so testing never touches the release app's state. It is installed to
-#                          ~/Applications/HAL9001 Dev.app, because macOS delivers notifications only to apps that live
-#                          in /Applications or ~/Applications.
+#                          and CLI name, so testing never touches the release app's state. It is NOT installed by
+#                          default; set HAL9001_APP_INSTALL_DIR=~/Applications to install it there (macOS delivers
+#                          notifications only to apps in /Applications or ~/Applications).
 # Both are signed ad hoc (nested binary first, then the bundle); never use a self-signed identity.
 #
 # Environment:
-#   HAL9001_APP_INSTALL_DIR  where to install the dev copy (default ~/Applications; "none" skips the install)
+#   HAL9001_APP_INSTALL_DIR  opt-in: directory to install the dev copy into (default and "none": no install)
 #   HAL9001_RELEASE_VERSION  CI: dotted version (e.g. 0.1.7) used for CFBundleShortVersionString and the full version
 #   HAL9001_RELEASE_BUILD    CI: CFBundleVersion (default: the unix time); must increase with every release
 #   HAL9001_APP_DEV_HOME     dev build only: daemon home its bundled service uses (default ~/.hal9001)
@@ -63,7 +63,7 @@ dev_flags=()
 [ -z "${HAL9001_APP_DEV_PORT:-}" ] || dev_flags+=(-dev-port "$HAL9001_APP_DEV_PORT")
 assemble "bin/HAL9001 Dev.app" dev.hal9001.dev "HAL9001 Dev" "${dev_flags[@]+"${dev_flags[@]}"}"
 
-dest=${HAL9001_APP_INSTALL_DIR-$HOME/Applications}
+dest=${HAL9001_APP_INSTALL_DIR-none}
 if [ -n "$dest" ] && [ "$dest" != none ]; then
   mkdir -p "$dest"
   rm -rf "$dest/HAL9001 Dev.app"

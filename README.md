@@ -323,7 +323,7 @@ Older installs: the app notices the agents of previous versions (`com.hal9001.da
 
 ```sh
 mise run app          # builds bin/HAL9001.app (release id dev.hal9001) and bin/HAL9001 Dev.app (dev.hal9001.dev), signed ad hoc,
-                      # and installs the dev copy to ~/Applications/HAL9001 Dev.app
+                      # (not installed; to install the dev copy: HAL9001_APP_INSTALL_DIR=~/Applications mise run app)
 mise run app:run      # (alias: menubar) run from source, outside a bundle: menu and API client only, no service management
 ```
 

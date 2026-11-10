@@ -71,7 +71,7 @@ description = "Throwaway daemon on a free port with a fake agent runtime (--port
 run = "go run ./cmd/hal9001-sandbox"
 
 [tasks.app]
-description = "Build bin/HAL9001.app (release id) and bin/HAL9001 Dev.app (dev id), ad-hoc signed; installs the dev copy to ~/Applications/HAL9001 Dev.app (HAL9001_APP_INSTALL_DIR, HAL9001_APP_DEV_HOME, HAL9001_APP_DEV_PORT: see scripts/build-app.sh)"
+description = "Build bin/HAL9001.app (release id) and bin/HAL9001 Dev.app (dev id), ad-hoc signed; no install by default (to install the dev copy run HAL9001_APP_INSTALL_DIR=~/Applications mise run app; also HAL9001_APP_DEV_HOME, HAL9001_APP_DEV_PORT: see scripts/build-app.sh)"
 depends = ["build"]
 run = "scripts/build-app.sh"
 
