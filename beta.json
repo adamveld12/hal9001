@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.9",
-  "build": 9,
-  "commit": "ca4c07be8174893f9a4554c1217420b63921779c",
-  "published_at": "2026-11-10T22:20:48Z",
+  "version": "0.1.10",
+  "build": 10,
+  "commit": "c098954c71f4f7d8ce1c7a8190105cd3c023744d",
+  "published_at": "2026-11-10T22:59:11Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.9/HAL9001-0.1.9.app.zip",
-  "size": 27637912,
-  "sha256": "7d3dd13ba94aa399af5889ffbec493279f2d341e91c14c535c3218d88c0a4d2f",
-  "signature": "yeth2GkFRM6wRGT98VX2pBdNPOKIDAlXoOTV7cLuO1W+tt+XaTnc+YZf5zfIQFMOVmBepO6Pw8ITTPO9KLFEAg==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.9",
-  "notes": "## Changes\n\n- Assist drawer: keep keyboard focus in the composer after send or approval (#6) (ca4c07b)\n\nCommit: ca4c07be8174893f9a4554c1217420b63921779c\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.10/HAL9001-0.1.10.app.zip",
+  "size": 27639714,
+  "sha256": "ca9a8af8d68b85fa6de696d2d828f1d25a030e425f604f748affbee39a4533b6",
+  "signature": "KvQKwRWVGq1Ke8YT+isDZVyqCXsOjf+3V9HUXvbV79HMseglmLTRF7TqibU9LpuCy5Rbutkgvnduy74rnlYzDA==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.10",
+  "notes": "## Changes\n\n- Settings: app-wide system prompt (Context section) (#2) (c098954)\n\nCommit: c098954c71f4f7d8ce1c7a8190105cd3c023744d\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
