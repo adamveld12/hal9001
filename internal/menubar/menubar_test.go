@@ -71,6 +71,20 @@ func TestZeroCountHidesTitle(t *testing.T) {
 	}
 }
 
+func TestNoDanglingSeparator(t *testing.T) {
+	for _, snap := range []*Snapshot{nil, {}} {
+		m := BuildMenu(snap, "http://ui")
+		for _, e := range m.Entries {
+			if e.Kind != Submenu {
+				continue
+			}
+			if len(e.Children) != 1 {
+				t.Fatalf("%s submenu children = %d, want only the All link", e.Title, len(e.Children))
+			}
+		}
+	}
+}
+
 func TestUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
