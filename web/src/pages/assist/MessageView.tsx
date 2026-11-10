@@ -14,6 +14,7 @@ import { toolContent, toolTone } from "../runs/transcript";
 import { ToolContentView } from "../runs/TranscriptView";
 import { extractCommand, extractDiffs } from "../approvals/diff";
 import { DiffView } from "../approvals/DiffView";
+import { noFocusOnClick } from "../../lib/focus";
 
 const KIND_ICON: Record<string, IconName> = {
   read: "note",
@@ -97,12 +98,14 @@ function ApprovalPrompt({
         <Button
           variant="primary"
           disabled={busy}
+          {...noFocusOnClick}
           onClick={() => decide.mutate({ id: a.id, action: "approve" })}
         >
           Allow
         </Button>
         <Button
           disabled={busy}
+          {...noFocusOnClick}
           title={
             runtime === "codex"
               ? "Codex cannot continue after a denial: the turn ends here."
@@ -115,6 +118,7 @@ function ApprovalPrompt({
         <Button
           variant="danger"
           disabled={busy}
+          {...noFocusOnClick}
           title="Deny and end this turn."
           onClick={() =>
             decide.mutate({ id: a.id, action: "deny", cancelRun: true })

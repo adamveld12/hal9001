@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "../../api/client";
 import { Button, TextArea } from "../../components/ui";
+import { focusLost, noFocusOnClick } from "../../lib/focus";
 
 /**
  * Multiline message input: Enter sends, Shift+Enter inserts a newline. The
@@ -37,6 +38,20 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
+  // When the agent finishes (disabled -> enabled), take focus back if it fell
+  // to the page (an approval or Stop button that held it went away). Focus the
+  // user moved to another control, such as the editor, is left alone.
+  const wasDisabled = useRef(disabled);
+  useEffect(() => {
+    if (
+      wasDisabled.current &&
+      !disabled &&
+      focusLost(document.activeElement, document.body)
+    ) {
+      ref.current?.focus();
+    }
+    wasDisabled.current = disabled;
+  }, [disabled]);
 
   const submit = async () => {
     const t = text.trim();
@@ -85,6 +100,7 @@ export function Composer({
         <Button
           variant="primary"
           disabled={disabled || sending || text.trim() === ""}
+          {...noFocusOnClick}
           onClick={() => void submit()}
         >
           {sending ? "Sending…" : "Send"}

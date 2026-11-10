@@ -7,6 +7,7 @@ import { Icon, type IconName } from "../components/icons";
 import { Badge, Kbd } from "../components/ui";
 import { cx } from "../lib/cx";
 import { isDark, setTheme, useTheme } from "../lib/theme";
+import { assistDrawerOpen } from "../lib/focus";
 import { KillSwitch } from "./KillSwitch";
 import { UpdateBanner } from "./UpdateBanner";
 
@@ -87,12 +88,12 @@ function useGoToShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (assistDrawerOpen(document)) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
         (t.isContentEditable ||
           t.closest(".cm-editor") ||
-          t.closest("[aria-label='AI assistant']") ||
           /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
       ) {
         return;
@@ -137,12 +138,12 @@ function useNavCollapsed(): [boolean, () => void] {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "[" || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (assistDrawerOpen(document)) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
         (t.isContentEditable ||
           t.closest(".cm-editor") ||
-          t.closest("[aria-label='AI assistant']") ||
           /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
       ) {
         return;
