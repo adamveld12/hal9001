@@ -329,7 +329,7 @@ mise run app:run      # (alias: menubar) run from source, outside a bundle: menu
 
 See [docs/macos-app.md](docs/macos-app.md) for the manual test checklist.
 
-**Installing:** open `HAL9001-<version>.dmg` and drag HAL9001 onto Applications. The app is signed ad hoc, so for a copy downloaded from the internet Gatekeeper blocks the first launch: right-click the app, choose Open, then Open again (or run `xattr -dr com.apple.quarantine /Applications/HAL9001.app`).
+**Installing:** open `HAL9001-<version>.dmg` and drag HAL9001 onto Applications. The app is signed ad hoc, so for a copy downloaded from the internet Gatekeeper blocks the first launch. On macOS 15 and later right-click > Open no longer bypasses this: try to open the app once, then go to System Settings > Privacy & Security and click "Open Anyway" (or run `xattr -dr com.apple.quarantine /Applications/HAL9001.app`).
 
 The bundle holds the app (`Contents/MacOS/HAL9001`, cgo: `fyne.io/systray` plus an Objective-C bridge for `SMAppService` and alerts), the daemon and CLI built with the UI embedded (`Contents/Resources/hal9001`), `AppIcon.icns` (rendered from the menubar eye by `cmd/hal9001-app-pack`) and the LaunchAgent plist. It needs macOS 13 or later. Signing is ad hoc (`codesign -s -`, nested binary first, then the bundle); never use a self-signed certificate. Notifications only work when the app lives in `/Applications` or `~/Applications`, which is why the dev copy is installed there.
 

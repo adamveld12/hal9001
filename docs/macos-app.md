@@ -11,7 +11,7 @@ Use a Mac where no hal9001 agent runs: stop the headless service and remove olde
 - [ ] Open the DMG. The Finder window shows the red-eye background, the HAL9001 icon on the left and the
       Applications folder on the right, with the arrow between them, no toolbar or sidebar, no stray files.
 - [ ] Drag HAL9001 onto Applications. Eject the DMG.
-- [ ] First launch from a downloaded copy: Gatekeeper blocks it (ad-hoc signature); right-click > Open > Open works.
+- [ ] First launch from a downloaded copy: Gatekeeper blocks it (ad-hoc signature). On macOS 15+ right-click > Open no longer bypasses it; open it once, then System Settings > Privacy & Security > "Open Anyway" works.
 - [ ] The eye appears in the menubar; there is no Dock icon.
 
 ## 2. First launch

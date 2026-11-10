@@ -65,7 +65,7 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "Open the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: the first time, right-click it and choose Open."
+            echo "Open the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings > Privacy & Security and click Open Anyway. On macOS 14 and earlier, right-click > Open also works."
           } > notes.md
 
       - uses: actions/upload-artifact@v4

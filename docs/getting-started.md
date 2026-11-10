@@ -15,7 +15,8 @@ Install:
    (`hal9001 service uninstall`), and the old menubar app. If the app still finds legacy launch agents, it offers
    **Remove older launch agents…** and starts no service until you accept.
 2. Open the DMG and drag HAL9001 onto Applications. It must live in Applications, or macOS won't let it send
-   notifications. A downloaded copy is ad-hoc signed, so Gatekeeper blocks the first launch: right-click > Open > Open.
+   notifications. A downloaded copy is ad-hoc signed, so Gatekeeper blocks the first launch (macOS 15+: right-click > Open
+   no longer works). Try to open it once, then System Settings > Privacy & Security > **Open Anyway**.
 3. Launch HAL9001. The eye appears in the menubar; there's no Dock icon.
 4. Click **Allow** when macOS asks about notifications. Don't quit while the prompt is open, or macOS records
    "denied". If that happens, the menu shows **Notifications are off — Open Settings**.
