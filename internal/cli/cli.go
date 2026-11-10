@@ -197,6 +197,8 @@ type command struct {
 	summary string
 	subs    []*command
 	leaf    *leaf
+	// def runs when a group is named without a subcommand.
+	def *leaf
 }
 
 // leaf is an executable command.
@@ -249,6 +251,9 @@ func (a *app) run(ctx context.Context, args []string) error {
 	cmd, path, rest, err := resolve(root, args)
 	if err != nil {
 		return err
+	}
+	if cmd.leaf == nil && cmd.def != nil && (len(rest) == 0 || (strings.HasPrefix(rest[0], "-") && rest[0] != "-h" && rest[0] != "--help")) {
+		return a.runLeaf(ctx, &command{name: cmd.name, summary: cmd.summary, leaf: cmd.def}, path, rest)
 	}
 	if cmd.leaf == nil {
 		if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {

@@ -26,6 +26,10 @@ type app struct {
 	cancel    context.CancelFunc
 	poke      func() // asks the refresh loop to refresh now
 
+	// installRoot is the app bundle an update replaces: the release app's own bundle. Empty for a dev build and for a
+	// binary outside a bundle; such an app is not the update installer and never registers as one.
+	installRoot string
+
 	actMu sync.Mutex // serializes menu actions
 
 	mu       sync.Mutex
@@ -39,6 +43,13 @@ type app struct {
 	streamMu     sync.Mutex
 	streamCancel context.CancelFunc // ends the current stream connection; nil before the first
 	notif        *notifications
+
+	// updMu guards the update state the menu shows.
+	updMu           sync.Mutex
+	updRunning      bool               // this app is executing an install
+	updPhase        string             // how far it is, for the menu
+	serviceUpdating bool               // the service is being registered again after an app update
+	serviceRetry    context.CancelFunc // ends the automatic retries of that; nil when none runs
 }
 
 func (a *app) onReady() {
@@ -82,7 +93,7 @@ func (a *app) streamLoop(ctx context.Context, poke func()) {
 		a.streamMu.Lock()
 		a.streamCancel = cancel
 		a.streamMu.Unlock()
-		err := a.client.Stream(cctx, menubar.StreamOptions{Notifications: a.notif.sink()}, a.onEvent)
+		err := a.client.Stream(cctx, menubar.StreamOptions{Notifications: a.notif.sink(), Updater: a.installRoot != ""}, a.onEvent)
 		restarted := cctx.Err() != nil
 		cancel()
 		if ctx.Err() != nil {
@@ -113,6 +124,8 @@ func (a *app) onEvent(ev menubar.Event) {
 	switch ev.Type {
 	case menubar.EventNotification:
 		a.notif.onEvent(ev)
+	case menubar.EventUpdateInstall:
+		a.onUpdateInstall(ev)
 	case "approval.updated", "inbox.updated":
 		if a.notif.enabled {
 			if ids := a.notif.tracker.Withdrawn(ev); len(ids) > 0 {

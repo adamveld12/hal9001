@@ -12,6 +12,7 @@ import (
 	"hal9001/internal/notify"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/update"
 )
 
 // runtimeEngine is the engine as the daemon drives it: the core.Engine
@@ -54,4 +55,5 @@ type apiParams struct {
 	UI        http.Handler
 	Log       *slog.Logger
 	Sinks     *notify.Sinks
+	Update    *update.Service
 }

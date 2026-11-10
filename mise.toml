@@ -96,3 +96,7 @@ run = "scripts/make-dmg.sh"
 [tasks."dmg:check"]
 description = "Mount the newest bin/HAL9001-*.dmg read-only and verify the app, Applications symlink, background and .DS_Store layout (background set, icon positions)"
 run = "scripts/check-dmg.sh"
+
+[tasks."update:keygen"]
+description = "Generate the update-signing key pair: private key to ./update-signing-key.txt (gitignored), public key to internal/update/publickey.txt; prints next steps"
+run = "go run ./cmd/hal9001-release keygen --private-out update-signing-key.txt"
