@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +47,9 @@ type managed struct {
 	backend Backend
 	cfg     spec.Sandbox
 	print   string // fingerprint of the files the backend was built from
+	// envNames are the variables commands see; secrets are the values to keep out of the run log.
+	envNames []string
+	secrets  []string
 }
 
 // NewManager returns a Manager. Nothing is built until Open.
@@ -92,16 +97,82 @@ func (m *Manager) Config(backend string) (spec.Sandbox, error) {
 }
 
 // Open starts a session on backend for rs. It fails with ErrDisabled for a backend that is not enabled.
-// rs.Lifecycle defaults to the backend's configured lifecycle.
+// rs.Lifecycle defaults to the backend's configured lifecycle. With rs.Log set, the provisioning, every operation of
+// the session and its teardown are recorded there.
 func (m *Manager) Open(ctx context.Context, backend string, rs RunSpec) (Session, error) {
-	b, cfg, err := m.get(backend)
-	if err != nil {
+	start := time.Now()
+	log := rs.Log
+	mg, err := m.get(backend)
+	if mg != nil {
+		log = withRedaction(log, mg.secrets)
+		rs.Log = log
+	}
+	if rs.Lifecycle == "" && mg != nil {
+		rs.Lifecycle = mg.cfg.Lifecycle
+	}
+	if log != nil {
+		fields := map[string]string{"backend": backend, "lifecycle": rs.Lifecycle}
+		if rs.Image != "" {
+			fields["image"] = rs.Image
+		}
+		if rs.Repo != "" {
+			fields["repo"] = CleanRepo(rs.Repo)
+		}
+		if rs.Ref != "" {
+			fields["ref"] = rs.Ref
+		}
+		var names []string
+		if mg != nil {
+			names = append(append([]string(nil), mg.envNames...), mapKeys(rs.Env)...)
+			sort.Strings(names)
+			names = slices.Compact(names)
+		}
+		log.Update(SessionUpdate{Status: StatusProvisioning, Info: SessionInfo{
+			Image: rs.Image, Repo: CleanRepo(rs.Repo), Ref: rs.Ref, Lifecycle: rs.Lifecycle, EnvNames: names,
+		}})
+		logStep(log, "Provisioning "+backend+" sandbox", fields)
+		if mg != nil {
+			env := LogEntry{Kind: KindLifecycle, Title: "Environment variables visible to commands (names only)", Fields: map[string]string{"count": fmt.Sprint(len(names))}}
+			if len(names) > 0 {
+				env.Fields["names"] = strings.Join(names, ", ")
+			}
+			log.Add(env)
+		}
+	}
+	fail := func(err error) (Session, error) {
+		if log != nil {
+			msg := err.Error()
+			log.Add(LogEntry{Kind: KindLifecycle, Level: LevelError, Title: "Provisioning failed: " + oneLine(msg), Error: msg, Duration: time.Since(start)})
+			log.Update(SessionUpdate{Status: StatusFailed, Error: msg})
+		}
 		return nil, err
 	}
-	if rs.Lifecycle == "" {
-		rs.Lifecycle = cfg.Lifecycle
+	if err != nil {
+		return fail(err)
 	}
-	return b.Prepare(ctx, rs)
+	sess, err := mg.backend.Prepare(ctx, rs)
+	if err != nil {
+		return fail(err)
+	}
+	if log == nil {
+		return sess, nil
+	}
+	info := SessionInfo{Workdir: sess.Workdir()}
+	if d, ok := sess.(Describer); ok {
+		info = d.Describe()
+	}
+	info.Lifecycle = rs.Lifecycle
+	took := time.Since(start)
+	fields := map[string]string{"workdir": info.Workdir, "duration_ms": fmt.Sprint(ms(took))}
+	if info.Name != "" {
+		fields["sandbox"] = info.Name
+	}
+	if info.ID != "" {
+		fields["sandbox_id"] = info.ID
+	}
+	log.Add(LogEntry{Kind: KindLifecycle, Title: "Sandbox ready in " + took.Round(time.Millisecond).String(), Duration: took, Fields: fields})
+	log.Update(SessionUpdate{Status: StatusReady, Info: info})
+	return &loggedSession{Session: sess, log: log, backend: backend, lifecycle: rs.Lifecycle}, nil
 }
 
 // Policy returns the approval policy of backend.
@@ -113,32 +184,36 @@ func (m *Manager) Policy(backend string) (*Policy, error) {
 	return NewPolicy(cfg)
 }
 
-func (m *Manager) get(backend string) (Backend, spec.Sandbox, error) {
+// get returns the built backend of a backend name. On ErrDisabled and other errors the result is nil, except that
+// an enabled backend whose construction failed has no entry either.
+func (m *Manager) get(backend string) (*managed, error) {
 	if !spec.ValidSandboxBackend(backend) {
-		return nil, spec.Sandbox{}, fmt.Errorf("unknown sandbox backend %q", backend)
+		return nil, fmt.Errorf("unknown sandbox backend %q", backend)
 	}
 	cfg, env, print, err := m.load(backend)
 	if err != nil {
-		return nil, cfg, err
+		return nil, err
 	}
+	names := envNames(env.commandVars(backend))
 	if !cfg.Enabled {
-		return nil, cfg, fmt.Errorf("%w: %s", ErrDisabled, backend)
+		return &managed{cfg: cfg, envNames: names, secrets: env.Secrets}, fmt.Errorf("%w: %s", ErrDisabled, backend)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cur := m.backends[backend]; cur != nil {
 		if cur.print == print {
-			return cur.backend, cfg, nil
+			return cur, nil
 		}
 		closeBackend(cur.backend)
 		delete(m.backends, backend)
 	}
 	b, err := New(backend, cfg, env, m.opts.Home)
 	if err != nil {
-		return nil, cfg, err
+		return nil, err
 	}
-	m.backends[backend] = &managed{backend: b, cfg: cfg, print: print}
-	return b, cfg, nil
+	cur := &managed{backend: b, cfg: cfg, print: print, envNames: names, secrets: env.Secrets}
+	m.backends[backend] = cur
+	return cur, nil
 }
 
 func closeBackend(b Backend) {
@@ -174,11 +249,11 @@ func (m *Manager) Sweep(ctx context.Context) {
 		if err != nil || !cfg.Enabled || cfg.Lifecycle != spec.LifecyclePerRun {
 			continue
 		}
-		b, _, err := m.get(name)
+		mg, err := m.get(name)
 		if err != nil {
 			continue
 		}
-		if s, ok := b.(Sweeper); ok {
+		if s, ok := mg.backend.(Sweeper); ok {
 			if err := s.Sweep(ctx, maxAge); err != nil {
 				m.opts.Log.Warn("sandbox sweep failed", "backend", name, "err", err)
 			}

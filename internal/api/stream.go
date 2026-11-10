@@ -498,6 +498,34 @@ func (h *hub) handle(c store.Change) bool {
 			return false
 		}
 		h.publish("assist.message", assistStreamMessageView{assistMessageView: assistMessage(*m), SessionID: m.SessionID}, map[string]string{"assist_session_id": m.SessionID}, false)
+	case store.ResSandboxSession:
+		ss, err := st.GetSandboxSession(ctx, c.ID)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		h.publish("sandbox_session."+kind, ss, rv.sandboxMeta(*ss), false)
+	case store.ResSandboxLog:
+		if c.Op != store.OpCreate {
+			return false
+		}
+		id, err := strconv.ParseInt(c.ID, 10, 64)
+		if err != nil {
+			return false
+		}
+		e, err := st.GetSandboxLogEntry(ctx, id)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		ss, err := st.GetSandboxSession(ctx, e.SessionID)
+		if err != nil {
+			h.logRead(c.Resource, c.ID, err)
+			return false
+		}
+		v := newSandboxEntryView(*e)
+		v.Stdout, v.Stderr = "", ""
+		h.publish("sandbox_log.appended", sandboxLogAppendedView{sandboxEntryView: v, AgentRunID: ss.AgentRunID, NodeRunID: ss.NodeRunID}, rv.sandboxMeta(*ss), false)
 	case store.ResAuthEvent:
 		if c.Op != store.OpCreate {
 			return false

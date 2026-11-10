@@ -44,7 +44,7 @@ func TestManagerOpenReloadAndSweep(t *testing.T) {
 	m.mu.Lock()
 	first := m.backends["local"].backend
 	m.mu.Unlock()
-	if b, _, _ := m.get("local"); b != first {
+	if mg, _ := m.get("local"); mg == nil || mg.backend != first {
 		t.Fatal("backend was rebuilt without a change")
 	}
 

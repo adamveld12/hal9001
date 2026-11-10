@@ -140,8 +140,11 @@ func (b *kubeBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error) 
 		name = podName("hal-persistent-", shortHash(img))
 	}
 	b.mu.Lock()
-	err = b.ensurePod(ctx, name, img, rs.RunID, !perRun)
+	err = b.ensurePod(ctx, name, img, rs.RunID, !perRun, rs.Log)
 	b.mu.Unlock()
+	if rs.Log != nil {
+		b.logEvents(ctx, rs.Log, name)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +170,7 @@ func (b *kubeBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error) 
 	s := &remoteSession{
 		workdir: strings.TrimSpace(string(res.Stdout)), run: run, timeout: b.timeout,
 		env: mergeEnv(b.env, rs.Env), inlineEnv: true,
+		info: SessionInfo{Name: name, Image: img},
 		closeFn: func(ctx context.Context, success bool) error {
 			switch {
 			case perRun && success:
@@ -186,12 +190,13 @@ func (b *kubeBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error) 
 	return s, nil
 }
 
-func (b *kubeBackend) ensurePod(ctx context.Context, name, img, runID string, persistent bool) error {
+func (b *kubeBackend) ensurePod(ctx context.Context, name, img, runID string, persistent bool, log RunLog) error {
 	res, err := b.kc(ctx, nil, time.Minute, 4096, "get", "pod", name, "-o", "jsonpath={.status.phase}")
 	if err != nil {
 		return err
 	}
 	if res.ExitCode == 0 && strings.TrimSpace(string(res.Stdout)) == "Running" {
+		logBackend(log, "Reusing running pod "+name, map[string]string{"pod": name})
 		return nil
 	}
 	if res.ExitCode != 0 && !strings.Contains(string(res.Stderr), "NotFound") {
@@ -221,7 +226,9 @@ func (b *kubeBackend) ensurePod(ctx context.Context, name, img, runID string, pe
 		if run.ExitCode != 0 {
 			return fmt.Errorf("kubectl run: %s", firstLine(string(run.Stderr)))
 		}
+		logBackend(log, "Created pod "+name, map[string]string{"pod": name, "image": img})
 	}
+	logBackend(log, "Waiting for pod "+name+" to become ready", nil)
 	wait, err := b.kc(ctx, nil, 5*time.Minute, 1<<14, "wait", "--for=condition=Ready", "pod/"+name, "--timeout=240s")
 	if err != nil {
 		return err
@@ -230,6 +237,22 @@ func (b *kubeBackend) ensurePod(ctx context.Context, name, img, runID string, pe
 		return fmt.Errorf("pod %s did not become ready: %s", name, firstLine(string(wait.Stderr)))
 	}
 	return nil
+}
+
+// logEvents adds the pod's events (scheduling, image pull, start, failures) to the log. Best effort: a short timeout,
+// and an unreadable event list is only mentioned.
+func (b *kubeBackend) logEvents(ctx context.Context, log RunLog, name string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	res, err := b.kc(ctx, nil, 10*time.Second, 32<<10, "get", "events", "--field-selector", "involvedObject.name="+name, "--sort-by=.lastTimestamp")
+	if err != nil || res.ExitCode != 0 {
+		return
+	}
+	text := strings.TrimSpace(string(res.Stdout))
+	if text == "" || strings.HasPrefix(text, "No resources found") {
+		return
+	}
+	logAdd(log, LogEntry{Kind: KindBackend, Title: "Events of pod " + name, Stdout: text, Fields: map[string]string{"pod": name}})
 }
 
 // overrides is the --overrides JSON for the service account and resources, or "" when neither is set.

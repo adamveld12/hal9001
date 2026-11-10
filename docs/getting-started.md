@@ -66,7 +66,8 @@ Details: [design/agent-access.md](design/agent-access.md), [runtimes.md](runtime
 - Every prompt starts with run context (flow, time, trigger, node input).
 - Sandboxes (Configure → Sandboxes: Local, Docker, Depot, Kubernetes, SSH): give an agent node fs_* and shell tools
   inside the sandbox, with per-sandbox approval rules and env vars. Local is always on with no setup; Depot needs its
-  token.
+  token. A run's sandbox log (provisioning, every command with output and exit code, denied calls, teardown) shows
+  under "Sandbox" on the agent run and node run pages.
 - Custom tools (Configure → Tools): YAML bash/python/node scripts with params, approval rules and a "runs in sandbox"
   option; attach to agent nodes; test runner and Create with AI.
 - Agent node: Sandbox dropdown with status, Image, Repo and Ref fields, Tools picker, inline prompts (no prompt file
@@ -131,5 +132,5 @@ Details: [assist.md](assist.md).
 - After rebuilding the app, the daemon may refuse to start for ~2 minutes; use Service > Stop service, then
   Start service.
 - Occasionally flaky e2e tests make a push need a retry.
-- Depot and Kubernetes sandboxes haven't run against real systems.
+- Depot and Kubernetes sandboxes haven't run against real systems, so their provisioning logs are untested there.
 - Notification buttons haven't been clicked by a person yet (on the checklist).

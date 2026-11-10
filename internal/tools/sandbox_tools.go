@@ -17,6 +17,8 @@ import (
 type SandboxOptions struct {
 	// GitToken returns the token used to clone RunSpec.Repo; nil uses the user's `gh auth token`.
 	GitToken func(ctx context.Context) string
+	// Log returns the run log of one sandbox session (provisioning, every operation, teardown); nil keeps no log.
+	Log func(ctx context.Context, rs RunSpec, info RunInfo) sandbox.RunLog
 }
 
 // maxReadBytes caps what fs_read returns in one call.
@@ -30,17 +32,25 @@ func SandboxProvider(m *sandbox.Manager, opt SandboxOptions) Provider {
 		if spec.Sandbox == "" {
 			return Extension{}, nil
 		}
+		info := spec.Info()
+		var lg sandbox.RunLog
+		if opt.Log != nil {
+			lg = opt.Log(ctx, spec, info)
+		}
 		policy, err := m.Policy(spec.Sandbox)
 		if err != nil {
+			if lg != nil {
+				lg.Add(sandbox.LogEntry{Kind: sandbox.KindLifecycle, Level: sandbox.LevelError, Title: "Sandbox policy is invalid: " + err.Error(), Error: err.Error()})
+				lg.Update(sandbox.SessionUpdate{Status: sandbox.StatusFailed, Error: err.Error()})
+			}
 			return Extension{}, err
 		}
-		info := spec.Info()
 		// The workspace is keyed by the node run, so the propose and execute phases of an approve node share it.
 		key := spec.RunID
 		if info.NodeRunID != "" {
 			key = info.NodeRunID
 		}
-		rs := sandbox.RunSpec{RunID: key, Image: spec.Image, Repo: spec.Repo, Ref: spec.Ref}
+		rs := sandbox.RunSpec{RunID: key, Image: spec.Image, Repo: spec.Repo, Ref: spec.Ref, Log: lg}
 		if len(info.Input) > 0 {
 			rs.Input = info.Input
 		}
@@ -55,7 +65,7 @@ func SandboxProvider(m *sandbox.Manager, opt SandboxOptions) Provider {
 		if err != nil {
 			return Extension{}, fmt.Errorf("sandbox %s: %w", spec.Sandbox, err)
 		}
-		st := &sandboxTools{name: spec.Sandbox, sess: sess, policy: policy}
+		st := &sandboxTools{name: spec.Sandbox, sess: sess, policy: policy, log: lg}
 		return Extension{
 			Tools:     st.tools(),
 			Sandbox:   sess,
@@ -68,6 +78,56 @@ type sandboxTools struct {
 	name   string
 	sess   sandbox.Session
 	policy *sandbox.Policy
+	log    sandbox.RunLog // may be nil
+}
+
+// annotate tells the sandbox log which tool call the session operations that follow belong to.
+func annotate(ctx context.Context, c Call) context.Context {
+	return sandbox.WithCall(ctx, sandbox.CallInfo{Tool: c.Name, Approval: c.Approval})
+}
+
+// blocked logs a call that was not run.
+func (s *sandboxTools) blocked(b Blocked) {
+	if s.log == nil {
+		return
+	}
+	var a struct{ Command, Path string }
+	_ = json.Unmarshal(b.Args, &a)
+	what := firstLine(a.Command)
+	if what == "" {
+		what = a.Path
+	}
+	e := sandbox.LogEntry{Kind: sandbox.KindDenied, Level: sandbox.LevelWarn, Tool: b.Tool, Command: a.Command, Path: a.Path}
+	var prefix string
+	switch b.By {
+	case BlockedPolicy:
+		prefix, e.Approval = "Denied by policy", "denied by policy: "+b.Reason
+	case BlockedUser:
+		prefix, e.Approval = "Denied by user", "denied by user"
+		if b.Comment != "" {
+			e.Approval += ": " + b.Comment
+		}
+	case BlockedExpired:
+		prefix, e.Approval = "Approval expired", "expired: nobody approved it before the approval timeout"
+	case BlockedReadOnly:
+		prefix, e.Approval = "Not run (read-only run)", "not run: needs approval ("+b.Reason+") but this run is read-only"
+	default:
+		prefix, e.Level, e.Approval, e.Error = "Not run (approval failed)", sandbox.LevelError, "approval failed: "+b.Reason, b.Reason
+	}
+	e.Title = prefix + ": " + b.Tool + " " + what
+	s.log.Add(e)
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	line, _, more := strings.Cut(s, "\n")
+	if len(line) > 160 {
+		line, more = strings.ToValidUTF8(line[:160], ""), true
+	}
+	if more {
+		line += " …"
+	}
+	return line
 }
 
 func objSchema(required []string, props map[string]any) map[string]any {
@@ -80,6 +140,14 @@ func objSchema(required []string, props map[string]any) map[string]any {
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 
 func (s *sandboxTools) tools() []Tool {
+	ts := s.toolList()
+	for i := range ts {
+		ts[i].OnBlocked = s.blocked
+	}
+	return ts
+}
+
+func (s *sandboxTools) toolList() []Tool {
 	where := fmt.Sprintf("in the %q sandbox workdir %s", s.name, s.sess.Workdir())
 	return []Tool{
 		{
@@ -144,6 +212,7 @@ func decode(raw json.RawMessage, dst any) error {
 }
 
 func (s *sandboxTools) read(ctx context.Context, c Call) (Result, error) {
+	ctx = annotate(ctx, c)
 	var a struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
@@ -180,9 +249,10 @@ func (s *sandboxTools) writePolicy(raw json.RawMessage) (Verdict, string) {
 		return VerdictDeny, fmt.Sprintf("fs_write to %s is denied by the %s sandbox policy: %s", a.Path, s.name, d.Reason)
 	case "approve":
 	default:
-		return VerdictAllow, ""
+		return VerdictAllow, d.Reason
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Reading the current content for the diff is not an operation of the agent.
+	ctx, cancel := context.WithTimeout(sandbox.WithCall(context.Background(), sandbox.CallInfo{Hidden: true}), 20*time.Second)
 	defer cancel()
 	old, err := s.sess.ReadFile(ctx, a.Path)
 	label := "modify " + a.Path
@@ -200,6 +270,7 @@ func (s *sandboxTools) writePolicy(raw json.RawMessage) (Verdict, string) {
 }
 
 func (s *sandboxTools) write(ctx context.Context, c Call) (Result, error) {
+	ctx = annotate(ctx, c)
 	var a struct{ Path, Content string }
 	if err := decode(c.Args, &a); err != nil {
 		return Result{}, err
@@ -211,6 +282,7 @@ func (s *sandboxTools) write(ctx context.Context, c Call) (Result, error) {
 }
 
 func (s *sandboxTools) list(ctx context.Context, c Call) (Result, error) {
+	ctx = annotate(ctx, c)
 	var a struct{ Path string }
 	if err := decode(c.Args, &a); err != nil {
 		return Result{}, err
@@ -234,6 +306,7 @@ func (s *sandboxTools) list(ctx context.Context, c Call) (Result, error) {
 }
 
 func (s *sandboxTools) search(ctx context.Context, c Call) (Result, error) {
+	ctx = annotate(ctx, c)
 	var a struct{ Pattern, Path string }
 	if err := decode(c.Args, &a); err != nil {
 		return Result{}, err
@@ -267,12 +340,13 @@ func (s *sandboxTools) shellPolicy(raw json.RawMessage) (Verdict, string) {
 		return VerdictDeny, fmt.Sprintf("shell command is denied by the %s sandbox policy: %s", s.name, d.Reason)
 	case "approve":
 	default:
-		return VerdictAllow, ""
+		return VerdictAllow, d.Reason
 	}
 	return VerdictApprove, fmt.Sprintf("sandbox %s: run a shell command (%s):\n\n%s", s.name, d.Reason, a.Command)
 }
 
 func (s *sandboxTools) shell(ctx context.Context, c Call) (Result, error) {
+	ctx = annotate(ctx, c)
 	var a struct {
 		Command        string `json:"command"`
 		Stdin          string `json:"stdin"`
@@ -362,12 +436,18 @@ func RunInSandboxEnv(ctx context.Context, sess sandbox.Session, lang, script str
 		var raw [6]byte
 		_, _ = rand.Read(raw[:])
 		file := ".hal/tool-" + hex.EncodeToString(raw[:]) + "." + ext
-		if err := sess.WriteFile(ctx, file, []byte(script)); err != nil {
+		if err := sess.WriteFile(sandbox.WithCall(ctx, sandbox.CallInfo{Hidden: true}), file, []byte(script)); err != nil {
 			return sandbox.ExecResult{}, err
 		}
 		cmd = runner + " " + file + "; code=$?; rm -f " + file + "; exit $code"
 	}
-	res, err := sess.Exec(ctx, b.String()+cmd, stdin, timeout)
+	// The log shows the script, not the exports of the tool's secret values in front of it.
+	ci := sandbox.CallFrom(ctx)
+	ci.Command = script
+	if runner != "" {
+		ci.Command = "# " + runner + " script\n" + script
+	}
+	res, err := sess.Exec(sandbox.WithCall(ctx, ci), b.String()+cmd, stdin, timeout)
 	if err != nil {
 		return res, err
 	}

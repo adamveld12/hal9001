@@ -25,6 +25,9 @@ type RunSpec struct {
 	Input []byte
 	// Env is added to the backend env for this run. Its values are redacted from output.
 	Env map[string]string
+	// Log, when set, receives the provisioning steps and backend messages of Prepare (Manager.Open also wraps the
+	// returned session so its operations are logged). Nil logs nothing.
+	Log RunLog
 }
 
 // ExecResult is the outcome of one command. Output is truncated at MaxOutput bytes per stream.
@@ -169,6 +172,7 @@ func (b redactBackend) Prepare(ctx context.Context, spec RunSpec) (Session, erro
 		}
 	}
 	red := newRedactor(secrets)
+	spec.Log = withRedaction(spec.Log, secrets)
 	sess, err := b.Backend.Prepare(ctx, spec)
 	if err != nil {
 		return nil, redactError{err, red}
@@ -194,6 +198,13 @@ func (e redactError) Unwrap() error { return e.err }
 type redactSession struct {
 	Session
 	red redactor
+}
+
+func (s redactSession) Describe() SessionInfo {
+	if d, ok := s.Session.(Describer); ok {
+		return d.Describe()
+	}
+	return SessionInfo{Workdir: s.Workdir()}
 }
 
 func (s redactSession) Exec(ctx context.Context, cmd string, stdin []byte, timeout time.Duration) (ExecResult, error) {

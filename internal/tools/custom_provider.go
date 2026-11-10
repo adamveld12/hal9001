@@ -86,7 +86,7 @@ func customTool(opt CustomOptions, rs RunSpec, id string, ct CustomTool) Tool {
 			var res UserResult
 			var err error
 			if t.RunsInSandbox {
-				res, err = runToolInSandbox(ctx, c.Sandbox, eff, c.Args, uo)
+				res, err = runToolInSandbox(sandbox.WithCall(ctx, sandbox.CallInfo{Tool: c.Name, Approval: c.Approval}), c.Sandbox, eff, c.Args, uo)
 			} else {
 				res, err = RunUserTool(ctx, eff, c.Args, uo)
 			}

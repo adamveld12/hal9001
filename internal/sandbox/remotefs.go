@@ -43,9 +43,16 @@ type remoteSession struct {
 	// b64Read: the transport is not binary safe; file reads go through base64.
 	b64Read bool
 	closeFn func(ctx context.Context, success bool) error
+	info    SessionInfo
 }
 
 func (s *remoteSession) Workdir() string { return s.workdir }
+
+func (s *remoteSession) Describe() SessionInfo {
+	info := s.info
+	info.Workdir = s.workdir
+	return info
+}
 
 func (s *remoteSession) Close(ctx context.Context, success bool) error {
 	if s.closeFn == nil {

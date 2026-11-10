@@ -234,6 +234,7 @@ func (b *sshBackend) Prepare(ctx context.Context, rs RunSpec) (Session, error) {
 	workdir := strings.TrimSpace(string(res.Stdout))
 	s := &remoteSession{
 		workdir: workdir, run: b.run, timeout: b.timeout, env: mergeEnv(b.env, rs.Env), inlineEnv: true,
+		info: SessionInfo{Name: b.cfg.User + "@" + b.cfg.Host},
 		closeFn: func(ctx context.Context, success bool) error {
 			if perRun && success {
 				_, err := b.run(ctx, "rm -rf -- "+shQuote(workdir), nil, time.Minute, 4096)

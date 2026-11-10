@@ -12,6 +12,7 @@ import { runVisual } from "../../flow/runOverlay";
 import { summarizeStep } from "../../flow/transform/steps";
 import type { TransformNode } from "../../flow/transform/types";
 import { Meta, Mono, SectionTitle, TextLink } from "./Meta";
+import { SandboxLogSection } from "./SandboxLog";
 import {
   commandSnapshot,
   indexText,
@@ -280,6 +281,9 @@ export function NodeRunPanel({
               .sort((a, b) => a.created_at.localeCompare(b.created_at))}
           />
           <Snapshot run={run} />
+          {run.node.type === "agent" && (
+            <SandboxLogSection scope="node" id={run.id} variant="section" />
+          )}
           <section className="space-y-3">
             <Capture label="stdin" blob={run.stdin} />
             <Capture label="stdout" blob={run.stdout} />

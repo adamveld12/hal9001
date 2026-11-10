@@ -1423,6 +1423,60 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/node-runs/{id}/sandbox-log": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["NodeRunId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sandbox log of a node run
+     * @description What happened in the sandbox(es) a node run used: provisioning and teardown steps, every command and file operation
+     *     with exit code, duration, stdout and stderr, calls that policy or a user denied, and messages from the backend.
+     *     `sessions` lists the sandboxes (one per agent run phase) with their status; `entries` are in ascending `id`
+     *     across all of them. Secrets from the env files are redacted, environment variables appear by name only, and each
+     *     command's output is capped (head and tail kept, a marker in between). The whole log of a run is capped as well
+     *     (`truncated` on the session).
+     *
+     *     To tail a running sandbox, load once (optionally with `tail`), then follow `sandbox_log.appended` on the stream and
+     *     fetch `after_id` = the last `id` seen for the content; refetch after a `stream.resync`. The response has no
+     *     sessions (200) when the run used no sandbox.
+     */
+    get: operations["getNodeRunSandboxLog"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/node-runs/{id}/sandbox-log/raw": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["NodeRunId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Download the sandbox log of a node run as text
+     * @description The whole log as plain text, one block per entry (`<time> <level> <title>`, then the command, output and details
+     *     indented), as a download. Same redaction and caps as the JSON form.
+     */
+    get: operations["downloadNodeRunSandboxLog"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/agent-runs": {
     parameters: {
       query?: never;
@@ -1524,6 +1578,60 @@ export interface paths {
      *     Secrets from the env file are redacted.
      */
     get: operations["downloadAgentRunRaw"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/agent-runs/{id}/sandbox-log": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AgentRunId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sandbox log of an agent run
+     * @description What happened in the sandbox(es) an agent run used: provisioning and teardown steps, every command and file operation
+     *     with exit code, duration, stdout and stderr, calls that policy or a user denied, and messages from the backend.
+     *     `sessions` lists the sandboxes (one per agent run phase) with their status; `entries` are in ascending `id`
+     *     across all of them. Secrets from the env files are redacted, environment variables appear by name only, and each
+     *     command's output is capped (head and tail kept, a marker in between). The whole log of a run is capped as well
+     *     (`truncated` on the session).
+     *
+     *     To tail a running sandbox, load once (optionally with `tail`), then follow `sandbox_log.appended` on the stream and
+     *     fetch `after_id` = the last `id` seen for the content; refetch after a `stream.resync`. The response has no
+     *     sessions (200) when the run used no sandbox.
+     */
+    get: operations["getAgentRunSandboxLog"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/agent-runs/{id}/sandbox-log/raw": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AgentRunId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Download the sandbox log of an agent run as text
+     * @description The whole log as plain text, one block per entry (`<time> <level> <title>`, then the command, output and details
+     *     indented), as a download. Same redaction and caps as the JSON form.
+     */
+    get: operations["downloadAgentRunSandboxLog"];
     put?: never;
     post?: never;
     delete?: never;
@@ -4474,6 +4582,131 @@ export interface components {
       last_seq: number;
       has_more: boolean;
     };
+    /** @description One sandbox an agent run opened. `agent_run_id` is the id the run has or would have (the sandbox is provisioned before the agent run is recorded, and when provisioning fails there is no agent run). */
+    SandboxSession: {
+      id: components["schemas"]["Ulid"];
+      node_run_id: components["schemas"]["Ulid"];
+      agent_run_id: components["schemas"]["Ulid"];
+      /** @enum {string} */
+      backend: "local" | "docker" | "depot" | "kubernetes" | "ssh";
+      /**
+       * @description `failed` means provisioning failed (see `error`); `interrupted` means the daemon stopped while the sandbox was open.
+       * @enum {string}
+       */
+      status: "provisioning" | "ready" | "failed" | "closed" | "interrupted";
+      /** @description Backend id of the sandbox: the Depot sandbox id. Empty when the backend has none. */
+      sandbox_id?: string;
+      /** @description Container, pod or host name; the run directory for `local`. */
+      sandbox_name?: string;
+      image?: string;
+      /** @description Clone URL without credentials. */
+      repo?: string;
+      ref?: string;
+      /** @enum {string} */
+      lifecycle?: "per_run" | "persistent";
+      workdir?: string;
+      /** @description Names of the environment variables commands see. Values are never recorded. */
+      env_names: string[];
+      /** @description The backend's message when provisioning failed or the sandbox was interrupted. */
+      error?: string;
+      /** @description The run's log hit its size cap; later entries were dropped or lost their output. */
+      truncated: boolean;
+      entry_count: number;
+      started_at: components["schemas"]["Timestamp"];
+      /** @description Provisioning took `ready_at - started_at`. */
+      ready_at?: components["schemas"]["Timestamp"] | null;
+      ended_at?: components["schemas"]["Timestamp"] | null;
+    };
+    SandboxLogEntry: {
+      /** @description Increases in insertion order across all sandboxes; the cursor for `after_id`. */
+      id: number;
+      session_id: components["schemas"]["Ulid"];
+      ts: components["schemas"]["Timestamp"];
+      /**
+       * @description `lifecycle`: provisioning, clone, ready, teardown. `exec`: a command (the `shell` tool, or the script of a custom
+       *     tool that runs in the sandbox). `fs`: `fs_read`, `fs_write`, `fs_list`, `fs_search`. `denied`: a call that was not
+       *     run. `backend`: messages from the backend itself (image pull, pod events).
+       * @enum {string}
+       */
+      kind: "lifecycle" | "exec" | "fs" | "denied" | "backend";
+      /** @enum {string} */
+      level: "info" | "warn" | "error";
+      /** @description One-line summary. */
+      title: string;
+      /** @description The hal tool (`shell`, `fs_write`, a custom tool id). */
+      tool?: string;
+      /** @description How the call was allowed (`auto: <reason>`, `approved by user`) or why it was not run (`denied by policy: ...`, `denied by user`, `expired`). */
+      approval?: string;
+      /** @description The command line; for `fs_search` the pattern. */
+      command?: string;
+      cwd?: string;
+      path?: string;
+      exit_code?: number;
+      duration_ms?: number;
+      /** @description Size of the file read or written; the number of entries or hits listed. */
+      bytes?: number;
+      /** @description Capped to 64 KiB with a marker. Omitted from `sandbox_log.appended` events. */
+      stdout?: string;
+      /** @description Capped to 64 KiB with a marker. Omitted from `sandbox_log.appended` events. */
+      stderr?: string;
+      timed_out?: boolean;
+      /** @description The backend cut the output or hal capped it. */
+      truncated?: boolean;
+      error?: string;
+      /** @description Small details of lifecycle and backend entries. */
+      fields?: {
+        [key: string]: string;
+      };
+    };
+    SandboxLog: {
+      sessions: components["schemas"]["SandboxSession"][];
+      entries: components["schemas"]["SandboxLogEntry"][];
+      has_more: boolean;
+    };
+    /** @description A sandbox started provisioning. `data` is `SandboxSession`; the stream filters `agent_run_id` and `flow_run_id` apply. */
+    SandboxSessionCreatedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "sandbox_session.created";
+      data?: components["schemas"]["SandboxSession"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "sandbox_session.created";
+    };
+    /** @description A sandbox changed status (ready, failed, closed). `data` is `SandboxSession`; the stream filters `agent_run_id` and `flow_run_id` apply. */
+    SandboxSessionUpdatedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "sandbox_session.updated";
+      data?: components["schemas"]["SandboxSession"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "sandbox_session.updated";
+    };
+    /**
+     * @description A sandbox log entry was added. `data` is `SandboxLogEntry` without `stdout` and `stderr` (fetch `after_id` for the
+     *     content) plus `agent_run_id` and `node_run_id`; the stream filters `agent_run_id` and `flow_run_id` apply.
+     */
+    SandboxLogAppendedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "sandbox_log.appended";
+      data?: components["schemas"]["SandboxLogAppended"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "sandbox_log.appended";
+    };
+    /** @description The `data` of `sandbox_log.appended`. */
+    SandboxLogAppended: components["schemas"]["SandboxLogEntry"] & {
+      agent_run_id: components["schemas"]["Ulid"];
+      node_run_id: components["schemas"]["Ulid"];
+    };
     PermissionOption: {
       option_id: string;
       name: string;
@@ -5224,6 +5457,9 @@ export interface components {
       | "agent_run.created"
       | "agent_run.updated"
       | "agent_event.appended"
+      | "sandbox_session.created"
+      | "sandbox_session.updated"
+      | "sandbox_log.appended"
       | "permission_request.created"
       | "permission_request.updated"
       | "approval.created"
@@ -5264,6 +5500,9 @@ export interface components {
       | components["schemas"]["AgentRunCreatedEvent"]
       | components["schemas"]["AgentRunUpdatedEvent"]
       | components["schemas"]["AgentEventAppendedEvent"]
+      | components["schemas"]["SandboxSessionCreatedEvent"]
+      | components["schemas"]["SandboxSessionUpdatedEvent"]
+      | components["schemas"]["SandboxLogAppendedEvent"]
       | components["schemas"]["PermissionRequestCreatedEvent"]
       | components["schemas"]["PermissionRequestUpdatedEvent"]
       | components["schemas"]["ApprovalCreatedEvent"]
@@ -7938,6 +8177,67 @@ export interface operations {
       default: components["responses"]["Error"];
     };
   };
+  getNodeRunSandboxLog: {
+    parameters: {
+      query?: {
+        /** @description Return only entries with an `id` greater than this. Default 0 (from the start). */
+        after_id?: number;
+        limit?: number;
+        /** @description Return the newest `limit` entries (after `after_id`) instead of the oldest; `has_more` then says older entries were left out. */
+        tail?: boolean;
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["NodeRunId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sessions and a page of entries. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SandboxLog"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  downloadNodeRunSandboxLog: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["NodeRunId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Text file. */
+      200: {
+        headers: {
+          /** @description `attachment; filename="sandbox-log-<id>.txt"` */
+          "Content-Disposition"?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          "text/plain": string;
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
   listAgentRuns: {
     parameters: {
       query?: {
@@ -8077,6 +8377,67 @@ export interface operations {
         };
         content: {
           "application/x-ndjson": string;
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getAgentRunSandboxLog: {
+    parameters: {
+      query?: {
+        /** @description Return only entries with an `id` greater than this. Default 0 (from the start). */
+        after_id?: number;
+        limit?: number;
+        /** @description Return the newest `limit` entries (after `after_id`) instead of the oldest; `has_more` then says older entries were left out. */
+        tail?: boolean;
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["AgentRunId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sessions and a page of entries. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SandboxLog"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  downloadAgentRunSandboxLog: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["AgentRunId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Text file. */
+      200: {
+        headers: {
+          /** @description `attachment; filename="sandbox-log-<id>.txt"` */
+          "Content-Disposition"?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          "text/plain": string;
         };
       };
       401: components["responses"]["Unauthorized"];

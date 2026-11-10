@@ -25,6 +25,7 @@ export const QUERY_ROOTS = [
   "agent-runs",
   "agent-run",
   "agent-events",
+  "sandbox-log",
   "permission-requests",
   "approvals",
   "approval",

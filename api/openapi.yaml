@@ -193,6 +193,9 @@ paths:
         agent_run.created: '#/components/schemas/AgentRunCreatedEvent'
         agent_run.updated: '#/components/schemas/AgentRunUpdatedEvent'
         agent_event.appended: '#/components/schemas/AgentEventAppendedEvent'
+        sandbox_session.created: '#/components/schemas/SandboxSessionCreatedEvent'
+        sandbox_session.updated: '#/components/schemas/SandboxSessionUpdatedEvent'
+        sandbox_log.appended: '#/components/schemas/SandboxLogAppendedEvent'
         permission_request.created: '#/components/schemas/PermissionRequestCreatedEvent'
         permission_request.updated: '#/components/schemas/PermissionRequestUpdatedEvent'
         approval.created: '#/components/schemas/ApprovalCreatedEvent'
@@ -1891,6 +1894,73 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         default: {$ref: '#/components/responses/Error'}
+  /api/node-runs/{id}/sandbox-log:
+    parameters:
+      - {$ref: '#/components/parameters/NodeRunId'}
+    get:
+      operationId: getNodeRunSandboxLog
+      tags: [agents]
+      summary: Sandbox log of a node run
+      description: |
+        What happened in the sandbox(es) a node run used: provisioning and teardown steps, every command and file operation
+        with exit code, duration, stdout and stderr, calls that policy or a user denied, and messages from the backend.
+        `sessions` lists the sandboxes (one per agent run phase) with their status; `entries` are in ascending `id`
+        across all of them. Secrets from the env files are redacted, environment variables appear by name only, and each
+        command's output is capped (head and tail kept, a marker in between). The whole log of a run is capped as well
+        (`truncated` on the session).
+
+        To tail a running sandbox, load once (optionally with `tail`), then follow `sandbox_log.appended` on the stream and
+        fetch `after_id` = the last `id` seen for the content; refetch after a `stream.resync`. The response has no
+        sessions (200) when the run used no sandbox.
+      x-hal-service: api
+      parameters:
+        - name: after_id
+          in: query
+          description: Return only entries with an `id` greater than this. Default 0 (from the start).
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+        - name: tail
+          in: query
+          description: Return the newest `limit` entries (after `after_id`) instead of the oldest; `has_more` then says older entries were left out.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Sessions and a page of entries.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxLog'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/node-runs/{id}/sandbox-log/raw:
+    parameters:
+      - {$ref: '#/components/parameters/NodeRunId'}
+    get:
+      operationId: downloadNodeRunSandboxLog
+      tags: [agents]
+      summary: Download the sandbox log of a node run as text
+      description: |
+        The whole log as plain text, one block per entry (`<time> <level> <title>`, then the command, output and details
+        indented), as a download. Same redaction and caps as the JSON form.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Text file.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename="sandbox-log-<id>.txt"`'
+              schema: {type: string}
+          content:
+            text/plain:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
   /api/agent-runs:
     get:
       operationId: listAgentRuns
@@ -2013,6 +2083,73 @@ paths:
               schema: {type: string}
           content:
             application/x-ndjson:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs/{id}/sandbox-log:
+    parameters:
+      - {$ref: '#/components/parameters/AgentRunId'}
+    get:
+      operationId: getAgentRunSandboxLog
+      tags: [agents]
+      summary: Sandbox log of an agent run
+      description: |
+        What happened in the sandbox(es) an agent run used: provisioning and teardown steps, every command and file operation
+        with exit code, duration, stdout and stderr, calls that policy or a user denied, and messages from the backend.
+        `sessions` lists the sandboxes (one per agent run phase) with their status; `entries` are in ascending `id`
+        across all of them. Secrets from the env files are redacted, environment variables appear by name only, and each
+        command's output is capped (head and tail kept, a marker in between). The whole log of a run is capped as well
+        (`truncated` on the session).
+
+        To tail a running sandbox, load once (optionally with `tail`), then follow `sandbox_log.appended` on the stream and
+        fetch `after_id` = the last `id` seen for the content; refetch after a `stream.resync`. The response has no
+        sessions (200) when the run used no sandbox.
+      x-hal-service: api
+      parameters:
+        - name: after_id
+          in: query
+          description: Return only entries with an `id` greater than this. Default 0 (from the start).
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+        - name: tail
+          in: query
+          description: Return the newest `limit` entries (after `after_id`) instead of the oldest; `has_more` then says older entries were left out.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Sessions and a page of entries.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxLog'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/agent-runs/{id}/sandbox-log/raw:
+    parameters:
+      - {$ref: '#/components/parameters/AgentRunId'}
+    get:
+      operationId: downloadAgentRunSandboxLog
+      tags: [agents]
+      summary: Download the sandbox log of an agent run as text
+      description: |
+        The whole log as plain text, one block per entry (`<time> <level> <title>`, then the command, output and details
+        indented), as a download. Same redaction and caps as the JSON form.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Text file.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename="sandbox-log-<id>.txt"`'
+              schema: {type: string}
+          content:
+            text/plain:
               schema: {type: string}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -5491,6 +5628,105 @@ components:
         items: {type: array, items: {$ref: '#/components/schemas/AgentEvent'}}
         last_seq: {type: integer, minimum: 0, description: '`seq` of the last event in `items`, or the requested `after_seq` when empty.'}
         has_more: {type: boolean}
+    SandboxSession:
+      type: object
+      description: One sandbox an agent run opened. `agent_run_id` is the id the run has or would have (the sandbox is provisioned before the agent run is recorded, and when provisioning fails there is no agent run).
+      required: [id, node_run_id, agent_run_id, backend, status, env_names, truncated, entry_count, started_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        node_run_id: {$ref: '#/components/schemas/Ulid'}
+        agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        backend: {type: string, enum: [local, docker, depot, kubernetes, ssh]}
+        status:
+          type: string
+          enum: [provisioning, ready, failed, closed, interrupted]
+          description: '`failed` means provisioning failed (see `error`); `interrupted` means the daemon stopped while the sandbox was open.'
+        sandbox_id: {type: string, description: 'Backend id of the sandbox: the Depot sandbox id. Empty when the backend has none.'}
+        sandbox_name: {type: string, description: 'Container, pod or host name; the run directory for `local`.'}
+        image: {type: string}
+        repo: {type: string, description: Clone URL without credentials.}
+        ref: {type: string}
+        lifecycle: {type: string, enum: [per_run, persistent]}
+        workdir: {type: string}
+        env_names: {type: array, items: {type: string}, description: 'Names of the environment variables commands see. Values are never recorded.'}
+        error: {type: string, description: The backend's message when provisioning failed or the sandbox was interrupted.}
+        truncated: {type: boolean, description: The run's log hit its size cap; later entries were dropped or lost their output.}
+        entry_count: {type: integer, minimum: 0}
+        started_at: {$ref: '#/components/schemas/Timestamp'}
+        ready_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}], description: 'Provisioning took `ready_at - started_at`.'}
+        ended_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+    SandboxLogEntry:
+      type: object
+      required: [id, session_id, ts, kind, level, title]
+      properties:
+        id: {type: integer, minimum: 1, description: 'Increases in insertion order across all sandboxes; the cursor for `after_id`.'}
+        session_id: {$ref: '#/components/schemas/Ulid'}
+        ts: {$ref: '#/components/schemas/Timestamp'}
+        kind:
+          type: string
+          enum: [lifecycle, exec, fs, denied, backend]
+          description: |
+            `lifecycle`: provisioning, clone, ready, teardown. `exec`: a command (the `shell` tool, or the script of a custom
+            tool that runs in the sandbox). `fs`: `fs_read`, `fs_write`, `fs_list`, `fs_search`. `denied`: a call that was not
+            run. `backend`: messages from the backend itself (image pull, pod events).
+        level: {type: string, enum: [info, warn, error]}
+        title: {type: string, description: One-line summary.}
+        tool: {type: string, description: 'The hal tool (`shell`, `fs_write`, a custom tool id).'}
+        approval: {type: string, description: 'How the call was allowed (`auto: <reason>`, `approved by user`) or why it was not run (`denied by policy: ...`, `denied by user`, `expired`).'}
+        command: {type: string, description: 'The command line; for `fs_search` the pattern.'}
+        cwd: {type: string}
+        path: {type: string}
+        exit_code: {type: integer}
+        duration_ms: {type: integer, minimum: 0}
+        bytes: {type: integer, minimum: 0, description: 'Size of the file read or written; the number of entries or hits listed.'}
+        stdout: {type: string, description: 'Capped to 64 KiB with a marker. Omitted from `sandbox_log.appended` events.'}
+        stderr: {type: string, description: 'Capped to 64 KiB with a marker. Omitted from `sandbox_log.appended` events.'}
+        timed_out: {type: boolean}
+        truncated: {type: boolean, description: The backend cut the output or hal capped it.}
+        error: {type: string}
+        fields: {type: object, additionalProperties: {type: string}, description: Small details of lifecycle and backend entries.}
+    SandboxLog:
+      type: object
+      required: [sessions, entries, has_more]
+      properties:
+        sessions: {type: array, items: {$ref: '#/components/schemas/SandboxSession'}}
+        entries: {type: array, items: {$ref: '#/components/schemas/SandboxLogEntry'}}
+        has_more: {type: boolean}
+    SandboxSessionCreatedEvent:
+      description: A sandbox started provisioning. `data` is `SandboxSession`; the stream filters `agent_run_id` and `flow_run_id` apply.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [sandbox_session.created]}
+            data: {$ref: '#/components/schemas/SandboxSession'}
+    SandboxSessionUpdatedEvent:
+      description: A sandbox changed status (ready, failed, closed). `data` is `SandboxSession`; the stream filters `agent_run_id` and `flow_run_id` apply.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [sandbox_session.updated]}
+            data: {$ref: '#/components/schemas/SandboxSession'}
+    SandboxLogAppendedEvent:
+      description: |
+        A sandbox log entry was added. `data` is `SandboxLogEntry` without `stdout` and `stderr` (fetch `after_id` for the
+        content) plus `agent_run_id` and `node_run_id`; the stream filters `agent_run_id` and `flow_run_id` apply.
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [sandbox_log.appended]}
+            data: {$ref: '#/components/schemas/SandboxLogAppended'}
+    SandboxLogAppended:
+      description: The `data` of `sandbox_log.appended`.
+      allOf:
+        - {$ref: '#/components/schemas/SandboxLogEntry'}
+        - type: object
+          required: [agent_run_id, node_run_id]
+          properties:
+            agent_run_id: {$ref: '#/components/schemas/Ulid'}
+            node_run_id: {$ref: '#/components/schemas/Ulid'}
     PermissionOption:
       type: object
       required: [option_id, name, kind]
@@ -6196,6 +6432,9 @@ components:
         - agent_run.created
         - agent_run.updated
         - agent_event.appended
+        - sandbox_session.created
+        - sandbox_session.updated
+        - sandbox_log.appended
         - permission_request.created
         - permission_request.updated
         - approval.created
@@ -6238,6 +6477,9 @@ components:
         - {$ref: '#/components/schemas/AgentRunCreatedEvent'}
         - {$ref: '#/components/schemas/AgentRunUpdatedEvent'}
         - {$ref: '#/components/schemas/AgentEventAppendedEvent'}
+        - {$ref: '#/components/schemas/SandboxSessionCreatedEvent'}
+        - {$ref: '#/components/schemas/SandboxSessionUpdatedEvent'}
+        - {$ref: '#/components/schemas/SandboxLogAppendedEvent'}
         - {$ref: '#/components/schemas/PermissionRequestCreatedEvent'}
         - {$ref: '#/components/schemas/PermissionRequestUpdatedEvent'}
         - {$ref: '#/components/schemas/ApprovalCreatedEvent'}
@@ -6269,6 +6511,9 @@ components:
           agent_run.created: '#/components/schemas/AgentRunCreatedEvent'
           agent_run.updated: '#/components/schemas/AgentRunUpdatedEvent'
           agent_event.appended: '#/components/schemas/AgentEventAppendedEvent'
+          sandbox_session.created: '#/components/schemas/SandboxSessionCreatedEvent'
+          sandbox_session.updated: '#/components/schemas/SandboxSessionUpdatedEvent'
+          sandbox_log.appended: '#/components/schemas/SandboxLogAppendedEvent'
           permission_request.created: '#/components/schemas/PermissionRequestCreatedEvent'
           permission_request.updated: '#/components/schemas/PermissionRequestUpdatedEvent'
           approval.created: '#/components/schemas/ApprovalCreatedEvent'
