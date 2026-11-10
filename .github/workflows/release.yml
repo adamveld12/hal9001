@@ -73,10 +73,58 @@ jobs:
           name: HAL9001-${{ env.HAL9001_RELEASE_VERSION }}
           path: dist/*
 
+      - name: Update manifest
+        id: manifest
+        env:
+          HAL9001_UPDATE_SIGNING_KEY: ${{ secrets.HAL9001_UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$HAL9001_UPDATE_SIGNING_KEY" ]; then
+            echo "::warning::HAL9001_UPDATE_SIGNING_KEY is not set: publishing without a signed update manifest; installed apps will not see this build"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag="v${HAL9001_RELEASE_VERSION}"
+          zip="dist/HAL9001-${HAL9001_RELEASE_VERSION}.app.zip"
+          mkdir -p manifests
+          # Channel policy: space-separated channels that every main build is published to.
+          CHANNELS="stable beta"
+          for channel in $CHANNELS; do
+            mise exec -- go run ./cmd/hal9001-release manifest \
+              --channel "$channel" \
+              --version "$HAL9001_RELEASE_VERSION" \
+              --build "$HAL9001_RELEASE_BUILD" \
+              --commit "$GITHUB_SHA" \
+              --zip "$zip" \
+              --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "$zip")" \
+              --notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}" \
+              --notes-file notes.md \
+              --min-macos 13.0 \
+              --key-env HAL9001_UPDATE_SIGNING_KEY \
+              --out "manifests/${channel}.json"
+          done
+          cp "manifests/${CHANNELS%% *}.json" dist/update.json
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         run: |
+          assets=(dist/*.dmg dist/*.app.zip dist/SHA256SUMS)
+          if [ "${{ steps.manifest.outputs.signed }}" = "true" ]; then
+            assets+=(dist/update.json)
+          fi
           gh release create "v${HAL9001_RELEASE_VERSION}" \
             --target "$GITHUB_SHA" \
             --title "HAL9001 ${HAL9001_RELEASE_VERSION}" \
             --notes-file notes.md \
-            dist/*.dmg dist/*.app.zip dist/SHA256SUMS
+            "${assets[@]}"
+
+      - name: Publish channel manifests
+        if: steps.manifest.outputs.signed == 'true'
+        run: |
+          if ! gh release view channels >/dev/null 2>&1; then
+            gh release create channels \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Update channels" \
+              --notes "Update manifests (stable.json, beta.json) read by the HAL9001 app updater. Managed by CI; do not edit."
+          fi
+          gh release upload channels manifests/*.json --clobber

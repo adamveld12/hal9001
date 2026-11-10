@@ -59,6 +59,8 @@ flowchart LR
 
 Authoring details: [docs/flows.md](docs/flows.md).
 
+Release and auto-update setup: [docs/releases.md](docs/releases.md).
+
 ## Prerequisites
 
 macOS, [mise](https://mise.jdx.dev/), and the tools below. Everything pinned in [`mise.toml`](mise.toml) (Go, Node,
