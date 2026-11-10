@@ -7,6 +7,7 @@ import { GeneralSection } from "./GeneralSection";
 import { PasskeysPanel } from "./PasskeysPanel";
 import { RuntimesSection } from "./RuntimesSection";
 import { SessionsPanel } from "./SessionsPanel";
+import { UpdatesSection } from "./UpdatesSection";
 
 function SettingsPageShell({
   title,
@@ -58,6 +59,14 @@ export function SettingsRuntimesPage() {
   return (
     <SettingsPageShell title="Runtimes">
       <RuntimesSection />
+    </SettingsPageShell>
+  );
+}
+
+export function SettingsUpdatesPage() {
+  return (
+    <SettingsPageShell title="Updates">
+      <UpdatesSection />
     </SettingsPageShell>
   );
 }

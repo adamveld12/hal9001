@@ -54,7 +54,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "assist.updated": ["assist-sessions"],
   "assist.message": [],
   "notification.created": [],
-  "update.status": [],
+  "update.status": ["update"],
   "update.install": [],
 };
 
