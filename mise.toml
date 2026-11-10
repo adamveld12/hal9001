@@ -80,3 +80,16 @@ run = "go run ./cmd/hal9001-app"
 [tasks."build:all"]
 description = "Build everything: hal9001 with embedded UI and the macOS app bundles"
 depends = ["build", "app"]
+
+[tasks.dmg]
+description = "Build bin/HAL9001-<version>.dmg (drag-to-Applications installer) from bin/HAL9001.app; run `mise run app` first. Finder layout needs a GUI session, otherwise a plain DMG is made with a warning"
+run = "scripts/make-dmg.sh"
+
+[tasks.release]
+description = "Build the app bundles, then the DMG installer"
+depends = ["app"]
+run = "scripts/make-dmg.sh"
+
+[tasks."dmg:check"]
+description = "Mount the newest bin/HAL9001-*.dmg read-only and verify the app, Applications symlink and background"
+run = "scripts/check-dmg.sh"
