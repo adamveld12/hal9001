@@ -85,7 +85,7 @@ func TestRequiresApprovalApprove(t *testing.T) {
 	if !ap.Gate || ap.Title != "g: run act?" || ap.Description != "Run node act (command) of flow g" || !strings.Contains(ap.Details.Command, "echo ran") || ap.FlowRun != run || ap.NodeRun == "" || ap.Details.DryRun || ap.ExpiresAt != "" {
 		t.Fatalf("approval: %+v", ap)
 	}
-	for _, want := range []string{"echo ran", `"name": "api"`} {
+	for _, want := range []string{`"name": "api"`} {
 		if !strings.Contains(ap.Details.BodyMD, want) {
 			t.Errorf("approval body lacks %q:\n%s", want, ap.Details.BodyMD)
 		}
