@@ -305,7 +305,7 @@ func flowCmds() []*command {
 			fs.StringVar(&jsonInput, "json", "", "use this JSON value as input")
 			fs.StringVar(&wait, "wait", "", "how long to wait for the node run, e.g. 60s (server default 30s)")
 			fs.BoolVar(&dry, "dry-run", false, "run with dry-run semantics")
-			fs.StringVar(&simulate, "simulate-approval", "", "approval nodes: the decision to take instead of waiting, approved (default) or denied")
+			fs.StringVar(&simulate, "simulate-approval", "", "approval nodes and requires_approval gates: the decision to take instead of waiting, approved (default) or denied")
 		},
 		run: func(ctx context.Context, c *call) error {
 			input, err := testNodeInput(c, event, nodeRun, jsonInput)

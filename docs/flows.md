@@ -295,8 +295,8 @@ edges:
 - **Fan-out:** one port can feed several nodes; they run concurrently.
 - **Ports:** a `command` node declares `ports` (default `[out]`). A `transform` node's ports come from its route step
   (see [Building flows without code](#building-flows-without-code-transform-nodes)). Every node also has an implicit
-  `error` port; agent nodes in `approve` mode also have `denied`. `error` and `denied` cannot be declared. Inbox nodes
-  and agent nodes emit on `out`.
+  `error` port; agent nodes in `approve` mode and any node with `requires_approval` also have `denied`. `error` and
+  `denied` cannot be declared. Inbox nodes and agent nodes emit on `out`.
 - **Error port:** if an edge leaves a node's `error` port, a failed node run is routed there instead of failing the
   branch, with the payload `{"input": <node input>, "error": <class>, "reason": ..., "exit_code": ..., "stderr": ...}`
   (stderr cut to 4000 characters). Test runs never route.
@@ -485,6 +485,48 @@ dry run: approving or denying only exercises the flow's branches."; the notifica
 (`draft_test`, `hal9001 assist test`) never wait: they take the decision `simulate_approval` (`approved` default, or
 `denied`; `--simulate-approval`) and create no approval.
 
+### Asking for approval before any node runs (`requires_approval`)
+
+Every node type except `approval` takes two common fields:
+
+```yaml
+- id: deploy
+  type: command
+  lang: bash
+  command: [./deploy.sh]
+  requires_approval: true     # default false
+  approval_timeout: 2h        # optional; without it the approval waits until someone decides
+```
+
+When a run reaches a node with `requires_approval: true` (its input is ready, before it executes), hal creates a
+pending approval of type `request` (flagged `request.gate: true`) and parks the node as `awaiting_approval`; the flow
+run is `awaiting_approval`. The node holds no concurrency slot and survives daemon restarts, exactly like a "Request
+approval" node. The approval is titled `<flow>: run <node id>?` and shows the flow, the node id and type, the node's
+resolved configuration (a command's script or command line, a transform's compiled jq, an agent's runtime, mode and
+rendered instructions, an inbox node's rendered title and summary) and its input (cut to 2000 characters). It is decided
+like any other approval: in the Inbox, with `hal9001 approvals approve|deny <id> [--comment ...]`, or from the
+notification.
+
+- **Approve:** the node runs exactly as if it had no gate; its ports and payloads are unchanged.
+- **Deny** (or `approval_timeout` passing, which counts as denied with `decision: timeout`): the node does **not** run.
+  It emits on the extra port `denied` with `{"input": <node input>, "approval": {"decision": "denied|timeout",
+  "comment": "...", "decided_by": "...", "decided_at": "...", "approval_id": "..."}}`. The `error` port is only for
+  real failures.
+- **`denied` not wired:** the branch stops. The node run is recorded as `done` on port `denied` (error class `denied`,
+  or `approval_timeout` for a timeout, reason `denied: <comment>`), not as failed, and the flow run still succeeds.
+- **Validation:** edges from `denied` are only valid on a node with `requires_approval`, an agent in `approve` mode, or
+  an `approval` node. `approval_timeout` without `requires_approval` is an error (on agent nodes it keeps its own
+  meaning, below). `requires_approval` on an `approval` node is an error: it already asks.
+- **Dry run, kill switch, tests:** like the Request approval node. A dry run still asks, and the approval is tagged
+  `dry_run`; approvals can be decided while paused (the approved node queues until resume); "Run node on sample" and the
+  assist flow test never wait, they take `simulate_approval` and create no approval.
+- **Agent nodes:** the gate comes first, before phase 1; the agent does not start until it is approved. An agent in
+  `approve` mode with the default `approve: proposal` then raises its own proposal approval as usual, so a gated agent
+  can ask twice (run it at all? then, is this plan acceptable?). Both denials leave on the same `denied` port; tell them
+  apart by the payload: a gate denial has `approval` (and no `agent`), a proposal denial has `agent` (with the
+  `proposal` and `comment`). On an agent node `approval_timeout` keeps bounding its own approvals (per-tool calls,
+  proposals; default from `config.yaml`) and also bounds the gate, which waits indefinitely when it is not set.
+
 ## Agent nodes
 
 ```yaml
@@ -602,7 +644,8 @@ Starter prompts are in `content/prompts/` (`pr-review`, `triage-slack`, `linear-
 
 Downstream nodes receive `{"input": <the agent node's input>, "agent": {"run_id", "status", "final_message", "note",
 "proposal", "comment"}}`, for example `{{.input.agent.note.title}}` or `{{.input.input.url}}`. The same shape goes out on
-`denied`. Agent failures go to the `error` port (classes include `timeout`, `approval_timeout`, `spawn_failed`,
+`denied` for a denied proposal (a node with `requires_approval` that is denied before it starts emits
+`{"input", "approval"}` on `denied` instead, see [above](#asking-for-approval-before-any-node-runs-requires_approval)). Agent failures go to the `error` port (classes include `timeout`, `approval_timeout`, `spawn_failed`,
 `agent_exit`, `agent_error`, `mode_unavailable`, `model_rejected`, `policy_rejected`, `empty_proposal`).
 
 ## Dry-run, replay and test-node
