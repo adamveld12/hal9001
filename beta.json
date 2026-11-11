@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.19",
-  "build": 19,
-  "commit": "a67b9838105510d086d76cb5f175728a8659442e",
-  "published_at": "2026-11-11T18:58:44Z",
+  "version": "0.1.21",
+  "build": 21,
+  "commit": "e7c349660ff376afd6819246c784567589b8b324",
+  "published_at": "2026-11-11T22:14:04Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.19/HAL9001-0.1.19.app.zip",
-  "size": 28058059,
-  "sha256": "10e2df2bcdaedb57a322013837b3e323e1c0424abe7cf2a7b91b7a953a44aa87",
-  "signature": "WQ7/v7J41cfWM5FSL7EcExHIcsemvDLsz7c55hnJUijkrfNV4xMAFimh0UzhtQAtjHpZqLmkD/2avSAt83dzAQ==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.19",
-  "notes": "## Changes\n\n- Runtimes: detect Claude/Codex/omp, hal-managed ACP adapters, no mise (#15) (a67b983)\n\nCommit: a67b9838105510d086d76cb5f175728a8659442e\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.21/HAL9001-0.1.21.app.zip",
+  "size": 28327871,
+  "sha256": "cf120bc998c0c7c9cde63c7fdcad9b9fa50bc799d1ca410bb1f391c50dcf6301",
+  "signature": "t/X5mzqOjErOr52Z6CiEP43uTO1zB0lvCaXlwx1lBJqMDbleA34o9oXl5oLpAxVZCxHy6H2jZeJgxihz+DqCAA==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.21",
+  "notes": "## Changes\n\n- Unified chat: Chat page, continue an agent run in chat, sandbox keep_alive, emit back into the flow (#18) (e7c3496)\n- Tailscale: share hal on your tailnet and manage allowed_hosts from hal (#16) (9103678)\n\nCommit: e7c349660ff376afd6819246c784567589b8b324\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
