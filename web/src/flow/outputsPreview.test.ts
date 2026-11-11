@@ -76,7 +76,12 @@ describe("outputsSection", () => {
       a,
       [
         { id: "c", type: "command", lang: "bash", script: "cat" },
-        { id: "ap", type: "approval", title: "Ok {{.input.x}}?" },
+        {
+          id: "ap",
+          type: "approval",
+          title: "Ok {{.input.x}}?",
+          description: "d",
+        },
       ],
       [
         { from: "a", port: "go", to: "c" },

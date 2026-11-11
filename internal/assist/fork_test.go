@@ -104,6 +104,9 @@ func (hubHost) Approve(context.Context, tools.ApprovalRequest) (tools.Decision, 
 }
 func (hubHost) Record(context.Context, tools.CallRecord) (string, error) { return "rec", nil }
 func (hubHost) Finish(context.Context, string, string)                   {}
+func (hubHost) Ask(context.Context, tools.AskRequest) (tools.AskResult, error) {
+	return tools.AskResult{Status: "approved"}, nil
+}
 
 type tokens struct{}
 

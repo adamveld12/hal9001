@@ -15,7 +15,7 @@ import (
 
 // msgID is the id of a folded message: the agent run id and the seq of the first event it was built from (0: the run's
 // prompt), zero padded so ids sort in transcript order.
-func msgID(runID string, seq int64) string { return fmt.Sprintf("%s:%08d", runID, seq) }
+func MessageID(runID string, seq int64) string { return fmt.Sprintf("%s:%08d", runID, seq) }
 
 func startOf(ar *store.AgentRun) time.Time {
 	if ar.StartedAt != nil {
@@ -51,7 +51,7 @@ func (s Service) foldRun(ctx context.Context, ar *store.AgentRun, head bool) ([]
 		return nil, err
 	}
 	if p := string(prompt); strings.TrimSpace(p) != "" {
-		add(Message{ID: msgID(runID, 0), Role: "user", Text: &p, CreatedAt: startOf(ar)})
+		add(Message{ID: MessageID(runID, 0), Role: "user", Text: &p, CreatedAt: startOf(ar)})
 	}
 	approvals, err := s.approvalsByToolCall(ctx, runID)
 	if err != nil {
@@ -97,7 +97,7 @@ func (s Service) foldRun(ctx context.Context, ar *store.AgentRun, head bool) ([]
 					if ev.Kind == "user_message" {
 						role = "user"
 					}
-					textIdx, textKind = add(Message{ID: msgID(runID, ev.Seq), Role: role, CreatedAt: ev.TS.UTC()}), ev.Kind
+					textIdx, textKind = add(Message{ID: MessageID(runID, ev.Seq), Role: role, CreatedAt: ev.TS.UTC()}), ev.Kind
 				}
 				text.WriteString(chunk)
 			case "tool_call", "tool_call_update":
@@ -119,7 +119,7 @@ func (s Service) foldRun(ctx context.Context, ar *store.AgentRun, head bool) ([]
 						title += " " + id
 					}
 					ts = &toolState{call: ToolCall{ToolCallID: id, Title: title, Kind: "other", Status: "pending", RawInput: json.RawMessage("null"), Content: []json.RawMessage{}}}
-					ts.idx = add(Message{ID: msgID(runID, ev.Seq), Role: "tool", ApprovalID: nonEmpty(approvals[id]), CreatedAt: ev.TS.UTC()})
+					ts.idx = add(Message{ID: MessageID(runID, ev.Seq), Role: "tool", ApprovalID: nonEmpty(approvals[id]), CreatedAt: ev.TS.UTC()})
 					tools[key] = ts
 					order = append(order, ts)
 				}
@@ -127,7 +127,7 @@ func (s Service) foldRun(ctx context.Context, ar *store.AgentRun, head bool) ([]
 			case "harness":
 				if t := harnessText(raw); t != "" {
 					flushText()
-					add(Message{ID: msgID(runID, ev.Seq), Role: "system", Text: &t, CreatedAt: ev.TS.UTC()})
+					add(Message{ID: MessageID(runID, ev.Seq), Role: "system", Text: &t, CreatedAt: ev.TS.UTC()})
 				}
 			}
 		}
@@ -167,7 +167,7 @@ func (s Service) foldRun(ctx context.Context, ar *store.AgentRun, head bool) ([]
 		if ar.EndedAt != nil {
 			at = ar.EndedAt.UTC()
 		}
-		add(Message{ID: msgID(runID, seq), Role: "system", Text: &t, CreatedAt: at})
+		add(Message{ID: MessageID(runID, seq), Role: "system", Text: &t, CreatedAt: at})
 	}
 	return out, nil
 }
@@ -234,7 +234,7 @@ func (s Service) proposalMessages(ctx context.Context, ar *store.AgentRun, seq *
 			at = *a.DecidedAt
 		}
 		id := a.ID
-		out = append(out, Message{ID: msgID(ar.ID, *seq), Role: "system", Text: &t, ApprovalID: &id, CreatedAt: at.UTC()})
+		out = append(out, Message{ID: MessageID(ar.ID, *seq), Role: "system", Text: &t, ApprovalID: &id, CreatedAt: at.UTC()})
 	}
 	return out, nil
 }

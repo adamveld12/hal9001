@@ -487,7 +487,7 @@ func TestUnifiedChatToolsAndApprovals(t *testing.T) {
 	d.Decide(ap2.ID, false, map[string]any{"comment": "no thanks"})
 	d.assistWait(fork.ID, "idle")
 	runs := d.assistRuns(fork.ID)
-	if tr := d.Transcript(runs[len(runs)-1].ID); !strings.Contains(tr, "mcp[c1] is_error=true") || !strings.Contains(tr, "denied by the user: no thanks") || !strings.Contains(tr, "Went on.") {
+	if tr := d.Transcript(runs[len(runs)-1].ID); !strings.Contains(tr, "mcp[c1] is_error=true") || !strings.Contains(tr, "Denied by the user: ") || !strings.Contains(tr, "no thanks") || !strings.Contains(tr, "Went on.") {
 		t.Errorf("denied shell transcript:\n%s", tr)
 	}
 	if len(e.workspaces("denied.txt")) != 0 {

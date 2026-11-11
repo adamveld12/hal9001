@@ -107,7 +107,8 @@ func TestToolCallApprovalExposesReasonAndArguments(t *testing.T) {
 		RawInput: store.Inline(`{"tool":"emit_ship","arguments":{"body":"hi"}}`), Reason: "Emit a result to flow f: node work -> port ship.", MatchedRule: "hal:approval",
 	}
 	must(t, e.st.CreatePermissionRequest(ctx(), pr))
-	ap := &store.Approval{AgentRunID: turn.ID, Type: store.ApprovalToolCall, PermissionRequestID: pr.ID}
+	ap := &store.Approval{AgentRunID: turn.ID, Type: store.ApprovalToolCall, PermissionRequestID: pr.ID,
+		Title: "Emit ship", Description: "Emit a result to flow f.", Origin: store.OriginChat}
 	must(t, e.st.CreateApproval(ctx(), ap))
 
 	got := e.get("/api/approvals/" + ap.ID).want(200).json()["permission_request"].(map[string]any)

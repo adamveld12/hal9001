@@ -89,10 +89,10 @@ func TestCategoriesAndTheirButtons(t *testing.T) {
 		want string
 	}{
 		{note(), CategoryNote, "open:Open,mark_read:Mark read,archive:Archive"},
-		{approval("proposal"), CategoryApproval, "approve:Approve,deny:Deny,approve_comment*:Approve with comment…,deny_comment*:Deny with comment…"},
-		{approval("tool_call"), CategoryApproval, "approve:Approve,deny:Deny,approve_comment*:Approve with comment…,deny_comment*:Deny with comment…"},
-		{req, CategoryApproval, "approve:Approve,deny:Deny,approve_comment*:Approve with comment…,deny_comment*:Deny with comment…"},
-		{editable, CategoryEditable, "approve:Approve as-is,deny:Deny,open:Open to edit"},
+		{approval("proposal"), CategoryApproval, "approve:Approve,deny:Deny,deny_steer*:Deny…"},
+		{approval("tool_call"), CategoryApproval, "approve:Approve,deny:Deny,deny_steer*:Deny…"},
+		{req, CategoryApproval, "approve:Approve,deny:Deny,deny_steer*:Deny…"},
+		{editable, CategoryEditable, "approve:Approve as-is,deny:Deny,deny_steer*:Deny…,open:Open to edit"},
 	} {
 		if got := CategoryFor(tc.n); got != tc.cat {
 			t.Errorf("%s editable=%v: category %q, want %q", tc.n.Kind, tc.n.Editable, got, tc.cat)
@@ -245,8 +245,8 @@ func TestActionsCallTheAPI(t *testing.T) {
 		{"approve", act(ActApprove, "", approval("proposal")), `POST /api/approvals/a1/approve application/json {}`},
 		{"approve as-is on an editable request", act(ActApprove, "", func() Notification { n := approval("request"); n.Editable = true; return n }()), `POST /api/approvals/a1/approve application/json {}`},
 		{"deny", act(ActDeny, "", approval("tool_call")), `POST /api/approvals/a1/deny application/json {}`},
-		{"approve with comment", act(ActApproveComment, "ship it", approval("proposal")), `POST /api/approvals/a1/approve application/json {"comment":"ship it"}`},
-		{"deny with comment", act(ActDenyComment, "not now", approval("proposal")), `POST /api/approvals/a1/deny application/json {"comment":"not now"}`},
+		{"deny with steering", act(ActDenySteer, " not now ", approval("proposal")), `POST /api/approvals/a1/deny application/json {"comment":"not now"}`},
+		{"deny with empty steering", act(ActDenySteer, "", approval("tool_call")), `POST /api/approvals/a1/deny application/json {}`},
 		{"mark read", act(ActMarkRead, "", note()), `PATCH /api/inbox/i1 application/json {"read":true}`},
 		{"archive", act(ActArchive, "", note()), `PATCH /api/inbox/i1 application/json {"archived":true}`},
 	} {

@@ -152,9 +152,13 @@ curl -sS "$API/flow-runs/$RUN?wait=60s" | jq '{status: .flow_run.status, nodes: 
 AID=$(curl -sS "$API/approvals?status=pending&type=proposal" | jq -r '.items[0].id')
 curl -sS "$API/approvals/$AID" | jq -r '.proposal_md'
 curl -sS -X POST -H "$H" "$API/approvals/$AID/approve" -d '{"comment": "Go ahead, but skip the docs."}' | jq '{status, decided_at}'
-# To refuse: POST .../deny {"comment": "..."} routes the node to port "denied".
+# To refuse: POST .../deny {"comment": "..."} routes the node to port "denied". The comment is steering: a denied
+# tool call or request_approval hands it to the agent, a denied proposal is revised with it.
 # A tool_call approval: .../approve allows the call, .../deny rejects it and the agent continues,
 # .../deny with {"cancel_run": true} ends the run.
+# Every approval has a title, a description, details (command, fields, diffs), an origin and, when an agent run
+# raised it, a conversation link: GET "$API/approvals?conversation_id=<chat session or agent run id>" lists the
+# approvals of one conversation.
 
 # 4. Wait for the resumed run to finish, then look at what the agent did.
 curl -sS "$API/flow-runs/$RUN?wait=300s" | jq '.flow_run.status'

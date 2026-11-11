@@ -265,7 +265,7 @@ nodes:
       ship: {description: Ship it., schema: {type: object, required: [body], properties: {body: {type: string}}}}
       hold: {description: Hold., schema: {type: object, required: [why], properties: {why: {type: string}}}}
   - {id: gated, type: inbox, title: "gated {{.input.agent.output.body}}", requires_approval: true}
-  - {id: confirm, type: approval, title: "Hold {{.input.agent.output.why}}?", body: "why"}
+  - {id: confirm, type: approval, title: "Hold {{.input.agent.output.why}}?", description: "Hold the shipment", body: "why"}
   - {id: after, type: inbox, title: "after {{.input.approval.decision}}"}
 edges:
   - {from: prep, to: work}
@@ -307,7 +307,7 @@ func TestContinuationHonoursApprovalsDownstream(t *testing.T) {
 	}
 	h.waitRun(id2, store.FlowRunAwaitingApproval)
 	pending = h.approvals(store.ApprovalPending)
-	if len(pending) != 1 || pending[0].Type != store.ApprovalRequest || !strings.Contains(pending[0].Request, "Hold later?") {
+	if len(pending) != 1 || pending[0].Type != store.ApprovalRequest || pending[0].Title != "Hold later?" {
 		t.Fatalf("approval node did not ask: %+v", pending)
 	}
 	if _, err := h.eng.DecideApproval(context.Background(), pending[0].ID, core.ApprovalDecision{Approve: true, Principal: "tester"}); err != nil {

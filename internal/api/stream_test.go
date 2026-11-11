@@ -239,7 +239,7 @@ func (e *env) agentFixtureFor(fr *store.FlowRun, nr *store.NodeRun) agentFixture
 	must(e.t, e.st.AppendAgentEvent(ctx(), &store.AgentEvent{AgentRunID: f.agentRun.ID, Kind: "message", Payload: store.Inline(`{"text":"hi"}`)}))
 	f.perm = &store.PermissionRequest{AgentRunID: f.agentRun.ID, ToolCallID: "c", ToolKind: "edit", Title: "Edit", RawInput: store.Inline(`{}`)}
 	must(e.t, e.st.CreatePermissionRequest(ctx(), f.perm))
-	f.toolAppr = &store.Approval{AgentRunID: f.agentRun.ID, Type: store.ApprovalToolCall, PermissionRequestID: f.perm.ID}
+	f.toolAppr = seeded(&store.Approval{AgentRunID: f.agentRun.ID, Type: store.ApprovalToolCall, PermissionRequestID: f.perm.ID})
 	must(e.t, e.st.CreateApproval(ctx(), f.toolAppr))
 	return f
 }

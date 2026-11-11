@@ -106,6 +106,7 @@ describe("validateFlow", () => {
       id: "ask",
       type: "approval",
       title: "ok?",
+      description: "d",
       requires_approval: true,
     } as never);
     const d = validateFlow(flow).find(

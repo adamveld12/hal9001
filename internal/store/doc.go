@@ -18,7 +18,7 @@
 //	sandbox_sessions      per sandbox an agent run opened: backend, ids, image, repo, status, timing; follows its node run
 //	sandbox_log_entries   that sandbox's log: lifecycle, commands with output, file operations, denied calls
 //	permission_requests   every session/request_permission and its decision
-//	approvals             proposal and tool_call approvals
+//	approvals             proposal, tool_call and request approvals (one shape: title, description, details, origin, conversation)
 //	inbox_items           notes; links to runs by plain ids so they can outlive pruning
 //	auth_events           every authentication decision
 //	sessions              id is the caller-computed hash of the cookie secret

@@ -96,15 +96,19 @@ func TestMCPOperatorToolsOverHTTPAndStdio(t *testing.T) {
 		t.Errorf("an operator approval has run ids: %+v", ap)
 	}
 	var detail struct {
-		Request struct {
-			Title  string `json:"title"`
+		Title        string `json:"title"`
+		Description  string `json:"description"`
+		Origin       struct{ Kind string }
+		Conversation *struct{} `json:"conversation"`
+		Details      struct {
 			BodyMD string `json:"body_md"`
 			Fields []struct{ Key, Value string }
-		} `json:"request"`
+		} `json:"details"`
 	}
 	d.Get("/api/approvals/" + ap.ID).Want(200).JSON(&detail)
-	if !strings.Contains(detail.Request.Title, "flow_run") || !strings.Contains(detail.Request.BodyMD, `"one"`) || len(detail.Request.Fields) != 3 {
-		t.Errorf("approval content: %+v", detail.Request)
+	if !strings.Contains(detail.Title, "flow_run") || detail.Description == "" || detail.Origin.Kind != "mcp" || detail.Conversation != nil ||
+		!strings.Contains(detail.Details.BodyMD, `"one"`) || len(detail.Details.Fields) != 3 {
+		t.Errorf("approval content: %+v", detail)
 	}
 	if n := len(d.FlowRuns("one")); n != 0 {
 		t.Fatalf("the flow ran before it was approved: %d runs", n)
@@ -126,7 +130,7 @@ func TestMCPOperatorToolsOverHTTPAndStdio(t *testing.T) {
 	ap = d.WaitApproval("request")
 	d.Decide(ap.ID, false, map[string]any{"comment": "not now"})
 	res, err = wait()
-	if err != nil || !res.IsError || !strings.Contains(resultText(t, res), "denied by the user: not now") {
+	if err != nil || !res.IsError || !strings.Contains(resultText(t, res), `Denied by the user: "not now"`) {
 		t.Fatalf("denied sensor_poll: %v %+v", err, res)
 	}
 	if got := len(d.Events("ticker")); got != events {

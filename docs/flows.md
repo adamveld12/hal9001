@@ -431,6 +431,7 @@ opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|ar
 - id: confirm-reply
   type: approval
   title: "Send this reply to {{.input.author}}?"
+  description: "Posts the drafted reply to {{.input.author}} on {{.input.repo}}."   # template, REQUIRED
   body: "{{.input.draft}}"            # markdown template, optional
   fields: [author, repo, lines]       # input dot-paths shown as a key/value table, optional
   editable: [draft]                   # input dot-paths the approver may edit before approving, optional
@@ -441,7 +442,9 @@ opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|ar
 
 When a run reaches the node it creates a pending approval of type `request` and parks the node as `awaiting_approval`
 (the flow run is `awaiting_approval`). The node holds no concurrency slot and survives daemon restarts. `title` is
-required and must not render empty; `title` and `body` are templates over the same data as inbox nodes (`.input`,
+required and must not render empty. `description` is required too (validation error `required` at
+`nodes[i].description` in the editor, `hal9001 validate`, assist saves and API file saves, until it is filled): one or two
+sentences saying what the approver is asked and why. `title`, `description` and `body` are templates over the same data as inbox nodes (`.input`,
 `.event`, ...). Someone approves or denies it, with an optional comment, in the Inbox (Needs action) or with
 `hal9001 approvals approve|deny <id>`; a macOS notification opens `/inbox/approval/<id>`.
 
@@ -449,6 +452,16 @@ required and must not render empty; `title` and `body` are templates over the sa
 `{"input": <node input>, "approval": {"decision": "approved|denied|timeout", "comment": "...", "decided_by": "...", "decided_at": "...", "edited": false}}`.
 When the timeout passes, `on_timeout` decides: `denied` or `approved` route to that port with `decision: timeout`,
 `error` fails the node (class `approval_timeout`, routed on `error` if wired).
+
+**Steering.** Denying with text is steering: the text becomes `approval.comment` on port `denied` (also for a gated node,
+see `requires_approval`), so a downstream node can act on it, for example by feeding it back to an agent. Steering text
+on approvals raised by agents counts against `max_steers_per_run` (config and Settings > General; default 3, 1 to 100):
+a denied tool call or `request_approval` returns the text to the agent verbatim and the agent continues, and a proposal
+denied with text is revised and proposed again (the node leaves on `denied` only for a denial without text). After that
+many steered denials in one conversation or one flow agent run (the revisions of a proposal are one conversation), the
+next gated action is held for the user, who cannot steer it, and the agent is told to stop and wait. Approvals that
+hal raises itself (tool calls, gates, MCP actions) get a description generated from the facts; only the Request approval
+node needs one written.
 
 **Edit before approve.** `editable` lists dot-paths into the input (validated: non-empty, no empty segments, no
 duplicates). The approval shows each as an editable box prefilled with the current value: a textarea for strings, a JSON
@@ -467,6 +480,7 @@ nodes:
   - id: review
     type: approval
     title: "Reply in #{{.input.channel}}?"
+    description: "Posts the drafted reply to #{{.input.channel}}; edit the wording first if needed."
     editable: [reply]
   - id: send
     type: command
@@ -526,7 +540,8 @@ notification.
   assist flow test never wait, they take `simulate_approval` and create no approval.
 - **Agent nodes:** the gate comes first, before phase 1; the agent does not start until it is approved. An agent in
   `approve` mode with the default `approve: proposal` then raises its own proposal approval as usual, so a gated agent
-  can ask twice (run it at all? then, is this plan acceptable?). Both denials leave on the same `denied` port; tell them
+  can ask twice (run it at all? then, is this plan acceptable?). Both denials leave on the same `denied` port (a
+  proposal denied with text is revised instead, see Steering); tell them
   apart by the payload: a gate denial has `approval` (and no `agent`), a proposal denial has `agent` (with the
   `proposal` and `comment`). On an agent node `approval_timeout` keeps bounding its own approvals (per-tool calls,
   proposals; default from `config.yaml`) and also bounds the gate, which waits indefinitely when it is not set.
@@ -585,7 +600,7 @@ decides each call inside its server. The modes differ in what a write may do.
 |---|---|---|
 | `readonly` | Calls that would change something (for example a `gh_api` POST) fail without asking. `emit_<port>` tools still work: they change nothing outside hal. | Port `out`, or the declared ports. An inbox item and notification only with `output: note` (see the behavior change below). |
 | `auto` | Calls that need approval still ask: hal's approval rules are not bypassed by the mode. | Port `out`, or the declared ports; an inbox item only with `output: note`. |
-| `approve` + `proposal` | Phase 1 is read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) with "Approved. Execute the plan." plus your comment (and the Outputs section when the node has ports). Denying routes to port `denied`. With ports, the `emit_<port>` tools and the Outputs section exist only in phase 2. | Port `out` (or the declared ports) after phase 2. |
+| `approve` + `proposal` | Phase 1 is read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) with "Approved. Execute the plan." plus your comment (and the Outputs section when the node has ports). Denying without text routes to port `denied`. Denying with text is steering: the agent revises the plan in another read-only turn (same session when it can be loaded, else a new one carrying the earlier plan and your text) and the node stays parked on a new proposal approval; revisions count against `max_steers_per_run`, and a held proposal's denial ends on `denied`. With ports, the `emit_<port>` tools and the Outputs section exist only in phase 2. | Port `out` (or the declared ports) after phase 2. |
 | `approve` + `per_tool` | One session (emit tools available throughout); every call that needs approval becomes a tool-call Approval showing the tool and its arguments. Allow runs the call; deny returns a tool error and the agent continues. After `approval_timeout` the call fails with a tool error. | Port `out` (or the declared ports). |
 
 A flow run waiting on an approval has status `awaiting_approval`; downstream nodes run after the agent finishes.
@@ -767,6 +782,7 @@ A port `schema` is a JSON Schema written as YAML (JSON also works), draft 2020-1
 - id: ask
   type: approval
   title: "Send reply? {{.input.agent.output.priority}}"
+  description: "Sends the agent's drafted reply."
   body: "{{.input.agent.output.reply}}"
 edges:
   - {from: triage, port: fix, to: format}

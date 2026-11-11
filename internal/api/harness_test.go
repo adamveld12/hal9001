@@ -501,3 +501,13 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// seeded fills what every approval needs (title, description, origin, conversation) so a test can store one directly.
+func seeded(a *store.Approval) *store.Approval {
+	a.Title, a.Description = "Approve "+string(a.Type), "Do the "+string(a.Type)
+	a.Origin = store.OriginFlow
+	if a.AgentRunID != "" {
+		a.ConversationID, a.ConversationKind = a.AgentRunID, store.ConvFlow
+	}
+	return a
+}

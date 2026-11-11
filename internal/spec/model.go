@@ -125,6 +125,8 @@ const (
 	DefaultCommandTimeout     = Duration(time.Minute)
 	DefaultAgentTimeout       = Duration(30 * time.Minute)
 	DefaultApprovalTimeout    = Duration(time.Hour)
+	DefaultMaxSteersPerRun    = 3
+	MaxMaxSteersPerRun        = 100
 	// MaxSystemPromptBytes caps Config.SystemPrompt.
 	MaxSystemPromptBytes = 16 << 10
 )
@@ -148,6 +150,9 @@ type Config struct {
 	// ApprovalTimeout is the default for agent nodes that do not set their own
 	// approval_timeout (see Config.ApprovalTimeoutFor).
 	ApprovalTimeout Duration `yaml:"approval_timeout,omitempty" json:"approval_timeout"`
+	// MaxSteersPerRun is how many steered denials (a denial with steering text) one conversation or flow agent run
+	// takes before the next gated action is held (see Config.MaxSteers).
+	MaxSteersPerRun int `yaml:"max_steers_per_run,omitempty" json:"max_steers_per_run"`
 	// SystemPrompt is user-written markdown (name, preferences, facts) added to every agent call; see tools.Preamble.
 	SystemPrompt  string             `yaml:"system_prompt,omitempty" json:"system_prompt"`
 	SessionTTL    Duration           `yaml:"session_ttl,omitempty" json:"session_ttl"`
@@ -278,7 +283,7 @@ type Flow struct {
 //	         approval_timeout, allow, mcp_servers, sandbox, image, repo, ref, tools
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
-//	approval: title, body, fields, priority, timeout, on_timeout
+//	approval: title, description, body, fields, editable, priority, timeout, on_timeout
 //
 // requires_approval and approval_timeout apply to every type but approval: the node waits for a user's approval
 // before it runs, and a denial (or the timeout) leaves it on port denied.
@@ -317,9 +322,11 @@ type Node struct {
 	SuggestedReply string `yaml:"suggested_reply,omitempty" json:"suggested_reply,omitempty"`
 	Links          []Link `yaml:"links,omitempty" json:"links,omitempty"`
 
-	// approval (title and priority are shared with inbox)
-	Body   string   `yaml:"body,omitempty" json:"body,omitempty"`
-	Fields []string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	// approval (title and priority are shared with inbox). Description is a template saying what the approver is
+	// asked and why; it is required.
+	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Body        string   `yaml:"body,omitempty" json:"body,omitempty"`
+	Fields      []string `yaml:"fields,omitempty" json:"fields,omitempty"`
 	// Editable lists dot-paths into the input the approver may edit before approving.
 	Editable  []string `yaml:"editable,omitempty" json:"editable,omitempty"`
 	OnTimeout string   `yaml:"on_timeout,omitempty" json:"on_timeout,omitempty"`

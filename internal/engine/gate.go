@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"hal9001/internal/agent"
-	"hal9001/internal/notify"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -58,24 +57,19 @@ func (e *Engine) gate(ne *nodeEnv) (out nodeOutcome, held bool) {
 		return e.gateDecidedOutcome(ne, ap), true
 	}
 
-	req, err := e.gateRequest(ne)
+	spc, err := e.gateSpec(ne)
 	if err != nil {
 		return failure(errTemplate, err.Error()), true
 	}
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return failure(errConfig, err.Error()), true
-	}
-	ap = &store.Approval{NodeRunID: ne.nr.ID, Type: store.ApprovalRequest, Request: string(raw)}
 	if t := ne.node.ApprovalTimeout; t > 0 {
 		exp := time.Now().UTC().Add(t.Std())
-		ap.ExpiresAt = &exp
+		spc.ExpiresAt = &exp
 	}
-	if err := e.st.CreateApproval(e.dbCtx, ap); err != nil {
+	r, err := e.RaiseApproval(e.dbCtx, spc)
+	if err != nil {
 		return failure(errConfig, "create approval: "+err.Error()), true
 	}
-	e.notify(notify.Request(ne.fr.FlowID, ap.ID, req, e.url(ApprovalPath(ap.ID))))
-	return nodeOutcome{status: store.NodeAwaitingApproval, reason: "awaiting approval " + ap.ID}, true
+	return nodeOutcome{status: store.NodeAwaitingApproval, reason: "awaiting approval " + r.Approval.ID}, true
 }
 
 // gateApproval is the approval a node run raised for its gate, or nil.
@@ -87,12 +81,14 @@ func (e *Engine) gateApproval(nodeRunID string) (*store.Approval, error) {
 	return &apps.Items[0], nil
 }
 
-// gateRequest renders what the user is asked: the node's resolved configuration and its input.
-func (e *Engine) gateRequest(ne *nodeEnv) (store.RequestApproval, error) {
+// gateSpec renders what the user is asked: hal's description of the gated node, and as details the node's resolved
+// configuration (the real command or script) and its input.
+func (e *Engine) gateSpec(ne *nodeEnv) (ApprovalSpec, error) {
 	n, red := ne.node, ne.snap.red
-	req := store.RequestApproval{
-		Title:    fmt.Sprintf("%s: run %s?", ne.fr.FlowID, n.ID),
-		Priority: store.PriorityNormal, DryRun: ne.fr.DryRun, Gate: true, Fields: []store.RequestField{},
+	req := ApprovalSpec{
+		Type:  store.ApprovalRequest,
+		Title: fmt.Sprintf("%s: run %s?", ne.fr.FlowID, n.ID), Description: fmt.Sprintf("Run node %s (%s) of flow %s", n.ID, n.Type, ne.fr.FlowID),
+		DryRun: ne.fr.DryRun, NodeRunID: ne.nr.ID, FlowID: ne.fr.FlowID, Meta: store.RequestApproval{Gate: true},
 	}
 	add := func(key, value string) {
 		if value != "" {
@@ -112,9 +108,9 @@ func (e *Engine) gateRequest(ne *nodeEnv) (store.RequestApproval, error) {
 	case spec.NodeCommand:
 		add("lang", n.Lang)
 		if n.Lang == spec.LangExec {
-			block("Command", "", strings.Join(n.Command, " "))
+			req.Command = red.String(truncate(strings.Join(n.Command, " "), gateScriptLimit))
 		} else {
-			block("Script", n.Lang, n.Script)
+			req.Command = red.String(truncate(strings.TrimRight(n.Script, "\n"), gateScriptLimit))
 		}
 		if n.Cwd != nil {
 			cwd, err := ne.render("cwd", n.Cwd.Path)

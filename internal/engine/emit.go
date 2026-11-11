@@ -162,6 +162,7 @@ func (e *Engine) emitTool(fork core.ForkNode, conversationID string, orig *store
 			}
 			return tools.VerdictApprove, emitApprovalReason(fork, orig, et, payload)
 		},
+		Describe: tools.DescribeEmit(fork.FlowID, fork.NodeID, et.port, strings.Join(et.next, "; ")),
 		Run: func(ctx context.Context, c tools.Call) (tools.Result, error) {
 			if !strings.HasPrefix(c.Approval, "approved by user") {
 				return tools.Result{}, fmt.Errorf("%s: refused: the call was not approved by the user", et.name)

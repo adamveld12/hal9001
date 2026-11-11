@@ -183,7 +183,7 @@ func TestUnifiedChatEmitApprovalStartsAContinuationRun(t *testing.T) {
 	d.assistWait(fork.ID, "idle")
 	runs = d.assistRuns(fork.ID)
 	tr = d.Transcript(runs[len(runs)-1].ID)
-	wantContains(t, "denied emit transcript", tr, "mcp[e1] is_error=true", "denied by the user: not now", "Asked to emit.")
+	wantContains(t, "denied emit transcript", tr, "mcp[e1] is_error=true", "Denied by the user: ", "not now", "Asked to emit.")
 	if n := len(d.continuationRuns(orig.FlowRunID)); n != 1 {
 		t.Errorf("a denied emit started a run: %d continuation runs", n)
 	}
@@ -209,7 +209,7 @@ func TestUnifiedChatEmitApprovalStartsAContinuationRun(t *testing.T) {
 	}
 	e.wantUpstreamReused(origDetail, parked, "pre")
 	gate := d.gateApproval()
-	if gate.FlowRun != id2 || !gate.Request.Gate {
+	if gate.FlowRun != id2 || !gate.Gate {
 		t.Errorf("the gate of the downstream node: %+v", gate)
 	}
 	sameTitles(t, d.Inbox(), "Reviewed Flow says fine", "Reviewed chat says hi")

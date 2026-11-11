@@ -36,13 +36,20 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	if err != nil {
 		return failure(errConfig, err.Error())
 	}
-	if prev != nil && (approval == nil || approval.Status != store.ApprovalApproved) {
-		return failure(errConfig, "node has an unresolved proposal but no approved approval")
+	// A proposal denied with steering (and not held) is revised; an approved one is executed.
+	revising := prev != nil && approval != nil && approval.Status == store.ApprovalDenied && steersProposal(approval)
+	if prev != nil && (approval == nil || (approval.Status != store.ApprovalApproved && !revising)) {
+		return failure(errConfig, "node has an unresolved proposal but no approved or steered approval")
 	}
 
 	var prompt, cwd, wtKey string
 	if prev != nil {
-		prompt, cwd = strings.TrimSuffix(e.readContent(prev.Prompt), agent.ProposalSuffix), prev.Cwd
+		// The original prompt, not the revise prompt of a revision.
+		first, err := e.firstAgentRun(nr)
+		if err != nil {
+			return failure(errConfig, err.Error())
+		}
+		prompt, cwd = strings.TrimSuffix(e.readContent(first.Prompt), agent.ProposalSuffix), prev.Cwd
 	} else {
 		if prompt, err = e.renderPrompt(ne); err != nil {
 			return failure(errTemplate, err.Error())
@@ -64,7 +71,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	// ports produce no note of their own.
 	expectNote := out.mode == spec.OutputNote
 	// The planning phase of an approve+proposal run only writes the plan; the result is returned in the execute phase.
-	planning := mode == agent.ModeApprove && style != agent.ApprovePerTool && prev == nil
+	planning := mode == agent.ModeApprove && style != agent.ApprovePerTool && (prev == nil || revising)
 	var sink *tools.OutputSink
 	if !planning {
 		if sink, err = newOutputSink(node, out); err != nil {
@@ -77,7 +84,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	}
 	runID := e.st.NewID()
 	phase := agent.PhasePropose
-	if prev != nil {
+	if prev != nil && !revising {
 		phase = agent.PhaseExecute
 	}
 	ht, err := e.openHalTools(ctx, tools.RunSpec{
@@ -143,13 +150,20 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	}
 
 	var res agent.RunRecord
-	if prev != nil {
+	switch {
+	case revising:
+		e.markPhaseOneDone(prev)
+		res, err = ex.Revise(ctx, agent.ResumeRequest{
+			RunRequest: req, PrevRunID: prev.ID, SessionID: prev.SessionID,
+			Proposal: e.readContent(approval.Proposal), Comment: approval.Comment,
+		})
+	case prev != nil:
 		e.markPhaseOneDone(prev)
 		res, err = ex.Resume(ctx, agent.ResumeRequest{
 			RunRequest: req, PrevRunID: prev.ID, SessionID: prev.SessionID,
 			Proposal: e.readContent(approval.Proposal), Comment: approval.Comment,
 		})
-	} else {
+	default:
 		res, err = ex.Run(ctx, req)
 	}
 	if err != nil {
@@ -208,7 +222,7 @@ func newOutputSink(node *spec.Node, out agentOutput) (*tools.OutputSink, error) 
 // parkedProposal finds the propose-phase run of a node that is being resumed,
 // and its approval. prev is nil for a fresh node run.
 func (e *Engine) parkedProposal(nr *store.NodeRun) (*store.AgentRun, *store.Approval, error) {
-	runs, err := e.st.ListAgentRuns(e.dbCtx, store.AgentRunFilter{NodeRunID: nr.ID, ListOpts: store.ListOpts{Oldest: true, Limit: 50}})
+	runs, err := e.st.ListAgentRuns(e.dbCtx, store.AgentRunFilter{NodeRunID: nr.ID, ListOpts: store.ListOpts{Oldest: true, Limit: 500}})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -224,6 +238,25 @@ func (e *Engine) parkedProposal(nr *store.NodeRun) (*store.AgentRun, *store.Appr
 		return &last, nil, err
 	}
 	return &last, &apps.Items[0], nil
+}
+
+// firstAgentRun is the first run of a node run: the one that got the node's original prompt, before any revision of
+// a denied proposal.
+func (e *Engine) firstAgentRun(nr *store.NodeRun) (*store.AgentRun, error) {
+	runs, err := e.st.ListAgentRuns(e.dbCtx, store.AgentRunFilter{NodeRunID: nr.ID, ListOpts: store.ListOpts{Oldest: true, Limit: 1}})
+	if err != nil {
+		return nil, err
+	}
+	if len(runs.Items) == 0 {
+		return nil, errors.New("node run has no agent run")
+	}
+	return &runs.Items[0], nil
+}
+
+// steersProposal reports whether a denied proposal carries steering the agent can act on: a comment, and the
+// approval was not held (a held proposal's denial ends the node on port denied).
+func steersProposal(ap *store.Approval) bool {
+	return strings.TrimSpace(ap.Comment) != "" && !ap.Held()
 }
 
 // markPhaseOneDone closes the propose-phase run once its approved plan is being executed.

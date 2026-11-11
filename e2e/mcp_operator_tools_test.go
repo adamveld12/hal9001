@@ -46,20 +46,25 @@ func callMCP(t *testing.T, s *mcpsdk.ClientSession, tool string, args map[string
 }
 
 type requestView struct {
-	ID      string `json:"id"`
-	Status  string `json:"status"`
-	Comment string `json:"comment"`
-	Request struct {
-		Title    string `json:"title"`
-		BodyMD   string `json:"body_md"`
-		Priority string `json:"priority"`
-		Source   string `json:"source"`
-		Client   string `json:"client"`
-		Editable []struct {
-			Key   string          `json:"key"`
-			Value json.RawMessage `json:"value"`
-		} `json:"editable"`
-	} `json:"request"`
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	Comment       string `json:"comment"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	DescriptionBy string `json:"description_by"`
+	Priority      string `json:"priority"`
+	Origin        struct {
+		Kind   string `json:"kind"`
+		Client string `json:"client"`
+	} `json:"origin"`
+	Details struct {
+		BodyMD string `json:"body_md"`
+	} `json:"details"`
+	Editable []struct {
+		Key   string          `json:"key"`
+		Value json.RawMessage `json:"value"`
+	} `json:"editable"`
+	Conversation *struct{} `json:"conversation"`
 }
 
 // waitRequest waits for a pending request approval whose title starts with prefix.
@@ -70,7 +75,7 @@ func waitRequest(t *testing.T, d *Daemon, prefix string) requestView {
 		for _, a := range d.Approvals("pending") {
 			var v requestView
 			d.Get("/api/approvals/" + a.ID).Want(200).JSON(&v)
-			if strings.HasPrefix(v.Request.Title, prefix) {
+			if strings.HasPrefix(v.Title, prefix) {
 				got = v
 				return true
 			}
@@ -130,9 +135,10 @@ func TestMCPCreateFlowAndSensorNeedApproval(t *testing.T) {
 	// Valid: pending approval shows the spec; the flow does not exist until approval; created disabled.
 	wait := callAsync(s, "flow_create", map[string]any{"id": "agent-made", "spec": mcpNewFlow})
 	ap := waitRequest(t, d, "Create flow: agent-made")
-	if ap.Request.Source != "mcp" || !strings.Contains(ap.Request.Client, "e2e-agent") || !strings.Contains(ap.Request.BodyMD, "Created by an agent over MCP") ||
-		!strings.Contains(ap.Request.BodyMD, "```yaml") || !strings.Contains(ap.Request.BodyMD, "disabled") {
-		t.Errorf("approval = %+v", ap.Request)
+	if ap.Origin.Kind != "mcp" || !strings.Contains(ap.Origin.Client, "e2e-agent") || ap.DescriptionBy != "hal" || ap.Description == "" || ap.Conversation != nil ||
+		!strings.Contains(ap.Details.BodyMD, "Created by an agent over MCP") ||
+		!strings.Contains(ap.Details.BodyMD, "```yaml") || !strings.Contains(ap.Details.BodyMD, "disabled") {
+		t.Errorf("approval = %+v", ap)
 	}
 	d.Get("/api/flows/agent-made").Want(404)
 	d.Decide(ap.ID, true, nil)
@@ -161,7 +167,7 @@ func TestMCPCreateFlowAndSensorNeedApproval(t *testing.T) {
 	ap = waitRequest(t, d, "Create flow: denied-flow")
 	d.Decide(ap.ID, false, map[string]any{"comment": "not this one"})
 	res, err = wait()
-	if err != nil || !res.IsError || !strings.Contains(resultText(t, res), "denied by the user: not this one") {
+	if err != nil || !res.IsError || !strings.Contains(resultText(t, res), `Denied by the user: "not this one"`) {
 		t.Fatalf("denied flow_create: %v %+v", err, res)
 	}
 	d.Get("/api/flows/denied-flow").Want(404)
@@ -209,12 +215,13 @@ func TestMCPRequestApproval(t *testing.T) {
 	s := connectMCP(t, d, "e2e-agent")
 
 	wait := callAsync(s, "request_approval", map[string]any{
-		"title": "Send this reply?", "body": "Draft below", "priority": "high",
+		"title": "Send this reply?", "description": "The user asked for a shorter reply.", "body": "Draft below", "priority": "high",
 		"editable": []map[string]any{{"key": "reply", "value": "Hi"}, {"key": "count", "value": 2}},
 	})
 	ap := waitRequest(t, d, "Send this reply?")
-	if ap.Request.Priority != "high" || ap.Request.Source != "mcp" || len(ap.Request.Editable) != 2 || !strings.Contains(ap.Request.Client, "e2e-agent") {
-		t.Errorf("approval = %+v", ap.Request)
+	if ap.Priority != "high" || ap.Origin.Kind != "mcp" || len(ap.Editable) != 2 || !strings.Contains(ap.Origin.Client, "e2e-agent") ||
+		ap.DescriptionBy != "agent" || ap.Description != "The user asked for a shorter reply." {
+		t.Errorf("approval = %+v", ap)
 	}
 	// The notification follows the approval a moment later.
 	d.Eventually("the notification of the request", func() bool {
@@ -236,7 +243,7 @@ func TestMCPRequestApproval(t *testing.T) {
 	}
 
 	// Denied.
-	wait = callAsync(s, "request_approval", map[string]any{"title": "Delete everything?"})
+	wait = callAsync(s, "request_approval", map[string]any{"title": "Delete everything?", "description": "Clean up the build directory."})
 	ap = waitRequest(t, d, "Delete everything?")
 	d.Decide(ap.ID, false, map[string]any{"comment": "no way"})
 	res, _ = wait()
@@ -246,7 +253,7 @@ func TestMCPRequestApproval(t *testing.T) {
 
 	// Undecided when the wait ends: pending, with the id; the approval stays open and is decided later.
 	start := time.Now()
-	res = callMCP(t, s, "request_approval", map[string]any{"title": "Later?", "wait_seconds": 1, "timeout_seconds": 3600})
+	res = callMCP(t, s, "request_approval", map[string]any{"title": "Later?", "description": "Can wait.", "wait_seconds": 1, "timeout_seconds": 3600})
 	got = mcpJSON[askResult](t, res)
 	if got.Status != "pending" || got.ApprovalID == "" || time.Since(start) > 10*time.Second {
 		t.Fatalf("pending result = %+v after %s", got, time.Since(start))
@@ -268,7 +275,7 @@ func TestMCPRequestApproval(t *testing.T) {
 
 	// A timeout shorter than the wait expires the approval: the agent is told expired.
 	start = time.Now()
-	res = callMCP(t, s, "request_approval", map[string]any{"title": "Quick?", "timeout_seconds": 10})
+	res = callMCP(t, s, "request_approval", map[string]any{"title": "Quick?", "description": "Needs an answer fast.", "timeout_seconds": 10})
 	got = mcpJSON[askResult](t, res)
 	if got.Decision != "expired" || time.Since(start) > 30*time.Second {
 		t.Errorf("expiry result = %+v after %s", got, time.Since(start))

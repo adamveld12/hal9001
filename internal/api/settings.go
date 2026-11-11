@@ -147,6 +147,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyMinPriority  *string        `json:"notify_min_priority"`
 		NotifyVia          *string        `json:"notify_via"`
 		ApprovalTimeout    *spec.Duration `json:"approval_timeout"`
+		MaxSteersPerRun    *int           `json:"max_steers_per_run"`
 		SystemPrompt       *string        `json:"system_prompt"`
 		UpdateChannel      *string        `json:"update_channel"`
 		UpdateAutoInstall  *bool          `json:"update_auto_install"`
@@ -191,6 +192,13 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["approval_timeout"] = patch.ApprovalTimeout.String()
+	}
+	if patch.MaxSteersPerRun != nil {
+		if *patch.MaxSteersPerRun < 1 || *patch.MaxSteersPerRun > spec.MaxMaxSteersPerRun {
+			fieldProblem(w, "max_steers_per_run", fmt.Sprintf("max_steers_per_run must be between 1 and %d", spec.MaxMaxSteersPerRun))
+			return
+		}
+		set["max_steers_per_run"] = *patch.MaxSteersPerRun
 	}
 	if patch.SystemPrompt != nil {
 		if len(*patch.SystemPrompt) > spec.MaxSystemPromptBytes {

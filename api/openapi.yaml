@@ -2259,6 +2259,7 @@ paths:
         - {name: type, in: query, schema: {$ref: '#/components/schemas/ApprovalType'}}
         - {name: agent_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: flow_run_id, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: conversation_id, in: query, description: 'Only approvals requested in this conversation (chat session id or agent run id).', schema: {type: string}}
       responses:
         '200':
           description: One page of approvals.
@@ -4520,7 +4521,7 @@ components:
       description: |
         "Request approval": asks the user to approve or deny and parks the node as `awaiting_approval` (no concurrency
         slot; it survives daemon restarts) until someone decides in the Inbox or the approval times out. Creates an
-        approval of type `request`. `title` and `body` are Go templates over `{.event, .input, .flow, .run}`.
+        approval of type `request`. `title`, `description` and `body` are Go templates over `{.event, .input, .flow, .run}`.
         Ports: `approved`, `denied` and the implicit `error`. On `approved` and `denied` (and a timed-out approval
         routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
         comment, decided_by, decided_at, edited, edits?}}`. With `editable`, the approver may change those input paths when
@@ -4534,6 +4535,7 @@ components:
         id: {$ref: '#/components/schemas/Slug'}
         type: {type: string, enum: [approval]}
         title: {type: string, description: Template. Required.}
+        description: {type: string, description: 'Template. Required by validation (an empty one is an error diagnostic, so the file still parses and opens in the visual editor): one or two sentences saying what the approver is asked and why. Shown on the approval card.'}
         body: {type: string, description: Markdown template shown in the approval.}
         fields: {type: array, items: {type: string}, description: 'Dot-paths into the node input, shown as a key/value table.'}
         editable: {type: array, items: {type: string}, description: 'Dot-paths into the node input the approver may edit before approving (strings or JSON values).'}
@@ -4836,6 +4838,7 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        max_steers_per_run: {type: integer, minimum: 1, maximum: 100, default: 3, description: 'How many steered denials (a denial with additional steering text) one agent run or chat conversation takes. The next gated action is then held for the user and the agent is told to stop and wait.'}
         system_prompt: {type: string, maxLength: 16384, description: 'Markdown added to every agent call (flow agent nodes and assistant sessions); empty adds nothing. At most 16 KiB (16384 bytes).'}
         update_channel: {$ref: '#/components/schemas/UpdateChannel'}
         update_auto_install: {type: boolean, default: false}
@@ -5506,6 +5509,7 @@ components:
         notify_min_priority: {$ref: '#/components/schemas/Priority'}
         notify_via: {$ref: '#/components/schemas/NotifyVia'}
         approval_timeout: {$ref: '#/components/schemas/Duration'}
+        max_steers_per_run: {type: integer, minimum: 1, maximum: 100}
         system_prompt: {type: string, description: 'Markdown added to every agent call. Empty clears it. 422 above 16 KiB (16384 bytes).'}
         update_channel: {$ref: '#/components/schemas/UpdateChannel'}
         update_auto_install: {type: boolean, description: 'Install an available app update by itself once no flow is running.'}
@@ -6321,45 +6325,74 @@ components:
         items: {type: array, items: {$ref: '#/components/schemas/PermissionRequest'}}
     Approval:
       type: object
-      required: [id, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, assist_session_id, event_id, runtime, type, permission_request_id, permission_request, proposal_md, request, status, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
+      description: |
+        One shape for every approval: a title, a required description, details (fields, command, diffs, markdown), a
+        priority, where it came from (`origin`) and the conversation it belongs to. Created only by the engine's
+        RaiseApproval, whatever raised it (agent tool call, `request_approval`, proposal, node gate, Request approval
+        node, MCP client).
+      required: [id, type, status, title, description, description_by, priority, origin, details, editable, edits, conversation, held, held_note, gate, on_timeout, agent_run_id, node_run_id, flow_run_id, flow_id, node_id, assist_session_id, event_id, runtime, permission_request_id, permission_request, proposal_md, comment, cancel_run, decided_by, decided_at, created_at, expires_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
+        type: {$ref: '#/components/schemas/ApprovalType'}
+        status: {$ref: '#/components/schemas/ApprovalStatus'}
+        title: {type: string, description: 'One line: what is being asked.'}
+        description:
+          type: string
+          description: Plain text or short markdown, never empty, at most 600 characters. What will happen if approved and why. Written by hal from facts (`description_by` `hal`) or by an agent (`agent`; the card labels it as agent-written and always shows the real command, diff or target beside it).
+        description_by: {type: string, enum: [hal, agent]}
+        priority: {$ref: '#/components/schemas/Priority'}
+        origin: {$ref: '#/components/schemas/ApprovalOrigin'}
+        details: {$ref: '#/components/schemas/ApprovalDetails'}
+        editable: {type: array, description: 'Paths the approver may edit when approving, with their current values (any JSON).', items: {type: object, required: [key, value], properties: {key: {type: string}, value: {}}}}
+        edits: {type: [object, 'null'], description: 'Set once approved with edits: what changed at each path.', additionalProperties: {type: object, required: [before, after], properties: {before: {}, after: {}}}}
+        conversation: {oneOf: [{$ref: '#/components/schemas/ApprovalConversation'}, {type: 'null'}], description: 'The conversation on the Chat page the approval was requested in; null for approvals with no agent run (Request approval nodes, node gates, MCP clients).'}
+        held: {type: boolean, description: 'The conversation reached `max_steers_per_run` steered denials: this action is held for the user and the agent was told to stop and wait. Steering is not offered.'}
+        held_note: {type: [string, 'null']}
+        gate: {type: boolean, description: 'The approval a node with `requires_approval` raised before running: approving runs the node, denying emits its input on port `denied`.'}
+        on_timeout: {type: [string, 'null'], enum: [denied, approved, error, null], description: 'What expiry does for a Request approval node; null otherwise.'}
         agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
-        node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
-        flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
-        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
-        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an operator approval.'}
-        assist_session_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: Set for a tool-call approval raised by an assist session turn.}
+        node_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an MCP approval.'}
+        flow_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an MCP approval.'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an MCP approval.'}
+        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null for an approval of an assist session and for an MCP approval.'}
+        assist_session_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: Set for an approval raised by a chat session turn.}
         event_id: {$ref: '#/components/schemas/NullableUlid'}
         runtime: {$ref: '#/components/schemas/Slug'}
-        type: {$ref: '#/components/schemas/ApprovalType'}
         permission_request_id: {$ref: '#/components/schemas/NullableUlid'}
-        permission_request: {oneOf: [{$ref: '#/components/schemas/PermissionRequest'}, {type: 'null'}], description: 'Embedded for `tool_call` approvals.'}
-        proposal_md: {type: [string, 'null'], description: 'Set for `proposal` approvals.'}
-        request: {oneOf: [{$ref: '#/components/schemas/ApprovalRequestContent'}, {type: 'null'}], description: 'Set for `request` approvals: those of an approval node (with `node_run_id`) and operator approvals, which an external MCP client''s call to a tool with side effects raises (no run ids; `docs/mcp.md`).'}
-        status: {$ref: '#/components/schemas/ApprovalStatus'}
-        comment: {type: [string, 'null']}
-        cancel_run: {type: [boolean, 'null'], description: 'For a denied `tool_call`, whether the run was cancelled.'}
+        permission_request: {oneOf: [{$ref: '#/components/schemas/PermissionRequest'}, {type: 'null'}], description: 'Embedded for `tool_call` approvals (raw input, options).'}
+        proposal_md: {type: [string, 'null'], description: 'Set for `proposal` approvals: the agent''s full proposal. `description` is its summary line.'}
+        comment: {type: [string, 'null'], description: 'The approver''s additional steering text. A denial with a comment is a steered denial; see docs/flows.md.'}
+        cancel_run: {type: [boolean, 'null'], description: 'For a denied `tool_call`, whether the run was cancelled (Deny + stop).'}
         decided_by: {type: [string, 'null'], description: 'Principal that decided; null for `expired`.'}
         decided_at: {$ref: '#/components/schemas/NullableTimestamp'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         expires_at: {$ref: '#/components/schemas/NullableTimestamp'}
-    ApprovalRequestContent:
+    ApprovalOrigin:
       type: object
-      description: What an `approval` node (or the `requires_approval` gate of another node) asked, rendered when the node was reached.
-      required: [title, body_md, fields, editable, priority, dry_run, on_timeout, gate]
+      required: [kind, label, client]
       properties:
-        gate: {type: boolean, description: 'The approval a node with `requires_approval` raised before running: approving runs the node, denying emits its input on port `denied`.'}
-        title: {type: string}
+        kind: {type: string, enum: [flow, chat, continued_chat, mcp], description: '`flow`: a node or agent run of a flow. `chat`: a chat (assist) session. `continued_chat`: a chat continued from a flow agent run. `mcp`: an external MCP client.'}
+        label: {type: string, description: 'Human label, for example `reviews / triage`, `Chat: <title>` or `MCP: claude-code`; may name the sandbox.'}
+        client: {type: [string, 'null'], description: 'Name of the MCP client for kind `mcp`.'}
+    ApprovalDetails:
+      type: object
+      description: What will actually happen, as hal knows it. Always shown next to the description.
+      required: [body_md, fields, command, tool, diffs, dry_run]
+      properties:
         body_md: {type: string, description: 'Markdown. In a dry run the first line says so.'}
         fields: {type: array, items: {type: object, required: [key, value], properties: {key: {type: string}, value: {type: string}}}}
-        editable: {type: array, description: 'Input paths the approver may edit when approving, with their current values (any JSON).', items: {type: object, required: [key, value], properties: {key: {type: string}, value: {}}}}
-        edits: {type: object, description: 'Set once approved with edits: what changed at each path.', additionalProperties: {type: object, required: [before, after], properties: {before: {}, after: {}}}}
-        priority: {$ref: '#/components/schemas/Priority'}
+        command: {type: [string, 'null'], description: 'The shell command or tool-call explanation (extracted from nested arguments), not raw JSON.'}
+        tool: {type: [string, 'null'], description: 'Tool name or kind for a tool call.'}
+        diffs: {type: array, items: {type: object, required: [path, old, new], properties: {path: {type: [string, 'null']}, old: {type: [string, 'null']}, new: {type: string}}}}
         dry_run: {type: boolean, description: 'The approval belongs to a dry run: deciding only exercises the flow''s branches.'}
-        on_timeout: {type: [string, 'null'], enum: [denied, approved, error, null], description: 'What expiry does; null without a timeout (`expires_at`).'}
-        source: {type: [string, 'null'], enum: [mcp, null], description: '`mcp` when an external MCP client raised the approval (`docs/mcp.md`); null for an approval node.'}
-        client: {type: [string, 'null'], description: 'Name of that MCP client (its `clientInfo` or User-Agent); null when unknown or not an MCP approval.'}
+    ApprovalConversation:
+      type: object
+      required: [id, kind, anchor, path]
+      properties:
+        id: {type: string, description: 'Chat session id (kind `chat`) or agent run id (kind `flow`).'}
+        kind: {type: string, enum: [chat, flow]}
+        anchor: {type: [string, 'null'], description: 'Message id of the point where the approval was requested.'}
+        path: {type: string, description: 'UI path: `/chat/<id>?message=<anchor>`.'}
     ApprovalList:
       type: object
       required: [items, next_cursor]
@@ -6376,9 +6409,9 @@ components:
       type: object
       additionalProperties: false
       properties:
-        comment: {type: string}
+        comment: {type: string, description: 'Additional steering. The agent gets it verbatim: a denied tool call or `request_approval` returns `Denied by the user: "<text>". Do not retry the same action unchanged; do what the user asked instead.`, a denied proposal is revised and proposed again with it, a denied node gate or Request approval node continues on port `denied` with it in `approval.comment`.'}
         edits: {description: 'Accepted and ignored: a denial never applies edits.'}
-        cancel_run: {type: boolean, default: false, description: '`tool_call` only: cancel the run instead of letting the agent continue.'}
+        cancel_run: {type: boolean, default: false, description: '`tool_call` only (Deny + stop): cancel the run instead of letting the agent continue.'}
     InboxItem:
       type: object
       required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at]

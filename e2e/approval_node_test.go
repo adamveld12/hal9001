@@ -14,6 +14,7 @@ nodes:
   - id: confirm
     type: approval
     title: "Ship {{.input.name}}?"
+    description: "Asks whether to deploy {{.input.name}}"
     body: "Deploy of **{{.input.name}}**"
     fields: [name, meta.env]
     priority: high
@@ -26,19 +27,20 @@ edges:
 `
 
 type requestApproval struct {
-	ID      string  `json:"id"`
-	Type    string  `json:"type"`
-	Status  string  `json:"status"`
-	AgentID *string `json:"agent_run_id"`
-	NodeRun string  `json:"node_run_id"`
-	FlowRun string  `json:"flow_run_id"`
-	Request struct {
-		Title    string                        `json:"title"`
-		BodyMD   string                        `json:"body_md"`
-		Priority string                        `json:"priority"`
-		DryRun   bool                          `json:"dry_run"`
-		Fields   []struct{ Key, Value string } `json:"fields"`
-	} `json:"request"`
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	Status      string  `json:"status"`
+	AgentID     *string `json:"agent_run_id"`
+	NodeRun     string  `json:"node_run_id"`
+	FlowRun     string  `json:"flow_run_id"`
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Priority    string  `json:"priority"`
+	Details     struct {
+		BodyMD string                        `json:"body_md"`
+		DryRun bool                          `json:"dry_run"`
+		Fields []struct{ Key, Value string } `json:"fields"`
+	} `json:"details"`
 }
 
 func (d *Daemon) requestApproval() requestApproval {
@@ -68,9 +70,9 @@ func TestApprovalNodeApprove(t *testing.T) {
 	run := d.InjectRun("src", map[string]any{"id": "1", "name": "api", "meta": map[string]any{"env": "prod"}})
 	d.WaitRun(run, "awaiting_approval")
 	ap := d.requestApproval()
-	if ap.Type != "request" || ap.AgentID != nil || ap.FlowRun != run || ap.Request.Title != "Ship api?" ||
-		!strings.Contains(ap.Request.BodyMD, "**api**") || ap.Request.Priority != "high" || ap.Request.DryRun ||
-		len(ap.Request.Fields) != 2 || ap.Request.Fields[1].Key != "meta.env" || ap.Request.Fields[1].Value != "prod" {
+	if ap.Type != "request" || ap.AgentID != nil || ap.FlowRun != run || ap.Title != "Ship api?" || ap.Description != "Asks whether to deploy api" ||
+		!strings.Contains(ap.Details.BodyMD, "**api**") || ap.Priority != "high" || ap.Details.DryRun ||
+		len(ap.Details.Fields) != 2 || ap.Details.Fields[1].Key != "meta.env" || ap.Details.Fields[1].Value != "prod" {
 		t.Fatalf("approval: %+v", ap)
 	}
 	if n := d.Node(d.GetRun(run, 0), "confirm"); n.Status != "awaiting_approval" || n.NodeType != "approval" {
@@ -78,7 +80,7 @@ func TestApprovalNodeApprove(t *testing.T) {
 	}
 	d.Eventually("the approval notification", func() bool {
 		for _, n := range d.Notifications() {
-			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/inbox/approval/"+ap.ID && n["subtitle"] == "Request: Ship api?" {
+			if n["open"] == "http://localhost:"+strconv.Itoa(d.Port())+"/inbox/approval/"+ap.ID && n["subtitle"] == "Ship api?" && n["message"] == "Asks whether to deploy api" {
 				return true
 			}
 		}
@@ -203,13 +205,13 @@ func TestApprovalNodeDryRun(t *testing.T) {
 	run := d.InjectRun("src", map[string]any{"id": "1", "name": "api"})
 	d.WaitRun(run, "awaiting_approval")
 	ap := d.requestApproval()
-	if !ap.Request.DryRun || !strings.HasPrefix(ap.Request.BodyMD, "This is a dry run: approving or denying only exercises the flow's branches.") {
-		t.Fatalf("dry-run approval: %+v", ap.Request)
+	if !ap.Details.DryRun || !strings.HasPrefix(ap.Details.BodyMD, "This is a dry run: approving or denying only exercises the flow's branches.") {
+		t.Fatalf("dry-run approval: %+v", ap)
 	}
 	d.Eventually("the dry-run notification", func() bool {
 		for _, n := range d.Notifications() {
 			if strings.HasSuffix(n["open"], "/inbox/approval/"+ap.ID) {
-				return n["subtitle"] == "[dry run] Request: Ship api?"
+				return n["subtitle"] == "[dry run] Ship api?"
 			}
 		}
 		return false
@@ -253,6 +255,7 @@ nodes:
   - id: confirm
     type: approval
     title: "Send reply?"
+    description: "Asks whether to send the drafted reply"
     editable: [draft, tags]
   - {id: yes, type: inbox, title: "sent", summary_md: "{{.input.input.draft}}|{{.input.approval.edited}}|{{.input.approval.edits.draft.before}}|{{index .input.input.tags 0}}"}
   - {id: no, type: inbox, title: "dropped", summary_md: "{{.input.input.draft}}|{{.input.approval.edited}}"}
@@ -262,13 +265,11 @@ edges:
 `
 
 type editableApproval struct {
-	Request struct {
-		Editable []struct {
-			Key   string          `json:"key"`
-			Value json.RawMessage `json:"value"`
-		} `json:"editable"`
-		Edits map[string]struct{ Before, After json.RawMessage } `json:"edits"`
-	} `json:"request"`
+	Editable []struct {
+		Key   string          `json:"key"`
+		Value json.RawMessage `json:"value"`
+	} `json:"editable"`
+	Edits map[string]struct{ Before, After json.RawMessage } `json:"edits"`
 }
 
 // Approving with edits applies them to the downstream input and records before/after; undeclared paths are 422;
@@ -285,9 +286,9 @@ func TestApprovalNodeEdits(t *testing.T) {
 	ap := d.requestApproval()
 	var view editableApproval
 	d.Get("/api/approvals/" + ap.ID).Want(200).JSON(&view)
-	if len(view.Request.Editable) != 2 || view.Request.Editable[0].Key != "draft" || string(view.Request.Editable[0].Value) != `"hi"` ||
-		string(view.Request.Editable[1].Value) != `["a","b"]` {
-		t.Fatalf("editable: %+v", view.Request.Editable)
+	if len(view.Editable) != 2 || view.Editable[0].Key != "draft" || string(view.Editable[0].Value) != `"hi"` ||
+		string(view.Editable[1].Value) != `["a","b"]` {
+		t.Fatalf("editable: %+v", view.Editable)
 	}
 	d.Post("/api/approvals/"+ap.ID+"/approve", map[string]any{"edits": map[string]any{"other": "y"}}).Want(422)
 	d.Decide(ap.ID, true, map[string]any{"edits": map[string]any{"draft": "hello there", "tags": []string{"z"}}})
@@ -296,8 +297,8 @@ func TestApprovalNodeEdits(t *testing.T) {
 		t.Errorf("approved with edits: %+v", it)
 	}
 	d.Get("/api/approvals/" + ap.ID).Want(200).JSON(&view)
-	if e := view.Request.Edits["draft"]; string(e.Before) != `"hi"` || string(e.After) != `"hello there"` || len(view.Request.Edits) != 2 {
-		t.Errorf("recorded edits: %+v", view.Request.Edits)
+	if e := view.Edits["draft"]; string(e.Before) != `"hi"` || string(e.After) != `"hello there"` || len(view.Edits) != 2 {
+		t.Errorf("recorded edits: %+v", view.Edits)
 	}
 
 	payload["id"] = "2"

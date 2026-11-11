@@ -159,7 +159,7 @@ func TestMcpHTTPDeniedSideEffectDoesNotRun(t *testing.T) {
 	}
 	s := connect(t, serveHTTP(t, e.srv).URL+"/mcp")
 	out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: "flow_run", Arguments: map[string]any{"id": "demo"}})
-	if err != nil || !out.IsError || !strings.Contains(textOf(out), "denied by the user: not now") {
+	if err != nil || !out.IsError || !strings.Contains(textOf(out), `Denied by the user: "not now"`) {
 		t.Fatalf("denied flow_run: %v %+v", err, out)
 	}
 	if host.asked.Load() != 1 {
@@ -189,7 +189,7 @@ func TestMcpToolsAreHeldToTheServiceOfTheEndpointTheyCall(t *testing.T) {
 		"flow_run":         {"id": "demo"},
 		"flow_create":      {"id": "fresh", "spec": demoFlowYAML},
 		"sensor_create":    {"id": "fresh", "spec": "lang: bash\nscript: echo\nkey: x"},
-		"request_approval": {"title": "ok?"},
+		"request_approval": {"title": "ok?", "description": "Ship the build."},
 		"send_note":        {"title": "hi"},
 	} {
 		out, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
@@ -290,7 +290,7 @@ func TestMcpDeniedCreateWritesNothing(t *testing.T) {
 	e, host := newOperatorEnv(t, false)
 	s := connect(t, serveHTTP(t, e.srv).URL+"/mcp")
 	out := callTool(t, s, "flow_create", map[string]any{"id": "nope", "spec": newFlowYAML})
-	if !out.IsError || !strings.Contains(textOf(out), "denied by the user: not now") || host.asked.Load() != 1 || fileExists(e, "flows/nope.yaml") {
+	if !out.IsError || !strings.Contains(textOf(out), `Denied by the user: "not now"`) || host.asked.Load() != 1 || fileExists(e, "flows/nope.yaml") {
 		t.Errorf("denied flow_create: %+v asked=%d file=%v", out, host.asked.Load(), fileExists(e, "flows/nope.yaml"))
 	}
 }

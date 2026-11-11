@@ -6,7 +6,7 @@ import { Time } from "../../components/Time";
 import { Badge } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import { Countdown } from "../approvals/Countdown";
-import { TypeBadge } from "../approvals/ApprovalList";
+import { TypeBadge } from "../approvals/badges";
 import {
   approvalOrigin,
   approvalTitle,

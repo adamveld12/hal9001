@@ -230,7 +230,7 @@ function FlowConversation({ c }: { c: ConversationDetail }) {
           )}
           <MessageList
             messages={list.items}
-            runtime={c.runtime}
+            conversationId={c.id}
             source="flow"
             sandbox={sandbox.data}
             onLoadEarlierSandbox={sandbox.loadEarlier}

@@ -751,63 +751,132 @@ func (rv *resolver) permissionRequestView(p store.PermissionRequest) (permission
 }
 
 type approvalView struct {
-	ID                  string                 `json:"id"`
-	AgentRunID          *string                `json:"agent_run_id"`
-	NodeRunID           *string                `json:"node_run_id"`
-	FlowRunID           *string                `json:"flow_run_id"`
-	FlowID              *string                `json:"flow_id"`
-	NodeID              *string                `json:"node_id"`
-	AssistSessionID     *string                `json:"assist_session_id"`
-	EventID             *string                `json:"event_id"`
-	Runtime             string                 `json:"runtime"`
-	Type                string                 `json:"type"`
-	PermissionRequestID *string                `json:"permission_request_id"`
-	PermissionRequest   *permissionRequestView `json:"permission_request"`
-	ProposalMD          *string                `json:"proposal_md"`
-	Request             *approvalRequestView   `json:"request"`
-	Status              string                 `json:"status"`
-	Comment             *string                `json:"comment"`
-	CancelRun           *bool                  `json:"cancel_run"`
-	DecidedBy           *string                `json:"decided_by"`
-	DecidedAt           *time.Time             `json:"decided_at"`
-	CreatedAt           time.Time              `json:"created_at"`
-	ExpiresAt           *time.Time             `json:"expires_at"`
+	ID                  string                       `json:"id"`
+	Type                string                       `json:"type"`
+	Status              string                       `json:"status"`
+	Title               string                       `json:"title"`
+	Description         string                       `json:"description"`
+	DescriptionBy       string                       `json:"description_by"`
+	Priority            string                       `json:"priority"`
+	Origin              approvalOriginView           `json:"origin"`
+	Details             approvalDetailsView          `json:"details"`
+	Editable            []store.RequestEditable      `json:"editable"`
+	Edits               map[string]store.RequestEdit `json:"edits"`
+	Conversation        *approvalConversationView    `json:"conversation"`
+	Held                bool                         `json:"held"`
+	HeldNote            *string                      `json:"held_note"`
+	Gate                bool                         `json:"gate"`
+	OnTimeout           *string                      `json:"on_timeout"`
+	AgentRunID          *string                      `json:"agent_run_id"`
+	NodeRunID           *string                      `json:"node_run_id"`
+	FlowRunID           *string                      `json:"flow_run_id"`
+	FlowID              *string                      `json:"flow_id"`
+	NodeID              *string                      `json:"node_id"`
+	AssistSessionID     *string                      `json:"assist_session_id"`
+	EventID             *string                      `json:"event_id"`
+	Runtime             string                       `json:"runtime"`
+	PermissionRequestID *string                      `json:"permission_request_id"`
+	PermissionRequest   *permissionRequestView       `json:"permission_request"`
+	ProposalMD          *string                      `json:"proposal_md"`
+	Comment             *string                      `json:"comment"`
+	CancelRun           *bool                        `json:"cancel_run"`
+	DecidedBy           *string                      `json:"decided_by"`
+	DecidedAt           *time.Time                   `json:"decided_at"`
+	CreatedAt           time.Time                    `json:"created_at"`
+	ExpiresAt           *time.Time                   `json:"expires_at"`
 }
 
-type approvalRequestView struct {
-	Title     string                       `json:"title"`
-	BodyMD    string                       `json:"body_md"`
-	Fields    []store.RequestField         `json:"fields"`
-	Editable  []store.RequestEditable      `json:"editable"`
-	Edits     map[string]store.RequestEdit `json:"edits,omitempty"`
-	Priority  store.Priority               `json:"priority"`
-	DryRun    bool                         `json:"dry_run"`
-	OnTimeout *string                      `json:"on_timeout"`
-	// Gate is true for the approval a node with requires_approval raised before running.
-	Gate bool `json:"gate"`
-	// Source is "mcp" when an external MCP client raised the approval, Client its name.
-	Source *string `json:"source"`
+type approvalOriginView struct {
+	Kind   string  `json:"kind"`
+	Label  string  `json:"label"`
 	Client *string `json:"client"`
 }
 
-func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
-	if a.Type == store.ApprovalRequest {
-		return rv.requestApprovalView(a)
+type approvalDiffView struct {
+	Path *string `json:"path"`
+	Old  *string `json:"old"`
+	New  string  `json:"new"`
+}
+
+type approvalDetailsView struct {
+	BodyMD  string               `json:"body_md"`
+	Fields  []store.RequestField `json:"fields"`
+	Command *string              `json:"command"`
+	Tool    *string              `json:"tool"`
+	Diffs   []approvalDiffView   `json:"diffs"`
+	DryRun  bool                 `json:"dry_run"`
+}
+
+type approvalConversationView struct {
+	ID     string  `json:"id"`
+	Kind   string  `json:"kind"`
+	Anchor *string `json:"anchor"`
+	Path   string  `json:"path"`
+}
+
+// approvalConversationPath is the UI path of a conversation, at a message when there is an anchor. Both are ids hal
+// generated (ULIDs, and the `<agent run id>:<seq>` of a flow message), so they need no escaping.
+func approvalConversationPath(id, anchor string) string {
+	p := "/chat/" + id
+	if anchor != "" {
+		p += "?message=" + anchor
 	}
-	l, ar, err := rv.lineageOfAgentRun(a.AgentRunID)
-	if err != nil {
-		return approvalView{}, err
+	return p
+}
+
+func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
+	var meta store.RequestApproval
+	if a.Request != "" {
+		if err := json.Unmarshal([]byte(a.Request), &meta); err != nil {
+			return approvalView{}, fmt.Errorf("api: approval %s: decode request: %w", a.ID, err)
+		}
+	}
+	if meta.Editable == nil {
+		meta.Editable = []store.RequestEditable{}
 	}
 	v := approvalView{
-		ID: a.ID, AgentRunID: nonEmpty(a.AgentRunID), NodeRunID: nonEmpty(l.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
-		EventID: nonEmpty(l.EventID), Type: string(a.Type), PermissionRequestID: nonEmpty(a.PermissionRequestID),
-		Status: string(a.Status), Comment: nonEmpty(a.Comment), DecidedBy: nonEmpty(a.DecidedBy),
-		DecidedAt: utcPtr(a.DecidedAt), CreatedAt: utc(a.CreatedAt), ExpiresAt: utcPtr(a.ExpiresAt), Runtime: unknownRef,
+		ID: a.ID, Type: string(a.Type), Status: string(a.Status), Title: a.Title, Description: a.Description, DescriptionBy: string(a.DescriptionBy),
+		Priority: string(a.Priority),
+		Origin:   approvalOriginView{Kind: string(a.Origin), Label: a.OriginLabel, Client: nonEmpty(a.OriginClient)},
+		Details: approvalDetailsView{
+			BodyMD: a.Details.BodyMD, Fields: a.Details.Fields, Command: nonEmpty(a.Details.Command), Tool: nonEmpty(a.Details.Tool),
+			Diffs: make([]approvalDiffView, 0, len(a.Details.Diffs)), DryRun: a.Details.DryRun,
+		},
+		Editable: meta.Editable, Edits: meta.Edits, Held: a.Held(), HeldNote: nonEmpty(a.HeldNote), Gate: meta.Gate, OnTimeout: nonEmpty(meta.OnTimeout),
+		AgentRunID: nonEmpty(a.AgentRunID), PermissionRequestID: nonEmpty(a.PermissionRequestID), Runtime: unknownRef,
+		Comment: nonEmpty(a.Comment), DecidedBy: nonEmpty(a.DecidedBy), DecidedAt: utcPtr(a.DecidedAt), CreatedAt: utc(a.CreatedAt), ExpiresAt: utcPtr(a.ExpiresAt),
 	}
-	if ar != nil {
-		v.Runtime = ar.Runtime
-		v.AssistSessionID = nonEmpty(ar.AssistSessionID)
+	if v.Details.Fields == nil {
+		v.Details.Fields = []store.RequestField{}
 	}
+	for _, d := range a.Details.Diffs {
+		v.Details.Diffs = append(v.Details.Diffs, approvalDiffView{Path: nonEmpty(d.Path), Old: nonEmpty(d.Old), New: d.New})
+	}
+	if a.ConversationID != "" {
+		v.Conversation = &approvalConversationView{
+			ID: a.ConversationID, Kind: string(a.ConversationKind), Anchor: nonEmpty(a.Anchor), Path: approvalConversationPath(a.ConversationID, a.Anchor),
+		}
+	}
+
+	switch {
+	case a.AgentRunID != "":
+		l, ar, err := rv.lineageOfAgentRun(a.AgentRunID)
+		if err != nil {
+			return approvalView{}, err
+		}
+		v.NodeRunID, v.FlowRunID, v.FlowID, v.NodeID, v.EventID = nonEmpty(l.NodeRunID), nonEmpty(l.FlowRunID), nonEmpty(l.FlowID), nonEmpty(l.NodeID), nonEmpty(l.EventID)
+		if ar != nil {
+			v.Runtime = ar.Runtime
+			v.AssistSessionID = nonEmpty(ar.AssistSessionID)
+		}
+	case a.NodeRunID != "":
+		l, err := rv.lineageOfNodeRun(a.NodeRunID, "")
+		if err != nil {
+			return approvalView{}, err
+		}
+		v.NodeRunID, v.FlowRunID, v.FlowID, v.NodeID, v.EventID = nonEmpty(a.NodeRunID), nonEmpty(l.FlowRunID), nonEmpty(l.FlowID), nonEmpty(l.NodeID), nonEmpty(l.EventID)
+	}
+
 	if a.Type == store.ApprovalProposal {
 		text := rv.s.contentString(a.Proposal)
 		v.ProposalMD = &text
@@ -830,34 +899,6 @@ func (rv *resolver) approvalView(a store.Approval) (approvalView, error) {
 		}
 	}
 	return v, nil
-}
-
-// requestApprovalView is the view of an approval raised by an approval node: it has no agent run, so its lineage
-// comes from the node run. An operator approval (an external MCP client's call) has neither, and no lineage.
-func (rv *resolver) requestApprovalView(a store.Approval) (approvalView, error) {
-	var l lineage
-	if a.NodeRunID != "" {
-		var err error
-		if l, err = rv.lineageOfNodeRun(a.NodeRunID, ""); err != nil {
-			return approvalView{}, err
-		}
-	}
-	var req store.RequestApproval
-	if err := json.Unmarshal([]byte(a.Request), &req); err != nil {
-		return approvalView{}, fmt.Errorf("api: approval %s: decode request: %w", a.ID, err)
-	}
-	if req.Fields == nil {
-		req.Fields = []store.RequestField{}
-	}
-	if req.Editable == nil {
-		req.Editable = []store.RequestEditable{}
-	}
-	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Editable: req.Editable, Edits: req.Edits, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout), Gate: req.Gate, Source: nonEmpty(req.Source), Client: nonEmpty(req.Client)}
-	return approvalView{
-		ID: a.ID, NodeRunID: nonEmpty(a.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
-		EventID: nonEmpty(l.EventID), Type: string(a.Type), Request: rq, Status: string(a.Status), Comment: nonEmpty(a.Comment),
-		DecidedBy: nonEmpty(a.DecidedBy), DecidedAt: utcPtr(a.DecidedAt), CreatedAt: utc(a.CreatedAt), ExpiresAt: utcPtr(a.ExpiresAt), Runtime: unknownRef,
-	}, nil
 }
 
 // ---- inbox ----

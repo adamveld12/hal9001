@@ -43,7 +43,7 @@ Manual checklist for what tests can't cover: [macos-app.md](macos-app.md). Authe
   Install command-line tool…, Install the MCP… (opens Settings → MCP), hal9001 on GitHub, Quit.
 - Native notifications with the HAL icon: title = flow, subtitle = item/approval/request/tool call, body = first
   lines; grouped per flow, dry runs labelled, high/urgent play a sound. Buttons: notes Open / Mark read / Archive;
-  approvals Approve / Deny / Approve with comment… / Deny with comment…; editable requests Approve as-is / Deny /
+  approvals Approve / Deny / Deny… (opens a text box for additional steering); editable requests Approve as-is / Deny /
   Open to edit. A notification disappears once handled elsewhere. Without the app, terminal-notifier takes over. Log
   at `GET /api/notifications`; `notify_via` (auto/app/terminal-notifier/none).
 - DMG installer: drag-to-Applications window with eye-and-arrow background, built without Finder;

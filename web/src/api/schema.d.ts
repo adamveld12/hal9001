@@ -3475,7 +3475,7 @@ export interface components {
     /**
      * @description "Request approval": asks the user to approve or deny and parks the node as `awaiting_approval` (no concurrency
      *     slot; it survives daemon restarts) until someone decides in the Inbox or the approval times out. Creates an
-     *     approval of type `request`. `title` and `body` are Go templates over `{.event, .input, .flow, .run}`.
+     *     approval of type `request`. `title`, `description` and `body` are Go templates over `{.event, .input, .flow, .run}`.
      *     Ports: `approved`, `denied` and the implicit `error`. On `approved` and `denied` (and a timed-out approval
      *     routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
      *     comment, decided_by, decided_at, edited, edits?}}`. With `editable`, the approver may change those input paths when
@@ -3493,6 +3493,8 @@ export interface components {
       type: "approval";
       /** @description Template. Required. */
       title: string;
+      /** @description Template. Required by validation (an empty one is an error diagnostic, so the file still parses and opens in the visual editor): one or two sentences saying what the approver is asked and why. Shown on the approval card. */
+      description?: string;
       /** @description Markdown template shown in the approval. */
       body?: string;
       /** @description Dot-paths into the node input, shown as a key/value table. */
@@ -3826,6 +3828,11 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      /**
+       * @description How many steered denials (a denial with additional steering text) one agent run or chat conversation takes. The next gated action is then held for the user and the agent is told to stop and wait.
+       * @default 3
+       */
+      max_steers_per_run?: number;
       /** @description Markdown added to every agent call (flow agent nodes and assistant sessions); empty adds nothing. At most 16 KiB (16384 bytes). */
       system_prompt?: string;
       update_channel?: components["schemas"]["UpdateChannel"];
@@ -4415,6 +4422,7 @@ export interface components {
       notify_min_priority?: components["schemas"]["Priority"];
       notify_via?: components["schemas"]["NotifyVia"];
       approval_timeout?: components["schemas"]["Duration"];
+      max_steers_per_run?: number;
       /** @description Markdown added to every agent call. Empty clears it. 422 above 16 KiB (16384 bytes). */
       system_prompt?: string;
       update_channel?: components["schemas"]["UpdateChannel"];
@@ -5214,32 +5222,70 @@ export interface components {
     PermissionRequestList: {
       items: components["schemas"]["PermissionRequest"][];
     };
+    /**
+     * @description One shape for every approval: a title, a required description, details (fields, command, diffs, markdown), a
+     *     priority, where it came from (`origin`) and the conversation it belongs to. Created only by the engine's
+     *     RaiseApproval, whatever raised it (agent tool call, `request_approval`, proposal, node gate, Request approval
+     *     node, MCP client).
+     */
     Approval: {
       id: components["schemas"]["Ulid"];
+      type: components["schemas"]["ApprovalType"];
+      status: components["schemas"]["ApprovalStatus"];
+      /** @description One line: what is being asked. */
+      title: string;
+      /** @description Plain text or short markdown, never empty, at most 600 characters. What will happen if approved and why. Written by hal from facts (`description_by` `hal`) or by an agent (`agent`; the card labels it as agent-written and always shows the real command, diff or target beside it). */
+      description: string;
+      /** @enum {string} */
+      description_by: "hal" | "agent";
+      priority: components["schemas"]["Priority"];
+      origin: components["schemas"]["ApprovalOrigin"];
+      details: components["schemas"]["ApprovalDetails"];
+      /** @description Paths the approver may edit when approving, with their current values (any JSON). */
+      editable: {
+        key: string;
+        value: unknown;
+      }[];
+      /** @description Set once approved with edits: what changed at each path. */
+      edits: {
+        [key: string]: {
+          before: unknown;
+          after: unknown;
+        };
+      } | null;
+      /** @description The conversation on the Chat page the approval was requested in; null for approvals with no agent run (Request approval nodes, node gates, MCP clients). */
+      conversation: components["schemas"]["ApprovalConversation"] | null;
+      /** @description The conversation reached `max_steers_per_run` steered denials: this action is held for the user and the agent was told to stop and wait. Steering is not offered. */
+      held: boolean;
+      held_note: string | null;
+      /** @description The approval a node with `requires_approval` raised before running: approving runs the node, denying emits its input on port `denied`. */
+      gate: boolean;
+      /**
+       * @description What expiry does for a Request approval node; null otherwise.
+       * @enum {string|null}
+       */
+      on_timeout: "denied" | "approved" | "error" | null;
       agent_run_id: components["schemas"]["NullableUlid"];
-      /** @description Null for an approval of an assist session and for an operator approval. */
+      /** @description Null for an approval of an assist session and for an MCP approval. */
       node_run_id: components["schemas"]["Ulid"] | null;
-      /** @description Null for an approval of an assist session and for an operator approval. */
+      /** @description Null for an approval of an assist session and for an MCP approval. */
       flow_run_id: components["schemas"]["Ulid"] | null;
-      /** @description Null for an approval of an assist session and for an operator approval. */
+      /** @description Null for an approval of an assist session and for an MCP approval. */
       flow_id: components["schemas"]["Slug"] | null;
-      /** @description Null for an approval of an assist session and for an operator approval. */
+      /** @description Null for an approval of an assist session and for an MCP approval. */
       node_id: components["schemas"]["Slug"] | null;
-      /** @description Set for a tool-call approval raised by an assist session turn. */
+      /** @description Set for an approval raised by a chat session turn. */
       assist_session_id: components["schemas"]["Ulid"] | null;
       event_id: components["schemas"]["NullableUlid"];
       runtime: components["schemas"]["Slug"];
-      type: components["schemas"]["ApprovalType"];
       permission_request_id: components["schemas"]["NullableUlid"];
-      /** @description Embedded for `tool_call` approvals. */
+      /** @description Embedded for `tool_call` approvals (raw input, options). */
       permission_request: components["schemas"]["PermissionRequest"] | null;
-      /** @description Set for `proposal` approvals. */
+      /** @description Set for `proposal` approvals: the agent's full proposal. `description` is its summary line. */
       proposal_md: string | null;
-      /** @description Set for `request` approvals: those of an approval node (with `node_run_id`) and operator approvals, which an external MCP client's call to a tool with side effects raises (no run ids; `docs/mcp.md`). */
-      request: components["schemas"]["ApprovalRequestContent"] | null;
-      status: components["schemas"]["ApprovalStatus"];
+      /** @description The approver's additional steering text. A denial with a comment is a steered denial; see docs/flows.md. */
       comment: string | null;
-      /** @description For a denied `tool_call`, whether the run was cancelled. */
+      /** @description For a denied `tool_call`, whether the run was cancelled (Deny + stop). */
       cancel_run: boolean | null;
       /** @description Principal that decided; null for `expired`. */
       decided_by: string | null;
@@ -5247,44 +5293,46 @@ export interface components {
       created_at: components["schemas"]["Timestamp"];
       expires_at: components["schemas"]["NullableTimestamp"];
     };
-    /** @description What an `approval` node (or the `requires_approval` gate of another node) asked, rendered when the node was reached. */
-    ApprovalRequestContent: {
-      /** @description The approval a node with `requires_approval` raised before running: approving runs the node, denying emits its input on port `denied`. */
-      gate: boolean;
-      title: string;
+    ApprovalOrigin: {
+      /**
+       * @description `flow`: a node or agent run of a flow. `chat`: a chat (assist) session. `continued_chat`: a chat continued from a flow agent run. `mcp`: an external MCP client.
+       * @enum {string}
+       */
+      kind: "flow" | "chat" | "continued_chat" | "mcp";
+      /** @description Human label, for example `reviews / triage`, `Chat: <title>` or `MCP: claude-code`; may name the sandbox. */
+      label: string;
+      /** @description Name of the MCP client for kind `mcp`. */
+      client: string | null;
+    };
+    /** @description What will actually happen, as hal knows it. Always shown next to the description. */
+    ApprovalDetails: {
       /** @description Markdown. In a dry run the first line says so. */
       body_md: string;
       fields: {
         key: string;
         value: string;
       }[];
-      /** @description Input paths the approver may edit when approving, with their current values (any JSON). */
-      editable: {
-        key: string;
-        value: unknown;
+      /** @description The shell command or tool-call explanation (extracted from nested arguments), not raw JSON. */
+      command: string | null;
+      /** @description Tool name or kind for a tool call. */
+      tool: string | null;
+      diffs: {
+        path: string | null;
+        old: string | null;
+        new: string;
       }[];
-      /** @description Set once approved with edits: what changed at each path. */
-      edits?: {
-        [key: string]: {
-          before: unknown;
-          after: unknown;
-        };
-      };
-      priority: components["schemas"]["Priority"];
       /** @description The approval belongs to a dry run: deciding only exercises the flow's branches. */
       dry_run: boolean;
-      /**
-       * @description What expiry does; null without a timeout (`expires_at`).
-       * @enum {string|null}
-       */
-      on_timeout: "denied" | "approved" | "error" | null;
-      /**
-       * @description `mcp` when an external MCP client raised the approval (`docs/mcp.md`); null for an approval node.
-       * @enum {string|null}
-       */
-      source?: "mcp" | null;
-      /** @description Name of that MCP client (its `clientInfo` or User-Agent); null when unknown or not an MCP approval. */
-      client?: string | null;
+    };
+    ApprovalConversation: {
+      /** @description Chat session id (kind `chat`) or agent run id (kind `flow`). */
+      id: string;
+      /** @enum {string} */
+      kind: "chat" | "flow";
+      /** @description Message id of the point where the approval was requested. */
+      anchor: string | null;
+      /** @description UI path: `/chat/<id>?message=<anchor>`. */
+      path: string;
     };
     ApprovalList: {
       items: components["schemas"]["Approval"][];
@@ -5298,11 +5346,12 @@ export interface components {
       };
     };
     DenyRequest: {
+      /** @description Additional steering. The agent gets it verbatim: a denied tool call or `request_approval` returns `Denied by the user: "<text>". Do not retry the same action unchanged; do what the user asked instead.`, a denied proposal is revised and proposed again with it, a denied node gate or Request approval node continues on port `denied` with it in `approval.comment`. */
       comment?: string;
       /** @description Accepted and ignored: a denial never applies edits. */
       edits?: unknown;
       /**
-       * @description `tool_call` only: cancel the run instead of letting the agent continue.
+       * @description `tool_call` only (Deny + stop): cancel the run instead of letting the agent continue.
        * @default false
        */
       cancel_run?: boolean;
@@ -9327,6 +9376,8 @@ export interface operations {
         type?: components["schemas"]["ApprovalType"];
         agent_run_id?: components["schemas"]["Ulid"];
         flow_run_id?: components["schemas"]["Ulid"];
+        /** @description Only approvals requested in this conversation (chat session id or agent run id). */
+        conversation_id?: string;
       };
       header?: never;
       path?: never;

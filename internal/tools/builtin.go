@@ -16,7 +16,7 @@ func obj(props map[string]any, required ...string) map[string]any {
 	return s
 }
 
-func builtinTools(gh GHOptions) []Tool {
+func builtinTools(gh GHOptions, host Host) []Tool {
 	ts := ghTools(gh)
 	ts = append(ts,
 		Tool{
@@ -48,6 +48,7 @@ func builtinTools(gh GHOptions) []Tool {
 			},
 		},
 	)
+	ts = append(ts, requestApprovalTool(host))
 	return ts
 }
 
@@ -106,7 +107,7 @@ func runContext(_ context.Context, c Call) (Result, error) {
 // tools), sorted.
 func BuiltinToolNames() []string {
 	var names []string
-	for _, t := range builtinTools(GHOptions{}) {
+	for _, t := range builtinTools(GHOptions{}, nil) {
 		names = append(names, t.Name)
 	}
 	sort.Strings(names)

@@ -11,13 +11,18 @@ export const DEFAULTS = {
   dedup_retention_days: 180,
   notify_min_priority: "normal",
   approval_timeout: "1h",
+  max_steers_per_run: 3,
 } as const;
+
+/** Upper bound of `max_steers_per_run` (spec.MaxMaxSteersPerRun). */
+export const MAX_STEERS_LIMIT = 100;
 
 export const INT_FIELDS = [
   "max_agent_runs",
   "max_command_runs",
   "retention_days",
   "dedup_retention_days",
+  "max_steers_per_run",
 ] as const;
 export type IntField = (typeof INT_FIELDS)[number];
 
@@ -29,6 +34,7 @@ export interface SettingsForm {
   dedup_retention_days: string;
   notify_min_priority: Priority;
   approval_timeout: string;
+  max_steers_per_run: string;
 }
 
 export type FormErrors = Partial<Record<keyof SettingsForm, string>>;
@@ -51,6 +57,9 @@ export function formFromConfig(c: Config): SettingsForm {
     ),
     notify_min_priority: priority ?? DEFAULTS.notify_min_priority,
     approval_timeout: c.approval_timeout ?? DEFAULTS.approval_timeout,
+    max_steers_per_run: String(
+      c.max_steers_per_run ?? DEFAULTS.max_steers_per_run,
+    ),
   };
 }
 
@@ -61,6 +70,12 @@ export function validateForm(f: SettingsForm): FormErrors {
     if (!/^[0-9]+$/.test(f[k].trim()) || Number(f[k]) < 1) {
       errors[k] = "Whole number, 1 or more.";
     }
+  }
+  if (
+    !errors.max_steers_per_run &&
+    Number(f.max_steers_per_run) > MAX_STEERS_LIMIT
+  ) {
+    errors.max_steers_per_run = `Whole number, 1 to ${MAX_STEERS_LIMIT}.`;
   }
   if (!isPriority(f.notify_min_priority)) {
     errors.notify_min_priority = "Choose a priority.";

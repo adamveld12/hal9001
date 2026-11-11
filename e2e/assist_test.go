@@ -614,6 +614,20 @@ func TestAssistGatedCallsNeedApprovalAndDenyRejects(t *testing.T) {
 	if pr["tool_kind"] != "other" || pr["title"] != "hal tool: draft_test" || pr["matched_rule"] != "hal:approval" {
 		t.Errorf("permission request = %v", pr)
 	}
+	// A chat approval belongs to the session's conversation, anchored at a message, and is listed by it.
+	conv, _ := ap["conversation"].(map[string]any)
+	origin, _ := ap["origin"].(map[string]any)
+	if conv["kind"] != "chat" || conv["id"] != s.ID || conv["anchor"] == nil || conv["path"] != "/chat/"+s.ID+"?message="+conv["anchor"].(string) ||
+		origin["kind"] != "chat" || ap["description"] == "" || ap["description_by"] != "hal" {
+		t.Errorf("chat approval conversation = %v, origin = %v, description = %v", conv, origin, ap["description"])
+	}
+	var byConv struct {
+		Items []map[string]any `json:"items"`
+	}
+	d.Get("/api/approvals?conversation_id=" + s.ID).Want(200).JSON(&byConv)
+	if len(byConv.Items) != 1 || byConv.Items[0]["id"] != ap["id"] {
+		t.Errorf("approvals of the chat = %v", byConv.Items)
+	}
 	waiting := d.assistWait(s.ID, "awaiting_approval")
 	var linked *assistMsg
 	for i := range waiting.Messages {
@@ -663,7 +677,7 @@ func TestAssistGatedCallsNeedApprovalAndDenyRejects(t *testing.T) {
 	if len(tests) != 2 || decisionOf(tests[0]) != "reject" || *tests[0].DecidedBy != "user" || decisionOf(tests[1]) != "allow" || *tests[1].DecidedBy != "user" {
 		t.Errorf("draft_test records = %+v", tests)
 	}
-	if tr := d.Transcript(run.ID); !strings.Contains(tr, "mcp[t1] is_error=true") || !strings.Contains(tr, "denied by the user: not yet") || !strings.Contains(tr, "mcp[t2] is_error=false") {
+	if tr := d.Transcript(run.ID); !strings.Contains(tr, "mcp[t1] is_error=true") || !strings.Contains(tr, `Denied by the user: \"not yet\"`) || !strings.Contains(tr, "mcp[t2] is_error=false") {
 		t.Errorf("transcript lacks the tool error of the denial and the result of the allowed test:\n%s", tr)
 	}
 	last := got.Messages[len(got.Messages)-1]

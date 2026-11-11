@@ -758,10 +758,11 @@ func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
 	typ := q.enum("type", approvalTypes...)
 	agentRunID := q.ulid("agent_run_id")
 	flowRunID := q.ulid("flow_run_id")
+	conversationID := q.ulid("conversation_id")
 	if !q.ok(w) {
 		return
 	}
-	f := store.ApprovalFilter{Statuses: statuses, Type: store.ApprovalType(typ), AgentRunID: agentRunID, FlowRunID: flowRunID, ListOpts: opts}
+	f := store.ApprovalFilter{Statuses: statuses, Type: store.ApprovalType(typ), AgentRunID: agentRunID, FlowRunID: flowRunID, ConversationID: conversationID, ListOpts: opts}
 	page, err := s.opts.Store.ListApprovals(r.Context(), f)
 	if err != nil {
 		s.writeError(w, r, err)

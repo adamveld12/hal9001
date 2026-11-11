@@ -605,13 +605,15 @@ func (s *Server) approveApproval(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, r, err)
 			return
 		}
-		if a.Type != store.ApprovalRequest {
-			fieldProblem(w, "edits", "edits apply to request approvals only")
-			return
-		}
 		var rq store.RequestApproval
-		if err := json.Unmarshal([]byte(a.Request), &rq); err != nil {
-			s.writeError(w, r, err)
+		if a.Request != "" {
+			if err := json.Unmarshal([]byte(a.Request), &rq); err != nil {
+				s.writeError(w, r, err)
+				return
+			}
+		}
+		if len(rq.Editable) == 0 {
+			fieldProblem(w, "edits", "this approval has no editable fields")
 			return
 		}
 		for path := range req.Edits {

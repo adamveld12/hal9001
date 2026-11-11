@@ -10,6 +10,11 @@ import {
 } from "../../api/approvals";
 import { qk } from "../../api/keys";
 import { ApprovalDetail } from "../approvals/ApprovalDetail";
+import {
+  decisionFor,
+  type DecideAction,
+  type DecisionInput,
+} from "../approvals/card";
 import { buildEdits, initialDrafts } from "../approvals/edits";
 import { decisionNotice } from "../approvals/queue";
 import {
@@ -287,16 +292,12 @@ export function InboxPage() {
     pendingApprovals.find((a) => a.id === openApprovalId);
   const canDecide =
     shownApproval?.status === "pending" && shownApproval.id === openApprovalId;
-  const decideApproval = (
-    a: Approval,
-    action: "approve" | "deny",
-    cancelRun?: boolean,
-  ) => {
+  const decideApproval = (a: Approval, d: DecisionInput) => {
     if (decide.isPending) return;
     let edits: Record<string, unknown> | undefined;
-    if (action === "approve" && a.request && a.request.editable.length > 0) {
-      const built = buildEdits(a.request.editable, {
-        ...initialDrafts(a.request.editable),
+    if (d.action === "approve" && a.editable.length > 0) {
+      const built = buildEdits(a.editable, {
+        ...initialDrafts(a.editable),
         ...editValues,
       });
       const bad = Object.keys(built.errors);
@@ -314,7 +315,7 @@ export function InboxPage() {
       selectionKey({ kind: "approval", id: a.id }),
     );
     decide.mutate(
-      { id: a.id, action, comment, cancelRun, edits },
+      { id: a.id, ...d, edits },
       {
         onSuccess: (done) => {
           setNotice(decisionNotice(done));
@@ -338,6 +339,11 @@ export function InboxPage() {
     void qc.invalidateQueries({ queryKey: qk("approval", openApprovalId) });
   }, [qc, openApprovalId]);
 
+  const hotkeyDecide = (action: DecideAction) => {
+    const d = shownApproval && decisionFor(shownApproval, action, comment);
+    if (shownApproval && d) decideApproval(shownApproval, d);
+  };
+
   useHotkeys({
     j: () => setCursor(moveCursor(ids, cursorId, 1, cursorPos?.index ?? 0)),
     k: () => setCursor(moveCursor(ids, cursorId, -1, cursorPos?.index ?? 0)),
@@ -347,12 +353,9 @@ export function InboxPage() {
     Escape: () => {
       if (openKey) closeDetail();
     },
-    a: () => canDecide && decideApproval(shownApproval, "approve"),
-    d: () => canDecide && decideApproval(shownApproval, "deny"),
-    c: () =>
-      canDecide &&
-      shownApproval.type === "tool_call" &&
-      decideApproval(shownApproval, "deny", true),
+    a: () => canDecide && hotkeyDecide("approve"),
+    d: () => canDecide && hotkeyDecide("deny"),
+    c: () => canDecide && hotkeyDecide("deny_stop"),
     e: () => cursorItem && toggleArchive(cursorItem),
     s: () => cursorItem && patch(cursorItem, { starred: !cursorItem.starred }),
     u: () => cursorItem && patch(cursorItem, { read: !cursorItem.read }),
@@ -645,8 +648,8 @@ export function InboxPage() {
               <ApprovalDetail
                 key={shownApproval.id}
                 approval={shownApproval}
-                comment={comment}
-                onComment={(text) => setDraft({ id: shownApproval.id, text })}
+                steering={comment}
+                onSteering={(text) => setDraft({ id: shownApproval.id, text })}
                 editDrafts={editValues}
                 onEditDraft={(key, text) =>
                   setEditDraft({
@@ -655,9 +658,7 @@ export function InboxPage() {
                   })
                 }
                 busy={decide.isPending}
-                onDecide={(action, cancelRun) =>
-                  decideApproval(shownApproval, action, cancelRun)
-                }
+                onDecide={(d) => decideApproval(shownApproval, d)}
                 onStale={onStale}
                 backTo={{ pathname: "/inbox", search }}
               />

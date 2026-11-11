@@ -95,6 +95,7 @@ func (s *session) draftTools() []tools.Tool {
 					}}},
 			}),
 			Approval: s.testApproval,
+			Describe: s.testDescribe,
 			Run:      s.runDraftTest,
 		},
 		{
@@ -324,6 +325,70 @@ func (s *session) testApproval(args json.RawMessage) (bool, string) {
 	}
 	s.toolTest = &pendingTest{id: id, base: base}
 	return true, "the draft's code changed since the user last tested or approved it, and a test runs it with real credentials"
+}
+
+// testDescribe is draft_test's approval text from the facts of the script testApproval just queued: what runs and
+// which of the user's credentials it mentions.
+func (s *session) testDescribe(json.RawMessage, string) tools.ApprovalText {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.toolTest
+	if p == nil {
+		return tools.ApprovalText{}
+	}
+	id := p.id
+	kind, what := "sensor", "script"
+	switch {
+	case id.Flow:
+		kind = "flow"
+		var names []string
+		for _, n := range id.Nodes {
+			names = append(names, n.ID)
+		}
+		what = "command nodes"
+		if len(names) > 0 {
+			what += " (" + strings.Join(names, ", ") + ")"
+		}
+		if len(id.Sensors) > 0 {
+			what += " and the draft sensors that feed it"
+		}
+	case id.Tool:
+		kind = "tool"
+	}
+	if !id.Flow && len(id.Command) > 0 {
+		what = "command"
+	}
+	if !id.Flow && id.Lang != "" {
+		what = id.Lang + " " + what
+	}
+	env := map[string]bool{}
+	for _, e := range id.Env {
+		env[e] = true
+	}
+	for _, n := range append(append([]nodeScript(nil), id.Nodes...), id.Sensors...) {
+		for _, e := range n.Env {
+			env[e] = true
+		}
+	}
+	creds := make([]string, 0, len(env))
+	for e := range env {
+		creds = append(creds, e)
+	}
+	sort.Strings(creds)
+	with := "none of the user's credentials"
+	if len(creds) > 0 {
+		with = "the credentials " + strings.Join(creds, ", ")
+	}
+	target := s.row.TargetID
+	if target == "" {
+		target = "(new)"
+	}
+	return tools.ApprovalText{
+		Title:       "Test the draft " + kind + " " + target,
+		Description: fmt.Sprintf("Run the draft %s %s: its %s changed since it was last tested or approved. It uses %s.", kind, target, what, with),
+		Command:     id.text(),
+		Fields:      []tools.ApprovalField{{Key: "draft", Value: kind + " " + target}, {Key: "credentials", Value: strings.Join(creds, ", ")}},
+	}
 }
 
 func (s *session) runDraftTest(ctx context.Context, c tools.Call) (tools.Result, error) {

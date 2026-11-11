@@ -24,6 +24,10 @@ type Tool struct {
 	Approval func(args json.RawMessage) (needs bool, reason string)
 	// Policy, when set, is used instead of Approval and can also deny a call outright. Same rules as Approval.
 	Policy func(args json.RawMessage) (Verdict, string)
+	// Describe says, from the call's facts, what the call would do; it fills the approval's title, description,
+	// command and fields (why is the Approval's or Policy's reason). Every tool that can need approval sets it; nil
+	// gives the generic text (see DescribeCall). It must not have side effects.
+	Describe func(args json.RawMessage, why string) ApprovalText
 	// Run executes the tool. A returned error is reported to the agent as a tool error.
 	Run func(ctx context.Context, c Call) (Result, error)
 	// OnBlocked, when set, is told about every call that was not run: refused by policy, denied or left unanswered by

@@ -82,9 +82,10 @@ Use a flow that raises inbox notes and approvals (the seeded `demo` flow does; t
 
 - [ ] A note shows title (flow), subtitle and body, grouped per flow. Hover shows **Open**, **Mark read**, **Archive**.
       Clicking the notification opens its page; Mark read / Archive change the item in the UI.
-- [ ] A proposal or tool-call approval shows **Approve**, **Deny**, **Approve with comment…**, **Deny with comment…**.
-      Each decision shows in the UI, with the comment when you typed one.
-- [ ] A request approval with editable fields shows **Approve as-is**, **Deny**, **Open to edit**.
+- [ ] An approval (proposal, tool call, request) shows the approval's title and description, and **Approve**, **Deny**,
+      **Deny…**. **Deny…** opens a text box (steering); the typed text is the denial comment the agent receives.
+      Each decision shows in the UI, with the steering when you typed one.
+- [ ] A request approval with editable fields shows **Approve as-is**, **Deny**, **Deny…**, **Open to edit**.
 - [ ] Approving the same item twice shows a "Could not approve" notification (409); clicking it opens the page.
 - [ ] Decide an approval (or read an item) in the web UI: its notification disappears from Notification Center.
 - [ ] `high` and `urgent` play a sound; `low` and `normal` are silent. Notifications are not time-sensitive, so a

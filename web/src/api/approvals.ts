@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -24,7 +25,7 @@ export type ApprovalsQuery = Omit<
 const PAGE_SIZE = 50;
 
 /** Approvals, one page at a time, keeping the previous list while filters change. */
-export function useApprovalsList(query: ApprovalsQuery) {
+export function useApprovalsList(query: ApprovalsQuery, enabled = true) {
   return useInfiniteQuery({
     queryKey: qk("approvals", query),
     queryFn: ({ pageParam }) =>
@@ -36,7 +37,44 @@ export function useApprovalsList(query: ApprovalsQuery) {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     placeholderData: keepPreviousData,
+    enabled,
   });
+}
+
+/** Filter of the pending approvals of one conversation (a chat session id or flow agent run id). */
+export function conversationApprovalsQuery(
+  conversationId: string,
+): ApprovalsQuery {
+  return { conversation_id: conversationId, status: ["pending"] };
+}
+
+/**
+ * The pending approvals of one conversation, oldest first. Stream events
+ * refetch the `approvals` family and a decision anywhere updates every cached
+ * list, so this stays in step with the Inbox and the Approvals page.
+ */
+export function useConversationApprovals(conversationId: string | null) {
+  const query = useApprovalsList(
+    conversationApprovalsQuery(conversationId ?? ""),
+    conversationId !== null,
+  );
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Approval[] = [];
+    for (const page of query.data?.pages ?? []) {
+      for (const a of page.items) {
+        if (seen.has(a.id)) continue;
+        seen.add(a.id);
+        out.push(a);
+      }
+    }
+    return out.sort(
+      (a, b) =>
+        Date.parse(a.created_at) - Date.parse(b.created_at) ||
+        (a.id < b.id ? -1 : 1),
+    );
+  }, [query.data]);
+  return { ...query, items };
 }
 
 export function useApproval(id: string | undefined) {
@@ -51,6 +89,7 @@ export function useApproval(id: string | undefined) {
 export interface Decision {
   id: string;
   action: "approve" | "deny";
+  /** Additional steering text; sent with a denial only. */
   comment?: string;
   /** `request` approvals, approve only: new values for editable paths. */
   edits?: Record<string, unknown>;
@@ -85,7 +124,7 @@ export function replaceApprovalInPages(
 }
 
 /**
- * Approve / allow or deny. The decided approval replaces the cached copy at
+ * Approve or deny. The decided approval replaces the cached copy at
  * once (leaving the pending queue); everything is refetched afterwards. A 409
  * `invalid-state` means someone else decided first: the lists are refreshed
  * and the caller shows `isAlreadyDecided(error)`.
@@ -96,7 +135,7 @@ export function useDecideApproval() {
     mutationFn: ({ id, action, comment, cancelRun, edits }: Decision) => {
       const text = comment?.trim() ? { comment: comment.trim() } : {};
       const approveBody =
-        edits && Object.keys(edits).length > 0 ? { ...text, edits } : text;
+        edits && Object.keys(edits).length > 0 ? { edits } : {};
       const params = { path: { id } };
       return action === "approve"
         ? unwrap(

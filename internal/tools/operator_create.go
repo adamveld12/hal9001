@@ -324,13 +324,14 @@ func (o *Operator) runCreate(ctx context.Context, env OperatorEnv, k specKind, t
 	fields, body := k.describe(p.id, p.yaml, p.parsed, env.Caller)
 	d, err := o.host.ApproveOperator(ctx, OperatorApproval{
 		Tool: tool, Reason: "Create the " + k.noun + " " + p.id, Title: "Create " + k.noun + ": " + p.id,
-		BodyMD: body, Fields: fields, Caller: env.Caller, Timeout: o.timeout,
+		Description: fmt.Sprintf("Create the %s %q from the spec in the details; it is saved only if you approve.", k.noun, p.id),
+		BodyMD:      body, Fields: fields, Caller: env.Caller, Timeout: o.timeout,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("tool %s: approval failed: %w", tool, err)
 	}
 	if !d.Allowed {
-		return Result{}, &DeniedError{Tool: tool, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
+		return Result{}, &DeniedError{Tool: tool, Expired: d.Expired, Cancelled: d.Cancelled, Held: d.Held, Comment: d.Comment}
 	}
 	reqBody, _ := json.Marshal(map[string]any{"id": p.id, "yaml": p.yaml})
 	status, out, err := env.API(ctx, http.MethodPost, k.collection, nil, reqBody)

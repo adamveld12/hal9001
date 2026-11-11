@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssistMessage } from "../../api/assist";
 import {
+  anchorMessage,
   isBelowView,
   pendingApprovalMessage,
   shouldFollow,
@@ -44,5 +45,23 @@ describe("isBelowView", () => {
   it("is true only when the item starts past the visible area", () => {
     expect(isBelowView(900, 800)).toBe(true);
     expect(isBelowView(500, 800)).toBe(false);
+  });
+});
+
+describe("anchorMessage", () => {
+  const ids = [
+    { id: "run1:00000000" },
+    { id: "run1:00000004" },
+    { id: "run1:00000009" },
+  ];
+  it("picks the last message not after the anchor", () => {
+    expect(anchorMessage(ids, "run1:00000006")).toBe("run1:00000004");
+    expect(anchorMessage(ids, "run1:00000009")).toBe("run1:00000009");
+    expect(anchorMessage(ids, "run1:00000099")).toBe("run1:00000009");
+  });
+  it("finds nothing without an anchor or before every message", () => {
+    expect(anchorMessage(ids, null)).toBeUndefined();
+    expect(anchorMessage(ids, "")).toBeUndefined();
+    expect(anchorMessage(ids, "run0:00000001")).toBeUndefined();
   });
 });

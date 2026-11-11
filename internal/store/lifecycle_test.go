@@ -29,14 +29,14 @@ func TestMarkInterruptedOnRestart(t *testing.T) {
 	pr := &PermissionRequest{AgentRunID: a2.ID, ToolKind: "edit", Title: "Edit main.go"}
 	must(t, s.CreatePermissionRequest(ctx(), pr))
 	tool := &Approval{AgentRunID: a2.ID, Type: ApprovalToolCall, PermissionRequestID: pr.ID}
-	must(t, s.CreateApproval(ctx(), tool))
+	must(t, s.CreateApproval(ctx(), valid(tool)))
 
 	// Flow 3: proposal waiting for the user; the agent process already exited.
 	f3 := mkFlowRun(t, s, "F", "", FlowRunAwaitingApproval)
 	n3 := mkNodeRun(t, s, f3.ID, "agent", NodeAgent, NodeAwaitingApproval)
 	a3 := mkAgentRun(t, s, n3.ID, StyleProposal, AgentAwaitingApproval)
 	prop := &Approval{AgentRunID: a3.ID, Type: ApprovalProposal, Proposal: Inline("Plan: do X")}
-	must(t, s.CreateApproval(ctx(), prop))
+	must(t, s.CreateApproval(ctx(), valid(prop)))
 
 	// Queued work resumes.
 	f4 := mkFlowRun(t, s, "F", "", FlowRunQueued)
@@ -119,7 +119,7 @@ func TestDecideApprovalIsCompareAndSet(t *testing.T) {
 	pr := &PermissionRequest{AgentRunID: a.ID, ToolKind: "execute", Title: "rm -rf"}
 	must(t, s.CreatePermissionRequest(ctx(), pr))
 	ap := &Approval{AgentRunID: a.ID, Type: ApprovalToolCall, PermissionRequestID: pr.ID}
-	must(t, s.CreateApproval(ctx(), ap))
+	must(t, s.CreateApproval(ctx(), valid(ap)))
 
 	var wins, conflicts atomic.Int32
 	var wg sync.WaitGroup
@@ -204,7 +204,7 @@ func TestPruneKeepsStarredAndPendingAndReportsOrphans(t *testing.T) {
 	}
 	unstarred := &InboxItem{SourceType: SourceAgentRun, AgentRunID: old.agent.ID, Title: "forget me"}
 	must(t, s.CreateInboxItem(ctx(), unstarred))
-	must(t, s.CreateApproval(ctx(), &Approval{AgentRunID: pending.agent.ID, Type: ApprovalProposal, Proposal: Inline(bigText(SpillThreshold + 3))}))
+	must(t, s.CreateApproval(ctx(), valid(&Approval{AgentRunID: pending.agent.ID, Type: ApprovalProposal, Proposal: Inline(bigText(SpillThreshold + 3))})))
 
 	// A shared blob: both the old run and the kept pending run hold the same stdout.
 	shared := bigText(SpillThreshold + 9)

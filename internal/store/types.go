@@ -20,26 +20,29 @@ var (
 // Enums. The strings are the exact values stored and serialised.
 
 type (
-	FlowRunStatus string
-	FlowRunKind   string
-	NodeRunStatus string
-	NodeDecision  string
-	NodeType      string
-	AgentStatus   string
-	AgentPhase    string
-	ResumedVia    string
-	AgentMode     string
-	ApproveStyle  string
-	Policy        string
-	ApprovalType  string
-	ApprovalState string
-	PermDecision  string
-	PermDecidedBy string
-	Priority      string
-	SensorStatus  string
-	SensorOrigin  string
-	SourceType    string
-	AuthService   string
+	FlowRunStatus    string
+	FlowRunKind      string
+	NodeRunStatus    string
+	NodeDecision     string
+	NodeType         string
+	AgentStatus      string
+	AgentPhase       string
+	ResumedVia       string
+	AgentMode        string
+	ApproveStyle     string
+	Policy           string
+	ApprovalType     string
+	ApprovalState    string
+	DescriptionBy    string
+	ApprovalOrigin   string
+	ConversationKind string
+	PermDecision     string
+	PermDecidedBy    string
+	Priority         string
+	SensorStatus     string
+	SensorOrigin     string
+	SourceType       string
+	AuthService      string
 )
 
 const (
@@ -108,6 +111,17 @@ const (
 	ApprovalProposal ApprovalType = "proposal"
 	ApprovalToolCall ApprovalType = "tool_call"
 	ApprovalRequest  ApprovalType = "request"
+
+	DescByHal   DescriptionBy = "hal"
+	DescByAgent DescriptionBy = "agent"
+
+	OriginFlow          ApprovalOrigin = "flow"
+	OriginChat          ApprovalOrigin = "chat"
+	OriginContinuedChat ApprovalOrigin = "continued_chat"
+	OriginMCP           ApprovalOrigin = "mcp"
+
+	ConvChat ConversationKind = "chat"
+	ConvFlow ConversationKind = "flow"
 
 	ApprovalPending  ApprovalState = "pending"
 	ApprovalApproved ApprovalState = "approved"
@@ -466,21 +480,63 @@ type PermissionRequest struct {
 	DecidedAt   *time.Time      `json:"decided_at,omitempty"`
 }
 
-// Approval is a pending or decided approval-queue entry.
+// MaxApprovalDescription is the longest approval description, in characters.
+const MaxApprovalDescription = 600
+
+// Approval is a pending or decided approval-queue entry. Every approval has the same shape: what is asked (Title,
+// Description), what will actually happen (Details), where it came from (Origin) and, when an agent run raised it, the
+// conversation it belongs to. Request holds the request machinery only (RequestApproval).
 type Approval struct {
-	ID                  string        `json:"id"`
-	AgentRunID          string        `json:"agent_run_id,omitempty"` // empty for a request approval
-	NodeRunID           string        `json:"node_run_id,omitempty"`  // set for a request approval
-	Request             string        `json:"request,omitempty"`      // JSON of a RequestApproval; request approvals only
-	Type                ApprovalType  `json:"type"`
-	PermissionRequestID string        `json:"permission_request_id,omitempty"`
-	Proposal            Content       `json:"proposal_md"`
-	Status              ApprovalState `json:"status"`
-	Comment             string        `json:"comment,omitempty"`
-	DecidedBy           string        `json:"decided_by,omitempty"` // principal, or "system" for expiry
-	CreatedAt           time.Time     `json:"created_at"`
-	ExpiresAt           *time.Time    `json:"expires_at,omitempty"`
-	DecidedAt           *time.Time    `json:"decided_at,omitempty"`
+	ID                  string         `json:"id"`
+	AgentRunID          string         `json:"agent_run_id,omitempty"` // lineage: the flow agent run or chat turn run that raised it
+	NodeRunID           string         `json:"node_run_id,omitempty"`  // set for a Request approval node or a node gate
+	Request             string         `json:"request,omitempty"`      // JSON of a RequestApproval; request approvals only
+	Type                ApprovalType   `json:"type"`
+	PermissionRequestID string         `json:"permission_request_id,omitempty"`
+	Title               string         `json:"title"`
+	Description         string         `json:"description"`
+	DescriptionBy       DescriptionBy  `json:"description_by"`
+	Priority            Priority       `json:"priority"`
+	Origin              ApprovalOrigin `json:"origin"`
+	OriginLabel         string         `json:"origin_label,omitempty"`
+	OriginClient        string         `json:"origin_client,omitempty"` // the MCP client of an mcp approval
+	// ConversationID and ConversationKind link an approval raised by an agent run to its conversation: a chat
+	// session (id = session id) or a flow agent run (id = agent run id). Both are empty without an agent run.
+	ConversationID   string           `json:"conversation_id,omitempty"`
+	ConversationKind ConversationKind `json:"conversation_kind,omitempty"`
+	// Anchor is the message id of the point in the conversation where the approval was raised.
+	Anchor string `json:"anchor,omitempty"`
+	// HeldNote is set on an approval raised held (the conversation reached its steering cap): the note says why.
+	HeldNote  string          `json:"held_note,omitempty"`
+	Details   ApprovalDetails `json:"details"`
+	Proposal  Content         `json:"proposal_md"`
+	Status    ApprovalState   `json:"status"`
+	Comment   string          `json:"comment,omitempty"`    // the approver's steering text
+	DecidedBy string          `json:"decided_by,omitempty"` // principal, or "system" for expiry
+	CreatedAt time.Time       `json:"created_at"`
+	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
+	DecidedAt *time.Time      `json:"decided_at,omitempty"`
+}
+
+// Held reports whether the approval was raised held.
+func (a *Approval) Held() bool { return a.HeldNote != "" }
+
+// ApprovalDetails is what will actually happen, as hal knows it: shown next to the description.
+type ApprovalDetails struct {
+	BodyMD string         `json:"body_md"`
+	Fields []RequestField `json:"fields"`
+	// Command is the shell command or the tool-call explanation, extracted from nested arguments.
+	Command string         `json:"command"`
+	Tool    string         `json:"tool"`
+	Diffs   []ApprovalDiff `json:"diffs"`
+	DryRun  bool           `json:"dry_run"`
+}
+
+// ApprovalDiff is one change a tool call would make. Old is empty for a new file.
+type ApprovalDiff struct {
+	Path string `json:"path"`
+	Old  string `json:"old"`
+	New  string `json:"new"`
 }
 
 // InboxLink is one entry of InboxItem.Links.
@@ -573,24 +629,17 @@ type KillSwitch struct {
 	By          string    `json:"by,omitempty"`
 }
 
-// RequestApproval is the content of a request approval (Approval.Request, stored as JSON): the title, body and
-// fields an approval node rendered when it ran, so the approval reads the same whenever it is opened.
+// RequestApproval is the request machinery of a request approval (Approval.Request, stored as JSON): what the approver
+// may edit, the edits applied, what an expiry does and how the approval is tied to its raiser. What is asked and what
+// will happen live in the Approval itself (Title, Description, Details).
 type RequestApproval struct {
-	Title  string         `json:"title"`
-	BodyMD string         `json:"body_md"`
-	Fields []RequestField `json:"fields"`
 	// Editable are the input paths the approver may edit, with their values when the approval was raised.
 	Editable []RequestEditable `json:"editable,omitempty"`
 	// Edits is set when the approval was approved with edits.
-	Edits    map[string]RequestEdit `json:"edits,omitempty"`
-	Priority Priority               `json:"priority"`
-	DryRun   bool                   `json:"dry_run"`
+	Edits map[string]RequestEdit `json:"edits,omitempty"`
 	// OnTimeout is what an expiry does: denied, approved or error. Empty without a timeout.
 	OnTimeout string `json:"on_timeout,omitempty"`
-	// Source is "mcp" when an external MCP client raised the approval (an operator approval, docs/mcp.md) and Client
-	// the client's name; Principal is the authenticated caller of its MCP request.
-	Source    string `json:"source,omitempty"`
-	Client    string `json:"client,omitempty"`
+	// Principal is the authenticated caller of the MCP request that raised an mcp approval.
 	Principal string `json:"principal,omitempty"`
 	// Detached marks an approval that outlives the MCP call that raised it (request_approval): it is decided and
 	// expires on its own, survives a daemon restart, and nobody has to be waiting on it.

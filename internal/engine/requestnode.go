@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"hal9001/internal/notify"
 	"hal9001/internal/runner"
@@ -60,29 +61,39 @@ func (e *Engine) runApproval(ne *nodeEnv) nodeOutcome {
 	if err != nil {
 		return failure(errTemplate, err.Error())
 	}
-	red := ne.snap.red
-	req := store.RequestApproval{
-		Title: strings.TrimSpace(red.String(title)), BodyMD: red.String(body), Priority: store.Priority(n.Priority),
-		DryRun: ne.fr.DryRun, Fields: []store.RequestField{}, OnTimeout: n.OnTimeout,
+	desc, err := ne.render("description", n.Description)
+	if err != nil {
+		return failure(errTemplate, err.Error())
 	}
-	if req.Title == "" {
+	red := ne.snap.red
+	title = strings.TrimSpace(red.String(title))
+	if title == "" {
 		return failure(errTemplate, "title rendered empty")
 	}
-	if req.Priority == "" {
-		req.Priority = store.PriorityNormal
+	desc = strings.TrimSpace(red.String(desc))
+	if desc == "" {
+		return failure(errTemplate, "description rendered empty")
+	}
+	if n := utf8.RuneCountInString(desc); n > store.MaxApprovalDescription {
+		return failure(errTemplate, fmt.Sprintf("description rendered %d characters; the limit is %d", n, store.MaxApprovalDescription))
+	}
+	spc := ApprovalSpec{
+		Type: store.ApprovalRequest, Title: title, Description: desc, BodyMD: body, Priority: store.Priority(n.Priority),
+		DryRun: ne.fr.DryRun, NodeRunID: ne.nr.ID, FlowID: ne.fr.FlowID,
+		Meta: store.RequestApproval{OnTimeout: n.OnTimeout},
 	}
 	for _, path := range n.Fields {
-		req.Fields = append(req.Fields, store.RequestField{Key: path, Value: red.String(fieldText(lookupPath(ne.inputV, path)))})
+		spc.Fields = append(spc.Fields, store.RequestField{Key: path, Value: fieldText(lookupPath(ne.inputV, path))})
 	}
 	for _, path := range n.Editable {
 		v, err := json.Marshal(lookupPath(ne.inputV, path))
 		if err != nil {
 			return failure(errConfig, err.Error())
 		}
-		req.Editable = append(req.Editable, store.RequestEditable{Key: path, Value: v})
+		spc.Editable = append(spc.Editable, store.RequestEditable{Key: path, Value: v})
 	}
-	if req.DryRun {
-		req.BodyMD = strings.TrimRight(dryRunNotice+"\n\n"+req.BodyMD, "\n")
+	if spc.DryRun {
+		spc.BodyMD = strings.TrimRight(dryRunNotice+"\n\n"+spc.BodyMD, "\n")
 	}
 
 	if ne.fr.Kind == store.KindTest {
@@ -94,23 +105,18 @@ func (e *Engine) runApproval(ne *nodeEnv) nodeOutcome {
 			e.simulations.Delete(ne.fr.ID) // a node test runs one node; TestFlow deletes its own
 		}
 		now := time.Now().UTC()
-		return e.requestOutcome(ne, decision, "", "simulated", &now, "simulated approval: "+decision+": "+truncate(req.Title, 120), nil)
+		return e.requestOutcome(ne, decision, "", "simulated", &now, "simulated approval: "+decision+": "+truncate(title, 120), nil)
 	}
 
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return failure(errConfig, err.Error())
-	}
-	ap := &store.Approval{NodeRunID: ne.nr.ID, Type: store.ApprovalRequest, Request: string(raw)}
 	if n.Timeout > 0 {
 		exp := time.Now().UTC().Add(n.Timeout.Std())
-		ap.ExpiresAt = &exp
+		spc.ExpiresAt = &exp
 	}
-	if err := e.st.CreateApproval(e.dbCtx, ap); err != nil {
+	r, err := e.RaiseApproval(e.dbCtx, spc)
+	if err != nil {
 		return failure(errConfig, "create approval: "+err.Error())
 	}
-	e.notify(notify.Request(ne.fr.FlowID, ap.ID, req, e.url(ApprovalPath(ap.ID))))
-	return nodeOutcome{status: store.NodeAwaitingApproval, reason: "awaiting approval " + ap.ID}
+	return nodeOutcome{status: store.NodeAwaitingApproval, reason: "awaiting approval " + r.Approval.ID}
 }
 
 // requestOutcome is the outcome of a decided approval node: the input plus the approval, on port approved or denied.
@@ -215,10 +221,10 @@ func (e *Engine) expireRequests() {
 	}
 	now := time.Now().UTC()
 	for _, ap := range apps.Items {
-		if ap.NodeRunID == "" { // an operator approval
-			if ap.ExpiresAt != nil && !ap.ExpiresAt.After(now) && isDetached(ap.Request) {
-				// request_approval: nobody has to be waiting. A gated call's own wait expires its approval.
-				e.expireOperatorApproval(ap.ID, "no decision before the approval's timeout")
+		if kind := classifyRequest(&ap); kind.waited() {
+			if kind.detached() && ap.ExpiresAt != nil && !ap.ExpiresAt.After(now) {
+				// request_approval: nobody has to be waiting. A gated MCP call's own wait expires its approval.
+				e.expireWaitedApproval(ap.ID, "no decision before the approval's timeout")
 			}
 			continue
 		}

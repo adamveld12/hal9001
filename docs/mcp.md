@@ -64,7 +64,7 @@ And two tools that talk to you:
 
 | Tool | What it does |
 |---|---|
-| `request_approval` | Ask you for a decision, with optional editable values. Opens an approval in the Inbox. |
+| `request_approval` | Ask you for a decision, with a required description and optional editable values. Opens an approval in the Inbox. |
 | `send_note` | Post a note to your Inbox and raise a notification. No approval. |
 
 There is no tool to approve or deny, to change or delete a flow, sensor or setting, or to run anything else. Operator
@@ -72,6 +72,10 @@ approvals are ordinary approvals (`type: request`, no `flow_id` or `node_run_id`
 native notifications (with Approve and Deny) and `GET /api/approvals`. The ones a tool call waits on (`flow_run`,
 `sensor_poll`, the create tools) expire when the daemon restarts, like per-tool approvals of agent runs; a
 `request_approval` one does not (below). Decided ones are pruned with the retention setting.
+For those gated calls hal writes the approval's description from the call's facts (for example `Run the flow "triage" now: poll
+its sensors and start runs of it.`); only `request_approval` carries a description the agent wrote. Agents that run inside hal
+(flow agent nodes, the chat assistant) have a `request_approval` tool with the same arguments among their hal tools, see
+[design/agent-access.md](design/agent-access.md).
 
 ### Arguments
 
@@ -97,16 +101,21 @@ deletes. A JSON spec is stored as block-style YAML.
   only when polled. So a sensor created over MCP is inert until a flow you enabled subscribes to it.
 - **References.** Sensors and prompts a flow names must exist (the validator reports them), so create the sensor first.
 
-**`request_approval`**: `title` (string, required, at most 200 characters); `body` (markdown, at most 16 KiB); `priority`
+**`request_approval`**: `title` (string, required, at most 200 characters); `description` (string, **required**, at most 600
+characters: one or two sentences on what the agent wants to do and why; a call without it is a tool error,
+`description is required: say in one or two sentences what you want to do and why`, and the agent retries). The Inbox card
+shows it labelled as written by the agent. `body` (markdown, at most 16 KiB); `priority`
 (`low`, `normal`, `high`, `urgent`; default `normal`); `editable` (up to 20 `{key, value}` entries the approver may change
 before approving: `key` is a dot-path such as `reply` or `draft.subject`, `value` any JSON value shown as the starting value:
 the Request approval node's editable fields); `timeout_seconds` (10 to 604800, default **86400** = 24 hours): how long the
 approval stays open; `wait_seconds` (0 to 240, default **240**): how long this call waits for you.
 
-It returns `{approval_id, status, decision, comment, decided_by, decided_at, values, edited, edits}`:
+It returns `{approval_id, status, decision, comment, decided_by, decided_at, values, edited, edits, message}`:
 
 - `decision` is `approved`, `denied` or `expired`, or `pending` when `wait_seconds` ran out with no decision (`status` is the
-  same word). `comment` is what you typed. `values` (approved only) is the final value of every editable field, `edits`
+  same word). `comment` is what you typed. When you deny with a comment, `message` is `Denied by the user: "<text>". Do not
+  retry the same action unchanged; do what the user asked instead.` (steering the agent should follow); a held approval
+  (steering limit reached) says to stop and wait. `values` (approved only) is the final value of every editable field, `edits`
   the ones you changed as `{before, after}`; a denial ignores edits.
 - **Polling pattern.** An MCP call must not sit silent for more than about 4 to 5 minutes, so `wait_seconds` is capped at 240
   (the same limit as the other approvals). If you have not decided by then the call returns

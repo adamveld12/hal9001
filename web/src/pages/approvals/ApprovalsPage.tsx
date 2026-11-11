@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import { useApprovalsList } from "../../api/approvals";
+import { useApprovalsList, type Approval } from "../../api/approvals";
 import { useStatus } from "../../api/status";
 import { Tabs } from "../../components/Tabs";
 import {
@@ -13,8 +13,11 @@ import {
 } from "../../components/ui";
 import { usePageContext } from "../../layout/pageContext";
 import { factList, rowEntities } from "../../lib/contextSummary";
+import { Time } from "../../components/Time";
+import { StatusBadge } from "../../components/ui";
+import { ConnectedApprovalCard } from "./ConnectedApprovalCard";
 import { approvalEntity } from "./context";
-import { ApprovalList } from "./ApprovalList";
+import { approvalOrigin } from "./queue";
 import {
   HISTORY_STATUSES,
   mergeApprovalPages,
@@ -30,9 +33,30 @@ const TABS_BASE = [
   { key: "history", label: "History" },
 ] as const;
 
-/**
- * Approval history. Deciding happens in the Inbox: every row opens there.
- */
+/** A decided approval: one header line that expands to the full card. */
+function HistoryRow({ approval: a }: { approval: Approval }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-line">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-raised/60"
+      >
+        <span className="min-w-0 flex-1 truncate font-medium">{a.title}</span>
+        <span className="hidden truncate text-muted sm:inline">
+          {approvalOrigin(a)}
+        </span>
+        <StatusBadge status={a.status} />
+        <Time ts={a.decided_at ?? a.created_at} />
+      </button>
+      {open && <ConnectedApprovalCard approval={a} variant="full" />}
+    </div>
+  );
+}
+
+/** Pending approvals as actionable cards; history collapsed to a header with expand. The Inbox and chat show the same card. */
 export function ApprovalsPage() {
   const [params, setParams] = useSearchParams();
   const status = useStatus();
@@ -74,7 +98,7 @@ export function ApprovalsPage() {
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         title="Approvals"
-        subtitle="Decisions are made in the Inbox; open a row to see it there."
+        subtitle="Decide pending approvals here or in the Inbox; decided ones expand to show who decided and why."
       />
       <Tabs<ApprovalsTab>
         tabs={tabs}
@@ -136,7 +160,15 @@ export function ApprovalsPage() {
           />
         ) : (
           <>
-            <ApprovalList items={items} />
+            {items.map((a) =>
+              view.tab === "pending" ? (
+                <div key={a.id} className="border-b border-line">
+                  <ConnectedApprovalCard approval={a} variant="full" />
+                </div>
+              ) : (
+                <HistoryRow key={a.id} approval={a} />
+              ),
+            )}
             {list.hasNextPage && (
               <div className="p-3">
                 <Button

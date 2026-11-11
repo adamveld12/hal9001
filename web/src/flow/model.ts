@@ -128,6 +128,8 @@ export interface ApprovalNode {
   type: "approval";
   /** Template, required. */
   title: string;
+  /** Template, required: what the approver is asked and why. */
+  description: string;
   /** Markdown template. */
   body?: string;
   /** Dot-paths into the node input, shown as a key/value table. */
@@ -289,6 +291,8 @@ export function newNode(type: NodeType, id: string, ui: UIPos): FlowNode {
         id,
         type,
         title: "Approve {{.input.title}}?",
+        // Left empty so the required-field error asks the author to write it.
+        description: "",
         priority: "normal",
         ui,
       };

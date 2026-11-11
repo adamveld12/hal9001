@@ -28,6 +28,7 @@ Always available to every agent run (executed on the local hal instance):
 |---|---|
 | `gh_api(method, path, params)`, `pr_view`, `pr_diff`, `pr_list`, `issue_view`, `search` | `gh` CLI with the user's auth. GET auto-allowed; POST/PATCH/PUT/DELETE need approval by default. |
 | `now(timezone?)` | Current time. |
+| `request_approval(title, description, body?, priority?, editable?, timeout_seconds?, wait_seconds?)` | Ask the user for a decision. `description` is required (one or two sentences: what you want to do and why); without it the call is a tool error and the agent retries. Returns `{approval_id, status, decision, comment, values, edited, edits, message?}`. A denial with a comment is steering: `message` repeats it as `Denied by the user: "<text>". Do not retry the same action unchanged; do what the user asked instead.` Allowed in read-only and dry runs (it only asks). Same schema as the MCP operator tool of that name ([../mcp.md](../mcp.md)). |
 | `run_context()`, `node_input()`, `event()` | The run's state: ids, trigger, node input payload, original event. |
 
 Added when the agent node has `output: note` (inline `instructions` or a prompt file with `output: note`): `submit_output(...)`
@@ -65,6 +66,18 @@ summary of available tools.
 - Sandbox `shell` / `fs_write`: per-sandbox policy `approval: auto | always | rules` with command-regex and path rules.
 - Pending calls are tool_call approvals in the Inbox (tool, args, diff for `fs_write`); the agent waits up to
   `approval_timeout`. Deny returns a tool error to the agent.
+- **Approval detail.** Every approval has a `title`, a required `description` (at most 600 characters) and `details` (the
+  real command, fields, diffs). For a gated call hal writes the description from the call's facts (`Tool.Describe`:
+  ``Run `npm test` in sandbox docker-dev``, `Write src/a.go (120 bytes) in sandbox docker-dev`, `Post a review on o/r#123`,
+  `Comment on o/r#7`, `Merge o/r#9`, `Run custom tool <id> with <key args>`); a tool without one gets `Run tool <name>`, its
+  reason and its top-level arguments. The command is extracted from nested arguments (`command`, `cmd`, `script`, `argv`),
+  never shown as raw JSON. A description an agent wrote (`request_approval`) is labelled as agent-written and shown beside
+  the real command, never instead of it.
+- **Steering.** The approver's comment on a denial is steering. The agent gets
+  `Denied by the user: "<text>". Do not retry the same action unchanged; do what the user asked instead.` as the tool
+  error (tool calls) or in `message` (`request_approval`). After `max_steers_per_run` steered denials in one conversation
+  the next gated action is held: its denial reads `Denied by the user. The steering limit for this conversation was
+  reached; stop and wait for the user instead of trying other actions.`
 
 ## Sandboxes (Configure → Sandboxes)
 

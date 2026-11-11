@@ -84,3 +84,17 @@ func mkAgentRun(t *testing.T, s *Store, nodeRunID string, style ApproveStyle, st
 	must(t, s.CreateAgentRun(ctx(), a))
 	return a
 }
+
+// valid fills what every approval needs (title, description, origin) when a test leaves it out.
+func valid(a *Approval) *Approval {
+	if a.Title == "" {
+		a.Title = "Approve"
+	}
+	if a.Description == "" {
+		a.Description = "Do the thing"
+	}
+	if a.Origin == "" {
+		a.Origin = OriginFlow
+	}
+	return a
+}

@@ -59,19 +59,19 @@ const (
 
 // Notification action ids (buttons).
 const (
-	ActOpen           = "open"
-	ActMarkRead       = "mark_read"
-	ActArchive        = "archive"
-	ActApprove        = "approve"
-	ActDeny           = "deny"
-	ActApproveComment = "approve_comment"
-	ActDenyComment    = "deny_comment"
+	ActOpen     = "open"
+	ActMarkRead = "mark_read"
+	ActArchive  = "archive"
+	ActApprove  = "approve"
+	ActDeny     = "deny"
+	// ActDenySteer is "Deny…": a denial with typed text, which is the steering the agent gets.
+	ActDenySteer = "deny_steer"
 )
 
 // DefaultAction is the action id of a click on the notification itself (UNNotificationDefaultActionIdentifier).
 const DefaultAction = "com.apple.UNNotificationDefaultActionIdentifier"
 
-// ActionDef is one button of a category. Text buttons take typed input; its text is sent as the comment.
+// ActionDef is one button of a category. Text buttons take typed input; for a denial its text is the steering comment.
 type ActionDef struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
@@ -88,12 +88,10 @@ type CategoryDef struct {
 }
 
 // Categories is every category the app registers: notes get Open, Mark read, Archive; approvals (proposals, tool calls,
-// requests) get Approve, Deny and the same two with a typed comment; a request whose fields can be edited gets
-// Approve as-is, Deny and Open to edit.
+// requests) get Approve, Deny and Deny… (typed steering text); a request whose fields can be edited gets Approve as-is,
+// Deny, Deny… and Open to edit.
 func Categories() []CategoryDef {
-	comment := func(id, title string) ActionDef {
-		return ActionDef{ID: id, Title: title, Text: true, Placeholder: "Comment", SendTitle: "Send"}
-	}
+	steer := ActionDef{ID: ActDenySteer, Title: "Deny…", Destructive: true, Text: true, Placeholder: "Additional steering", SendTitle: "Deny"}
 	return []CategoryDef{
 		{ID: CategoryNote, Actions: []ActionDef{
 			{ID: ActOpen, Title: "Open"},
@@ -103,12 +101,12 @@ func Categories() []CategoryDef {
 		{ID: CategoryApproval, Actions: []ActionDef{
 			{ID: ActApprove, Title: "Approve"},
 			{ID: ActDeny, Title: "Deny", Destructive: true},
-			comment(ActApproveComment, "Approve with comment…"),
-			func() ActionDef { d := comment(ActDenyComment, "Deny with comment…"); d.Destructive = true; return d }(),
+			steer,
 		}},
 		{ID: CategoryEditable, Actions: []ActionDef{
 			{ID: ActApprove, Title: "Approve as-is"},
 			{ID: ActDeny, Title: "Deny", Destructive: true},
+			steer,
 			{ID: ActOpen, Title: "Open to edit"},
 		}},
 	}

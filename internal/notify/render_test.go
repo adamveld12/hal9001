@@ -1,7 +1,6 @@
 package notify_test
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -23,39 +22,41 @@ func TestNoteRendersFlowTitleItemSubtitleAndPlainBody(t *testing.T) {
 	}
 }
 
-func TestProposalRendering(t *testing.T) {
-	n := notify.Proposal("review", "01AP", "**Plan:** create hello.txt\nthen more", false, "http://h/inbox/approval/01AP")
-	if n.Kind != "proposal" || n.ApprovalType != "proposal" || n.ApprovalID != "01AP" || n.Subtitle != "Approval: Plan: create hello.txt" ||
-		n.Priority != "normal" || n.Body != "Plan: create hello.txt\nthen more" {
+func TestApprovalRendersTitleDescriptionAndPriority(t *testing.T) {
+	n := notify.Approval(notify.ApprovalNote{FlowID: "review", ApprovalID: "01AP", Type: store.ApprovalProposal,
+		Title: "Create hello.txt", Description: "**Plan:** create hello.txt\nthen more\nthird", Priority: store.PriorityHigh}, "http://h/approvals/01AP")
+	if n.Kind != "proposal" || n.ApprovalType != "proposal" || n.ApprovalID != "01AP" || n.Subtitle != "Create hello.txt" ||
+		n.Priority != "high" || n.Body != "Plan: create hello.txt\nthen more" || n.Title != "review" || n.URL != "http://h/approvals/01AP" || n.Editable {
 		t.Errorf("proposal: %+v", n)
 	}
 }
 
-func TestToolCallRenderingShortensArguments(t *testing.T) {
-	args := json.RawMessage(`{"path":"/tmp/a.txt","content":"` + strings.Repeat("x", 200) + `"}`)
-	n := notify.ToolCall("review", "01AP", "Write file", args, false, "u")
-	if n.Kind != "tool_call" || n.ApprovalType != "tool_call" || n.Priority != "high" || n.Body != "" {
+func TestApprovalToolCallIsNotForcedHigh(t *testing.T) {
+	n := notify.Approval(notify.ApprovalNote{FlowID: "review", ApprovalID: "01AP", Type: store.ApprovalToolCall,
+		Title: "Run `npm test`", Description: "Run `npm test` in sandbox docker-dev"}, "u")
+	if n.Kind != "tool_call" || n.ApprovalType != "tool_call" || n.Priority != "normal" || n.Body != "Run npm test in sandbox docker-dev" {
 		t.Errorf("tool call: %+v", n)
 	}
-	if !strings.HasPrefix(n.Subtitle, "Tool call: Write file content=xxx") || !strings.HasSuffix(n.Subtitle, "…") || utf8.RuneCountInString(n.Subtitle) > 120 {
+	if n.Subtitle != "Run `npm test`" {
 		t.Errorf("subtitle %q", n.Subtitle)
-	}
-	if n := notify.ToolCall("f", "a", "Read", nil, false, "u"); n.Subtitle != "Tool call: Read" {
-		t.Errorf("no args: %q", n.Subtitle)
 	}
 }
 
-func TestRequestRenderingEditableAndDryRun(t *testing.T) {
-	req := store.RequestApproval{Title: "Ship api?", BodyMD: notify.DryRunNotice + "\n\nDeploy **api** to prod", Priority: store.PriorityUrgent,
-		DryRun: true, Editable: []store.RequestEditable{{Key: "name"}}}
-	n := notify.Request("ask", "01AP", req, "u")
+func TestApprovalRequestEditableAndDryRun(t *testing.T) {
+	a := notify.ApprovalNote{FlowID: "ask", ApprovalID: "01AP", Type: store.ApprovalRequest, Title: "Ship api?",
+		Description: "Deploy **api** to prod", Priority: store.PriorityUrgent, DryRun: true, Editable: true}
+	n := notify.Approval(a, "u")
 	if n.Kind != "request" || n.ApprovalType != "request" || !n.Editable || !n.DryRun || n.Priority != "urgent" ||
-		n.Subtitle != "[dry run] Request: Ship api?" || n.Body != "Deploy api to prod" {
+		n.Subtitle != "[dry run] Ship api?" || n.Body != "Deploy api to prod" {
 		t.Errorf("request: %+v", n)
 	}
-	req.Editable, req.DryRun, req.Priority = nil, false, ""
-	if n := notify.Request("ask", "01AP", req, "u"); n.Editable || n.Priority != "normal" || strings.HasPrefix(n.Subtitle, "[dry run]") {
+	a.Editable, a.DryRun, a.Priority = false, false, ""
+	if n := notify.Approval(a, "u"); n.Editable || n.Priority != "normal" || strings.HasPrefix(n.Subtitle, "[dry run]") {
 		t.Errorf("plain request: %+v", n)
+	}
+	long := strings.Repeat("é", 500)
+	if n := notify.Approval(notify.ApprovalNote{Type: store.ApprovalRequest, Title: long, Description: long}, "u"); utf8.RuneCountInString(n.Subtitle) > 120 || utf8.RuneCountInString(n.Body) != 200 {
+		t.Errorf("limits: subtitle %d, body %d runes", utf8.RuneCountInString(n.Subtitle), utf8.RuneCountInString(n.Body))
 	}
 }
 

@@ -228,7 +228,7 @@ func TestMarkInterruptedFailsRunningAssistSessions(t *testing.T) {
 	pr := &PermissionRequest{AgentRunID: turn.ID, ToolKind: "execute", Title: "curl"}
 	must(t, s.CreatePermissionRequest(ctx(), pr))
 	ap := &Approval{AgentRunID: turn.ID, Type: ApprovalToolCall, PermissionRequestID: pr.ID}
-	must(t, s.CreateApproval(ctx(), ap))
+	must(t, s.CreateApproval(ctx(), valid(ap)))
 
 	res, err := s.MarkInterrupted(ctx())
 	must(t, err)
@@ -264,7 +264,7 @@ func TestPruneDeletesOldAssistSessionsWithTheirTurns(t *testing.T) {
 	pendingTurn := mkAssistRun(t, s, pending.ID, AgentAwaitingApproval)
 	pr := &PermissionRequest{AgentRunID: pendingTurn.ID, ToolKind: "execute", Title: "curl"}
 	must(t, s.CreatePermissionRequest(ctx(), pr))
-	must(t, s.CreateApproval(ctx(), &Approval{AgentRunID: pendingTurn.ID, Type: ApprovalToolCall, PermissionRequestID: pr.ID}))
+	must(t, s.CreateApproval(ctx(), valid(&Approval{AgentRunID: pendingTurn.ID, Type: ApprovalToolCall, PermissionRequestID: pr.ID})))
 
 	running := mkAssistSession(t, s, "")
 	running.Status = AssistRunning

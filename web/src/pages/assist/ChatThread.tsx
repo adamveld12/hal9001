@@ -69,7 +69,7 @@ export function ChatThread({
       )}
       <MessageList
         messages={s.messages}
-        runtime={s.runtime}
+        conversationId={id}
         sandbox={sandbox.data}
         onLoadEarlierSandbox={sandbox.loadEarlier}
         tail={

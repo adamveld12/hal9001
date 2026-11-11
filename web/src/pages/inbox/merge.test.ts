@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Approval } from "../../api/approvals";
 import type { InboxItem } from "../../api/inbox";
+import { approval } from "../approvals/fixtures";
 import { DEFAULT_FILTERS } from "./filters";
 import {
   mergeInboxRows,
@@ -12,15 +13,7 @@ import {
 const note = (id: string, created_at: string): InboxItem =>
   ({ id, created_at, title: id, summary_md: "" }) as InboxItem;
 const appr = (id: string, created_at: string, over = {}): Approval =>
-  ({
-    id,
-    created_at,
-    status: "pending",
-    type: "proposal",
-    expires_at: null,
-    proposal_md: `Proposal ${id}`,
-    ...over,
-  }) as Approval;
+  approval({ id, created_at, proposal_md: `Proposal ${id}`, ...over });
 
 const notes = [
   note("n1", "2026-01-02T00:00:00Z"),

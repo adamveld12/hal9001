@@ -391,11 +391,13 @@ func TestConversationMessagesOfAFlowRunFoldTheTranscript(t *testing.T) {
 	}
 	perm := &store.PermissionRequest{AgentRunID: run.ID, ToolCallID: "c2", ToolKind: "other", Title: "hal tool: emit_out"}
 	must(t, e.st.CreatePermissionRequest(ctx(), perm))
-	appr := &store.Approval{AgentRunID: run.ID, Type: store.ApprovalToolCall, PermissionRequestID: perm.ID}
+	appr := &store.Approval{AgentRunID: run.ID, Type: store.ApprovalToolCall, PermissionRequestID: perm.ID,
+		Title: "Emit out", Description: "Emit a result.", Origin: store.OriginFlow}
 	must(t, e.st.CreateApproval(ctx(), appr))
 	// The propose phase's proposal approval and its events come first.
 	must(t, e.st.AppendAgentEvent(ctx(), &store.AgentEvent{AgentRunID: f.proposeRun.ID, Kind: "message", Payload: store.Inline(`{"content":{"type":"text","text":"Plan: rebase first."}}`)}))
-	prop := &store.Approval{AgentRunID: f.proposeRun.ID, Type: store.ApprovalProposal, Proposal: store.Inline("Plan: rebase first.")}
+	prop := &store.Approval{AgentRunID: f.proposeRun.ID, Type: store.ApprovalProposal, Proposal: store.Inline("Plan: rebase first."),
+		Title: "Plan: rebase first.", Description: "Plan: rebase first.", Origin: store.OriginFlow}
 	must(t, e.st.CreateApproval(ctx(), prop))
 	if _, err := e.st.DecideApproval(ctx(), prop.ID, store.ApprovalDecision{Status: store.ApprovalApproved, Comment: "go ahead", DecidedBy: "me"}); err != nil {
 		t.Fatal(err)

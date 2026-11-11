@@ -248,7 +248,7 @@ func TestAssistTurnsAreAgentRunsWithoutAFlow(t *testing.T) {
 	must(t, e.st.CreateAgentRun(ctx(), turn))
 	pr := &store.PermissionRequest{AgentRunID: turn.ID, ToolCallID: "t1", ToolKind: "execute", Title: "curl example.com"}
 	must(t, e.st.CreatePermissionRequest(ctx(), pr))
-	ap := &store.Approval{AgentRunID: turn.ID, Type: store.ApprovalToolCall, PermissionRequestID: pr.ID}
+	ap := seeded(&store.Approval{AgentRunID: turn.ID, Type: store.ApprovalToolCall, PermissionRequestID: pr.ID})
 	must(t, e.st.CreateApproval(ctx(), ap))
 
 	run := e.get("/api/agent-runs/" + turn.ID).want(200).json()
