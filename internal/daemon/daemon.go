@@ -322,6 +322,9 @@ func Run(ctx context.Context, opts Options) error {
 		runErr = fmt.Errorf("daemon: serve: %w", err)
 	}
 
+	// Running work is interrupted before the HTTP calls it waits on are cancelled: an agent whose hal tool call
+	// is aborted by cancelBase must already be cancelled, or it carries on and can finish as succeeded.
+	eng.Interrupt()
 	cancelBase()
 	shutCtx, shutCancel := context.WithTimeout(context.WithoutCancel(ctx), httpShutdownTimeout)
 	if err := srv.Shutdown(shutCtx); err != nil {

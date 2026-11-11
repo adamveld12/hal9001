@@ -24,6 +24,7 @@ type recordingEngine struct {
 func (e *recordingEngine) Apply(ws *spec.Workspace)    { e.applied = append(e.applied, ws) }
 func (e *recordingEngine) Start(context.Context) error { return nil }
 func (e *recordingEngine) Stop(context.Context) error  { return nil }
+func (e *recordingEngine) Interrupt()                  {}
 
 const strictConfig = `max_agent_runs: 5
 allowed_hosts: [mac.tail1234.ts.net]

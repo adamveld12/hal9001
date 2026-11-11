@@ -6,12 +6,13 @@
 // # Lifecycle
 //
 // New, Apply (the loaded spec.Workspace; again on every hot reload), Start,
-// Stop. Apply is safe before Start and while work runs: running nodes keep
-// going, queued and later work sees the new files. Start runs
+// Interrupt, Stop. Apply is safe before Start and while work runs: running
+// nodes keep going, queued and later work sees the new files. Start runs
 // store.MarkInterrupted (running work becomes interrupted and is not retried,
 // per-tool approvals expire, queued runs and proposal approvals stay), restores
 // the kill switch and starts the dispatcher, the sensor schedulers and the daily
-// retention job. Stop cancels running nodes with agent.ErrInterrupted and waits.
+// retention job. Interrupt cancels running nodes with agent.ErrInterrupted
+// without waiting; Stop does the same and waits.
 //
 // # Execution model
 //

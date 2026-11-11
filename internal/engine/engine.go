@@ -204,19 +204,26 @@ func (e *Engine) start(ctx context.Context) error {
 	return nil
 }
 
+// Interrupt begins shutdown without waiting: schedulers stop and running nodes
+// are cancelled with agent.ErrInterrupted. The daemon calls it before it
+// cancels the HTTP calls running agents wait on (a hal tool call held for
+// approval): an agent whose call is aborted by shutdown must already be
+// cancelled, or it carries on with the failed call and can finish the run as
+// succeeded. Safe to call more than once; Stop calls it too.
+func (e *Engine) Interrupt() {
+	e.spawnMu.Lock()
+	e.stopping.Store(true)
+	e.spawnMu.Unlock()
+	e.stopLoops()
+	e.cancelActive(agent.ErrInterrupted)
+	e.cancel(agent.ErrInterrupted)
+}
+
 // Stop shuts the engine down: schedulers stop, running nodes are cancelled
 // with agent.ErrInterrupted and recorded as interrupted (proposal approvals
 // stay pending and survive), and Stop waits for them until ctx ends.
 func (e *Engine) Stop(ctx context.Context) error {
-	e.spawnMu.Lock()
-	already := e.stopping.Swap(true)
-	e.spawnMu.Unlock()
-	if already {
-		return nil
-	}
-	e.stopLoops()
-	e.cancelActive(agent.ErrInterrupted)
-	e.cancel(agent.ErrInterrupted)
+	e.Interrupt()
 	if e.ownRuntimes {
 		e.runtimes.Close()
 	}
