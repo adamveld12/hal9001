@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ApiError, errorMessage } from "../../api/client";
 import {
@@ -43,8 +43,23 @@ import { FlowRunNow } from "./FlowRunNow";
 
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-function NewFlow({ existing }: { existing: string[] }) {
+function NewFlow({
+  existing,
+  focusRequested,
+  onFocused,
+}: {
+  existing: string[];
+  /** `?new=1` (the "New flow" command): put the cursor in the id field. */
+  focusRequested: boolean;
+  onFocused: () => void;
+}) {
   const [id, setId] = useState("");
+  const idInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!focusRequested) return;
+    idInput.current?.focus();
+    onFocused();
+  }, [focusRequested, onFocused]);
   const create = useCreateFlow();
   const navigate = useNavigate();
   const problem =
@@ -81,6 +96,7 @@ function NewFlow({ existing }: { existing: string[] }) {
         }
       >
         <TextInput
+          ref={idInput}
           value={id}
           placeholder="triage-github"
           onChange={(e) => setId(e.target.value)}
@@ -135,6 +151,11 @@ export function FlowsPage() {
       : params.get("view") === "queue"
         ? "queue"
         : "flows";
+  const clearNewParam = () => {
+    const next = new URLSearchParams(params);
+    next.delete("new");
+    setParams(next, { replace: true });
+  };
   const runFilters = flowRunFiltersFromParams(params);
   const queue = useQueue();
   const setView = (v: "flows" | "runs" | "queue") => {
@@ -163,7 +184,13 @@ export function FlowsPage() {
         subtitle="Each flow is a YAML file under flows/"
         actions={
           <>
-            {flows.data && <NewFlow existing={flows.data.map((f) => f.id)} />}
+            {flows.data && (
+              <NewFlow
+                existing={flows.data.map((f) => f.id)}
+                focusRequested={params.get("new") === "1"}
+                onFocused={clearNewParam}
+              />
+            )}
             <Button
               icon="agent"
               disabled={drafting}

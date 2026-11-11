@@ -44,8 +44,8 @@ export interface Assist {
   openDrawer: () => void;
   close: () => void;
   toggle: () => void;
-  /** Show the start view for a target (or its session when it is shown already), with optional composer text. */
-  openTarget: (target: DrawerTarget, seed?: string) => void;
+  /** Show the start view for a target (or its session when it is shown already), with optional composer text; `send` sends it as the message. */
+  openTarget: (target: DrawerTarget, seed?: string, send?: boolean) => void;
   /** A fresh general chat; the chat that was shown keeps running. */
   newChat: () => void;
   select: (session: Pick<AssistSession, "id" | "target">) => void;
@@ -55,7 +55,8 @@ export interface Assist {
   bind: (sessionId: string, target?: DrawerTarget) => void;
   /** The target moved on (a new sensor was saved); the session stays. */
   retarget: (target: DrawerTarget) => void;
-  seedText: (text: string) => void;
+  /** Put text in the composer; `send` sends it as the message once the composer can. */
+  seedText: (text: string, send?: boolean) => void;
   /** The composer took the seed; it is not applied again when the composer remounts. */
   consumeSeed: () => void;
   dismissNotice: () => void;

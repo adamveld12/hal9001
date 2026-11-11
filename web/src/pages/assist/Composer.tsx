@@ -21,7 +21,7 @@ export function Composer({
 }: {
   disabled: boolean;
   placeholder: string;
-  prefill: { text: string; n: number } | null;
+  prefill: { text: string; n: number; send?: boolean } | null;
   /** Focus the input when the composer mounts (the drawer opened, or the conversation started). */
   autoFocus?: boolean;
   onSend: (text: string) => Promise<void>;
@@ -43,7 +43,9 @@ export function Composer({
   useEffect(() => {
     if (!prefill) return;
     ref.current?.focus();
-    onPrefillApplied();
+    // A prefill that asks to be sent stays until it is (see below), so a
+    // composer that remounts first still sends it.
+    if (prefill.send !== true) onPrefillApplied();
   }, [prefill, onPrefillApplied]);
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -83,6 +85,20 @@ export function Composer({
       setSending(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      prefill?.send !== true ||
+      prefill.n !== appliedPrefill ||
+      disabled ||
+      sending
+    ) {
+      return;
+    }
+    onPrefillApplied();
+    // Not inline: submit sets state, which an effect should not do synchronously.
+    queueMicrotask(() => void submit());
+  });
 
   const hints = slashHints(text);
   const isCommand = parseSlashCommand(text) !== null;

@@ -20,4 +20,4 @@ mise exec -- pnpm gen:api       # regenerate src/api/schema.d.ts from ../api/ope
 - `src/pages/`: one directory per area of REQUIREMENTS §11. `src/layout/`: shell, header, kill switch. `src/components/`: shared UI kit.
 - `tools/gen-api/`: a separate workspace package that carries TypeScript 5 for `openapi-typescript`, which needs the compiler JS API that TypeScript 7 does not ship.
 
-Keyboard: `g` then `t i a f s p ,` jumps to a page; inbox and approvals have `j`/`k` and action keys; `⌘S` saves in the flow editor, `⌘Z` / `⇧⌘Z` undo and redo.
+Keyboard: `⌘P` / `Ctrl+P` opens the command palette (every page, action and item by name; see [docs/command-palette.md](../docs/command-palette.md)); `⌘K` / `Ctrl+K` toggles Ask AI; `g` then `t i a f s p ,` jumps to a page; inbox and approvals have `j`/`k` and action keys; `⌘S` saves in the flow editor, `⌘Z` / `⇧⌘Z` undo and redo.

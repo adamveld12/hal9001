@@ -1,146 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { Fragment, useCallback, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { useFaviconActivity } from "./faviconActivity";
 import { eyeLabel, eyeThrobs } from "./halEye";
 import { useStatus } from "../api/status";
 import { useStreamState } from "../api/streamHooks";
-import { GithubMark, Icon, type IconName } from "../components/icons";
+import { GithubMark, Icon } from "../components/icons";
 import { ExternalLink } from "../components/ExternalLink";
 import { Badge, Kbd } from "../components/ui";
 import { cx } from "../lib/cx";
 import { isDark, setTheme, useTheme } from "../lib/theme";
-import { assistDrawerOpen, isAskAiShortcut } from "../lib/focus";
 import { AssistDrawer } from "../pages/assist/AssistDrawer";
 import { AssistProvider } from "../pages/assist/AssistProvider";
 import { useAssist } from "../pages/assist/context";
-import { chatPath, isChatPath, NEW_CHAT_ID } from "../pages/chat/path";
+import { isChatPath } from "../pages/chat/path";
 import { useTrackOrigin } from "../pages/chat/useTrackOrigin";
+import { CommandProvider } from "./commands/CommandProvider";
+import { useAppCommands } from "./commands/useAppCommands";
 import { KillSwitch } from "./KillSwitch";
+import { NAV_SECTIONS } from "./nav";
+import { MAC } from "./platform";
 import { PageContextProvider } from "./PageContextProvider";
 import { UpdateBanner } from "./UpdateBanner";
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: IconName;
-  /** second key of the `g <key>` go-to shortcut, if any */
-  key?: string;
-}
-
-interface NavSection {
-  label: string;
-  items: NavItem[];
-}
-
 /** The modifier of the Ask AI shortcut on this platform. */
-const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+const MOD_KEY = MAC ? "⌘" : "Ctrl";
 
 const INBOX_BADGE_TITLE = "Unread notes plus pending approvals";
 
-const NAV_SECTIONS: NavSection[] = [
-  {
-    label: "Notify",
-    items: [
-      { to: "/inbox", label: "Inbox", icon: "inbox", key: "i" },
-      { to: "/approvals", label: "Approvals", icon: "approvals", key: "a" },
-    ],
-  },
-  {
-    label: "Automate",
-    items: [
-      { to: "/sensors", label: "Sensors", icon: "sensors", key: "s" },
-      { to: "/flows", label: "Flows", icon: "flows", key: "f" },
-      { to: "/prompts", label: "Prompts", icon: "prompts", key: "p" },
-      { to: "/chat", label: "Chat", icon: "chat", key: "h" },
-    ],
-  },
-  {
-    label: "Observe",
-    items: [
-      { to: "/timeline", label: "Timeline", icon: "timeline", key: "t" },
-      { to: "/agent-runs", label: "Agent runs", icon: "agent", key: "r" },
-    ],
-  },
-  {
-    label: "Configure",
-    items: [
-      {
-        to: "/settings/general",
-        label: "General",
-        icon: "settings",
-        key: ",",
-      },
-      {
-        to: "/settings/context",
-        label: "Context",
-        icon: "prompts",
-        key: "c",
-      },
-      {
-        to: "/settings/environment",
-        label: "Environment",
-        icon: "env",
-        key: "e",
-      },
-      {
-        to: "/settings/runtimes",
-        label: "Runtimes",
-        icon: "command",
-        key: "m",
-      },
-      { to: "/tools", label: "Tools", icon: "command", key: "o" },
-      { to: "/sandboxes", label: "Sandboxes", icon: "box", key: "b" },
-      { to: "/settings/auth", label: "Auth", icon: "lock", key: "u" },
-      {
-        to: "/settings/tailscale",
-        label: "Tailscale",
-        icon: "network",
-        key: "n",
-      },
-      { to: "/settings/mcp", label: "MCP", icon: "code", key: "c" },
-      { to: "/settings/updates", label: "Updates", icon: "refresh" },
-    ],
-  },
+/** The second keys of the `g <key>` shortcuts, in sidebar order; a key a page lost to an earlier one is left out. */
+const GO_KEYS = [
+  ...new Set(
+    NAV_SECTIONS.flatMap((s) => s.items).flatMap((n) => (n.key ? [n.key] : [])),
+  ),
 ];
 
-const NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.items);
-
-/** `g` then a letter jumps to a page (Linear style); ignored while typing. */
-function useGoToShortcuts() {
-  const navigate = useNavigate();
-  const armed = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (assistDrawerOpen(document)) return;
-      const t = e.target;
-      if (
-        t instanceof HTMLElement &&
-        (t.isContentEditable ||
-          t.closest(".cm-editor") ||
-          /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
-      ) {
-        return;
-      }
-      if (armed.current) {
-        clearTimeout(armed.current);
-        armed.current = undefined;
-        const item = NAV.find((n) => n.key === e.key);
-        if (item) {
-          e.preventDefault();
-          void navigate(item.to);
-        }
-      } else if (e.key === "g") {
-        armed.current = setTimeout(() => (armed.current = undefined), 1200);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [navigate]);
-}
 const NAV_COLLAPSED_ITEM = "hal9001.nav.collapsed";
 
-/** Whether the left nav is an icon rail; persisted, toggled with `[` (ignored while typing). */
+/** Whether the left nav is an icon rail; persisted. The `[` shortcut is the "Toggle sidebar" command. */
 function useNavCollapsed(): [boolean, () => void] {
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -159,43 +55,7 @@ function useNavCollapsed(): [boolean, () => void] {
       return !c;
     });
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "[" || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (assistDrawerOpen(document)) return;
-      const t = e.target;
-      if (
-        t instanceof HTMLElement &&
-        (t.isContentEditable ||
-          t.closest(".cm-editor") ||
-          /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
-      ) {
-        return;
-      }
-      e.preventDefault();
-      toggle();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggle]);
   return [collapsed, toggle];
-}
-
-/**
- * Cmd/Ctrl+K toggles the Ask AI drawer from anywhere, also while typing. It
- * listens in the capture phase so an editor does not take the key first.
- */
-function useAskAiShortcut(toggle: () => void) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!isAskAiShortcut(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      toggle();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [toggle]);
 }
 
 function Count({
@@ -214,26 +74,11 @@ function Count({
 }
 
 function Shell() {
-  useGoToShortcuts();
   useTrackOrigin();
   const assist = useAssist();
-  const navigate = useNavigate();
   const onChatPage = isChatPath(useLocation().pathname);
-  // On the Chat page the drawer is not shown (one chat at a time): Ask AI
-  // moves to that page's message box, or starts a new chat when it has none.
-  const askAi = () => {
-    if (!onChatPage) {
-      assist.toggle();
-      return;
-    }
-    const input = document.querySelector<HTMLTextAreaElement>(
-      "[data-chat-composer] textarea",
-    );
-    if (input && !input.disabled) input.focus();
-    else void navigate(chatPath(NEW_CHAT_ID));
-  };
-  useAskAiShortcut(askAi);
   const [collapsed, toggle] = useNavCollapsed();
+  const { askAi } = useAppCommands({ collapsed, toggle });
   const status = useStatus();
   const stream = useStreamState();
   const theme = useTheme();
@@ -357,12 +202,20 @@ function Shell() {
             <Icon name="sidebar" size={15} />
           </button>
           {!collapsed && (
-            <span>
-              <Kbd>g</Kbd> then <Kbd>i</Kbd> <Kbd>a</Kbd> <Kbd>s</Kbd>{" "}
-              <Kbd>f</Kbd> <Kbd>p</Kbd> <Kbd>h</Kbd> <Kbd>t</Kbd> <Kbd>r</Kbd>{" "}
-              <Kbd>,</Kbd> <Kbd>e</Kbd> <Kbd>m</Kbd> <Kbd>b</Kbd> <Kbd>u</Kbd>{" "}
-              to jump
-            </span>
+            <div className="space-y-1">
+              <div>
+                <Kbd>g</Kbd> then{" "}
+                {GO_KEYS.map((k) => (
+                  <Fragment key={k}>
+                    <Kbd>{k}</Kbd>{" "}
+                  </Fragment>
+                ))}
+                to jump
+              </div>
+              <div>
+                <Kbd>{MOD_KEY} P</Kbd> command palette
+              </div>
+            </div>
           )}
         </div>
       </nav>
@@ -404,7 +257,7 @@ function Shell() {
                   ? "border-accent/50 bg-accent/10 text-accent"
                   : "border-line hover:bg-raised",
               )}
-              onClick={askAi}
+              onClick={() => askAi({ shortcut: true })}
             >
               <Icon name="agent" size={14} />
               Ask AI
@@ -497,7 +350,9 @@ export function AppShell() {
   return (
     <PageContextProvider>
       <AssistProvider>
-        <Shell />
+        <CommandProvider>
+          <Shell />
+        </CommandProvider>
       </AssistProvider>
     </PageContextProvider>
   );

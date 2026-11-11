@@ -14,6 +14,8 @@ export interface DrawerTarget {
 export interface Seed {
   text: string;
   n: number;
+  /** Send the text as a message once the composer can, instead of leaving it to edit. */
+  send?: boolean;
 }
 
 export interface DrawerState {
