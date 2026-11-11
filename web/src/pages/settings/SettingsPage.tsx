@@ -1,33 +1,46 @@
-import { useAuthSessions, usePasskeys } from "../../api/auth";
-import { useSettings } from "../../api/settings";
+import { useEffect } from "react";
+import { Navigate, useLocation, useSearchParams } from "react-router";
+import { useAuthOverview, useAuthStacks } from "../../api/auth";
+import { useTailscaleStatus } from "../../api/tailscale";
 import { usePageContext } from "../../layout/pageContext";
-import { factList } from "../../lib/contextSummary";
-import { Navigate, useSearchParams } from "react-router";
 import { PageHeader } from "../../components/ui";
-import { stackViews } from "./authView";
+import { AuthAdvancedCard } from "./AuthAdvancedCard";
 import { AuthEventsPanel } from "./AuthEventsPanel";
-import { AuthStackPanel, TailscalePanel } from "./AuthConfigPanels";
+import { AuthOverviewCard } from "./AuthOverviewCard";
+import { authPageContext } from "./authView";
+import { scrollTargetId } from "./authRoutes";
 import { ContextSection } from "./ContextSection";
 import { EnvSection } from "./EnvSection";
 import { GeneralSection } from "./GeneralSection";
 import { McpSection } from "./McpSection";
 import { PasskeysPanel } from "./PasskeysPanel";
+import {
+  NEW_PASSWORD_INPUT_ID,
+  PASSWORD_CARD_ID,
+  PasswordCard,
+} from "./PasswordCard";
 import { RuntimesSection } from "./RuntimesSection";
-import { TailscaleSection } from "./TailscaleSection";
 import { SessionsPanel } from "./SessionsPanel";
+import { TailscaleCard } from "./TailscaleCard";
 import { UpdatesSection } from "./UpdatesSection";
 
 function SettingsPageShell({
   title,
+  intro,
   children,
 }: {
   title: string;
+  /** One line under the header. */
+  intro?: string;
   children: React.ReactNode;
 }) {
   return (
     <>
       <PageHeader title={title} />
-      <div className="mx-auto max-w-4xl space-y-4 p-4">{children}</div>
+      <div className="mx-auto max-w-4xl space-y-4 p-4">
+        {intro && <p className="m-0 text-xs text-muted">{intro}</p>}
+        {children}
+      </div>
     </>
   );
 }
@@ -90,37 +103,50 @@ export function SettingsUpdatesPage() {
 
 export function SettingsAuthPage() {
   useAuthPageContext();
+  const overview = useAuthOverview();
+  const { hash } = useLocation();
+  // `#tailscale` and the like: scroll to the card, again once the cards above it have their content.
+  useEffect(() => {
+    const id = scrollTargetId(hash);
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "start" });
+  }, [hash, overview.isSuccess]);
+
+  const showPasswordForm = () => {
+    document
+      .getElementById(PASSWORD_CARD_ID)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document
+      .getElementById(NEW_PASSWORD_INPUT_ID)
+      ?.focus({ preventScroll: true });
+  };
+
   return (
-    <SettingsPageShell title="Auth">
-      <SessionsPanel />
+    <SettingsPageShell
+      title="Auth"
+      intro="How you sign in to hal: which ways in are on, and who can use them."
+    >
+      <AuthOverviewCard onSetPassword={showPasswordForm} />
+      <TailscaleCard />
+      <PasswordCard />
       <PasskeysPanel />
-      <AuthStackPanel />
-      <TailscalePanel />
+      <SessionsPanel />
       <AuthEventsPanel />
+      <AuthAdvancedCard />
     </SettingsPageShell>
   );
 }
 
-/** Counts and names of the auth setup; never session ids, passkey ids or stack options. */
+/** Which ways in are on, whether a password is set, Tailscale sharing and the stacks by name; never logins, ids or options. */
 function useAuthPageContext() {
-  const settings = useSettings();
-  const passkeys = usePasskeys();
-  const sessions = useAuthSessions();
+  const overview = useAuthOverview();
+  const stacks = useAuthStacks();
+  const tailscale = useTailscaleStatus();
   usePageContext(
-    settings.data
-      ? {
-          title: "Settings: Auth",
-          facts: factList([
-            ["passkeys", passkeys.data?.credentials.length],
-            ["active sessions", sessions.data?.sessions.length],
-          ]),
-          entities: stackViews(settings.data.config.auth).map((s) => ({
-            kind: "auth_stack",
-            id: s.name,
-            detail: `guards ${s.services.join(", ") || "nothing"}; modules ${s.entries.map((e) => `${e.module} (${e.control})`).join(", ")}`,
-          })),
-        }
-      : null,
+    authPageContext({
+      overview: overview.data,
+      stacks: stacks.data,
+      tailscale: tailscale.data,
+    }),
   );
 }
 
@@ -128,14 +154,6 @@ export function SettingsMcpPage() {
   return (
     <SettingsPageShell title="MCP">
       <McpSection />
-    </SettingsPageShell>
-  );
-}
-
-export function SettingsTailscalePage() {
-  return (
-    <SettingsPageShell title="Tailscale">
-      <TailscaleSection />
     </SettingsPageShell>
   );
 }

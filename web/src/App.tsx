@@ -12,6 +12,7 @@ import {
   useParams,
 } from "react-router";
 import { ApiError } from "./api/client";
+import { TAILSCALE_REDIRECT } from "./pages/settings/authRoutes";
 import { qk } from "./api/keys";
 import { useWhoAmI } from "./api/status";
 import { StreamProvider } from "./api/stream";
@@ -103,11 +104,6 @@ const SettingsMcpPage = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsMcpPage",
 );
-const SettingsTailscalePage = page(
-  () => import("./pages/settings/SettingsPage"),
-  "SettingsTailscalePage",
-);
-
 const SettingsUpdatesPage = page(
   () => import("./pages/settings/SettingsPage"),
   "SettingsUpdatesPage",
@@ -188,7 +184,7 @@ function AuthGate() {
           <Route path="settings/mcp" element={<SettingsMcpPage />} />
           <Route
             path="settings/tailscale"
-            element={<SettingsTailscalePage />}
+            element={<Navigate to={TAILSCALE_REDIRECT} replace />}
           />
           <Route path="settings/updates" element={<SettingsUpdatesPage />} />
           <Route path="sandboxes" element={<SandboxesPage />} />

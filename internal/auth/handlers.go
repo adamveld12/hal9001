@@ -142,7 +142,22 @@ func (m *Manager) handleBegin(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	pwAttempt := isPasswordAttempt(req)
+	if pwAttempt {
+		if wait := m.PasswordRetryAfter(r); wait > 0 {
+			m.record(r.Context(), eventFor(req, "login_begin", Evaluation{Outcome: OutcomeFail, Reason: "too many failed password attempts from this address"}, ""))
+			WriteRateLimited(w, wait)
+			return
+		}
+	}
 	ev := m.stackFor(c, svc).Evaluate(r.Context(), req)
+	if pwAttempt {
+		if failed, ok := passwordResult(ev); failed {
+			m.NotePasswordFailure(r)
+		} else if ok {
+			m.NotePasswordSuccess(r)
+		}
+	}
 	m.finishLogin(w, r, c, req, "login_begin", ev)
 }
 

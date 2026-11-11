@@ -13,6 +13,7 @@ import {
   Th,
 } from "../../components/ui";
 import { statusTone } from "../../lib/status";
+import { actionLabel } from "./authView";
 
 export function AuthEventsPanel() {
   const events = useAuthEvents(100);
@@ -71,7 +72,7 @@ function EventRow({ event: e }: { event: AuthEvent }) {
       <Td>
         <Time ts={e.ts} />
       </Td>
-      <Td className="whitespace-nowrap">{e.action.replaceAll("_", " ")}</Td>
+      <Td className="whitespace-nowrap">{actionLabel(e.action)}</Td>
       <Td>{e.service ?? "–"}</Td>
       <Td className="max-w-56 truncate font-mono">
         <span title={e.endpoint}>{e.endpoint}</span>

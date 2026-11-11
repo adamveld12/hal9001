@@ -2768,6 +2768,178 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/overview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * How you sign in
+     * @description One row per way in with its status: `localhost` (On this Mac: `localhost-trust`), `tailscale` (From your tailnet:
+     *     `tailscale-identity`), `passkeys` (`webauthn`) and `password`. `state` is `on`, `off` or `attention` (the method is
+     *     in the stacks but needs a step: sharing is off, no passkey is registered, no password is set; `detail` says which).
+     *     `current` says how this request was admitted, which the guardrails of the write endpoints compare against.
+     *     Never returns the password hash.
+     */
+    get: operations["getAuthOverview"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/methods": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Switch sign-in methods on or off
+     * @description Turns `tailscale` (`tailscale-identity`), `passkeys` (`webauthn`) and `password` on or off by editing `auth.stacks`
+     *     in `config.yaml` (comments are kept). On adds `{module, control: sufficient}` to every stack a service uses that lacks
+     *     it; off removes the module from every stack. Turning `password` off also deletes the stored hash (it lives in the
+     *     entry's options); turning it on needs a password to be set first (409 `invalid-state`: set one with
+     *     `PUT /api/auth/password`, which adds the entry itself). `localhost` is not switchable: this Mac can never lock
+     *     itself out. The edit is validated like a config load.
+     *
+     *     Guardrails (server-enforced). Switching a method off ends the sessions that were established with it. When that
+     *     would disable the method this request was admitted by (`current.method`), or leave a remote request with no remote
+     *     method (`tailscale`, `passkeys`, `password`), the server answers 409 `confirmation-required` (`reasons`,
+     *     `ends_session`) and changes nothing until the request is repeated with `confirm: true`. The change is logged as an
+     *     auth event (`auth_methods_change`).
+     */
+    patch: operations["updateAuthMethods"];
+    trace?: never;
+  };
+  "/api/auth/password": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Set or change the password
+     * @description Stores an argon2id hash (the `hash` option of every `password` entry in `auth.stacks`; the entry is added to the
+     *     stacks the services use when there is none, which turns password sign-in on). The password is never stored in
+     *     clear text and neither it nor the hash is ever returned (settings views show `«redacted»`). `password` must be at
+     *     least 12 characters (422 otherwise). Changing an existing password needs `current_password` (422 on a wrong one).
+     *     A change ends every other session that was established with the password (`ended_sessions`, `notice`); the
+     *     caller's own session stays. Wrong `current_password` attempts are rate limited per client address like password
+     *     logins (429 `rate-limited` with `Retry-After`). Logged as `auth_password_set` / `auth_password_change`.
+     */
+    put: operations["setAuthPassword"];
+    post?: never;
+    /**
+     * Remove the password
+     * @description Needs `current_password` (422 on a wrong one, rate limited like `PUT`). Deletes the hash and removes the `password`
+     *     entries from the stacks (password sign-in is then off), and ends every session established with the password.
+     *     When the caller's own session is one of them, or the caller is remote and the password is its last remote method,
+     *     the server answers 409 `confirmation-required` until `confirm: true` is sent. Logged as `auth_password_remove`.
+     */
+    delete: operations["removeAuthPassword"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/allowed-logins": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Who can sign in over the tailnet
+     * @description Replaces `allowed_logins` in `config.yaml` (comments are kept): the Tailscale logins `tailscale-identity` accepts.
+     *     An empty list means the login that owns this Mac only. Each login must look like `name@domain` (no spaces, commas
+     *     or control characters, at most 254 bytes); duplicates (case-insensitive) are dropped; 422 lists every bad entry.
+     *     When the request was admitted by `tailscale-identity` and the new list no longer admits the caller's own login,
+     *     the server answers 409 `confirmation-required` until `confirm: true` is sent. Logged as `auth_logins_change`.
+     */
+    put: operations["setAllowedLogins"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/stacks": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The auth stacks and service mapping
+     * @description `auth.stacks` and `auth.services` of the effective config (defaults filled in), for the advanced editor. Secrets
+     *     in module options (the password hash) are `«redacted»`. `hash` is the hash of `config.yaml` to send back as
+     *     `expected_hash`.
+     */
+    get: operations["getAuthStacks"];
+    /**
+     * Replace the auth stacks and service mapping
+     * @description Writes `auth.stacks` and `auth.services` to `config.yaml`, keeping comments and entries that did not change. A
+     *     `«redacted»` option value keeps the stored one. The result must pass the validator that loads the config (unknown
+     *     modules, controls, services or stacks; 422 with diagnostics) and the server's own rules:
+     *
+     *     - On this Mac (`localhost-trust`) can never be turned off, by a local or a remote caller and with or without `confirm`:
+     *       the new stacks must still admit a plain local request for every service, otherwise 422 with the diagnostic
+     *       `localhost_trust_required` and nothing is written.
+     *     - 409 `confirmation-required` (`reasons`, `ends_session`) until `confirm: true` when the change removes the method
+     *       this request was admitted by, or leaves a remote request with no remote method in the `admin` stack.
+     *
+     *     Sessions established with a method that no longer appears in the `admin` stack's methods are ended. 409 `conflict`
+     *     when `expected_hash` is stale. Logged as `auth_stacks_change`.
+     */
+    put: operations["setAuthStacks"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/stacks/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Preview a stacks change
+     * @description Runs everything `PUT /api/auth/stacks` would check and writes nothing. Always 200 for a well-formed body:
+     *     `valid` and `diagnostics` carry validation and lock-out findings, `confirm_required` / `reasons` /
+     *     `ends_session` the guardrail outcome, and `before` / `after` the `auth:` section of `config.yaml` as YAML
+     *     (secrets redacted) for the UI to diff.
+     */
+    post: operations["previewAuthStacks"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/tailscale": {
     parameters: {
       query?: never;
@@ -3070,7 +3242,7 @@ export interface components {
      *     unauthenticated 401, authentication-failed 401, forbidden 403, host-not-allowed 403,
      *     origin-not-allowed 403, not-found 404, conflict/already-exists/invalid-state 409, login-expired 410,
      *     payload-too-large 413, unsupported-media-type 415, validation-failed 422, paused 423, internal 500,
-     *     unavailable 503.
+     *     unavailable 503; confirmation-required 409 (an auth change that needs `confirm: true`), rate-limited 429.
      * @enum {string}
      */
     ProblemType:
@@ -3090,7 +3262,9 @@ export interface components {
       | "urn:hal9001:problem:validation-failed"
       | "urn:hal9001:problem:paused"
       | "urn:hal9001:problem:internal"
-      | "urn:hal9001:problem:unavailable";
+      | "urn:hal9001:problem:unavailable"
+      | "urn:hal9001:problem:confirmation-required"
+      | "urn:hal9001:problem:rate-limited";
     Problem: {
       type: components["schemas"]["ProblemType"];
       /** @description Short summary of the class. */
@@ -3150,13 +3324,14 @@ export interface components {
     };
     ConflictProblem: components["schemas"]["Problem"] & {
       /**
-       * @description `conflict`: `expected_hash` does not match the file. `already-exists`: create of an existing id. `invalid-state`: the resource is not in a state that allows the operation.
+       * @description `conflict`: `expected_hash` does not match the file. `already-exists`: create of an existing id. `invalid-state`: the resource is not in a state that allows the operation. `confirmation-required`: an auth change that would end this session or leave it without a way in; repeat it with `confirm: true` (see `reasons`).
        * @enum {unknown}
        */
       type?:
         | "urn:hal9001:problem:conflict"
         | "urn:hal9001:problem:already-exists"
-        | "urn:hal9001:problem:invalid-state";
+        | "urn:hal9001:problem:invalid-state"
+        | "urn:hal9001:problem:confirmation-required";
       /** @enum {unknown} */
       status?: 409;
       /** @description The hash the client sent. */
@@ -3166,6 +3341,18 @@ export interface components {
       current_state?: string;
       /** @description For an install refused by `POST /api/update/install`: where to download the build by hand. */
       release_url?: string;
+      /** @description For `confirmation-required`: what the change does to this session, one sentence each. */
+      reasons?: string[];
+      /** @description For `confirmation-required`: confirming ends the caller's own session. */
+      ends_session?: boolean;
+    };
+    TooManyRequestsProblem: components["schemas"]["Problem"] & {
+      /** @enum {unknown} */
+      type?: "urn:hal9001:problem:rate-limited";
+      /** @enum {unknown} */
+      status?: 429;
+      /** @description Seconds until the client may try again (also the `Retry-After` header). */
+      retry_after?: number;
     };
     LoginExpiredProblem: components["schemas"]["Problem"] & {
       /** @enum {unknown} */
@@ -5599,7 +5786,7 @@ export interface components {
     AuthEvent: {
       id: string;
       ts: components["schemas"]["Timestamp"];
-      /** @description `request`, `whoami`, `login_begin`, `login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register`, `webauthn_delete`. */
+      /** @description `request`, `whoami`, `login_begin`, `login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register`, `webauthn_delete`, `auth_methods_change`, `auth_password_set`, `auth_password_change`, `auth_password_remove`, `auth_logins_change`, `auth_stacks_change`. The auth_* actions are admin changes of the sign-in configuration (`reason` says what changed; a rejected current password logs outcome `fail`). */
       action: string;
       service?: components["schemas"]["AuthService"];
       /** @example GET /api/flows */
@@ -5614,6 +5801,127 @@ export interface components {
     };
     AuthEventList: {
       events: components["schemas"]["AuthEvent"][];
+    };
+    /**
+     * @description Ways in: `localhost` = module `localhost-trust`, `tailscale` = `tailscale-identity`, `passkeys` = `webauthn`, `password` = `password`.
+     * @enum {string}
+     */
+    AuthMethodId: "localhost" | "tailscale" | "passkeys" | "password";
+    /** @enum {string} */
+    AuthMethodState: "on" | "off" | "attention";
+    AuthMethod: {
+      id: components["schemas"]["AuthMethodId"];
+      /** @example tailscale-identity */
+      module: string;
+      /**
+       * @description Label for the UI: On this Mac, From your tailnet, Passkeys, Password.
+       * @example From your tailnet
+       */
+      name: string;
+      state: components["schemas"]["AuthMethodState"];
+      /** @description The module is in the stack of at least one service. */
+      enabled: boolean;
+      /** @description False for `localhost`. */
+      toggleable: boolean;
+      /** @description The stacks do not have the plain shape (the module is in some of the stacks the services use but not all, or with a control other than `sufficient`); switching it rewrites every stack as described at `PATCH /api/auth/methods`. The Advanced editor shows the details. */
+      custom: boolean;
+      /** @description One line for the row: why it is on, off, or needs attention. */
+      detail: string;
+    };
+    /** @description How this request was admitted (to the `admin` service). */
+    AuthCurrent: {
+      /** @description The method of the first module that admitted it; null when unknown. */
+      method: components["schemas"]["AuthMethodId"] | null;
+      modules: string[];
+      /** @description The request does not pass the `localhost-trust` conditions (it came over the tailnet or a proxy). */
+      remote: boolean;
+      /** @enum {string} */
+      source: "session" | "stack";
+      principal: string;
+      session_id: string | null;
+    };
+    PasswordStatus: {
+      /** @description A password hash is stored. */
+      set: boolean;
+      /** @description The `password` module is in the stacks. */
+      enabled: boolean;
+      /** @description Last successful password sign-in found in the auth events; null if none. */
+      last_used_at: components["schemas"]["Timestamp"] | null;
+    };
+    AuthOverview: {
+      /** @description In the order localhost, tailscale, passkeys, password. */
+      methods: components["schemas"]["AuthMethod"][];
+      current: components["schemas"]["AuthCurrent"];
+      password: components["schemas"]["PasswordStatus"];
+      passkey_count: number;
+      /** @description `allowed_logins` as configured; empty means the Mac's owner only. */
+      allowed_logins: string[];
+    };
+    AuthChangeResult: {
+      overview: components["schemas"]["AuthOverview"];
+      /** @description Sessions the change ended (the caller's own included, when confirmed). */
+      ended_sessions: number;
+      /** @description Human sentence about what the change ended, for the UI. */
+      notice: string | null;
+    };
+    AuthMethodsRequest: {
+      tailscale?: boolean;
+      passkeys?: boolean;
+      password?: boolean;
+      /** @description Acknowledge a `confirmation-required` answer. */
+      confirm?: boolean;
+    };
+    AuthPasswordSetRequest: {
+      password: string;
+      /** @description Required when a password is already set. */
+      current_password?: string;
+    };
+    AuthPasswordRemoveRequest: {
+      current_password?: string;
+      confirm?: boolean;
+    };
+    AuthAllowedLoginsRequest: {
+      logins: string[];
+      confirm?: boolean;
+    };
+    /** @description Named ordered module stacks. */
+    AuthStackMap: {
+      [key: string]: components["schemas"]["AuthModuleEntry"][];
+    };
+    /** @description Which stack guards each service. */
+    AuthServiceMap: {
+      ui: string;
+      api: string;
+      approve: string;
+      admin: string;
+    };
+    AuthStacks: {
+      stacks: components["schemas"]["AuthStackMap"];
+      services: components["schemas"]["AuthServiceMap"];
+      hash: components["schemas"]["Hash"];
+    };
+    AuthStacksRequest: {
+      stacks: components["schemas"]["AuthStackMap"];
+      services: components["schemas"]["AuthServiceMap"];
+      expected_hash?: components["schemas"]["Hash"];
+      confirm?: boolean;
+    };
+    AuthStacksPreviewRequest: {
+      stacks: components["schemas"]["AuthStackMap"];
+      services: components["schemas"]["AuthServiceMap"];
+    };
+    AuthStacksPreview: {
+      /** @description No error diagnostics: the change could be written (after confirmation, when required). */
+      valid: boolean;
+      /** @description Validator findings, and the blocking `localhost_trust_required` when any request (local or remote) would remove `localhost-trust`. */
+      diagnostics: components["schemas"]["Diagnostic"][];
+      changed: boolean;
+      confirm_required: boolean;
+      reasons: string[];
+      ends_session: boolean;
+      /** @description The `auth:` section as YAML, secrets redacted. */
+      before: string;
+      after: string;
     };
     Passkey: {
       /** @description Base64url credential id. */
@@ -6834,6 +7142,16 @@ export interface components {
       };
       content: {
         "application/problem+json": components["schemas"]["ValidationProblem"];
+      };
+    };
+    /** @description Too many failed attempts from this client address; wait `retry_after` seconds (`Retry-After` header). */
+    TooManyRequests: {
+      headers: {
+        "Retry-After"?: number;
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["TooManyRequestsProblem"];
       };
     };
     /** @description The kill switch is engaged and this operation would start work. */
@@ -10939,6 +11257,240 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getAuthOverview: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Overview. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthOverview"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  updateAuthMethods: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthMethodsRequest"];
+      };
+    };
+    responses: {
+      /** @description Changed (or already so). The overview after the change. */
+      200: {
+        headers: {
+          "Set-Cookie": components["headers"]["SetSessionCookie"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthChangeResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  setAuthPassword: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthPasswordSetRequest"];
+      };
+    };
+    responses: {
+      /** @description Stored. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthChangeResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      429: components["responses"]["TooManyRequests"];
+      default: components["responses"]["Error"];
+    };
+  };
+  removeAuthPassword: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthPasswordRemoveRequest"];
+      };
+    };
+    responses: {
+      /** @description Removed. Idempotent when no password is set (and `current_password` is then not checked). */
+      200: {
+        headers: {
+          "Set-Cookie": components["headers"]["SetSessionCookie"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthChangeResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      429: components["responses"]["TooManyRequests"];
+      default: components["responses"]["Error"];
+    };
+  };
+  setAllowedLogins: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthAllowedLoginsRequest"];
+      };
+    };
+    responses: {
+      /** @description Changed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthChangeResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getAuthStacks: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Stacks. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthStacks"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  setAuthStacks: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthStacksRequest"];
+      };
+    };
+    responses: {
+      /** @description Written. */
+      200: {
+        headers: {
+          "Set-Cookie": components["headers"]["SetSessionCookie"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthChangeResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  previewAuthStacks: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthStacksPreviewRequest"];
+      };
+    };
+    responses: {
+      /** @description Preview. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthStacksPreview"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
       default: components["responses"]["Error"];
     };
   };

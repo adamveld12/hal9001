@@ -117,7 +117,9 @@ func (m *Manager) detect(ctx context.Context, force bool) *snapshot {
 	if s.stErr == nil {
 		s.serve, s.serveErr = cli.ServeStatus(ctx)
 	}
-	m.snap, m.snapAt = s, m.opt.Now()
+	if ctx.Err() == nil { // a reading cut short by a cancelled request (page reload) must not be served from the cache
+		m.snap, m.snapAt = s, m.opt.Now()
+	}
 	return s
 }
 

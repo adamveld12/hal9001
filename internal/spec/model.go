@@ -174,7 +174,7 @@ const (
 )
 
 // Tailscale is what hal9001 keeps in place for `tailscale serve` (docs/auth.md). hal9001 writes it when you share it on
-// your tailnet (Settings > Tailscale, `hal9001 tailscale serve`).
+// your tailnet (Settings > Auth, `hal9001 tailscale serve`).
 type Tailscale struct {
 	// Serve: hal9001 re-applies `tailscale serve` at start when the mapping is missing.
 	Serve bool `yaml:"serve,omitempty" json:"serve"`

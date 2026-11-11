@@ -140,6 +140,18 @@ func TestDetectionOfAReadyMachine(t *testing.T) {
 	}
 }
 
+// A status request the browser abandoned (a page reload) must not leave its killed commands in the cache.
+func TestACancelledReadingIsNotCached(t *testing.T) {
+	e := newEnv(t)
+	m := tailscale.New(tailscale.Options{Home: e.home, Port: halPort, CLI: tailscale.CLI{Path: e.stub.BinDir, Exact: true}, CacheTTL: time.Hour})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.Status(ctx, false)
+	if r := m.Status(context.Background(), false); !r.CLI.Found || !r.LoggedIn || r.Error != nil {
+		t.Errorf("status after a cancelled reading = %+v, error %v", r.CLI, r.Error)
+	}
+}
+
 func TestDetectionProblems(t *testing.T) {
 	cases := []struct {
 		name  string

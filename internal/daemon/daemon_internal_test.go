@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"hal9001/internal/auth"
+	"hal9001/internal/authcfg"
 	"hal9001/internal/authstore"
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
@@ -47,7 +48,7 @@ func newReloadHarness(t *testing.T) (*daemon, *recordingEngine, string) {
 	t.Cleanup(func() { _ = st.Close() })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ws := spec.Load(home)
-	mgr, err := auth.New(auth.Options{Config: AuthConfig(ws.Config.Value), Store: authstore.New(st), Logger: log})
+	mgr, err := auth.New(auth.Options{Config: authcfg.AuthConfig(ws.Config.Value), Store: authstore.New(st), Logger: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestAuthConfigMapsConfigYAML(t *testing.T) {
 	if errs := errorMessages(ws.Config.Diagnostics); len(errs) > 0 {
 		t.Fatalf("fixture config invalid: %v", errs)
 	}
-	cfg := AuthConfig(ws.Config.Value)
+	cfg := authcfg.AuthConfig(ws.Config.Value)
 	if cfg.SessionTTL.String() != "2h0m0s" || len(cfg.AllowedHosts) != 1 || cfg.AllowedHosts[0] != "mac.tail1234.ts.net" ||
 		len(cfg.AllowedLogins) != 1 {
 		t.Errorf("scalar settings = %+v", cfg)
@@ -137,7 +138,7 @@ func TestAuthConfigMapsConfigYAML(t *testing.T) {
 func TestAuthConfigDefaultsHaveNoPasswordHashAndValidate(t *testing.T) {
 	var c spec.Config
 	c.ApplyDefaults()
-	cfg := AuthConfig(&c)
+	cfg := authcfg.AuthConfig(&c)
 	if cfg.PasswordHash != "" {
 		t.Errorf("PasswordHash = %q", cfg.PasswordHash)
 	}

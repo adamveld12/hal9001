@@ -209,30 +209,6 @@ export function allowedHostView(s: TailscaleStatus): AllowedHostView {
   };
 }
 
-export interface LoginsView {
-  logins: string[];
-  note: string;
-}
-
-/** Who `tailscale-identity` accepts. `allowed_logins` is already the owner when config.yaml lists none. */
-export function loginsView(s: TailscaleStatus): LoginsView {
-  const owner = s.owner_login;
-  if (s.allowed_logins.length === 0) {
-    return {
-      logins: [],
-      note: owner
-        ? "No login is accepted. Set allowed_logins in config.yaml."
-        : "No login is accepted: this Mac's owner is unknown. Set allowed_logins in config.yaml.",
-    };
-  }
-  return {
-    logins: s.allowed_logins,
-    note: owner
-      ? `When allowed_logins in config.yaml is empty, only this Mac's owner (${owner}) is accepted.`
-      : "Set by allowed_logins in config.yaml.",
-  };
-}
-
 const BAD_WARNINGS: Partial<Record<TailscaleWarning["code"], true>> = {
   funnel_enabled: true,
   funnel_on_port: true,

@@ -41,34 +41,55 @@ func HashPassword(password string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
-// VerifyPassword checks password against an argon2id PHC string in constant
-// time. A malformed hash is an error, not a mismatch.
-func VerifyPassword(phc, password string) (bool, error) {
-	parts := strings.Split(phc, "$")
+// phc is a parsed argon2id PHC string.
+type phc struct {
+	m, t uint32
+	p    uint8
+	salt []byte
+	key  []byte
+}
+
+// parsePHC parses and range-checks an argon2id PHC string.
+func parsePHC(s string) (phc, error) {
+	parts := strings.Split(s, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
-		return false, errors.New("auth: password hash is not an argon2id PHC string")
+		return phc{}, errors.New("auth: password hash is not an argon2id PHC string")
 	}
 	if parts[2] != "v="+strconv.Itoa(argon2.Version) {
-		return false, fmt.Errorf("auth: unsupported argon2 version %q", parts[2])
+		return phc{}, fmt.Errorf("auth: unsupported argon2 version %q", parts[2])
 	}
-	var m, t uint32
-	var p uint8
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &m, &t, &p); err != nil {
-		return false, fmt.Errorf("auth: bad argon2 parameters: %w", err)
+	var h phc
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &h.m, &h.t, &h.p); err != nil {
+		return phc{}, fmt.Errorf("auth: bad argon2 parameters: %w", err)
 	}
-	if m == 0 || m > maxArgonMemoryKiB || t == 0 || p == 0 {
-		return false, errors.New("auth: argon2 parameters out of range")
+	if h.m == 0 || h.m > maxArgonMemoryKiB || h.t == 0 || h.p == 0 {
+		return phc{}, errors.New("auth: argon2 parameters out of range")
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil || len(salt) == 0 {
-		return false, errors.New("auth: bad argon2 salt")
+	var err error
+	if h.salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil || len(h.salt) == 0 {
+		return phc{}, errors.New("auth: bad argon2 salt")
 	}
-	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) == 0 {
-		return false, errors.New("auth: bad argon2 key")
+	if h.key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(h.key) == 0 {
+		return phc{}, errors.New("auth: bad argon2 key")
 	}
-	got := argon2.IDKey([]byte(password), salt, t, m, p, uint32(len(want))) //nolint:gosec // len bounded by decoded config value
-	return subtle.ConstantTimeCompare(got, want) == 1, nil
+	return h, nil
+}
+
+// ValidatePasswordHash reports why s cannot be used as a stored password hash, or nil.
+func ValidatePasswordHash(s string) error {
+	_, err := parsePHC(s)
+	return err
+}
+
+// VerifyPassword checks password against an argon2id PHC string in constant
+// time. A malformed hash is an error, not a mismatch.
+func VerifyPassword(s, password string) (bool, error) {
+	h, err := parsePHC(s)
+	if err != nil {
+		return false, err
+	}
+	got := argon2.IDKey([]byte(password), h.salt, h.t, h.m, h.p, uint32(len(h.key))) //nolint:gosec // len bounded by decoded config value
+	return subtle.ConstantTimeCompare(got, h.key) == 1, nil
 }
 
 // Password authenticates the single owner with the argon2id hash from the

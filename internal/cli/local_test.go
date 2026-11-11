@@ -11,6 +11,7 @@ import (
 
 	"hal9001/content"
 	"hal9001/internal/auth"
+	"hal9001/internal/authcfg"
 	"hal9001/internal/cli"
 	"hal9001/internal/daemon"
 	"hal9001/internal/spec"
@@ -233,7 +234,7 @@ func passwordHashOnDisk(t *testing.T, home string) string {
 	if errs := ws.Config.Diagnostics; spec.HasErrors(errs) {
 		t.Fatalf("config.yaml invalid after set-password: %v", errs)
 	}
-	return daemon.AuthConfig(ws.Config.Value).PasswordHash
+	return authcfg.AuthConfig(ws.Config.Value).PasswordHash
 }
 
 func TestSetPasswordStoresAnArgon2idHashThatLogsIn(t *testing.T) {
@@ -332,18 +333,33 @@ func TestSetPasswordRejectsAnEmptyPassword(t *testing.T) {
 	}
 }
 
-func TestSetPasswordWithoutAPasswordModuleExplainsWhatToAdd(t *testing.T) {
+func TestSetPasswordRefusesAShortPasswordAndChangesNothing(t *testing.T) {
+	home := seededHome(t)
+	before := mustRead(t, filepath.Join(home, "config.yaml"))
+	res := run(t, runOpts{stdin: "too short\n"}, "auth", "set-password", "--stdin", "--home", home)
+	if res.code != cli.ExitError || !strings.Contains(res.stderr, "at least 12 characters") {
+		t.Errorf("exit %d stderr %q", res.code, res.stderr)
+	}
+	if got := mustRead(t, filepath.Join(home, "config.yaml")); string(got) != string(before) {
+		t.Errorf("config.yaml was modified:\n%s", got)
+	}
+}
+
+func TestSetPasswordAddsThePasswordModuleWhenNoStackHasIt(t *testing.T) {
 	home := t.TempDir()
 	cfg := "auth:\n  stacks:\n    default:\n      - {module: localhost-trust, control: sufficient}\n"
 	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res := run(t, runOpts{stdin: "pw\n"}, "auth", "set-password", "--stdin", "--home", home)
-	if res.code != cli.ExitError || !strings.Contains(res.stderr, "no `password` module") {
-		t.Errorf("exit %d stderr %q", res.code, res.stderr)
+	if res := run(t, runOpts{stdin: "a long enough password\n"}, "auth", "set-password", "--stdin", "--home", home); res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
 	}
-	if got := string(mustRead(t, filepath.Join(home, "config.yaml"))); got != cfg {
-		t.Errorf("config.yaml was modified:\n%s", got)
+	stack := authcfg.AuthConfig(spec.Load(home).Config.Value).Stacks["default"]
+	if len(stack) != 2 || stack[0].Module != "localhost-trust" || stack[1].Module != "password" || stack[1].Control != "sufficient" {
+		t.Fatalf("stack = %+v", stack)
+	}
+	if ok, _ := auth.VerifyPassword(passwordHashOnDisk(t, home), "a long enough password"); !ok {
+		t.Error("password not stored")
 	}
 }
 
@@ -353,7 +369,7 @@ func TestSetPasswordCreatesConfigWithDefaultStackWhenMissing(t *testing.T) {
 		t.Fatalf("exit %d: %s", res.code, res.stderr)
 	}
 	ws := spec.Load(home)
-	cfg := daemon.AuthConfig(ws.Config.Value)
+	cfg := authcfg.AuthConfig(ws.Config.Value)
 	if ok, _ := auth.VerifyPassword(cfg.PasswordHash, "pw-from-nothing"); !ok {
 		t.Error("password not stored")
 	}
@@ -376,7 +392,7 @@ func TestSetPasswordSetsEveryPasswordEntryAcrossStacks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if res := run(t, runOpts{stdin: "pw\n"}, "auth", "set-password", "--stdin", "--home", home); res.code != 0 {
+	if res := run(t, runOpts{stdin: "pw-for-every-entry\n"}, "auth", "set-password", "--stdin", "--home", home); res.code != 0 {
 		t.Fatalf("exit %d: %s", res.code, res.stderr)
 	}
 	got := string(mustRead(t, filepath.Join(home, "config.yaml")))

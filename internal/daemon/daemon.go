@@ -22,6 +22,7 @@ import (
 	"hal9001/internal/agent"
 	"hal9001/internal/assist"
 	"hal9001/internal/auth"
+	"hal9001/internal/authcfg"
 	"hal9001/internal/authstore"
 	"hal9001/internal/httpsec"
 	"hal9001/internal/menubar"
@@ -176,7 +177,7 @@ func Run(ctx context.Context, opts Options) error {
 		tsCLI = tailscale.CLI{Path: opts.TailscalePATH, Exact: true}
 	}
 	tsMgr := tailscale.New(tailscale.Options{Home: home, Port: port, CLI: tsCLI, Log: log})
-	mgr, err := auth.New(auth.Options{Config: AuthConfig(ws.Config.Value), Store: authstore.New(st), Logger: log, Tailscale: tsMgr.Client()})
+	mgr, err := auth.New(auth.Options{Config: authcfg.AuthConfig(ws.Config.Value), Store: authstore.New(st), Logger: log, Tailscale: tsMgr.Client()})
 	if err != nil {
 		return fmt.Errorf("daemon: auth: %w", err)
 	}
@@ -384,7 +385,7 @@ func (d *daemon) reload() {
 	}
 	eff := d.effective(ws)
 	d.engine.Apply(eff)
-	if err := d.auth.Reload(AuthConfig(eff.Config.Value)); err != nil {
+	if err := d.auth.Reload(authcfg.AuthConfig(eff.Config.Value)); err != nil {
 		d.log.Error("auth config rejected; keeping the previous one", "err", err)
 	}
 	if d.update != nil {

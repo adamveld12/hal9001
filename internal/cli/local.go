@@ -212,6 +212,9 @@ func (c *call) readNewPassword(fromStdin bool) (string, error) {
 		if pw == "" {
 			return "", errors.New("the password is empty")
 		}
+		if err := auth.ValidatePassword(pw); err != nil {
+			return "", err
+		}
 		return pw, nil
 	}
 	first, err := c.env.ReadPassword("New password: ")
@@ -227,6 +230,9 @@ func (c *call) readNewPassword(fromStdin bool) (string, error) {
 	}
 	if first != second {
 		return "", errors.New("the passwords do not match; nothing was changed")
+	}
+	if err := auth.ValidatePassword(first); err != nil {
+		return "", err
 	}
 	return first, nil
 }

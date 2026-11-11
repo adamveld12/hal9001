@@ -54,6 +54,8 @@ type Manager struct {
 	ts     *TailscaleIdentity
 	wa     *WebAuthn
 	logins *loginTable
+	// limiter counts failed password attempts per client address (logins and wrong current_password).
+	limiter *failureLimiter
 }
 
 // New builds a Manager with the built-in modules registered (localhost-trust,
@@ -66,7 +68,7 @@ func New(opts Options) (*Manager, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	m := &Manager{store: opts.Store, reg: NewRegistry(), now: func() time.Time { return clock().UTC() }, log: opts.Logger, logins: newLoginTable()}
+	m := &Manager{store: opts.Store, reg: NewRegistry(), now: func() time.Time { return clock().UTC() }, log: opts.Logger, logins: newLoginTable(), limiter: newFailureLimiter()}
 	if m.log == nil {
 		m.log = slog.Default()
 	}
