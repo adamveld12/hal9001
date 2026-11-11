@@ -572,15 +572,18 @@ func (d *Daemon) CLI(stdin string, args ...string) (stdout, stderr string, code 
 
 // Tick advances the daemon's manual clock by dur and returns once every
 // scheduler timer it fired has handled its tick (polled, or skipped because the
-// sensor or the daemon is paused) and armed the next one. Tests that Tick do
-// not run agents on the clock. It fails if no scheduler timer is pending.
+// sensor or the daemon is paused) and armed the next one. It first waits for a
+// timer that dur will fire, so a scheduler still busy with its previous tick
+// (a poll running, the next timer not armed yet) does not lose this one. Tests
+// that Tick do not run agents on the clock. It fails if no timer due within dur
+// appears.
 func (d *Daemon) Tick(dur time.Duration) {
 	d.t.Helper()
 	if d.Clock == nil {
 		d.t.Fatal("Tick needs a daemon created withClock()")
 	}
 	if !d.Clock.Tick(dur, 30*time.Second) {
-		d.t.Fatal("the scheduler timers did not re-arm after the tick")
+		d.t.Fatalf("no scheduler timer due within %s, or the timers did not re-arm after the tick", dur)
 	}
 }
 

@@ -230,18 +230,31 @@ func (c *ManualClock) Advance(d time.Duration) int {
 }
 
 // Tick advances the clock by d for a scheduler that re-arms a timer after every
-// firing (the engine's sensor loops): it waits until a timer is pending, advances,
-// and returns once as many new timers exist as fired, that is, once every fired
-// timer's owner handled its tick and armed the next. It reports false if that
-// does not happen within timeout. It is wrong for clocks that also time agent
-// runs, whose timers do not re-arm.
+// firing (the engine's sensor loops). It first waits until a timer is pending
+// that the advance will fire (due within d): a scheduler that is still busy
+// with its previous tick has not armed its next timer yet, and advancing then
+// would lose the tick. After advancing it returns once as many new timers
+// exist as fired, that is, once every fired timer's owner handled its tick and
+// armed the next. It reports false if either wait exceeds timeout. It is wrong
+// for clocks that also time agent runs, whose timers do not re-arm.
 func (c *ManualClock) Tick(d, timeout time.Duration) bool {
-	if !c.WaitTimers(1, timeout) {
+	if !c.waitFor(timeout, func() bool { return c.dueWithin(d) }) {
 		return false
 	}
 	created := c.Created()
 	fired := c.Advance(d)
 	return c.WaitCreated(created+fired, timeout)
+}
+
+// dueWithin reports whether a pending timer fires when the clock advances by d.
+// The caller holds c.mu.
+func (c *ManualClock) dueWithin(d time.Duration) bool {
+	for _, t := range c.timers {
+		if !t.at.After(c.now.Add(d)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Created is how many timers were ever created (fired, stopped or pending).
