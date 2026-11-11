@@ -399,6 +399,48 @@ type AssistFlowTestResult struct {
 	EdgesTaken []AssistFlowTestEdge `json:"edges_taken"`
 }
 
+// ForkNode describes the agent node run that a conversation is forked from. The engine resolves it from the run, its
+// flow run and the flow version that run executed (the stored version, not the current file).
+type ForkNode struct {
+	AgentRunID string
+	NodeRunID  string
+	FlowRunID  string
+	FlowID     string
+	NodeID     string
+	// FlowHash is the version of the flow the original run executed.
+	FlowHash string
+	Runtime  string
+	Model    string
+	// Cwd is the original run's working directory ("" when unknown); the forked session starts there so the runtime
+	// can find its own session on disk.
+	Cwd string
+	// SessionID is the original run's ACP session id ("" when it never got one); LoadSession reports that the runtime
+	// advertised loadSession in the initialize response recorded on the run.
+	SessionID   string
+	LoadSession bool
+	// Sandbox settings of the node: the backend, image, repo and ref the run's sandbox was created from.
+	Sandbox string
+	Image   string
+	Repo    string
+	Ref     string
+	// ToolIDs are the node's custom tools and ToolApprove its per-tool approval overrides.
+	ToolIDs     []string
+	ToolApprove map[string]spec.ToolApprove
+	// Input is the node's input payload of the original run.
+	Input json.RawMessage
+	// Ports are the targets the conversation may emit to: the node's declared ports that have an outgoing edge, or a
+	// single port "out" for a node without declared ports.
+	Ports []ForkPort
+}
+
+// ForkPort is one emit target of a ForkNode.
+type ForkPort struct {
+	Name        string
+	Description string
+	// Next summarizes the node(s) the port leads to ("approval \"Send reply?\"", "command node send").
+	Next []string
+}
+
 // Assist is the AI-assisted sensor authoring service, implemented by
 // *assist.Manager. Reads (sessions, messages, the draft) come straight from the
 // store; everything that starts an agent turn, runs code or changes a draft goes

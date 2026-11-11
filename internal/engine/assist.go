@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"sync"
 
@@ -95,4 +96,14 @@ func (h assistHost) Clock() agent.Clock { return h.e.clock }
 
 func (h assistHost) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error) {
 	return h.e.TestFlow(ctx, req)
+}
+
+// ForkNode is implemented by the continuation work of the engine (resolving the node of an agent run for a forked chat).
+func (h assistHost) ForkNode(context.Context, string) (core.ForkNode, error) {
+	return core.ForkNode{}, errors.New("engine: ForkNode is not implemented yet")
+}
+
+// EmitTools is implemented by the continuation work of the engine (emit_<port> tools of a forked chat).
+func (h assistHost) EmitTools(context.Context, core.ForkNode, string) ([]tools.Tool, error) {
+	return nil, errors.New("engine: EmitTools is not implemented yet")
 }
