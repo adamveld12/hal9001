@@ -97,10 +97,68 @@ through hal's MCP tools, and each turn starts with the hal context block (sessio
 | `validate` | The draft's diagnostics. | never |
 | `draft_test` (`sample`, `event`, `sensor`, `from_sensor` + `item` for flows) | Runs the draft like a poll or one flow run with your credentials; redacted result. | **When the script changed** since you last tested or approved it (or since the saved sensor's script): a `tool_call` approval whose chat message carries what runs, which credentials it mentions, and a diff against the last approved version. Allow records that script as approved; unchanged scripts run without asking. |
 | `gh_api`, `pr_view`, `now`, ... | hal's always-available tools. | as for flow agents |
+| Read tools (below): `flow_runs_list`, `flow_run_get`, `agent_run_get`, `events_list`, ... | Everything the CLI can list, get and inspect. | never |
+| `github_issue_link` | Builds a prefilled GitHub new-issue link (below). Calls nothing. | never |
 
 The agent layer allows these tools and rejects every other permission request. Approvals are decided inline in the chat
 or in the Approvals page; a denial returns a tool error and the agent continues. The assist session's secrets never reach
 the agent: the environment holds no env-file values and `draft_test` redacts the output.
+
+### Read tools: debugging with the CLI's view
+
+The chat can read everything the `hal9001` CLI shows, so "why did my flow fail?" is answered from the run itself. Every
+tool here is one `GET` of the REST API ([api.md](api.md)); none asks you and none changes anything. The agent has no
+tool to run a flow, poll a sensor, decide an approval or write a setting: edits still go through the draft, your Save and
+the approval gate, and running something stays with you (Run now).
+
+| Area | Tools (arguments) |
+|---|---|
+| Flows and runs | `flows_list`, `flow_get`, `flow_runs_list` (`flow_id`, `event_id`, `status`, `kind`, `since`, `until`), `flow_run_get` (the run with its node runs), `node_run_get` (decision, error, stdin, stdout, stderr, agent runs), `queue_list` |
+| Agent runs | `agent_runs_list` (`status`, `runtime`, `flow_run_id`, `node_run_id`, `assist_session_id`), `agent_run_get` (error, rendered prompt, result, approvals), `agent_run_events` (the transcript: `after_seq`, `limit`, `kind`), `agent_run_permission_requests`, `agent_run_sandbox_log` and `node_run_sandbox_log` (`after_id`, `limit`, `tail`) |
+| Sensors and events | `sensors_list`, `sensor_get`, `sensor_runs_list` (`id`, `status`), `sensor_run_get`, `events_list` (`sensor_id`, `flow_id`, `status`, `decision`, `kind`, `q`, `since`, `until`), `event_get` |
+| Inbox and approvals | `inbox_list`, `inbox_get`, `approvals_list`, `approval_get` |
+| Configuration | `tools_list`, `tool_get`, `prompts_list`, `prompt_get`, `runtimes_list`, `sandboxes_list`, `sandbox_get`, `settings_get`, `status` |
+
+The names and filters follow the CLI (`runs list` is `flow_runs_list`, `agent-runs events` is `agent_run_events`, and so on).
+The reads of flows, flow runs, sensors, events (`events_list`), the inbox and approvals (`approvals_list`) are the same
+tools [MCP clients get](mcp.md#tools) (`flow_runs_list` and `events_list` take the filters above in both sets); the rest
+are for the assistant only. Lists take `limit` (1 to 200, default 20) and `cursor`. Environment values are not readable (no `env`
+tool), `settings_get` redacts secrets, and every result passes the session's redactor, so a secret value that appears in
+a record (a command's output, a prompt) is masked before the agent sees it.
+
+Limits: a result is at most **64 KiB**. A larger one keeps its structure and has each string over **12 KiB** (a
+rendered prompt, a script, command output) cut in the middle with a marker; if it is still over the limit it is cut with
+a note to narrow the query. The transcript and the sandbox log default to 50 and 100 entries per call (at most 200) and
+page with `after_seq` and `after_id`; `tail: true` returns the newest sandbox log entries. `flow_run_get` has no `wait`:
+a chat turn never blocks on a run. The agent is told to follow the order flow run, node runs, node run, agent run,
+transcript, sandbox log.
+
+The tools reach the API in-process, with the run token as the only credential and without the auth stack: the session
+belongs to a signed-in user, and only `GET` operations of the `api` service are mounted for it (anything else is refused
+before it reaches a handler). Flow agent runs get none of these tools.
+
+### Reporting a bug: `github_issue_link`
+
+When you report a bug or ask the assistant to file an issue, it investigates with the read tools, drafts the issue
+(steps to reproduce, expected and actual behavior, the run ids involved) and calls `github_issue_link`. The tool builds
+a `https://github.com/<owner>/<repo>/issues/new?title=...&body=...` link with GitHub's
+[URL query parameters](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue#creating-an-issue-from-a-url-query)
+(`title`, `body`, `labels`, `assignees`, `milestone`, `template`; `type` sets the issue type where the repository has
+issue types, which GitHub's table does not list). It **calls no API and needs no approval**: nothing exists until you
+open the link, review the form and submit it on GitHub. The chat shows the result as an **Open issue on GitHub** button
+(new tab) and **Copy body**.
+
+| Argument | |
+|---|---|
+| `title` (required), `body` | One-line title (at most 256 characters); markdown body (at most 10,000 bytes). Secret values the session knows are masked in both. |
+| `labels`, `assignees`, `milestone`, `template`, `type` | Optional. At most 10 labels and 10 assignees; labels cannot contain a comma; `template` is a file name such as `bug_report.md`. GitHub applies labels, assignees and milestone only if you may set them there. |
+| `repo` | `owner/name`, validated. Default `adamveld12/hal9001`. |
+| `diagnostics`, `refs` | `diagnostics: true` appends a collapsed block with the hal9001 version and build (commit, build time), the macOS version and architecture, and the Go version, plus `refs` (`flow_id`, `flow_run_id`, `node_run_id`, `agent_run_id`, `sensor_id`, `event_id`; values must look like ids). It never includes settings, paths, environment values or tokens. |
+
+The link is at most **8,000 bytes**. When the body does not fit, the link carries the longest start of it that does,
+ending with `(truncated — paste the full text below)`, and the result still holds the complete body: the button opens
+the link, **Copy body** copies everything, and the card says the link is cut. The result is JSON
+`{url, repo, title, body, truncated}`.
 
 **Draft directory of a flow session.**
 

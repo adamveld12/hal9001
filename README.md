@@ -12,6 +12,10 @@ approval.
   is decided by policy or by you, and recorded.
 - **Everything is traceable.** For any outcome you can see the source item, each node's input, output, exit code and
   script, the agent transcript, and what was approved.
+- **A chat assistant that can look.** The assist drawer drafts sensors, flows and tools, and can read every run,
+  transcript and log the CLI shows (read-only, no approval) to explain a failure. For a bug it builds a prefilled GitHub
+  issue link; nothing is filed until you submit it. Edits still go through a draft, your Save and the approval gate
+  ([docs/assist.md](docs/assist.md)).
 - **API first.** The UI and the `hal9001` CLI are clients of one JSON REST API ([`api/openapi.yaml`](api/openapi.yaml)).
 
 The full specification is [REQUIREMENTS.md](REQUIREMENTS.md). Working rules for contributors are in
@@ -408,7 +412,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
-| [docs/assist.md](docs/assist.md) | AI-assisted sensor authoring: draft, permission policy, secret model, lifecycle. |
+| [docs/assist.md](docs/assist.md) | The chat assistant: AI-assisted authoring (draft, permission policy, secret model, lifecycle), the read-only tools that inspect runs, and the GitHub issue link. |
 | [docs/api.md](docs/api.md) | REST API guide: auth, pagination, long-polling, SSE, errors, curl walkthrough. |
 | [docs/live-smoke.md](docs/live-smoke.md) | Live smoke tests against real runtimes and services. |
 | [cmd/fake-acp-agent/README.md](cmd/fake-acp-agent/README.md) | The scripted ACP agent used by tests. |
