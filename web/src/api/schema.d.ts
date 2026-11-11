@@ -1640,6 +1640,59 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/conversations/{id}/sandbox-log": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The conversation id: an assist session id (a chat, including a chat continued from an agent run) or an agent run id. */
+        id: components["schemas"]["Ulid"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Sandbox log of a conversation
+     * @description Same response shape and query parameters as the sandbox log of an agent run. For a chat it lists the sandbox
+     *     sessions that belong to the chat (`assist_session_id` set): a sandbox taken over from the agent run the chat was
+     *     continued from (the session header is copied and its first entry says `Reattached sandbox of run <id>`), and the
+     *     sandboxes created later when the earlier one had been removed after `keep_alive`. The agent run's own log stays on
+     *     the agent run and its node run, which do not list the chat's sessions. For a conversation that is an agent run of a
+     *     flow node the response is that run's log. `sessions` is empty (200) when the conversation used no sandbox; 404 when
+     *     the id is neither an assist session nor an agent run.
+     */
+    get: operations["getConversationSandboxLog"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{id}/sandbox-log/raw": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The conversation id: an assist session id or an agent run id. */
+        id: components["schemas"]["Ulid"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Download the sandbox log of a conversation as text
+     * @description The whole log as plain text, one block per entry (`<time> <level> <title>`, then the command, output and details
+     *     indented), as a download. Same sessions, redaction and caps as the JSON form.
+     */
+    get: operations["downloadConversationSandboxLog"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/approvals": {
     parameters: {
       query?: never;
@@ -4320,6 +4373,8 @@ export interface components {
       approval_rules: components["schemas"]["SandboxApprovalRules"];
       /** @description Default timeout of one command. */
       timeout: components["schemas"]["Duration"];
+      /** @description How long the sandbox of a run stays after the run ends, so a chat can continue in it. `0s` removes it at once. Default `1m` when the file does not set it; any non-negative duration is accepted (`0` is accepted on input). */
+      keep_alive: components["schemas"]["Duration"];
       resources: components["schemas"]["SandboxResources"];
       /** @description local, ssh: root directory (`<root>/runs/<run-id>` for per_run). local default `<home>/data/sandboxes/local`; ssh may be relative to the remote home. */
       root: string;
@@ -4881,11 +4936,13 @@ export interface components {
       last_seq: number;
       has_more: boolean;
     };
-    /** @description One sandbox an agent run opened. `agent_run_id` is the id the run has or would have (the sandbox is provisioned before the agent run is recorded, and when provisioning fails there is no agent run). */
+    /** @description One sandbox an agent run or a conversation opened. `agent_run_id` is the id the run has or would have (the sandbox is provisioned before the agent run is recorded, and when provisioning fails there is no agent run); for a session of a conversation it is the conversation id. `node_run_id` is the node run of the original run, so the session is pruned with it. */
     SandboxSession: {
       id: components["schemas"]["Ulid"];
       node_run_id: components["schemas"]["Ulid"];
       agent_run_id: components["schemas"]["Ulid"];
+      /** @description The chat (assist session) this sandbox belongs to; empty for a sandbox of an agent run. Sessions with this set are listed by the conversation sandbox log only. */
+      assist_session_id: string;
       /** @enum {string} */
       backend: "local" | "docker" | "depot" | "kubernetes" | "ssh";
       /**
@@ -4988,7 +5045,7 @@ export interface components {
     };
     /**
      * @description A sandbox log entry was added. `data` is `SandboxLogEntry` without `stdout` and `stderr` (fetch `after_id` for the
-     *     content) plus `agent_run_id` and `node_run_id`; the stream filters `agent_run_id` and `flow_run_id` apply.
+     *     content) plus `agent_run_id`, `node_run_id` and `assist_session_id`; the stream filters `agent_run_id`, `assist_session_id` and `flow_run_id` apply.
      */
     SandboxLogAppendedEvent: components["schemas"]["StreamEnvelope"] & {
       /** @enum {unknown} */
@@ -5005,6 +5062,7 @@ export interface components {
     SandboxLogAppended: components["schemas"]["SandboxLogEntry"] & {
       agent_run_id: components["schemas"]["Ulid"];
       node_run_id: components["schemas"]["Ulid"];
+      assist_session_id: string;
     };
     PermissionOption: {
       option_id: string;
@@ -8938,6 +8996,69 @@ export interface operations {
       header?: never;
       path: {
         id: components["parameters"]["AgentRunId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Text file. */
+      200: {
+        headers: {
+          /** @description `attachment; filename="sandbox-log-<id>.txt"` */
+          "Content-Disposition"?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          "text/plain": string;
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getConversationSandboxLog: {
+    parameters: {
+      query?: {
+        /** @description Return only entries with an `id` greater than this. Default 0 (from the start). */
+        after_id?: number;
+        limit?: number;
+        /** @description Return the newest `limit` entries (after `after_id`) instead of the oldest; `has_more` then says older entries were left out. */
+        tail?: boolean;
+      };
+      header?: never;
+      path: {
+        /** @description The conversation id: an assist session id (a chat, including a chat continued from an agent run) or an agent run id. */
+        id: components["schemas"]["Ulid"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sessions and a page of entries. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SandboxLog"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  downloadConversationSandboxLog: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The conversation id: an assist session id or an agent run id. */
+        id: components["schemas"]["Ulid"];
       };
       cookie?: never;
     };
