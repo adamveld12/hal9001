@@ -56,6 +56,9 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   // The open session is updated in place from the event (pages/assist/useAssistLive.ts); only the lists refetch.
   "assist.updated": ["assist-sessions"],
   "assist.message": [],
+  // The drawer acts on these once (pages/assist/AssistProvider.tsx); they change no server data.
+  "assist.navigate": [],
+  "assist.start_draft": [],
   "notification.created": [],
   "update.status": ["update"],
   "update.install": [],

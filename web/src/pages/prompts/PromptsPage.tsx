@@ -8,6 +8,8 @@ import {
   LoadingState,
   PageHeader,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, rowEntities } from "../../lib/contextSummary";
 import { NewPromptForm } from "./NewPromptForm";
 import { PromptEditorPane } from "./PromptEditor";
 import { PromptSidebar, PromptTable } from "./PromptList";
@@ -33,6 +35,23 @@ export function PromptsPage() {
   };
 
   const items = prompts.data?.items ?? [];
+  usePageContext(
+    prompts.isPending
+      ? null
+      : {
+          title: "Prompts",
+          facts: factList([
+            ["prompts", items.length],
+            ["selected prompt", name],
+            ["creating a new prompt", creating || undefined],
+            ["unsaved edits", dirty || undefined],
+          ]),
+          entities: rowEntities(items, (p) => ({
+            kind: "prompt",
+            id: p.name,
+          })),
+        },
+  );
 
   let body;
   if (prompts.isPending) {

@@ -3,6 +3,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from "@tanstack/react-query";
 import { api, unwrap, unwrapVoid, type Schemas } from "./client";
 import { qk } from "./keys";
@@ -21,44 +22,44 @@ export type AssistFlowTestNode = Schemas["AssistFlowTestNode"];
 export type AssistTestRequest = Schemas["AssistTestRequest"];
 export type AssistTargetKind = Schemas["AssistTargetKind"];
 export type AssistSample = Schemas["AssistSample"];
+/** An `assist.start_draft` event's data: the draft session the assistant offers. */
+export type AssistStartDraft = Schemas["AssistStartDraft"];
 
-/** Sessions that edit one target of `kind` (`targetId` set) or all sessions of that kind; closed ones are not listed. */
-export function useAssistSessions(
-  kind: AssistTargetKind,
-  targetId: string | null | undefined,
-) {
+/** Recent and active chats of every kind (the history list), newest first; ended ones are not listed. */
+export function useAssistSessions() {
   return useQuery({
-    queryKey: qk("assist-sessions", kind, targetId ?? null),
+    queryKey: qk("assist-sessions"),
     queryFn: () =>
-      unwrap(
-        api.GET("/api/assist/sessions", {
-          params: {
-            query: {
-              target_kind: kind,
-              target_id: targetId ?? undefined,
-            },
-          },
-        }),
-      ),
+      unwrap(api.GET("/api/assist/sessions", { params: { query: {} } })),
     select: (d) => d.items,
   });
 }
 
 const sessionKey = (id: string) => qk("assist-session", id);
 
+function sessionQuery(id: string) {
+  return {
+    queryKey: sessionKey(id),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/assist/sessions/{id}", { params: { path: { id } } }),
+      ),
+  };
+}
+
+/** Reads one session into the cache (or from it while fresh); rejects like the request does. */
+export function fetchAssistSession(
+  qc: QueryClient,
+  id: string,
+): Promise<AssistSessionDetail> {
+  return qc.fetchQuery(sessionQuery(id));
+}
+
 /** One session with its conversation. Kept current by the stream (pages/assist/useAssistLive.ts). */
 export function useAssistSession(id: string | null) {
   return useQuery({
     queryKey: sessionKey(id ?? ""),
-    queryFn:
-      id === null
-        ? skipToken
-        : () =>
-            unwrap(
-              api.GET("/api/assist/sessions/{id}", {
-                params: { path: { id } },
-              }),
-            ),
+    queryFn: id === null ? skipToken : sessionQuery(id).queryFn,
   });
 }
 

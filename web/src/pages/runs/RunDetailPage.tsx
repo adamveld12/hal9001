@@ -28,6 +28,8 @@ import {
   overlayForRuns,
 } from "../../flow/runOverlay";
 import { useNow } from "../approvals/timeLeft";
+import { usePageContext } from "../../layout/pageContext";
+import { countBy, factList, trimText } from "../../lib/contextSummary";
 import { durationBetween, shortId } from "../../lib/format";
 import { Mono, TextLink } from "./Meta";
 import { NodeRunPanel } from "./NodeRunPanel";
@@ -121,6 +123,39 @@ export function RunDetailPage() {
       nodes: g.nodes.map((n) => ({ ...n, selected: n.id === selectedNode })),
     };
   }, [flow, selectedNode]);
+  const failedNode = nodeRuns.find((n) => n.status === "failed");
+  usePageContext(
+    flowRun
+      ? {
+          title: "Flow run",
+          facts: factList([
+            ["run id", flowRun.id],
+            ["flow", flowRun.flow_id],
+            ["flow version", flowRun.flow_hash],
+            ["status", flowRun.status],
+            ["kind", flowRun.kind],
+            ["dry run", flowRun.dry_run || undefined],
+            ["event", flowRun.event_id],
+            ["replay of", flowRun.replay_of],
+            ["run error", trimText(flowRun.error)],
+            [
+              "node runs",
+              nodeRuns.length ? countBy(nodeRuns, (n) => n.status) : undefined,
+            ],
+            ["failed node", failedNode?.node_id],
+            [
+              "failed node error",
+              trimText(
+                [failedNode?.error, failedNode?.reason]
+                  .filter(Boolean)
+                  .join(": "),
+              ),
+            ],
+            ["selected node", selectedNode],
+          ]),
+        }
+      : null,
+  );
 
   if (runQ.isPending) return <LoadingState label="Loading run" />;
   if (runQ.isError || !flowRun) {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { Link } from "react-router";
+import { useAssist } from "../assist/context";
 import { useAgentTranscript } from "../../api/runs";
 import { buildTranscript } from "../runs/transcript";
 import type { Approval } from "../../api/approvals";
@@ -33,6 +34,7 @@ import { initialDrafts } from "./edits";
 const STALE_POLL_MS = 3000;
 
 function Context({ a }: { a: Approval }) {
+  const { openSession } = useAssist();
   const cls = "text-accent underline";
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
@@ -44,9 +46,13 @@ function Context({ a }: { a: Approval }) {
       {a.node_id && <span>node {a.node_id}</span>}
       {isOperatorApproval(a) && <span>MCP client</span>}
       {a.assist_session_id && (
-        <Link to={`/sensors?assist=${a.assist_session_id}`} className={cls}>
+        <button
+          type="button"
+          className={cls}
+          onClick={() => openSession(a.assist_session_id as string)}
+        >
           assist session {shortId(a.assist_session_id)}
-        </Link>
+        </button>
       )}
       {a.type !== "request" && <span>runtime {a.runtime}</span>}
       {a.flow_run_id && (

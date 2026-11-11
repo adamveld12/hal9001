@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "../../api/client";
 import { Button, TextArea } from "../../components/ui";
 import { focusLost, noFocusOnClick } from "../../lib/focus";
+import { parseSlashCommand, slashHints } from "./slashCommands";
 
 /**
  * Multiline message input: Enter sends, Shift+Enter inserts a newline. The
  * text stays when sending fails. `prefill` (a clicked starter prompt) replaces it.
+ * `/new` and `/clear` start a new chat instead of sending, also while the agent
+ * is working.
  */
 export function Composer({
   disabled,
@@ -13,6 +16,8 @@ export function Composer({
   prefill,
   autoFocus,
   onSend,
+  onNewChat,
+  onPrefillApplied,
 }: {
   disabled: boolean;
   placeholder: string;
@@ -20,6 +25,9 @@ export function Composer({
   /** Focus the input when the composer mounts (the drawer opened, or the conversation started). */
   autoFocus?: boolean;
   onSend: (text: string) => Promise<void>;
+  onNewChat: () => void;
+  /** Called once the prefill is in the input, so a remount does not apply it again. */
+  onPrefillApplied: () => void;
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -33,8 +41,10 @@ export function Composer({
     setText(prefill.text);
   }
   useEffect(() => {
-    if (prefill) ref.current?.focus();
-  }, [prefill]);
+    if (!prefill) return;
+    ref.current?.focus();
+    onPrefillApplied();
+  }, [prefill, onPrefillApplied]);
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
@@ -55,7 +65,13 @@ export function Composer({
 
   const submit = async () => {
     const t = text.trim();
-    if (t === "" || disabled || sending) return;
+    if (t === "" || sending) return;
+    if (parseSlashCommand(t) !== null) {
+      setText("");
+      onNewChat();
+      return;
+    }
+    if (disabled) return;
     setSending(true);
     setError(null);
     try {
@@ -68,8 +84,23 @@ export function Composer({
     }
   };
 
+  const hints = slashHints(text);
+  const isCommand = parseSlashCommand(text) !== null;
+
   return (
     <div className="space-y-1.5">
+      {hints.length > 0 && (
+        <ul
+          aria-label="Commands"
+          className="m-0 list-none space-y-0.5 rounded-md border border-line bg-panel p-1.5 text-[11px] text-muted"
+        >
+          {hints.map((c) => (
+            <li key={c.name}>
+              <code className="text-fg">{c.name}</code> {c.description}
+            </li>
+          ))}
+        </ul>
+      )}
       {error && (
         <div role="alert" className="text-xs text-bad">
           {error}
@@ -99,7 +130,7 @@ export function Composer({
         />
         <Button
           variant="primary"
-          disabled={disabled || sending || text.trim() === ""}
+          disabled={(disabled && !isCommand) || sending || text.trim() === ""}
           {...noFocusOnClick}
           onClick={() => void submit()}
         >
@@ -107,7 +138,8 @@ export function Composer({
         </Button>
       </div>
       <div className="text-[11px] text-muted">
-        Enter to send, Shift+Enter for a new line
+        Enter to send, Shift+Enter for a new line, <code>/new</code> for a new
+        chat
       </div>
     </div>
   );

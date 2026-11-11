@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import { useAssistSession } from "../../api/assist";
 import { useTools } from "../../api/tools";
 import {
   Badge,
@@ -13,85 +12,37 @@ import {
   Td,
   Th,
 } from "../../components/ui";
-import { AssistDrawer } from "../assist/AssistDrawer";
-import {
-  AssistPageContext,
-  type AssistPage,
-  type EditorBridge,
-} from "../assist/context";
-import { targetConfig } from "../assist/targets";
+import { usePageContext } from "../../layout/pageContext";
+import { useAssist } from "../assist/context";
+import { sameTarget } from "../assist/drawerState";
+import { toolsListContext } from "../assist/pageContexts";
 import { ToolDraftPane } from "./ToolDraftPane";
 import { ToolEditorPane } from "./ToolEditor";
 
 const DISCARD = "Discard unsaved changes to this tool?";
-const NEW = "new";
+const NEW_TOOL = { kind: "tool", id: null } as const;
 
 export function ToolsPage() {
   const { id } = useParams();
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const creating = params.get("new") === "1";
-  const assistParam = creating ? null : params.get("assist");
-  const sessionId =
-    assistParam !== null && assistParam !== NEW ? assistParam : null;
+  const assist = useAssist();
+  // The list page holds the editor of a new tool while the drawer is on one.
+  const draftingWithAi =
+    id === undefined && assist.open && sameTarget(assist.target, NEW_TOOL);
   const navigate = useNavigate();
   const tools = useTools();
   const [dirty, setDirty] = useState(false);
   const onDirtyChange = useCallback((d: boolean) => setDirty(d), []);
-  const editorRef = useRef<EditorBridge | null>(null);
-
-  const setAssist = useCallback(
-    (value: string | null, replace: boolean) =>
-      setParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (value === null) next.delete("assist");
-          else next.set("assist", value);
-          return next;
-        },
-        { replace },
-      ),
-    [setParams],
-  );
-  const assist = useMemo<AssistPage>(
-    () => ({
-      kind: "tool",
-      param: assistParam,
-      sessionId,
-      targetId: id ?? null,
-      open: () => setAssist(NEW, false),
-      close: () => setAssist(null, false),
-      bind: (sid) => setAssist(sid, true),
-      registerEditor: (e) => {
-        editorRef.current = e;
-      },
-      editor: () => editorRef.current,
-    }),
-    [assistParam, sessionId, id, setAssist],
-  );
-
-  // A link to a session names no tool: go to the one it edits.
-  const linked = useAssistSession(id === undefined ? sessionId : null);
-  const linkedKind = linked.data?.target.kind;
-  const linkedTarget = linked.data?.target.id ?? null;
-  useEffect(() => {
-    if (sessionId === null || linkedKind === undefined) return;
-    if (linkedKind !== "tool") {
-      const cfg = targetConfig(linkedKind);
-      void navigate(
-        linkedTarget === null
-          ? cfg.draftPath(sessionId)
-          : cfg.editorPath(linkedTarget, sessionId),
-        { replace: true },
-      );
-    } else if (id === undefined && linkedTarget !== null) {
-      void navigate(`/tools/${linkedTarget}?assist=${sessionId}`, {
-        replace: true,
-      });
-    }
-  }, [id, sessionId, linkedKind, linkedTarget, navigate]);
 
   const confirmLeave = () => !dirty || window.confirm(DISCARD);
   const items = tools.data?.items ?? [];
+  // The editors publish their own; the list does while it is what is shown.
+  usePageContext(
+    tools.data && id === undefined && !creating && !draftingWithAi
+      ? toolsListContext(items)
+      : null,
+  );
   const invalid = items.filter((t) =>
     t.diagnostics.some((d) => d.severity === "error"),
   ).length;
@@ -102,17 +53,17 @@ export function ToolsPage() {
     body = (
       <ErrorState error={tools.error} onRetry={() => void tools.refetch()} />
     );
-  else if (creating || (id === undefined && assistParam !== null)) {
+  else if (creating || draftingWithAi) {
     body = (
       <ToolDraftPane
         onDirtyChange={onDirtyChange}
-        onCreated={(created, sid) =>
-          void navigate(
-            sid === null
-              ? `/tools/${created}`
-              : `/tools/${created}?assist=${sid}`,
-          )
-        }
+        onCreated={(created) => {
+          // The chat stays attached: the drawer's target moves to the saved tool.
+          if (sameTarget(assist.target, NEW_TOOL)) {
+            assist.retarget({ kind: "tool", id: created });
+          }
+          void navigate(`/tools/${created}`);
+        }}
       />
     );
   } else if (id) {
@@ -217,45 +168,38 @@ export function ToolsPage() {
   }
 
   return (
-    <AssistPageContext.Provider value={assist}>
-      <div className="flex h-full">
-        <div className="min-w-0 flex-1 overflow-auto">
-          <PageHeader
-            title="Tools"
-            subtitle={
-              tools.data
-                ? `${items.length} tool${items.length === 1 ? "" : "s"}${invalid > 0 ? ` · ${invalid} invalid` : ""}`
-                : undefined
-            }
-            actions={
-              <>
-                <Button
-                  icon="plus"
-                  disabled={creating}
-                  onClick={() =>
-                    confirmLeave() && void navigate("/tools?new=1")
-                  }
-                >
-                  New tool
-                </Button>
-                <Button
-                  icon="agent"
-                  disabled={
-                    creating || (id === undefined && assistParam !== null)
-                  }
-                  onClick={() =>
-                    confirmLeave() && void navigate(`/tools?assist=${NEW}`)
-                  }
-                >
-                  Create with AI
-                </Button>
-              </>
-            }
-          />
-          {body}
-        </div>
-        {assistParam !== null && <AssistDrawer />}
-      </div>
-    </AssistPageContext.Provider>
+    <div className="h-full min-w-0 overflow-auto">
+      <PageHeader
+        title="Tools"
+        subtitle={
+          tools.data
+            ? `${items.length} tool${items.length === 1 ? "" : "s"}${invalid > 0 ? ` · ${invalid} invalid` : ""}`
+            : undefined
+        }
+        actions={
+          <>
+            <Button
+              icon="plus"
+              disabled={creating}
+              onClick={() => confirmLeave() && void navigate("/tools?new=1")}
+            >
+              New tool
+            </Button>
+            <Button
+              icon="agent"
+              disabled={creating || draftingWithAi}
+              onClick={() => {
+                if (!confirmLeave()) return;
+                if (id !== undefined) void navigate("/tools");
+                assist.openTarget(NEW_TOOL);
+              }}
+            >
+              Create with AI
+            </Button>
+          </>
+        }
+      />
+      {body}
+    </div>
   );
 }

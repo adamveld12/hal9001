@@ -9,8 +9,12 @@ import { ExternalLink } from "../components/ExternalLink";
 import { Badge, Kbd } from "../components/ui";
 import { cx } from "../lib/cx";
 import { isDark, setTheme, useTheme } from "../lib/theme";
-import { assistDrawerOpen } from "../lib/focus";
+import { assistDrawerOpen, isAskAiShortcut } from "../lib/focus";
+import { AssistDrawer } from "../pages/assist/AssistDrawer";
+import { AssistProvider } from "../pages/assist/AssistProvider";
+import { useAssist } from "../pages/assist/context";
 import { KillSwitch } from "./KillSwitch";
+import { PageContextProvider } from "./PageContextProvider";
 import { UpdateBanner } from "./UpdateBanner";
 
 interface NavItem {
@@ -25,6 +29,9 @@ interface NavSection {
   label: string;
   items: NavItem[];
 }
+
+/** The modifier of the Ask AI shortcut on this platform. */
+const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 
 const INBOX_BADGE_TITLE = "Unread notes plus pending approvals";
 
@@ -165,6 +172,23 @@ function useNavCollapsed(): [boolean, () => void] {
   return [collapsed, toggle];
 }
 
+/**
+ * Cmd/Ctrl+K toggles the Ask AI drawer from anywhere, also while typing. It
+ * listens in the capture phase so an editor does not take the key first.
+ */
+function useAskAiShortcut(toggle: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isAskAiShortcut(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggle();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [toggle]);
+}
+
 function Count({
   n,
   tone,
@@ -180,8 +204,10 @@ function Count({
   );
 }
 
-export function AppShell() {
+function Shell() {
   useGoToShortcuts();
+  const assist = useAssist();
+  useAskAiShortcut(assist.toggle);
   const [collapsed, toggle] = useNavCollapsed();
   const status = useStatus();
   const stream = useStreamState();
@@ -338,6 +364,22 @@ export function AppShell() {
             </Link>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <button
+              type="button"
+              aria-pressed={assist.open}
+              title={`Ask AI (${MOD_KEY} K)`}
+              className={cx(
+                "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium",
+                assist.open
+                  ? "border-accent/50 bg-accent/10 text-accent"
+                  : "border-line hover:bg-raised",
+              )}
+              onClick={assist.toggle}
+            >
+              <Icon name="agent" size={14} />
+              Ask AI
+              <Kbd>{MOD_KEY} K</Kbd>
+            </button>
             <NavLink
               to="/approvals"
               className="inline-flex items-center gap-1.5 text-xs"
@@ -409,11 +451,24 @@ export function AppShell() {
             Cannot reach the daemon: {status.error.message}
           </div>
         )}
-        <main className="min-h-0 flex-1 overflow-auto">
-          <UpdateBanner />
-          <Outlet />
-        </main>
+        <div className="flex min-h-0 flex-1">
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto">
+            <UpdateBanner />
+            <Outlet />
+          </main>
+          {assist.open && <AssistDrawer />}
+        </div>
       </div>
     </div>
+  );
+}
+
+export function AppShell() {
+  return (
+    <PageContextProvider>
+      <AssistProvider>
+        <Shell />
+      </AssistProvider>
+    </PageContextProvider>
   );
 }

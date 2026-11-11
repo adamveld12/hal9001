@@ -27,17 +27,17 @@ import {
 import { Tabs } from "../../components/Tabs";
 import { flowFromApi, flowToApi } from "../../flow/apiAdapter";
 import { FlowEditor } from "../../flow/FlowEditor";
-import type { Diagnostic, Flow } from "../../flow/model";
+import type { Diagnostic, Flow, FlowNode } from "../../flow/model";
 import { RunNowPanel } from "../../components/RunNowPanel";
 import { FlowRunNow } from "./FlowRunNow";
-import { AssistDrawer } from "../assist/AssistDrawer";
-import { AssistPageContext, useAssistPage } from "../assist/context";
+import { usePageContext } from "../../layout/pageContext";
+import { useAssist } from "../assist/context";
+import { flowContext } from "../assist/pageContexts";
 import { useBoundSession } from "../assist/useDraftSync";
 import { FlowRunsList } from "../runs/FlowRunsList";
 import { NO_FLOW_RUN_FILTERS } from "../runs/runList";
 import { FlowDraftView } from "./FlowDraftView";
 import { TestNodePanel } from "./TestNodePanel";
-import { useFlowAssistPage } from "./useFlowAssistPage";
 
 type View = "visual" | "yaml" | "runs";
 
@@ -74,6 +74,22 @@ function DiagnosticList({ diags }: { diags: Diagnostic[] }) {
   );
 }
 
+/** Reports the node whose form is open (rendered in the node form, so it exists only while one is selected). */
+function ReportSelection({
+  node,
+  onSelect,
+}: {
+  node: FlowNode;
+  onSelect: (node: { id: string; type: string } | null) => void;
+}) {
+  const { id, type } = node;
+  useEffect(() => {
+    onSelect({ id, type });
+    return () => onSelect(null);
+  }, [id, type, onSelect]);
+  return null;
+}
+
 function Loaded({
   initial,
   refetched,
@@ -98,7 +114,7 @@ function Loaded({
   const [current, setCurrent] = useState<Flow | undefined>();
 
   // With the assistant open, edits the canvas holds travel with the first message.
-  const assist = useAssistPage();
+  const assist = useAssist();
   const edits = useRef<{ flow: Flow | undefined; dirty: boolean }>({
     flow: undefined,
     dirty: false,
@@ -109,7 +125,10 @@ function Loaded({
   const { registerEditor } = assist;
   useEffect(() => {
     registerEditor({
+      kind: "flow",
+      id: initial.id,
       flush: async () => undefined,
+      dirty: () => edits.current.dirty,
       getText: async () => {
         const { flow, dirty: unsaved } = edits.current;
         return unsaved && flow
@@ -118,7 +137,11 @@ function Loaded({
       },
     });
     return () => registerEditor(null);
-  }, [registerEditor]);
+  }, [registerEditor, initial.id]);
+  const [selected, setSelected] = useState<{
+    id: string;
+    type: string;
+  } | null>(null);
   const [previewYaml, setPreviewYaml] = useState<string | undefined>();
   const [runNow, setRunNow] = useState<{
     result: FlowRunNowResult;
@@ -208,6 +231,20 @@ function Loaded({
 
   const flow = loaded.flow ? flowFromApi(loaded.flow) : undefined;
 
+  usePageContext(
+    flowContext({
+      id: loaded.id,
+      description: loaded.flow?.description,
+      enabled: loaded.flow?.enabled ?? false,
+      nodeCount: (current ?? flow)?.nodes.length,
+      view,
+      selected: view === "visual" ? selected : null,
+      diagnostics: serverDiags,
+      dirty: dirty || yamlText !== loaded.yaml,
+      drafting: false,
+    }),
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
@@ -290,9 +327,13 @@ function Loaded({
             </Link>
             <Button
               icon="agent"
-              disabled={assist.param !== null}
+              disabled={
+                assist.open &&
+                assist.target.kind === "flow" &&
+                assist.target.id === loaded.id
+              }
               title="Chat with an AI agent that edits this flow's draft"
-              onClick={assist.open}
+              onClick={() => assist.openTarget({ kind: "flow", id: loaded.id })}
             >
               Ask AI
             </Button>
@@ -340,7 +381,10 @@ function Loaded({
             onSave={save}
             onChange={onChange}
             nodeActions={(node, f) => (
-              <TestNodePanel flowId={loaded.id} node={node} flow={f} />
+              <>
+                <ReportSelection node={node} onSelect={setSelected} />
+                <TestNodePanel flowId={loaded.id} node={node} flow={f} />
+              </>
             )}
           />
         )}
@@ -433,6 +477,18 @@ function DraftEditor({
   detail: FlowDetail;
   sessionId: string;
 }) {
+  usePageContext(
+    flowContext({
+      id: detail.id,
+      description: detail.flow?.description,
+      enabled: detail.flow?.enabled ?? false,
+      view: "visual",
+      selected: null,
+      diagnostics: [],
+      dirty: false,
+      drafting: true,
+    }),
+  );
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
@@ -453,7 +509,7 @@ function DraftEditor({
         }
       />
       <div className="min-h-0 flex-1">
-        <FlowDraftView sessionId={sessionId} />
+        <FlowDraftView targetId={detail.id} sessionId={sessionId} />
       </div>
     </div>
   );
@@ -461,7 +517,7 @@ function DraftEditor({
 
 function FlowEditorBody({ id }: { id: string }) {
   const q = useFlow(id);
-  const bound = useBoundSession(id);
+  const bound = useBoundSession("flow", id);
   if (q.isPending) return <LoadingState label="Loading flow" />;
   if (q.isError)
     return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
@@ -473,15 +529,9 @@ function FlowEditorBody({ id }: { id: string }) {
 
 export function FlowEditorPage() {
   const { id = "" } = useParams();
-  const assist = useFlowAssistPage(id);
   return (
-    <AssistPageContext.Provider value={assist}>
-      <div className="flex h-full min-h-0">
-        <div className="min-w-0 flex-1">
-          <FlowEditorBody id={id} />
-        </div>
-        {assist.param !== null && <AssistDrawer />}
-      </div>
-    </AssistPageContext.Provider>
+    <div className="h-full min-h-0 min-w-0">
+      <FlowEditorBody id={id} />
+    </div>
   );
 }

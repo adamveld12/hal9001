@@ -15,6 +15,8 @@ import {
   Panel,
   StatusBadge,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, rowEntities } from "../../lib/contextSummary";
 import { durationBetween } from "../../lib/format";
 import { ApiError } from "../../api/client";
 import { ReplayDialog } from "./ReplayDialog";
@@ -26,6 +28,27 @@ export function EventDetailPage() {
   const { id = "" } = useParams();
   const q = useEventDetail(id);
   const [replaying, setReplaying] = useState(false);
+  const detail = q.data;
+  usePageContext(
+    detail
+      ? {
+          title: "Event",
+          facts: factList([
+            ["event id", detail.event.id],
+            ["sensor", detail.event.sensor_id],
+            ["injected", detail.event.injected],
+            ["sensor run status", detail.sensor_run?.status],
+            ["flow runs", detail.fan_out.length],
+          ]),
+          entities: rowEntities(detail.fan_out, (b) => ({
+            kind: "flow_run",
+            id: b.flow_run.id,
+            label: b.flow_run.flow_id,
+            detail: b.flow_run.status,
+          })),
+        }
+      : null,
+  );
 
   if (q.isPending) return <LoadingState label="Loading event" />;
   if (q.isError) {

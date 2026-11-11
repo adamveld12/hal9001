@@ -14,6 +14,8 @@ import {
   Select,
   TextInput,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList } from "../../lib/contextSummary";
 import { KillSwitchPanel } from "./KillSwitchPanel";
 import { diagnosticMessages, isConflict } from "./problem";
 import {
@@ -81,6 +83,19 @@ function SettingsEditor({
   };
 
   const diagnostics = diagnosticMessages(update.error);
+  usePageContext({
+    title: "Settings: General",
+    facts: factList([
+      ["max agent runs", base.max_agent_runs],
+      ["max command runs", base.max_command_runs],
+      ["run retention days", base.retention_days],
+      ["dedup retention days", base.dedup_retention_days],
+      ["notify min priority", base.notify_min_priority],
+      ["approval timeout", base.approval_timeout],
+      ["unsaved edits", draft !== null || undefined],
+      ["form errors", invalid ? Object.keys(errors).join(", ") : undefined],
+    ]),
+  });
 
   return (
     <>

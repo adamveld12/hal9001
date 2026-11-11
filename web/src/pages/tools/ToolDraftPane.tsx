@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useCreateTool } from "../../api/tools";
-import { Button, EmptyState, Panel } from "../../components/ui";
-import { useAssistPage } from "../assist/context";
+import { Button, Panel } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
 import { DraftBanners } from "../assist/DraftBanners";
+import { newDraftContext } from "../assist/pageContexts";
 import { useBoundSession, useDraftSync } from "../assist/useDraftSync";
 import { useTestDraft } from "../assist/useTestDraft";
 import { ToolDefinition } from "./ToolDefinition";
@@ -16,13 +17,14 @@ export function ToolDraftPane({
   onCreated,
 }: {
   onDirtyChange: (dirty: boolean) => void;
-  onCreated: (id: string, sessionId: string | null) => void;
+  onCreated: (id: string) => void;
 }) {
-  const page = useAssistPage();
-  const bound = useBoundSession(null);
+  const bound = useBoundSession("tool", null);
   const [text, setText] = useState(NEW_TOOL_YAML);
   const dirty = text !== NEW_TOOL_YAML;
   const sync = useDraftSync({
+    kind: "tool",
+    targetId: null,
     sessionId: bound.sessionId,
     text,
     setText,
@@ -34,14 +36,12 @@ export function ToolDraftPane({
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
-  if (bound.otherTarget !== null) {
-    return (
-      <EmptyState
-        title="Opening the tool"
-        hint="This session belongs to an existing tool."
-      />
-    );
-  }
+  usePageContext(
+    newDraftContext("tool", {
+      dirty,
+      diagnostics: sync.draft?.diagnostics ?? [],
+    }),
+  );
   return (
     <div className="space-y-4 p-4">
       <Panel
@@ -68,7 +68,7 @@ export function ToolDraftPane({
               disabled={create.isPending || text.trim() === ""}
               onClick={() =>
                 create.mutate(text, {
-                  onSuccess: (d) => onCreated(d.id, page.sessionId),
+                  onSuccess: (d) => onCreated(d.id),
                 })
               }
             >

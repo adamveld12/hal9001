@@ -15,29 +15,28 @@ import {
   fetchSensor,
   updateSensorFromYaml,
 } from "../../api/sensors";
-import { useAssistPage } from "./context";
+import { useAssist } from "./context";
 import {
   describeSaveFailure,
   saveFlowDraft,
   type FlowSaveApi,
   type SaveFailure,
 } from "./flowSave";
-import { targetConfig } from "./targets";
 
 /**
  * Save of the open flow session's draft: its sensors, its new prompts, then the
- * flow (see flowSave.ts). A new flow (`page.targetId` null) is created and its
+ * flow (see flowSave.ts). A new flow (the drawer's target id null) is created and its
  * editor opens with the session attached; an existing flow is replaced when its
  * file still has the hash it had when the session began, and an edited sensor
  * when its file still has the hash the draft copied it at. `run(true)`
  * overwrites newer files instead.
  */
 export function useFlowSave(sessionId: string) {
-  const page = useAssistPage();
+  const assist = useAssist();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const put = usePutAssistDraft(sessionId);
-  const { targetId } = page;
+  const { id: targetId } = assist.target;
 
   // The file's hash when the session began (or was last saved), for conflict detection.
   const [baseHash, setBaseHash] = useState<string | null>(() =>
@@ -76,8 +75,8 @@ export function useFlowSave(sessionId: string) {
     setPending(true);
     setFailure(null);
     try {
-      await page.editor()?.flush();
-      if (page.editor()?.undecided?.() === true) {
+      await assist.editor()?.flush();
+      if (assist.editor()?.undecided?.() === true) {
         return fail(
           "An AI update is waiting on the canvas. Choose Take AI version or Keep mine first.",
         );
@@ -127,9 +126,9 @@ export function useFlowSave(sessionId: string) {
       void qc.invalidateQueries({ queryKey: qk("flows") });
       void qc.invalidateQueries({ queryKey: qk("flow-versions") });
       if (targetId === null) {
-        void navigate(
-          targetConfig("flow").editorPath(result.flow.id, sessionId),
-        );
+        // The session stays attached: the drawer's target moves to the saved flow.
+        assist.retarget({ kind: "flow", id: result.flow.id });
+        void navigate(`/flows/${result.flow.id}`);
       }
       return true;
     } catch (e) {

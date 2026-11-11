@@ -14,9 +14,12 @@ import {
   LoadingState,
   PageHeader,
 } from "../../components/ui";
+import { useFlow } from "../../api/flows";
 import { FlowCanvas } from "../../flow/FlowCanvas";
 import { flowFromApi } from "../../flow/apiAdapter";
 import { flowToGraph } from "../../flow/graph";
+import { usePageContext } from "../../layout/pageContext";
+import { factList } from "../../lib/contextSummary";
 import { cx } from "../../lib/cx";
 import { shortId } from "../../lib/format";
 import { Mono, TextLink } from "./Meta";
@@ -89,6 +92,26 @@ export function FlowVersionPage() {
   const graph = useMemo(
     () => (q.data?.flow ? flowToGraph(flowFromApi(q.data.flow)) : null),
     [q.data],
+  );
+  const current = useFlow(id);
+  usePageContext(
+    q.data
+      ? {
+          title: "Flow version",
+          facts: factList([
+            ["flow", id],
+            ["version hash", hash],
+            [
+              "is current version",
+              current.data ? current.data.hash === hash : undefined,
+            ],
+            ["current hash", current.data?.hash],
+            ["runs on this version", q.data.run_count],
+            ["parses", q.data.flow !== null],
+            ["tab", tab],
+          ]),
+        }
+      : null,
   );
 
   const header = (

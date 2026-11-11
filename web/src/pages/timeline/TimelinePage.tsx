@@ -14,6 +14,13 @@ import {
   StatusBadge,
   TextInput,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import {
+  countBy,
+  factList,
+  rowEntities,
+  trimText,
+} from "../../lib/contextSummary";
 import { Time } from "../../components/Time";
 import {
   DECISIONS,
@@ -46,6 +53,31 @@ export function TimelinePage() {
   const flows = useFlowOptions();
   const feed = useEvents(filtersToQuery(filters));
   const events = feed.data?.pages.flatMap((p) => p.items) ?? [];
+  usePageContext(
+    feed.isPending
+      ? null
+      : {
+          title: "Timeline",
+          facts: factList([
+            ["sensor filter", filters.sensor],
+            ["flow filter", filters.flow],
+            ["run status filter", filters.status],
+            ["decision filter", filters.decision],
+            ["run kind filter", filters.kind],
+            ["search", trimText(filters.q, 60)],
+            ["events loaded", events.length],
+            ["more pages", feed.hasNextPage],
+          ]),
+          entities: rowEntities(events, (e) => ({
+            kind: "event",
+            id: e.id,
+            label: e.sensor_id,
+            detail: e.flow_runs.length
+              ? `runs: ${countBy(e.flow_runs, (r) => r.status)}`
+              : "no flow runs",
+          })),
+        },
+  );
 
   return (
     <>

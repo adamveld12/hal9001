@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssistSession } from "../../api/assist";
 import { bindSession } from "./sessions";
-import { selectResumable, starterPrompts, targetConfig } from "./targets";
+import { starterPrompts, targetConfig, targetPath } from "./targets";
 
 function session(
   id: string,
@@ -13,6 +13,7 @@ function session(
 ): AssistSession {
   return {
     id,
+    title: null,
     target: { kind, id: targetId },
     runtime: "claude",
     model: null,
@@ -36,46 +37,6 @@ function session(
     updated_at: updated,
   };
 }
-
-describe("selectResumable", () => {
-  const all = [
-    session("old", "sensor", "gh", "idle", "2026-11-05T09:00:00Z"),
-    session("new", "sensor", "gh", "running", "2026-11-05T11:00:00Z"),
-    session("ended", "sensor", "gh", "closed", "2026-11-05T12:00:00Z"),
-    session("other", "sensor", "linear", "idle", "2026-11-05T12:30:00Z"),
-    session("draft", "sensor", null, "idle", "2026-11-05T10:00:00Z"),
-    session("failed", "sensor", "gh", "failed", "2026-11-05T10:30:00Z"),
-    session("flow-gh", "flow", "gh", "idle", "2026-11-05T13:00:00Z"),
-    session("flow-new", "flow", null, "idle", "2026-11-05T13:30:00Z"),
-  ];
-
-  it("offers open sessions of the same sensor, newest first, failed ones included", () => {
-    expect(selectResumable(all, "sensor", "gh").map((s) => s.id)).toEqual([
-      "new",
-      "failed",
-      "old",
-    ]);
-  });
-
-  it("offers sessions of a not-yet-existing sensor only to the new-sensor page", () => {
-    expect(selectResumable(all, "sensor", null).map((s) => s.id)).toEqual([
-      "draft",
-    ]);
-  });
-
-  it("offers nothing for a sensor without sessions", () => {
-    expect(selectResumable(all, "sensor", "nope")).toEqual([]);
-  });
-
-  it("keeps sessions of a flow apart from a sensor with the same id", () => {
-    expect(selectResumable(all, "flow", "gh").map((s) => s.id)).toEqual([
-      "flow-gh",
-    ]);
-    expect(selectResumable(all, "flow", null).map((s) => s.id)).toEqual([
-      "flow-new",
-    ]);
-  });
-});
 
 describe("starterPrompts", () => {
   it("suggests sources to watch for a new sensor and edits for an existing one", () => {
@@ -109,51 +70,51 @@ describe("target config", () => {
     expect(flow.sessionTitle(null)).toBe("New flow");
     expect(flow.sessionTitle("triage")).toBe("Flow triage");
     expect(sensor.sessionTitle("gh")).toBe("Sensor gh");
-    expect(flow.editorPath("triage", "s1")).toBe("/flows/triage?assist=s1");
-    expect(sensor.editorPath("gh", "s1")).toBe("/sensors/gh?assist=s1");
-    expect(flow.draftPath("s1")).toBe("/flows?assist=s1");
+  });
+
+  it("a general chat has no page; the others open their editor or list", () => {
+    expect(targetPath("general", null)).toBeNull();
+    expect(targetPath("flow", "triage")).toBe("/flows/triage");
+    expect(targetPath("sensor", "gh")).toBe("/sensors/gh");
+    expect(targetPath("tool", null)).toBe("/tools");
+  });
+
+  it("the general chat suggests questions about the app", () => {
+    expect(starterPrompts("general", null)).toContain(
+      "What needs my attention?",
+    );
+    expect(targetConfig("general").sessionTitle(null)).toBe("Ask AI");
   });
 });
 
 describe("bindSession", () => {
   it("binds a sensor session on its sensor and on a page for a new sensor's saved file", () => {
     const s = session("s1", "sensor", "gh", "idle", "t");
-    expect(bindSession(s, "sensor", "gh").sessionId).toBe("s1");
-    expect(bindSession(s, "sensor", "other")).toEqual({
-      sessionId: null,
-      otherTarget: "gh",
-    });
+    expect(bindSession(s, "sensor", "gh")).toBe("s1");
+    expect(bindSession(s, "sensor", "other")).toBeNull();
     const fresh = session("s2", "sensor", null, "idle", "t");
-    expect(bindSession(fresh, "sensor", "anything").sessionId).toBe("s2");
+    expect(bindSession(fresh, "sensor", "anything")).toBe("s2");
   });
 
   it("binds a flow session on its flow", () => {
     const s = session("s1", "flow", "triage", "idle", "t", "triage");
-    expect(bindSession(s, "flow", "triage").sessionId).toBe("s1");
-    expect(bindSession(s, "flow", null)).toEqual({
-      sessionId: null,
-      otherTarget: "triage",
-    });
+    expect(bindSession(s, "flow", "triage")).toBe("s1");
+    expect(bindSession(s, "flow", null)).toBeNull();
   });
 
   it("keeps a new-flow session on the page of the flow it saved, and only there", () => {
     const s = session("s1", "flow", null, "idle", "t", "triage");
-    expect(bindSession(s, "flow", null).sessionId).toBe("s1");
-    expect(bindSession(s, "flow", "triage").sessionId).toBe("s1");
-    expect(bindSession(s, "flow", "other")).toEqual({
-      sessionId: null,
-      otherTarget: "triage",
-    });
+    expect(bindSession(s, "flow", null)).toBe("s1");
+    expect(bindSession(s, "flow", "triage")).toBe("s1");
+    expect(bindSession(s, "flow", "other")).toBeNull();
   });
 
   it("leaves closed sessions and other kinds alone", () => {
     expect(
-      bindSession(session("s", "flow", "t", "closed", "t"), "flow", "t")
-        .sessionId,
+      bindSession(session("s", "flow", "t", "closed", "t"), "flow", "t"),
     ).toBeNull();
     expect(
-      bindSession(session("s", "flow", "t", "idle", "t"), "sensor", "t")
-        .sessionId,
+      bindSession(session("s", "flow", "t", "idle", "t"), "sensor", "t"),
     ).toBeNull();
   });
 });

@@ -19,12 +19,36 @@ import {
   Td,
   Th,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, rowEntities } from "../../lib/contextSummary";
 import { formatDuration } from "../../lib/format";
 
 export function RuntimesSection() {
   const runtimes = useRuntimes();
   const probe = useProbeRuntime();
   const [open, setOpen] = useState<string | null>(null);
+  // Names, modes and probe outcome only: command lines and env are left out.
+  usePageContext(
+    runtimes.data
+      ? {
+          title: "Settings: Runtimes",
+          facts: factList([["runtimes", runtimes.data.length]]),
+          entities: rowEntities(runtimes.data, (r) => ({
+            kind: "runtime",
+            id: r.name,
+            detail: [
+              r.modes.ask && `ask: ${r.modes.ask}`,
+              r.modes.full && `full: ${r.modes.full}`,
+              r.last_probe
+                ? `last probe ${r.last_probe.ok ? "ok" : "failed"}`
+                : "not probed",
+            ]
+              .filter(Boolean)
+              .join(", "),
+          })),
+        }
+      : null,
+  );
 
   if (runtimes.isPending) return <LoadingState />;
   if (runtimes.isError) {
