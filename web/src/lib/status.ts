@@ -35,6 +35,18 @@ export function statusTone(status: string | undefined | null): Tone {
   }
 }
 
+/** Badge tone of a flow run kind: live is the plain case, a continuation stands out. */
+export function kindTone(kind: string): Tone {
+  switch (kind) {
+    case "live":
+      return "muted";
+    case "continuation":
+      return "run";
+    default:
+      return "info";
+  }
+}
+
 export const TONE_TEXT: Record<Tone, string> = {
   ok: "text-ok",
   warn: "text-warn",

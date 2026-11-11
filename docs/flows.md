@@ -840,6 +840,10 @@ kinds). `GET /api/flow-runs?continuation_of=<flow run id>` and `?conversation=<c
 runs of a run or of a chat; `kind=continuation` lists them all. `hal9001 runs list --continuation-of ID` and `runs get
 ID --table` show the same.
 
+In the web UI the Agent run page and the agent node panel of a run have a **Continue in chat** button (disabled until the
+run ends) and list the chats forked from the run. A continuation run shows a banner linking the original run and the chat,
+marks the node runs reused from the original, and the original run lists its continuation runs under **Continued by**.
+
 ### Testing agent nodes (`simulate_emit`)
 
 Flow tests (`test-node`, assist draft tests) skip agent nodes unless told what to emit. `simulate_emit` makes the node

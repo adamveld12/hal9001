@@ -1,3 +1,4 @@
+import { kindTone } from "../../lib/status";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useEvents, useFlowOptions, useSensorOptions } from "../../api/events";
@@ -39,6 +40,7 @@ const KIND_LABEL: Record<(typeof KINDS)[number], string> = {
   live: "live",
   replay: "replay",
   test: "test",
+  continuation: "continuation",
 };
 
 export function TimelinePage() {
@@ -258,7 +260,7 @@ function FilterBar({
         value={filters.kind}
         onChange={(e) => set("kind", e.target.value as TimelineFilters["kind"])}
       >
-        <option value="">Live and replay</option>
+        <option value="">Live, replay and continuation</option>
         {KINDS.map((k) => (
           <option key={k} value={k}>
             {KIND_LABEL[k]} only
@@ -339,7 +341,9 @@ function RunChip({ run }: { run: FlowRunBrief }) {
     >
       <span>{run.flow_id}</span>
       <StatusBadge status={run.status} />
-      {run.kind !== "live" && <Badge>{run.kind}</Badge>}
+      {run.kind !== "live" && (
+        <Badge tone={kindTone(run.kind)}>{run.kind}</Badge>
+      )}
       {run.dry_run && <Badge tone="warn">dry run</Badge>}
       {run.replay_of && <Badge>replay of earlier run</Badge>}
     </Link>
