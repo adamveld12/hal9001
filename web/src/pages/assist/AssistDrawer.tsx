@@ -110,15 +110,14 @@ function DrawerBar({
       <Button icon="plus" title="Start a new chat (/new)" onClick={newChat}>
         New chat
       </Button>
-      <button
-        type="button"
+      <Button
+        icon="external"
         aria-label="Open full page"
         title="Open this chat on the Chat page"
-        className="rounded-md p-1 text-muted hover:bg-raised hover:text-fg"
         onClick={openFullPage}
       >
-        <Icon name="external" size={15} />
-      </button>
+        Full page
+      </Button>
       <button
         type="button"
         aria-label="Close assistant"
