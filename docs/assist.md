@@ -195,8 +195,14 @@ through hal's MCP tools, and each turn starts with the hal context block (sessio
 | Read tools (below): `flow_runs_list`, `flow_run_get`, `agent_run_get`, `events_list`, ... | Everything the CLI can list, get and inspect. | never |
 | `github_issue_link` | Builds a prefilled GitHub new-issue link (below). Calls nothing. | never |
 
+The chat assistant also has the hub's `request_approval` (title, **required** `description`, optional body, priority, editable
+fields): it asks you for a decision and returns `{approval_id, status, decision, comment, values, edited, edits, message?}`. The
+approval shows in the chat, labelled as written by the agent, next to the real command or target. It changes nothing by itself.
+
 The agent layer allows these tools and rejects every other permission request. Approvals are decided inline in the chat
-or in the Approvals page; a denial returns a tool error and the agent continues. The assist session's secrets never reach
+or in the Approvals page; a denial returns a tool error and the agent continues. A comment you type on a denial is steering:
+the agent reads `Denied by the user: "<text>". Do not retry the same action unchanged; do what the user asked instead.` and
+does what you asked. `draft_test`'s approval says in its description what runs and with which credentials. The assist session's secrets never reach
 the agent: the environment holds no env-file values and `draft_test` redacts the output.
 
 ### Read tools: debugging with the CLI's view

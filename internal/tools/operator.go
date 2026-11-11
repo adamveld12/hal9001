@@ -115,9 +115,11 @@ type OperatorApproval struct {
 	Reason string
 	// Title, BodyMD and Fields replace the generic "MCP client: <tool>" approval content when set (flow_create shows
 	// the spec, for example). The host adds the caller's identity.
-	Title  string
-	BodyMD string
-	Fields []OperatorField
+	Title string
+	// Description is hal's one- or two-sentence text for the call, generated from its facts (never empty).
+	Description string
+	BodyMD      string
+	Fields      []OperatorField
 	// Caller identifies the MCP client.
 	Caller OperatorCaller
 	// Timeout is how long to wait; the host returns Decision.Expired when it elapses.
@@ -133,10 +135,12 @@ type OperatorEditable struct {
 
 // OperatorQuestion is a request_approval call: the agent asks the user for a decision.
 type OperatorQuestion struct {
-	Title    string
-	BodyMD   string
-	Priority string
-	Editable []OperatorEditable
+	Title string
+	// Description is what the agent wants to do and why, in its own words; required.
+	Description string
+	BodyMD      string
+	Priority    string
+	Editable    []OperatorEditable
 	// Timeout is how long the approval stays pending before it expires.
 	Timeout time.Duration
 	// Wait is how long the call blocks for the decision.
@@ -245,12 +249,17 @@ func (o *Operator) Call(ctx context.Context, env OperatorEnv, name string, args 
 		}
 	}
 	if verdict == VerdictApprove {
-		d, err := o.host.ApproveOperator(ctx, OperatorApproval{Tool: name, Args: args, Reason: why, Caller: env.Caller, Timeout: o.timeout})
+		text := DescribeCall(t, args, why)
+		title := ""
+		if t.Describe != nil {
+			title = text.Title
+		}
+		d, err := o.host.ApproveOperator(ctx, OperatorApproval{Tool: name, Args: args, Reason: why, Title: title, Description: text.Description, Caller: env.Caller, Timeout: o.timeout})
 		if err != nil {
 			return Result{}, fmt.Errorf("tool %s: approval failed: %w", name, err)
 		}
 		if !d.Allowed {
-			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
+			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Held: d.Held, Comment: d.Comment}
 		}
 	}
 	res, err := t.Run(withEnv(ctx, env), Call{Name: name, Args: args, Now: time.Now()})

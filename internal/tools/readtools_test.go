@@ -50,7 +50,8 @@ func TestReadToolsAreListedAndNeverNeedApproval(t *testing.T) {
 		}
 	}
 	// Nothing that writes or runs: the operator's write tools and the CLI's mutating commands have no counterpart.
-	for _, name := range []string{"flow_run", "sensor_poll", "flow_create", "sensor_create", "request_approval", "send_note", "env_set", "approve", "deny"} {
+	// (The hub's request_approval is in every session's base tools: it only asks the user, it changes nothing.)
+	for _, name := range []string{"flow_run", "sensor_poll", "flow_create", "sensor_create", "send_note", "env_set", "approve", "deny"} {
 		if listed[name] {
 			t.Errorf("tool %s must not be in a read-only set", name)
 		}

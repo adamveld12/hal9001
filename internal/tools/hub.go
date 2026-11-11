@@ -40,6 +40,10 @@ type ApprovalRequest struct {
 	Reason string
 	// Timeout is how long to wait; the host returns Decision.Expired when it elapses.
 	Timeout time.Duration
+	// Title, Description, Command and Fields are hal's text for the approval, generated from the call's facts
+	// (Tool.Describe); Description is never empty.
+	Title, Description, Command string
+	Fields                      []ApprovalField
 }
 
 // Decision is the host's answer to an ApprovalRequest.
@@ -47,13 +51,55 @@ type Decision struct {
 	Allowed bool
 	// Expired reports that nobody decided within the timeout (Allowed is false).
 	Expired bool
-	// Comment is the approver's comment, if any.
+	// Comment is the approver's steering text, if any.
 	Comment string
 	// Cancelled reports that the approver also stopped the run (the host has cancelled it).
 	Cancelled bool
+	// Held reports that the conversation reached its steering limit: the approval was held and offered no steering.
+	Held bool
 	// RecordID identifies the trace record the host made for the call; it is passed back to Host.Finish.
 	RecordID string
 }
+
+// AskRequest is the hub's request_approval tool call: the agent asks the user for a decision.
+type AskRequest struct {
+	// RunID and NodeRunID identify the agent run (for a chat, the turn's run).
+	RunID, NodeRunID string
+	Title            string
+	// Description is required: what the agent wants to do and why, in its own words.
+	Description string
+	BodyMD      string
+	// Priority is low, normal, high or urgent; empty means normal.
+	Priority string
+	Editable []AskEditable
+	// Timeout is how long the approval stays pending before it expires.
+	Timeout time.Duration
+	// Wait is how long the call blocks for the decision.
+	Wait time.Duration
+}
+
+// AskEditable is one field the approver may edit before approving, with its current value (JSON).
+type AskEditable struct {
+	Key   string
+	Value json.RawMessage
+}
+
+// AskResult is the outcome of an AskRequest.
+type AskResult struct {
+	ApprovalID string
+	// Status is pending, approved, denied or expired.
+	Status string
+	// Comment is the approver's steering text.
+	Comment string
+	// Values is the final value of every editable field of an approved request; Edits the ones that were changed.
+	Values map[string]json.RawMessage
+	Edits  map[string]AskEdit
+	// Held reports that the denial came from a held approval (steering limit reached).
+	Held bool
+}
+
+// AskEdit is one edited field: its value before and after the approver's change.
+type AskEdit struct{ Before, After json.RawMessage }
 
 // CallRecord describes a call that needed no approval.
 type CallRecord struct {
@@ -72,6 +118,10 @@ type Host interface {
 	// Approve registers a tool_call approval and blocks until it is decided, the timeout passes, or ctx ends
 	// (then it returns ctx's error). It records the call in the run trace; Decision.RecordID names that record.
 	Approve(ctx context.Context, req ApprovalRequest) (Decision, error)
+	// Ask registers a request approval the agent asked for (the hub's request_approval tool) and blocks until it is
+	// decided, its timeout passes, the wait elapses, or ctx ends. A request that is still undecided when the wait
+	// elapses returns Status "pending"; it stays open.
+	Ask(ctx context.Context, req AskRequest) (AskResult, error)
 	// Record puts an auto-allowed call in the run trace before it runs and returns the record's id.
 	Record(ctx context.Context, c CallRecord) (string, error)
 	// Finish adds the outcome of the call ("ok" or an error text) to the record.
@@ -188,7 +238,7 @@ func NewHub(opt Options) (*Hub, error) {
 		opt.Log = slog.Default()
 	}
 	base := NewRegistry()
-	if err := base.Register(builtinTools(opt.GH)...); err != nil {
+	if err := base.Register(builtinTools(opt.GH, opt.Host)...); err != nil {
 		return nil, err
 	}
 	return &Hub{opt: opt, base: base, sessions: map[string]*Session{}}, nil
@@ -397,7 +447,10 @@ type DeniedError struct {
 	Tool      string
 	Expired   bool
 	Cancelled bool
-	Comment   string
+	// Held reports that the approval was held because the conversation reached its steering limit.
+	Held bool
+	// Comment is the approver's steering text.
+	Comment string
 }
 
 func (e *DeniedError) Error() string {
@@ -406,8 +459,9 @@ func (e *DeniedError) Error() string {
 		return fmt.Sprintf("tool %s was denied by the user and the run was stopped", e.Tool)
 	case e.Expired:
 		return fmt.Sprintf("tool %s was not run: nobody approved it before the approval timeout", e.Tool)
-	case e.Comment != "":
-		return fmt.Sprintf("tool %s was denied by the user: %s", e.Tool, e.Comment)
+	}
+	if text := DeniedText(e.Comment, e.Held); text != "" {
+		return text
 	}
 	return fmt.Sprintf("tool %s was denied by the user", e.Tool)
 }
@@ -448,8 +502,10 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 		if info.AgentRunID == "" {
 			return Result{}, fmt.Errorf("tool %s needs approval but no agent run is active", name)
 		}
+		text := DescribeCall(t, args, why)
 		d, err := s.h.opt.Host.Approve(ctx, ApprovalRequest{
 			RunID: info.AgentRunID, NodeRunID: info.NodeRunID, Tool: name, Args: args, Reason: why, Timeout: s.spec.ApprovalTimeout,
+			Title: text.Title, Description: text.Description, Command: text.Command, Fields: text.Fields,
 		})
 		if err != nil {
 			blocked(t, Blocked{Tool: name, Args: args, By: BlockedError, Reason: err.Error()})
@@ -463,7 +519,7 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 				by = BlockedExpired
 			}
 			blocked(t, Blocked{Tool: name, Args: args, By: by, Reason: why, Comment: d.Comment})
-			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
+			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Held: d.Held, Comment: d.Comment}
 		}
 		approvedBy = "approved by user"
 		if d.Comment != "" {

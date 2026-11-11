@@ -11,6 +11,13 @@ import (
 // MaxPreambleInput is the size above which the node input is truncated in the preamble.
 const MaxPreambleInput = 8 << 10
 
+// ApprovalGuide is the paragraph every agent run of hal gets (flow agents and every chat or assistant session, through
+// Preamble) about approvals: how a denial with steering reads, the hold after repeated steering, and the description
+// of request_approval. Keep it in step with DeniedText.
+const ApprovalGuide = "approvals: a call of yours may be denied with steering from the user; the tool result then reads `Denied by the user: \"...\"`. " +
+	"Follow it and do not retry the same action unchanged. After repeated steering the user may hold further actions; the result then says the steering limit was reached: stop and wait for the user. " +
+	"request_approval needs a description of one or two sentences: what you want to do and why."
+
 // PreambleData is what the context preamble describes.
 type PreambleData struct {
 	Info RunInfo
@@ -72,6 +79,7 @@ func Preamble(d PreambleData) string {
 			fmt.Fprintf(&b, "- %s: %s\n", t.Name, firstSentence(t.Description))
 		}
 	}
+	b.WriteString(ApprovalGuide + "\n")
 	if d.Output != nil {
 		b.WriteString(d.Output.PreambleLine() + "\n")
 	}

@@ -138,7 +138,8 @@ func getApproval(ctx context.Context, api APIFunc, id string) (map[string]any, e
 
 // approvalResult is the outcome of a request approval as the agent reads it, from the approval's REST view:
 // decision pending, approved, denied or expired, the approver's comment, and for an approval the final value of every
-// editable field (values) with the ones that were changed (edits: {before, after}).
+// editable field (values) with the ones that were changed (edits: {before, after}). A denial with a comment (or a held
+// one) adds message: the steering the agent must follow.
 func approvalResult(view map[string]any) map[string]any {
 	status, _ := view["status"].(string)
 	res := map[string]any{"approval_id": view["id"], "status": status}
@@ -150,21 +151,24 @@ func approvalResult(view map[string]any) map[string]any {
 		return res
 	}
 	res["decision"] = status
-	res["comment"] = ""
-	if c, ok := view["comment"].(string); ok {
-		res["comment"] = c
-	}
+	comment, _ := view["comment"].(string)
+	res["comment"] = comment
 	for _, k := range []string{"decided_by", "decided_at"} {
 		if v := view[k]; v != nil {
 			res[k] = v
 		}
 	}
-	req, _ := view["request"].(map[string]any)
-	if status != "approved" || req == nil {
+	if status == "denied" {
+		held, _ := view["held"].(bool)
+		if msg := DeniedText(comment, held); msg != "" {
+			res["message"] = msg
+		}
+	}
+	if status != "approved" {
 		return res
 	}
 	values := map[string]any{}
-	editable, _ := req["editable"].([]any)
+	editable, _ := view["editable"].([]any)
 	for _, e := range editable {
 		if m, ok := e.(map[string]any); ok {
 			if k, _ := m["key"].(string); k != "" {
@@ -172,7 +176,7 @@ func approvalResult(view map[string]any) map[string]any {
 			}
 		}
 	}
-	edits, _ := req["edits"].(map[string]any)
+	edits, _ := view["edits"].(map[string]any)
 	for k, e := range edits {
 		if m, ok := e.(map[string]any); ok {
 			values[k] = m["after"]
@@ -191,26 +195,10 @@ func approvalResult(view map[string]any) map[string]any {
 // ---- request_approval ----
 
 func (o *Operator) requestApprovalTool() operatorTool {
-	schema := obj(map[string]any{
-		"title":    prop("string", fmt.Sprintf("What you are asking, one line (max %d characters). Shown as the approval's title and in the notification.", maxRequestTitle)),
-		"body":     prop("string", fmt.Sprintf("Details as markdown (max %d bytes): context, what happens on approve or deny.", maxRequestBody)),
-		"priority": prioProp("Inbox priority (default normal). high and urgent also play the notification sound."),
-		"editable": map[string]any{
-			"type": "array", "maxItems": maxEditableFields,
-			"description": "Values the user may edit before approving, for example a draft reply. Each is {key, value}: key is a " + maxEditableKeyText + ", value any JSON value that is shown as the starting value. On approval the result's values holds the final value of each.",
-			"items": map[string]any{
-				"type": "object", "additionalProperties": false, "required": []string{"key"},
-				"properties": map[string]any{"key": prop("string", "Field name."), "value": map[string]any{"description": "Current value (any JSON). Default null."}},
-			},
-		},
-		"timeout_seconds": map[string]any{"type": "integer", "minimum": int(MinRequestTimeout.Seconds()), "maximum": int(MaxRequestTimeout.Seconds()),
-			"description": fmt.Sprintf("How long the approval stays pending before it expires (default %d = 24 hours, max %d = 7 days).", int(DefaultRequestTimeout.Seconds()), int(MaxRequestTimeout.Seconds()))},
-		"wait_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": int(MaxRequestWait.Seconds()),
-			"description": fmt.Sprintf("How long this call waits for the decision (default and max %d). When it elapses undecided the call returns status pending with the approval_id and the approval stays open: poll approval_get. 0 returns at once.", int(MaxRequestWait.Seconds()))},
-	}, "title")
+	schema := obj(requestApprovalProps(), "title", "description")
 	validate := func(a map[string]any) error { _, err := parseQuestion(a); return err }
 	return o.hostTool("request_approval",
-		"Ask the user for a decision. Opens a request approval in the hal9001 Inbox (menubar count and a native notification with Approve and Deny) and waits up to wait_seconds (default 240, the most a client keeps a call open). Returns {approval_id, status, decision, comment, values, edits}: decision is approved, denied or expired, or pending when the wait ended with no decision. If pending, poll approval_get with the approval_id (its result field has the same shape); the approval stays open until it is decided or its timeout_seconds (default 24 hours) passes. You cannot decide it yourself.",
+		"Ask the user for a decision. Opens a request approval in the hal9001 Inbox (menubar count and a native notification with Approve and Deny) and waits up to wait_seconds (default 240, the most a client keeps a call open). description is required: say in one or two sentences what you want to do and why; the user sees it labelled as written by you, next to the title and body. Returns {approval_id, status, decision, comment, values, edits, message}: decision is approved, denied or expired, or pending when the wait ended with no decision. If the user denies with a comment, comment is their steering and message says so: do not retry the same action unchanged, do what they asked instead. If pending, poll approval_get with the approval_id (its result field has the same shape); the approval stays open until it is decided or its timeout_seconds (default 24 hours) passes. You cannot decide it yourself.",
 		schema, ServiceAdmin, true, validate,
 		func(ctx context.Context, env OperatorEnv, a map[string]any) (Result, error) {
 			q, err := parseQuestion(a)
@@ -274,6 +262,10 @@ func parseQuestion(a map[string]any) (OperatorQuestion, error) {
 	if err != nil {
 		return OperatorQuestion{}, err
 	}
+	desc, err := parseDescription(a)
+	if err != nil {
+		return OperatorQuestion{}, err
+	}
 	body, err := textArg(a, "body", maxRequestBody, false)
 	if err != nil {
 		return OperatorQuestion{}, err
@@ -285,7 +277,7 @@ func parseQuestion(a map[string]any) (OperatorQuestion, error) {
 	if !validPriority(prio) {
 		return OperatorQuestion{}, fmt.Errorf("priority must be one of %s", strings.Join(priorities, ", "))
 	}
-	q := OperatorQuestion{Title: title, BodyMD: body, Priority: prio, Timeout: DefaultRequestTimeout, Wait: MaxRequestWait}
+	q := OperatorQuestion{Title: title, Description: desc, BodyMD: body, Priority: prio, Timeout: DefaultRequestTimeout, Wait: MaxRequestWait}
 	if s, ok, err := intArg(a, "timeout_seconds", int64(MinRequestTimeout.Seconds()), int64(MaxRequestTimeout.Seconds())); err != nil {
 		return OperatorQuestion{}, err
 	} else if ok {

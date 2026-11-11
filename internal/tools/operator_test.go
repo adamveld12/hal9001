@@ -148,11 +148,14 @@ func TestOperatorRefusesBadArgumentsBeforeAskingAnyone(t *testing.T) {
 		{"flow_create", `{"spec":"  "}`},
 		{"sensor_create", `{"spec":"lang: bash","extra":1}`},
 		{"request_approval", `{}`},
-		{"request_approval", `{"title":"t","wait_seconds":241}`},
-		{"request_approval", `{"title":"t","timeout_seconds":1}`},
-		{"request_approval", `{"title":"t","priority":"critical"}`},
-		{"request_approval", `{"title":"t","editable":[{"key":"a b"}]}`},
-		{"request_approval", `{"title":"t","editable":[{"key":"a"},{"key":"a"}]}`},
+		{"request_approval", `{"title":"t"}`},
+		{"request_approval", `{"title":"t","description":"  "}`},
+		{"request_approval", `{"title":"t","description":"` + strings.Repeat("x", 601) + `"}`},
+		{"request_approval", `{"title":"t","description":"d","wait_seconds":241}`},
+		{"request_approval", `{"title":"t","description":"d","timeout_seconds":1}`},
+		{"request_approval", `{"title":"t","description":"d","priority":"critical"}`},
+		{"request_approval", `{"title":"t","description":"d","editable":[{"key":"a b"}]}`},
+		{"request_approval", `{"title":"t","description":"d","editable":[{"key":"a"},{"key":"a"}]}`},
 		{"send_note", `{"title":"t","url":"javascript:alert(1)"}`},
 		{"send_note", `{"title":"line\nbreak"}`},
 		{"send_note", `{"title":"t","body":"` + strings.Repeat("x", MaxNoteBody+1) + `"}`},
@@ -215,7 +218,7 @@ func TestOperatorChecksTheAuthServiceBeforeAskingAnyone(t *testing.T) {
 		return nil
 	}
 	for tool, args := range map[string]string{
-		"flow_run": `{"id":"f"}`, "flow_create": `{"spec":"nodes: []"}`, "request_approval": `{"title":"t"}`, "send_note": `{"title":"t"}`,
+		"flow_run": `{"id":"f"}`, "flow_create": `{"spec":"nodes: []"}`, "request_approval": `{"title":"t","description":"d"}`, "send_note": `{"title":"t"}`,
 	} {
 		if _, err := o.Call(context.Background(), env, tool, json.RawMessage(args)); err == nil || !strings.Contains(err.Error(), "403") {
 			t.Errorf("%s: error = %v", tool, err)
@@ -393,13 +396,13 @@ func TestValidateToolsReportWithoutAskingOrCreating(t *testing.T) {
 }
 
 func approvalView(status, comment string, editable string, edits string) string {
-	return `{"id":"A1","type":"request","status":"` + status + `","comment":"` + comment + `","decided_by":"alice","decided_at":"2026-01-01T00:00:00Z","expires_at":"2026-01-02T00:00:00Z","request":{"title":"t","editable":` + editable + `,"edits":` + edits + `}}`
+	return `{"id":"A1","type":"request","status":"` + status + `","comment":"` + comment + `","decided_by":"alice","decided_at":"2026-01-01T00:00:00Z","expires_at":"2026-01-02T00:00:00Z","title":"t","editable":` + editable + `,"edits":` + edits + `}`
 }
 
 func TestRequestApprovalReturnsTheDecisionCommentAndEditedValues(t *testing.T) {
 	host := &fakeOperatorHost{questionID: "A1"}
 	o := newOperator(t, host)
-	args := json.RawMessage(`{"title":"Send this reply?","body":"details","priority":"high","timeout_seconds":600,"wait_seconds":3,
+	args := json.RawMessage(`{"title":"Send this reply?","description":"Reply to the customer about the refund.","body":"details","priority":"high","timeout_seconds":600,"wait_seconds":3,
 		"editable":[{"key":"reply","value":"Hi"},{"key":"count","value":2}]}`)
 
 	var sent []sentRequest
@@ -421,18 +424,18 @@ func TestRequestApprovalReturnsTheDecisionCommentAndEditedValues(t *testing.T) {
 		t.Errorf("result = %s", res.Text)
 	}
 	q := host.questions[0]
-	if q.Title != "Send this reply?" || q.Priority != "high" || q.Timeout != 600*time.Second || q.Wait != 3*time.Second || len(q.Editable) != 2 || string(q.Editable[0].Value) != `"Hi"` || q.Caller.Client != "test-agent 1.0" {
+	if q.Title != "Send this reply?" || q.Description != "Reply to the customer about the refund." || q.Priority != "high" || q.Timeout != 600*time.Second || q.Wait != 3*time.Second || len(q.Editable) != 2 || string(q.Editable[0].Value) != `"Hi"` || q.Caller.Client != "test-agent 1.0" {
 		t.Errorf("question = %+v", q)
 	}
 
 	api = recordingAPI(200, approvalView("denied", "no", `[{"key":"reply","value":"Hi"}]`, `null`), &sent)
 	res, _ = o.Call(context.Background(), envOf(api, "alice"), "request_approval", args)
-	if strings.Contains(res.Text, `"values"`) || !strings.Contains(res.Text, `"decision":"denied"`) || !strings.Contains(res.Text, `"comment":"no"`) {
+	if strings.Contains(res.Text, `"values"`) || !strings.Contains(res.Text, `"decision":"denied"`) || !strings.Contains(res.Text, `"comment":"no"`) || !strings.Contains(res.Text, `"message":"Denied by the user: \"no\". Do not retry the same action unchanged; do what the user asked instead."`) {
 		t.Errorf("denied result = %s", res.Text)
 	}
 
-	api = recordingAPI(200, `{"id":"A1","type":"request","status":"pending","comment":null,"expires_at":"2026-01-02T00:00:00Z","request":{"editable":[]}}`, &sent)
-	res, _ = o.Call(context.Background(), envOf(api, "alice"), "request_approval", json.RawMessage(`{"title":"t"}`))
+	api = recordingAPI(200, `{"id":"A1","type":"request","status":"pending","comment":null,"expires_at":"2026-01-02T00:00:00Z","editable":[]}`, &sent)
+	res, _ = o.Call(context.Background(), envOf(api, "alice"), "request_approval", json.RawMessage(`{"title":"t","description":"d"}`))
 	if !strings.Contains(res.Text, `"status":"pending"`) || !strings.Contains(res.Text, `"approval_id":"A1"`) || !strings.Contains(res.Text, "approval_get") {
 		t.Errorf("pending result = %s", res.Text)
 	}

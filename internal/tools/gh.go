@@ -128,6 +128,7 @@ func ghTools(o GHOptions) []Tool {
 				"paginate": map[string]any{"type": "boolean", "description": "GET only: fetch every page"},
 			}, "path"),
 			Approval: ghAPIApproval,
+			Describe: ghAPIDescribe,
 			Run:      o.runGHAPI,
 		},
 		{

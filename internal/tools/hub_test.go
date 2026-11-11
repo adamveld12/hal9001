@@ -18,6 +18,9 @@ type fakeHost struct {
 	approvals []ApprovalRequest
 	records   []CallRecord
 	outcomes  []string
+	asks      []AskRequest
+	askResult AskResult
+	askErr    error
 }
 
 func (h *fakeHost) Approve(_ context.Context, r ApprovalRequest) (Decision, error) {
@@ -27,6 +30,15 @@ func (h *fakeHost) Approve(_ context.Context, r ApprovalRequest) (Decision, erro
 	d := h.decision
 	d.RecordID = "rec-approved"
 	return d, nil
+}
+
+func (h *fakeHost) Ask(_ context.Context, r AskRequest) (AskResult, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.asks = append(h.asks, r)
+	res := h.askResult
+	res.ApprovalID = "A1"
+	return res, h.askErr
 }
 
 func (h *fakeHost) Record(_ context.Context, c CallRecord) (string, error) {
@@ -131,7 +143,7 @@ func TestGHAPIWriteNeedsApproval(t *testing.T) {
 		ran     bool
 	}{
 		{"allowed", Decision{Allowed: true}, "", true},
-		{"denied", Decision{Comment: "no thanks"}, "denied by the user: no thanks", false},
+		{"denied", Decision{Comment: "no thanks"}, `Denied by the user: "no thanks". Do not retry the same action unchanged; do what the user asked instead.`, false},
 		{"expired", Decision{Expired: true}, "approval timeout", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,7 +155,7 @@ func TestGHAPIWriteNeedsApproval(t *testing.T) {
 			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("err = %v, want %q", err, tc.wantErr)
 			}
-			if len(host.approvals) != 1 || host.approvals[0].Tool != "gh_api" || host.approvals[0].RunID != "run1" || host.approvals[0].Timeout != time.Minute {
+			if len(host.approvals) != 1 || host.approvals[0].Tool != "gh_api" || host.approvals[0].RunID != "run1" || host.approvals[0].Timeout != time.Minute || host.approvals[0].Description != "Comment on o/r#1." {
 				t.Fatalf("approvals = %+v", host.approvals)
 			}
 			b, _ := os.ReadFile(log)

@@ -168,8 +168,9 @@ func (s *sandboxTools) toolList() []Tool {
 				"path":    str("File path relative to the workdir."),
 				"content": str("The complete new content of the file."),
 			}),
-			Policy: s.writePolicy,
-			Run:    s.write,
+			Policy:   s.writePolicy,
+			Describe: s.describeWrite,
+			Run:      s.write,
 		},
 		{
 			Name:        "fs_list",
@@ -198,8 +199,9 @@ func (s *sandboxTools) toolList() []Tool {
 				"stdin":           str("Optional text sent to the command's standard input."),
 				"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "description": "Kill the command after this many seconds (default: the sandbox's command timeout)."},
 			}),
-			Policy: s.shellPolicy,
-			Run:    s.shell,
+			Policy:   s.shellPolicy,
+			Describe: s.describeShell,
+			Run:      s.shell,
 		},
 	}
 }

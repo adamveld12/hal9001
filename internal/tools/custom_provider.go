@@ -78,6 +78,7 @@ func customTool(opt CustomOptions, rs RunSpec, id string, ct CustomTool) Tool {
 			}
 			return false, ""
 		},
+		Describe: describeCustom(id, t.Lang, t.Script, t.Command, t.RunsInSandbox, rs.Sandbox),
 		Run: func(ctx context.Context, c Call) (Result, error) {
 			uo := UserOptions{
 				Env: ct.Env, Redactor: ct.Redactor, BasePATH: opt.BasePATH,
