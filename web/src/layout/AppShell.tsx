@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router";
+import { useFaviconActivity } from "./faviconActivity";
 import { eyeLabel, eyeThrobs } from "./halEye";
 import { useStatus } from "../api/status";
 import { useStreamState } from "../api/streamHooks";
-import { Icon, type IconName } from "../components/icons";
+import { GithubMark, Icon, type IconName } from "../components/icons";
+import { ExternalLink } from "../components/ExternalLink";
 import { Badge, Kbd } from "../components/ui";
 import { cx } from "../lib/cx";
 import { isDark, setTheme, useTheme } from "../lib/theme";
@@ -185,6 +187,7 @@ export function AppShell() {
   const stream = useStreamState();
   const theme = useTheme();
   const s = status.data;
+  useFaviconActivity(s?.running_flow_runs);
   const inboxCount =
     s === undefined ? undefined : s.unread_inbox + s.pending_approvals;
   const running = (s?.running_flow_runs ?? 0) + (s?.running_agent_runs ?? 0);
@@ -388,6 +391,14 @@ export function AppShell() {
             >
               <Icon name={isDark(theme) ? "sun" : "moon"} size={15} />
             </button>
+            <ExternalLink
+              href="https://github.com/adamveld12/hal9001"
+              aria-label="hal9001 on GitHub"
+              title="hal9001 on GitHub"
+              className="rounded-md p-1.5 text-muted hover:bg-raised hover:text-fg"
+            >
+              <GithubMark size={15} />
+            </ExternalLink>
           </div>
         </header>
         {status.isError && (
