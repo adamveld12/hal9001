@@ -1365,7 +1365,7 @@ export interface paths {
     };
     /**
      * List flow runs
-     * @description Newest first. `kind` defaults to live and replay; ask for `test` explicitly.
+     * @description Newest first. Without `kind` every kind but `test` is listed (live, replay and continuation runs); ask for `test` explicitly. `continuation_of` lists the continuation runs started from one original flow run, `conversation` those started from one chat.
      */
     get: operations["listFlowRuns"];
     put?: never;
@@ -2822,8 +2822,11 @@ export interface components {
       | "killed"
       | "interrupted"
       | "cancelled";
-    /** @enum {string} */
-    FlowRunKind: "live" | "replay" | "test";
+    /**
+     * @description `continuation` is a run started by an approved emit of a chat that continues an agent run. It reuses the original run's upstream results and runs only what follows the emitting agent node; see `FlowRun.continuation`.
+     * @enum {string}
+     */
+    FlowRunKind: "live" | "replay" | "test" | "continuation";
     /** @enum {string} */
     NodeRunStatus:
       | "queued"
@@ -4698,6 +4701,18 @@ export interface components {
       created_at: components["schemas"]["Timestamp"];
       started_at: components["schemas"]["NullableTimestamp"];
       ended_at: components["schemas"]["NullableTimestamp"];
+      /** @description Where a run of kind `continuation` came from; null for the other kinds. */
+      continuation: components["schemas"]["FlowRunContinuation"] | null;
+    };
+    /** @description The link of a continuation run. The original run is not changed; the link is only on the continuation run. */
+    FlowRunContinuation: {
+      of_run_id: components["schemas"]["Ulid"];
+      conversation_id: components["schemas"]["Ulid"];
+      /** @description The agent node that was emitted from. */
+      node_id: string;
+      /** @description The port that was emitted on (`out` for a node without declared ports). */
+      port: string;
+      approval_id: components["schemas"]["NullableUlid"];
     };
     Queue: {
       items: components["schemas"]["QueueItem"][];
@@ -7823,7 +7838,7 @@ export interface operations {
         status?: components["schemas"]["FlowRunStatus"];
         /** @description Decision of any node run in the flow run. */
         decision?: components["schemas"]["NodeRunDecision"];
-        /** @description Flow run kind. Default is `live` and `replay`. */
+        /** @description Flow run kind. Default is `live`, `replay` and `continuation`. */
         kind?: components["schemas"]["FlowRunKind"];
         /** @description Case-insensitive substring search over the payload text. */
         q?: string;
@@ -8580,6 +8595,10 @@ export interface operations {
         status?: components["schemas"]["FlowRunStatus"];
         kind?: components["schemas"]["FlowRunKind"];
         replay_of?: components["schemas"]["Ulid"];
+        /** @description Only continuation runs of this original flow run. */
+        continuation_of?: components["schemas"]["Ulid"];
+        /** @description Only continuation runs started from this conversation (assist session id). */
+        conversation?: components["schemas"]["Ulid"];
         /** @description Only records created at or after this time. */
         since?: components["parameters"]["Since"];
         /** @description Only records created before this time. */

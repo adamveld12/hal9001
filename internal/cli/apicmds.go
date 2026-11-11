@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 )
 
@@ -641,22 +643,24 @@ func nodeRunDone(body []byte) bool {
 
 func runCmds() []*command {
 	var lf listFlags
-	var flow, event, status, kind, replayOf, since, until string
+	var flow, event, status, kind, replayOf, continuationOf, conversation, since, until string
 	list := &leaf{
 		flags: func(fs *flag.FlagSet) {
 			lf.register(fs)
 			fs.StringVar(&flow, "flow", "", "filter by flow id")
 			fs.StringVar(&event, "event", "", "filter by event id")
 			fs.StringVar(&status, "status", "", "filter by status")
-			fs.StringVar(&kind, "kind", "", "filter by kind: live, replay, test")
+			fs.StringVar(&kind, "kind", "", "filter by kind: live, replay, test, continuation (default: all but test)")
 			fs.StringVar(&replayOf, "replay-of", "", "runs that replay this flow run")
+			fs.StringVar(&continuationOf, "continuation-of", "", "continuation runs started from this flow run")
+			fs.StringVar(&conversation, "conversation", "", "continuation runs started from this conversation (chat session id)")
 			fs.StringVar(&since, "since", "", "only runs at or after this RFC 3339 time")
 			fs.StringVar(&until, "until", "", "only runs before this RFC 3339 time")
 		},
 		run: func(ctx context.Context, c *call) error {
 			qv := lf.apply(query("flow_id", flow, "event_id", event, "status", status, "kind", kind,
-				"replay_of", replayOf, "since", since, "until", until))
-			return c.doEmit(ctx, http.MethodGet, "/api/flow-runs", qv, nil, "id", "flow_id", "kind", "status", "dry_run", "created_at")
+				"replay_of", replayOf, "continuation_of", continuationOf, "conversation", conversation, "since", since, "until", until))
+			return c.doEmit(ctx, http.MethodGet, "/api/flow-runs", qv, nil, "id", "flow_id", "kind", "status", "dry_run", "continuation.of_run_id", "created_at")
 		},
 	}
 	var wait bool
@@ -670,16 +674,51 @@ func runCmds() []*command {
 		run: func(ctx context.Context, c *call) error {
 			path := "/api/flow-runs/" + esc(c.args[0])
 			if !wait {
-				return c.doEmit(ctx, http.MethodGet, path, nil, nil)
+				resp, err := c.client().do(ctx, http.MethodGet, path, nil, nil)
+				if err != nil {
+					return err
+				}
+				return c.emitRun(resp)
 			}
 			resp, err := c.waitFor(ctx, path, timeout, flowRunDone)
 			if err != nil {
 				return err
 			}
-			return c.emit(resp)
+			return c.emitRun(resp)
 		},
 	}
 	return []*command{cmd("list", "list flow runs", list), cmd("get", "show a flow run with its node runs", get)}
+}
+
+// emitRun prints a flow run with its node runs: the JSON as is, or with --table a summary of the run (its kind and,
+// for a continuation run, the run, conversation, node and port it continues from) followed by a table of its node runs.
+func (c *call) emitRun(resp *response) error {
+	var d struct {
+		FlowRun  map[string]any `json:"flow_run"`
+		NodeRuns []any          `json:"node_runs"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(resp.Body))
+	dec.UseNumber()
+	if !c.table || dec.Decode(&d) != nil || d.FlowRun == nil {
+		return c.emit(resp)
+	}
+	w := c.stdout()
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	for _, k := range []string{"id", "flow_id", "flow_hash", "kind", "status", "dry_run", "event_id", "replay_of", "error", "created_at", "started_at", "ended_at"} {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\n", k, cell(d.FlowRun[k]))
+	}
+	if cont, ok := d.FlowRun["continuation"].(map[string]any); ok {
+		for _, k := range []string{"of_run_id", "conversation_id", "node_id", "port", "approval_id"} {
+			_, _ = fmt.Fprintf(tw, "continuation.%s\t%s\n", k, cell(cont[k]))
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "\nnode runs\n"); err != nil {
+		return err
+	}
+	return writeItemsTable(w, d.NodeRuns, []string{"id", "node_id", "node_type", "status", "decision", "reason"})
 }
 
 func nodeRunCmds() []*command {

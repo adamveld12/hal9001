@@ -1191,7 +1191,7 @@ paths:
         - {name: flow_id, in: query, schema: {$ref: '#/components/schemas/Slug'}}
         - {name: status, in: query, description: Flow run status., schema: {$ref: '#/components/schemas/FlowRunStatus'}}
         - {name: decision, in: query, description: Decision of any node run in the flow run., schema: {$ref: '#/components/schemas/NodeRunDecision'}}
-        - {name: kind, in: query, description: 'Flow run kind. Default is `live` and `replay`.', schema: {$ref: '#/components/schemas/FlowRunKind'}}
+        - {name: kind, in: query, description: 'Flow run kind. Default is `live`, `replay` and `continuation`.', schema: {$ref: '#/components/schemas/FlowRunKind'}}
         - {name: q, in: query, description: Case-insensitive substring search over the payload text., schema: {type: string, minLength: 1}}
         - {$ref: '#/components/parameters/Since'}
         - {$ref: '#/components/parameters/Until'}
@@ -1828,7 +1828,9 @@ paths:
       operationId: listFlowRuns
       tags: [runs]
       summary: List flow runs
-      description: Newest first. `kind` defaults to live and replay; ask for `test` explicitly.
+      description: >-
+        Newest first. Without `kind` every kind but `test` is listed (live, replay and continuation runs); ask for `test` explicitly.
+        `continuation_of` lists the continuation runs started from one original flow run, `conversation` those started from one chat.
       x-hal-service: api
       parameters:
         - {$ref: '#/components/parameters/Cursor'}
@@ -1838,6 +1840,8 @@ paths:
         - {name: status, in: query, schema: {$ref: '#/components/schemas/FlowRunStatus'}}
         - {name: kind, in: query, schema: {$ref: '#/components/schemas/FlowRunKind'}}
         - {name: replay_of, in: query, schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: continuation_of, in: query, description: 'Only continuation runs of this original flow run.', schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: conversation, in: query, description: 'Only continuation runs started from this conversation (assist session id).', schema: {$ref: '#/components/schemas/Ulid'}}
         - {$ref: '#/components/parameters/Since'}
         - {$ref: '#/components/parameters/Until'}
       responses:
@@ -3841,7 +3845,12 @@ components:
         blob: {$ref: '#/components/schemas/NullableHash'}
     # ---------------------------------------------------------------- enums
     FlowRunStatus: {type: string, enum: [queued, running, awaiting_approval, succeeded, failed, killed, interrupted, cancelled]}
-    FlowRunKind: {type: string, enum: [live, replay, test]}
+    FlowRunKind:
+      type: string
+      enum: [live, replay, test, continuation]
+      description: >-
+        `continuation` is a run started by an approved emit of a chat that continues an agent run. It reuses the
+        original run's upstream results and runs only what follows the emitting agent node; see `FlowRun.continuation`.
     NodeRunStatus: {type: string, enum: [queued, running, awaiting_approval, done, failed, killed, interrupted, skipped, cancelled]}
     NodeRunDecision: {type: string, enum: [emitted, dropped, error, skipped]}
     NodeType: {type: string, enum: [command, agent, inbox, approval]}
@@ -5752,7 +5761,7 @@ components:
         dry_run: {type: boolean, description: 'Overrides the flow''s `dry_run` for this run; absent keeps the flow''s setting.'}
     FlowRun:
       type: object
-      required: [id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, cancelled_by, created_at, started_at, ended_at]
+      required: [id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, cancelled_by, created_at, started_at, ended_at, continuation]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         flow_id: {$ref: '#/components/schemas/Slug'}
@@ -5767,6 +5776,21 @@ components:
         created_at: {$ref: '#/components/schemas/Timestamp'}
         started_at: {$ref: '#/components/schemas/NullableTimestamp'}
         ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        continuation:
+          oneOf:
+            - {$ref: '#/components/schemas/FlowRunContinuation'}
+            - {type: 'null'}
+          description: Where a run of kind `continuation` came from; null for the other kinds.
+    FlowRunContinuation:
+      type: object
+      required: [of_run_id, conversation_id, node_id, port, approval_id]
+      description: The link of a continuation run. The original run is not changed; the link is only on the continuation run.
+      properties:
+        of_run_id: {$ref: '#/components/schemas/Ulid'}
+        conversation_id: {$ref: '#/components/schemas/Ulid'}
+        node_id: {type: string, description: The agent node that was emitted from.}
+        port: {type: string, description: The port that was emitted on (`out` for a node without declared ports).}
+        approval_id: {$ref: '#/components/schemas/NullableUlid'}
     Queue:
       type: object
       required: [items, total, waiting_for_flow_slot, waiting_for_agent_slot, waiting_for_command_slot, limits]
