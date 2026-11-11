@@ -21,7 +21,7 @@ export function Composer({
 }: {
   disabled: boolean;
   placeholder: string;
-  prefill: { text: string; n: number } | null;
+  prefill: { text: string; n: number; send?: boolean } | null;
   /** Focus the input when the composer mounts (the drawer opened, or the conversation started). */
   autoFocus?: boolean;
   onSend: (text: string) => Promise<void>;
@@ -40,9 +40,12 @@ export function Composer({
     setAppliedPrefill(prefill.n);
     setText(prefill.text);
   }
+  // A prefill that asks to be sent waits here until the composer can send.
+  const autoSend = useRef(false);
   useEffect(() => {
     if (!prefill) return;
     ref.current?.focus();
+    autoSend.current = prefill.send === true;
     onPrefillApplied();
   }, [prefill, onPrefillApplied]);
   useEffect(() => {
@@ -83,6 +86,12 @@ export function Composer({
       setSending(false);
     }
   };
+
+  useEffect(() => {
+    if (!autoSend.current || disabled || sending) return;
+    autoSend.current = false;
+    void submit();
+  });
 
   const hints = slashHints(text);
   const isCommand = parseSlashCommand(text) !== null;

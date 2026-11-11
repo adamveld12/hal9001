@@ -22,19 +22,13 @@ export function assistDrawerOpen(
   return doc.querySelector(ASSIST_DRAWER_SELECTOR) !== null;
 }
 
-/** Cmd+K (macOS) or Ctrl+K: toggles the Ask AI drawer, also while typing. */
-export function isAskAiShortcut(e: {
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-  shiftKey: boolean;
-}): boolean {
+/** Whether keystrokes on `target` go into a text field or editor, so plain-key shortcuts must not fire. */
+export function isTypingTarget(target: EventTarget | null): boolean {
   return (
-    e.key.toLowerCase() === "k" &&
-    (e.metaKey || e.ctrlKey) &&
-    !e.altKey &&
-    !e.shiftKey
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.closest(".cm-editor") !== null ||
+      /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
   );
 }
 

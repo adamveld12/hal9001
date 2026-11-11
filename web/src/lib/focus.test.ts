@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  assistDrawerOpen,
-  focusLost,
-  isAskAiShortcut,
-  noFocusOnClick,
-} from "./focus";
+import { assistDrawerOpen, focusLost, noFocusOnClick } from "./focus";
 
 describe("focusLost", () => {
   const body = {} as Element;
@@ -31,28 +26,5 @@ describe("noFocusOnClick", () => {
     let prevented = false;
     noFocusOnClick.onMouseDown({ preventDefault: () => (prevented = true) });
     expect(prevented).toBe(true);
-  });
-});
-
-describe("isAskAiShortcut", () => {
-  const key = (k: string, mods: Partial<KeyboardEvent> = {}) => ({
-    key: k,
-    metaKey: false,
-    ctrlKey: false,
-    altKey: false,
-    shiftKey: false,
-    ...mods,
-  });
-  it("matches Cmd+K and Ctrl+K only", () => {
-    expect(isAskAiShortcut(key("k", { metaKey: true }))).toBe(true);
-    expect(isAskAiShortcut(key("K", { ctrlKey: true }))).toBe(true);
-    expect(isAskAiShortcut(key("k"))).toBe(false);
-    expect(isAskAiShortcut(key("j", { metaKey: true }))).toBe(false);
-    expect(isAskAiShortcut(key("k", { metaKey: true, shiftKey: true }))).toBe(
-      false,
-    );
-    expect(isAskAiShortcut(key("k", { ctrlKey: true, altKey: true }))).toBe(
-      false,
-    );
   });
 });

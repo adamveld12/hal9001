@@ -45,6 +45,8 @@ export function ConfirmDialog({
         e.preventDefault();
         onCancel();
       }}
+      // Escape cancels the dialog only; the Ask AI drawer behind it listens on the window and would close too.
+      onKeyDown={(e) => e.key === "Escape" && e.stopPropagation()}
       className="m-auto w-[28rem] max-w-[90vw] rounded-md border border-line bg-panel p-4 text-fg backdrop:bg-black/50"
     >
       <h2 id={titleId} className="m-0 text-sm font-semibold">

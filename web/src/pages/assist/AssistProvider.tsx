@@ -103,7 +103,7 @@ export function AssistProvider({ children }: { children: ReactNode }) {
 
   const seeds = useRef(0);
   const nextSeed = useCallback(
-    (text: string) => ({ text, n: ++seeds.current }),
+    (text: string, send?: boolean) => ({ text, n: ++seeds.current, send }),
     [],
   );
 
@@ -116,12 +116,12 @@ export function AssistProvider({ children }: { children: ReactNode }) {
     else dispatch({ type: "open" });
   }, [close]);
   const openTarget = useCallback(
-    (target: DrawerTarget, seed?: string) => {
+    (target: DrawerTarget, seed?: string, send?: boolean) => {
       if (!mayLeave(target)) return;
       dispatch({
         type: "openTarget",
         target,
-        seed: seed === undefined ? undefined : nextSeed(seed),
+        seed: seed === undefined ? undefined : nextSeed(seed, send),
       });
     },
     [mayLeave, nextSeed],
@@ -146,7 +146,8 @@ export function AssistProvider({ children }: { children: ReactNode }) {
     [],
   );
   const seedText = useCallback(
-    (text: string) => dispatch({ type: "seed", seed: nextSeed(text) }),
+    (text: string, send?: boolean) =>
+      dispatch({ type: "seed", seed: nextSeed(text, send) }),
     [nextSeed],
   );
   const consumeSeed = useCallback(

@@ -232,7 +232,10 @@ export function TextInput({
   invalid,
   className,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
+}: InputHTMLAttributes<HTMLInputElement> & {
+  invalid?: boolean;
+  ref?: Ref<HTMLInputElement>;
+}) {
   return (
     <input
       className={cx(
