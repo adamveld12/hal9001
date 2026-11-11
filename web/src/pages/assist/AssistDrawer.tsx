@@ -112,10 +112,11 @@ function DrawerBar({
       </Button>
       <Button
         icon="external"
+        aria-label="Open full page"
         title="Open this chat on the Chat page"
         onClick={openFullPage}
       >
-        Open full page
+        Full page
       </Button>
       <button
         type="button"
