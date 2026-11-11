@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.15",
-  "build": 15,
-  "commit": "006fedb972b41086888b528899784d9475e8c352",
-  "published_at": "2026-11-11T01:13:07Z",
+  "version": "0.1.16",
+  "build": 16,
+  "commit": "e3e59bc55c7cd16aff35e7c27d2acd8d4316df19",
+  "published_at": "2026-11-11T01:15:42Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.15/HAL9001-0.1.15.app.zip",
-  "size": 27802649,
-  "sha256": "f2a90d191c15dc5f77ec677afa1d11438c0ec548b113f8f06674aaccc9206086",
-  "signature": "aA84FpqcHEjl2ubqxk0guP+tqgXnZAal+aYJ8dyUVrifF5bmCL5qn3eYQY99TuxrNjZeQiIMFPZC3gkKv6ULCg==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.15",
-  "notes": "## Changes\n\n- assist: read-only inspection tools and GitHub issue links (#13) (006fedb)\n\nCommit: 006fedb972b41086888b528899784d9475e8c352\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.16/HAL9001-0.1.16.app.zip",
+  "size": 27821596,
+  "sha256": "d84628ec10ad11d29de575c90a3104a5aff63e1a9a8bd186493f3416d8aa150e",
+  "signature": "4mLA3up3hlLxNcJ+CvHOxN0Yx7PNvx3n5UfSeCKxDK/SW5+aLXNXYsUP6Y4IKONNfSnNmN26V0IJBURAAVuGAw==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.16",
+  "notes": "## Changes\n\n- Requires-approval flag on every node, with a denied path (#12) (e3e59bc)\n\nCommit: e3e59bc55c7cd16aff35e7c27d2acd8d4316df19\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
