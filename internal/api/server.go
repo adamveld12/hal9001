@@ -29,11 +29,11 @@ import (
 	"hal9001/internal/apispec"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
-	"hal9001/internal/httpsec"
 	"hal9001/internal/notify"
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tailscale"
 	"hal9001/internal/tools"
 	"hal9001/internal/update"
 )
@@ -74,6 +74,8 @@ type Options struct {
 	Log *slog.Logger
 	// Sinks tracks connected notification sinks (stream clients that send NotifierHeader). Optional.
 	Sinks *notify.Sinks
+	// Tailscale serves the /api/tailscale operations. Optional: without it they answer 503 unavailable.
+	Tailscale *tailscale.Manager
 	// Update serves the /api/update operations and its stream events. Optional: without it GET /api/update reports
 	// updates as disabled and the other operations answer 503.
 	Update *update.Service
@@ -136,7 +138,7 @@ func New(opts Options) http.Handler {
 	}
 	s.mcpHandler = mcp.NewStreamableHTTPHandler(s.operatorServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	s.mountContract()
-	opts.Auth.Routes(s.mux, httpsec.DefaultPort)
+	opts.Auth.Routes(s.mux)
 	s.mux.HandleFunc("/mcp", s.mcpMethodNotAllowed) // POST /mcp, the more specific pattern, is a contract operation
 	s.mux.HandleFunc("/", s.fallback)
 
@@ -366,6 +368,10 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listAssistSamples":   s.listAssistSamples,
 		"cancelAssistSession": s.cancelAssistSession,
 
+		"getTailscaleStatus":      s.getTailscaleStatus,
+		"refreshTailscale":        s.refreshTailscale,
+		"enableTailscaleServe":    s.enableTailscaleServe,
+		"disableTailscaleServe":   s.disableTailscaleServe,
 		"listRuntimes":            s.listRuntimes,
 		"detectRuntimes":          s.detectRuntimes,
 		"probeRuntime":            s.probeRuntime,

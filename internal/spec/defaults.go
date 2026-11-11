@@ -54,6 +54,9 @@ func (c *Config) ApplyDefaults() {
 	if c.ApprovalTimeout == 0 {
 		c.ApprovalTimeout = DefaultApprovalTimeout
 	}
+	if c.Tailscale.HTTPSPort == 0 {
+		c.Tailscale.HTTPSPort = DefaultTailscaleHTTPSPort
+	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = DefaultSessionTTL
 	}
@@ -115,6 +118,9 @@ func (c Config) Minimal() Config {
 	}
 	if c.ApprovalTimeout == DefaultApprovalTimeout {
 		c.ApprovalTimeout = 0
+	}
+	if c.Tailscale.HTTPSPort == DefaultTailscaleHTTPSPort {
+		c.Tailscale.HTTPSPort = 0
 	}
 	if c.SessionTTL == DefaultSessionTTL {
 		c.SessionTTL = 0

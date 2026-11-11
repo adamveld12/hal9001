@@ -24,14 +24,11 @@ const maxBody = 64 << 10
 //	DELETE /api/auth/sessions/{id}          revoke one session          (admin)
 //	DELETE /api/auth/sessions               revoke all sessions         (admin)
 //	GET    /api/auth/events?limit=N         recent auth events          (admin)
-//	GET    /api/auth/tailscale              tailscale status report     (admin)
 //	GET    /api/auth/webauthn/credentials   list passkeys               (admin)
 //	DELETE /api/auth/webauthn/credentials/{id}  remove a passkey        (admin)
 //	POST   /api/auth/webauthn/register/begin    start passkey registration  (session covering admin)
 //	POST   /api/auth/webauthn/register/finish   finish it                   (session covering admin)
-//
-// tailscalePort is the daemon port reported by the tailscale endpoint.
-func (m *Manager) Routes(mux *http.ServeMux, tailscalePort int) {
+func (m *Manager) Routes(mux *http.ServeMux) {
 	admin := m.Require(ServiceAdmin)
 	mux.HandleFunc("POST /api/auth/{service}/begin", m.handleBegin)
 	mux.HandleFunc("POST /api/auth/{service}/continue", m.handleContinue)
@@ -41,9 +38,6 @@ func (m *Manager) Routes(mux *http.ServeMux, tailscalePort int) {
 	mux.Handle("DELETE /api/auth/sessions/{id}", admin(http.HandlerFunc(m.handleRevokeSession)))
 	mux.Handle("DELETE /api/auth/sessions", admin(http.HandlerFunc(m.handleRevokeAll)))
 	mux.Handle("GET /api/auth/events", admin(http.HandlerFunc(m.handleEvents)))
-	mux.Handle("GET /api/auth/tailscale", admin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, m.TailscaleReport(r.Context(), tailscalePort))
-	})))
 	mux.Handle("GET /api/auth/webauthn/credentials", admin(http.HandlerFunc(m.handleListCredentials)))
 	mux.Handle("DELETE /api/auth/webauthn/credentials/{id}", admin(http.HandlerFunc(m.handleDeleteCredential)))
 	mux.HandleFunc("POST /api/auth/webauthn/register/begin", m.handleRegisterBegin)

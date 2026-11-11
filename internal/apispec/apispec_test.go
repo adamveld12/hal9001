@@ -110,7 +110,7 @@ func TestEveryOperationIsDeclaredAndDocumentsProblems(t *testing.T) {
 		"getKillSwitch", "pauseKillSwitch", "resumeKillSwitch",
 		"beginAuth", "continueAuth", "logout", "whoami", "listSessions", "revokeSession", "revokeAllSessions",
 		"listPasskeys", "beginPasskeyRegistration", "finishPasskeyRegistration", "deletePasskey", "listAuthEvents",
-		"getTailscaleStatus", "getHealth", "getVersion", "getStatus", "streamEvents", "getBlob", "getUIShell",
+		"getTailscaleStatus", "refreshTailscale", "enableTailscaleServe", "disableTailscaleServe", "getHealth", "getVersion", "getStatus", "streamEvents", "getBlob", "getUIShell",
 	} {
 		if _, ok := seen[id]; !ok {
 			t.Errorf("operation %s is missing from the contract", id)

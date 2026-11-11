@@ -32,6 +32,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
     "sandbox",
     "sandbox-env",
     "queue",
+    "tailscale",
   ],
   "sensor_run.created": ["sensors", "sensor", "sensor-runs"],
   "sensor_run.updated": ["sensors", "sensor", "sensor-runs"],

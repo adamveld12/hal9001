@@ -560,16 +560,67 @@ func TestHelpListsCommandsAndExitsZero(t *testing.T) {
 	}
 }
 
+func tailscaleBody() map[string]any {
+	b := map[string]any{
+		"cli": map[string]any{"found": true, "path": "/opt/homebrew/bin/tailscale", "version": "1.80.2"}, "backend_state": "Running",
+		"logged_in": true, "dns_name": "hal-mac.example-tailnet.ts.net", "tailnet": "example-tailnet.ts.net", "owner_login": "a@example.com",
+		"https_enabled": true, "magic_dns_enabled": true,
+		"serve": map[string]any{"enabled": true, "https_port": 443, "target": "http://127.0.0.1:9001", "active": true, "points_at_hal": true, "conflict": nil, "funnel": false},
+		"url":   "https://hal-mac.example-tailnet.ts.net/", "allowed_host": map[string]any{"entry": "hal-mac.example-tailnet.ts.net", "present": true, "added_by_hal": true},
+		"allowed_logins": []string{"a@example.com"}, "warnings": []any{}, "error": nil, "checked_at": "2026-11-11T10:00:00Z",
+	}
+	return b
+}
+
 func TestTailscaleStatusIsAnAPIClientCommand(t *testing.T) {
 	f := newFakeDaemon(t)
-	body := map[string]any{
-		"available": true, "backend_state": "Running", "hostname": "mac.tail1234.ts.net", "owner_login": "a@b.c",
-		"serve_configured": true, "funnel_enabled": false, "host_allowed": true, "allowed_logins": []string{"a@b.c"},
-	}
-	f.on("GET /api/auth/tailscale", ok(body))
+	body := tailscaleBody()
+	f.on("GET /api/tailscale", ok(body))
 	res := f.run(runOpts{}, "tailscale", "status")
 	if res.code != 0 || !jsonEqual(t, res.stdout, body) {
 		t.Errorf("exit %d: %s", res.code, res.stdout)
+	}
+	if res := f.run(runOpts{}, "tailscale", "status", "--table"); res.code != 0 ||
+		!strings.Contains(res.stdout, "https://hal-mac.example-tailnet.ts.net/") || !strings.Contains(res.stdout, "added by hal9001") {
+		t.Errorf("--table: exit %d\n%s", res.code, res.stdout)
+	}
+}
+
+func TestTailscaleServeSendsThePortAndReplaceFlags(t *testing.T) {
+	f := newFakeDaemon(t)
+	f.on("POST /api/tailscale/serve", ok(tailscaleBody()))
+	if res := f.run(runOpts{}, "tailscale", "serve", "--port", "8443", "--replace"); res.code != 0 {
+		t.Fatalf("exit %d: %s%s", res.code, res.stdout, res.stderr)
+	}
+	r := f.only()
+	if r.Method != "POST" || !jsonEqual(t, r.Body, map[string]any{"https_port": float64(8443), "replace": true}) {
+		t.Errorf("request = %+v", r)
+	}
+
+	g := newFakeDaemon(t)
+	g.on("POST /api/tailscale/serve", ok(tailscaleBody()))
+	if res := g.run(runOpts{}, "tailscale", "serve"); res.code != 0 || strings.TrimSpace(g.only().Body) != "{}" {
+		t.Errorf("no flags: exit %d, body %q", res.code, g.only().Body)
+	}
+}
+
+func TestTailscaleServeConflictSuggestsReplace(t *testing.T) {
+	f := newFakeDaemon(t)
+	f.on("POST /api/tailscale/serve", problem(409, "already-exists", "Already exists", "HTTPS port 443 on the tailnet already serves http://127.0.0.1:3000", nil))
+	res := f.run(runOpts{}, "tailscale", "serve")
+	if res.code == 0 || !strings.Contains(res.stderr, "already serves http://127.0.0.1:3000") || !strings.Contains(res.stderr, "--replace") {
+		t.Errorf("exit %d: %s%s", res.code, res.stdout, res.stderr)
+	}
+}
+
+func TestTailscaleUnserveDeletesTheMapping(t *testing.T) {
+	f := newFakeDaemon(t)
+	f.on("DELETE /api/tailscale/serve", ok(tailscaleBody()))
+	if res := f.run(runOpts{}, "tailscale", "unserve"); res.code != 0 {
+		t.Fatalf("exit %d: %s%s", res.code, res.stdout, res.stderr)
+	}
+	if r := f.only(); r.Method != "DELETE" || r.Path != "/api/tailscale/serve" {
+		t.Errorf("request = %+v", r)
 	}
 }
 

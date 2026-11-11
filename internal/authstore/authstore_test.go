@@ -249,7 +249,7 @@ func TestManagerPasswordLoginSessionAndRevocationOnSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	m.Routes(mux, 9001)
+	m.Routes(mux)
 	mux.Handle("GET /api/ping", m.Require(auth.ServiceAPI)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})))

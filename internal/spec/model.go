@@ -120,6 +120,7 @@ const (
 	DefaultNotifyVia          = NotifyViaAuto
 	DefaultUpdateChannel      = UpdateChannelStable
 	DefaultSessionTTL         = Duration(7 * 24 * time.Hour)
+	DefaultTailscaleHTTPSPort = 443
 	DefaultMaxConcurrent      = 2
 	DefaultCommandTimeout     = Duration(time.Minute)
 	DefaultAgentTimeout       = Duration(30 * time.Minute)
@@ -152,6 +153,7 @@ type Config struct {
 	SessionTTL    Duration           `yaml:"session_ttl,omitempty" json:"session_ttl"`
 	AllowedHosts  []string           `yaml:"allowed_hosts,omitempty" json:"allowed_hosts"`
 	AllowedLogins []string           `yaml:"allowed_logins,omitempty" json:"allowed_logins"`
+	Tailscale     Tailscale          `yaml:"tailscale,omitempty" json:"tailscale"`
 	Runtimes      map[string]Runtime `yaml:"runtimes,omitempty" json:"runtimes"`
 	Auth          Auth               `yaml:"auth,omitempty" json:"auth"`
 }
@@ -165,6 +167,15 @@ const (
 	RuntimeKindCodex  = "codex"
 	RuntimeKindOmp    = "omp"
 )
+
+// Tailscale is what hal9001 keeps in place for `tailscale serve` (docs/auth.md). hal9001 writes it when you share it on
+// your tailnet (Settings > Tailscale, `hal9001 tailscale serve`).
+type Tailscale struct {
+	// Serve: hal9001 re-applies `tailscale serve` at start when the mapping is missing.
+	Serve bool `yaml:"serve,omitempty" json:"serve"`
+	// HTTPSPort is the tailnet HTTPS port the mapping uses (default 443).
+	HTTPSPort int `yaml:"https_port,omitempty" json:"https_port"`
+}
 
 // DataPlaceholder in a runtime's command, env values and spawn args/env is
 // replaced by the engine with <home>/data (the directory for runtime state such

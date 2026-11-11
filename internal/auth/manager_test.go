@@ -475,7 +475,7 @@ func TestSessionCoversOnlyServicesItsStackGranted(t *testing.T) {
 
 func TestAdminEndpointsRequireAdmin(t *testing.T) {
 	e := newEnv(t, withConfig(stackConfig(entry("password", auth.Sufficient))))
-	for _, r := range []*req{get("/api/auth/sessions"), del("/api/auth/sessions"), get("/api/auth/events"), get("/api/auth/tailscale"), get("/api/auth/webauthn/credentials")} {
+	for _, r := range []*req{get("/api/auth/sessions"), del("/api/auth/sessions"), get("/api/auth/events"), get("/api/auth/webauthn/credentials")} {
 		wantStatus(t, e.do(r), 401)
 	}
 	cookie := loginCookie(t, e)
@@ -485,7 +485,6 @@ func TestAdminEndpointsRequireAdmin(t *testing.T) {
 		t.Errorf("events = %d, want limit 2", n)
 	}
 	wantStatus(t, e.do(get("/api/auth/events?limit=0").cookie(cookie)), 400)
-	wantStatus(t, e.do(get("/api/auth/tailscale").cookie(cookie)), 200)
 }
 
 func TestConfigValidation(t *testing.T) {

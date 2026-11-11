@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"mime"
 	"net/netip"
-	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"hal9001/internal/tailscale"
 )
 
 // whoisCacheTTL is how long a whois (and owner-login) lookup is reused.
@@ -21,7 +21,7 @@ const whoisCacheTTL = 60 * time.Second
 // by checking the identity headers against `tailscale whois`
 // (REQUIREMENTS §10.4).
 type TailscaleIdentity struct {
-	ts  Tailscale
+	ts  tailscale.Client
 	now func() time.Time
 
 	mu     sync.Mutex
@@ -31,7 +31,7 @@ type TailscaleIdentity struct {
 }
 
 type whoisEntry struct {
-	who     Whois
+	who     tailscale.Whois
 	expires time.Time
 }
 
@@ -41,7 +41,7 @@ type ownerEntry struct {
 }
 
 // NewTailscaleIdentity builds the module over ts. now may be nil.
-func NewTailscaleIdentity(ts Tailscale, now func() time.Time) *TailscaleIdentity {
+func NewTailscaleIdentity(ts tailscale.Client, now func() time.Time) *TailscaleIdentity {
 	if now == nil {
 		now = time.Now
 	}
@@ -71,7 +71,7 @@ func (m *TailscaleIdentity) Authenticate(ctx context.Context, req *AuthRequest) 
 		return Fail(err.Error())
 	}
 	who, err := m.lookup(ctx, ip)
-	if errors.Is(err, ErrTailscaleUnavailable) {
+	if errors.Is(err, tailscale.ErrUnavailable) {
 		return Ignore(err.Error())
 	}
 	if err != nil {
@@ -91,7 +91,7 @@ func (m *TailscaleIdentity) Authenticate(ctx context.Context, req *AuthRequest) 
 	allowed := req.Settings.AllowedLogins
 	if len(allowed) == 0 {
 		owner, err := m.ownerLogin(ctx)
-		if errors.Is(err, ErrTailscaleUnavailable) {
+		if errors.Is(err, tailscale.ErrUnavailable) {
 			return Ignore(err.Error())
 		}
 		if err != nil {
@@ -125,7 +125,7 @@ func forwardedClientIP(req *AuthRequest) (netip.Addr, error) {
 	return ip.Unmap(), nil
 }
 
-func (m *TailscaleIdentity) lookup(ctx context.Context, ip netip.Addr) (Whois, error) {
+func (m *TailscaleIdentity) lookup(ctx context.Context, ip netip.Addr) (tailscale.Whois, error) {
 	now := m.now()
 	m.mu.Lock()
 	e, ok := m.whois[ip]
@@ -135,7 +135,7 @@ func (m *TailscaleIdentity) lookup(ctx context.Context, ip netip.Addr) (Whois, e
 	}
 	who, err := m.ts.Whois(ctx, ip)
 	if err != nil {
-		return Whois{}, err
+		return tailscale.Whois{}, err
 	}
 	m.mu.Lock()
 	m.whois[ip] = whoisEntry{who: who, expires: now.Add(whoisCacheTTL)}
@@ -160,85 +160,4 @@ func (m *TailscaleIdentity) ownerLogin(ctx context.Context) (string, error) {
 	m.owner, m.hasOwn = ownerEntry{login: login, expires: now.Add(whoisCacheTTL)}, true
 	m.mu.Unlock()
 	return login, nil
-}
-
-// TailscaleReport is what `hal9001 tailscale status` shows.
-type TailscaleReport struct {
-	// Available is false when the CLI is missing or tailscaled is unreachable;
-	// Error then says why.
-	Available    bool   `json:"available"`
-	Error        string `json:"error,omitempty"`
-	BackendState string `json:"backend_state,omitempty"`
-	// Hostname is this Mac's tailnet DNS name.
-	Hostname   string `json:"hostname,omitempty"`
-	OwnerLogin string `json:"owner_login,omitempty"`
-	// ServeConfigured reports whether tailscale serve proxies to the port.
-	ServeConfigured bool `json:"serve_configured"`
-	// FunnelEnabled is true when any serve entry is exposed to the internet,
-	// which hal9001 never wants.
-	FunnelEnabled bool `json:"funnel_enabled"`
-	// HostAllowed reports whether Hostname is in allowed_hosts.
-	HostAllowed   bool     `json:"host_allowed"`
-	AllowedLogins []string `json:"allowed_logins"`
-}
-
-// Report queries the CLI. It never runs `tailscale serve` itself.
-func (m *TailscaleIdentity) Report(ctx context.Context, settings Settings, port int) TailscaleReport {
-	r := TailscaleReport{AllowedLogins: settings.AllowedLogins}
-	st, err := m.ts.Status(ctx)
-	if err != nil {
-		r.Error = err.Error()
-		return r
-	}
-	r.Available = true
-	r.BackendState, r.Hostname, r.OwnerLogin = st.BackendState, st.Hostname(), st.OwnerLogin()
-	if len(r.AllowedLogins) == 0 && r.OwnerLogin != "" {
-		r.AllowedLogins = []string{r.OwnerLogin}
-	}
-	r.HostAllowed = r.Hostname != "" && slices.ContainsFunc(settings.AllowedHosts, func(h string) bool {
-		return strings.EqualFold(hostName(h), r.Hostname)
-	})
-	if cfg, err := m.ts.ServeStatus(ctx); err == nil {
-		r.ServeConfigured = cfg.proxiesTo(port)
-		for _, on := range cfg.AllowFunnel {
-			r.FunnelEnabled = r.FunnelEnabled || on
-		}
-	} else {
-		r.Error = "serve status: " + err.Error()
-	}
-	return r
-}
-
-// proxiesTo reports whether any web handler or TCP forward targets a loopback
-// address on port.
-func (c ServeConfig) proxiesTo(port int) bool {
-	for _, web := range c.Web {
-		for _, h := range web.Handlers {
-			if proxyTargetsPort(h.Proxy, port) {
-				return true
-			}
-		}
-	}
-	for _, t := range c.TCP {
-		if t.TCPForward != "" && proxyTargetsPort("tcp://"+t.TCPForward, port) {
-			return true
-		}
-	}
-	return false
-}
-
-func proxyTargetsPort(target string, port int) bool {
-	if !strings.Contains(target, "://") {
-		target = "http://" + target
-	}
-	u, err := url.Parse(target)
-	if err != nil {
-		return false
-	}
-	switch u.Hostname() {
-	case "127.0.0.1", "localhost", "::1":
-	default:
-		return false
-	}
-	return u.Port() == strconv.Itoa(port)
 }

@@ -343,6 +343,8 @@ func (d *Daemon) Start() {
 	d.logOK.Store(true)
 	opts := daemon.Options{
 		Home: d.Home, Version: "e2e", ListenAddr: "127.0.0.1:0", AssistIdleTimeout: d.AssistIdle, Executable: hal9001Bin,
+		// Only the fakes in Bin can answer as tailscale: never the Tailscale of the machine the suite runs on.
+		TailscaleExact: true, TailscalePATH: d.Bin,
 		Log:   slog.New(slog.NewTextHandler(logWriter{d}, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		Ready: func(a net.Addr) { ready <- a },
 	}
