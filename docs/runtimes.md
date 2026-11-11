@@ -138,6 +138,30 @@ error and the tail of the agent's stderr when the resolved command cannot start.
 
 Environment from your `env` file is part of the agent process environment, as for nodes.
 
+#### Settings > Runtimes
+
+Each runtime has a card with its status (Configured, Needs attention, Not available), the CLI, sign-in, adapter and
+Node checks, a copyable fix command for every warning, and the adapter install and remove buttons. **Re-check** runs
+detection again. Screenshots use stub CLIs; light and dark themes shown.
+
+| State | Light | Dark |
+| --- | --- | --- |
+| All three configured | ![](images/runtimes/a-all-configured-light.png) | ![](images/runtimes/a-all-configured-dark.png) |
+| Claude not signed in, with the `claude login` hint | ![](images/runtimes/b-claude-signed-out-light.png) | ![](images/runtimes/b-claude-signed-out-dark.png) |
+| Codex CLI missing | ![](images/runtimes/c-codex-missing-light.png) | ![](images/runtimes/c-codex-missing-dark.png) |
+| omp with no model provider | ![](images/runtimes/d-omp-no-providers-light.png) | ![](images/runtimes/d-omp-no-providers-dark.png) |
+| Node missing: install disabled with the reason | ![](images/runtimes/e-node-missing-light.png) | ![](images/runtimes/e-node-missing-dark.png) |
+| Install confirmation | ![](images/runtimes/install-confirm-light.png) | ![](images/runtimes/install-confirm-dark.png) |
+| Adapter install in progress | ![](images/runtimes/f-installing-light.png) | ![](images/runtimes/f-installing-dark.png) |
+| Adapter installed | ![](images/runtimes/g-installed-light.png) | ![](images/runtimes/g-installed-dark.png) |
+
+The runtime dropdowns (agent node in the flow editor, Ask AI) add the status to runtimes that are not ready, for
+example `codex (Not set up)` and `claude (Sign-in needed)`. They stay selectable.
+
+| Light | Dark |
+| --- | --- |
+| ![](images/runtimes/h-agent-node-runtime-light.png) | ![](images/runtimes/h-agent-node-runtime-dark.png) |
+
 ### Models
 
 Agent nodes can set `model:`. hal9001 sets it through the agent's `model` config option after the session starts (and
