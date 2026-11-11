@@ -309,7 +309,7 @@ when the runtime loaded its own session. The sandbox rows show that the run's sa
 **One chat at a time.** The drawer is not shown on `/chat`. The chat shown on the page receives the assistant's
 `navigate_ui` and `start_draft` requests, as the drawer's chat does elsewhere.
 
-The drawer has an `Open full page` button (the icon left of the close button) that opens the same chat on `/chat/<id>`.
+The drawer has an `Open full page` button in its header that opens the same chat on `/chat/<id>`.
 
 ![The Ask AI drawer with the Open full page button](images/chat/drawer-open-full-page-light.png) ([dark](images/chat/drawer-open-full-page-dark.png))
 
