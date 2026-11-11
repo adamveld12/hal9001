@@ -182,3 +182,35 @@ func assistTestResult(exitCode int) map[string]any {
 		"item_count": 1, "parse_error": nil, "stdout": blob(`[{"id":1}]`), "stderr": blob("boom"),
 	}
 }
+
+// runtimeItem is an item of GET /api/runtimes. warnings are RuntimeWarning objects; installing marks a running adapter install.
+func runtimeItem(name, status string, warnings []any, opts ...func(map[string]any)) map[string]any {
+	if warnings == nil {
+		warnings = []any{}
+	}
+	det := map[string]any{
+		"status": status,
+		"cli":    map[string]any{"name": name, "found": true, "path": "/usr/local/bin/" + name, "version": "1.2.3"},
+		"auth":   map[string]any{"status": "ok", "command": name + " login"},
+		"adapter": map[string]any{"source": "managed", "installed": true, "version": "0.100.0", "pinned_version": "0.100.0",
+			"path": "/home/data/adapters/x/dist/index.js", "installable": true, "installing": false},
+		"node":       map[string]any{"found": true, "version": "24.1.0", "ok": true},
+		"command":    []string{"/usr/bin/node", "/home/data/adapters/x/dist/index.js"},
+		"warnings":   warnings,
+		"checked_at": ts,
+	}
+	item := map[string]any{"name": name, "kind": name, "command": []string{}, "modes": map[string]any{}, "env_keys": []string{}, "last_probe": nil, "detection": det}
+	for _, o := range opts {
+		o(item)
+	}
+	return item
+}
+
+func withAdapter(patch map[string]any) func(map[string]any) {
+	return func(item map[string]any) {
+		ad := item["detection"].(map[string]any)["adapter"].(map[string]any)
+		for k, v := range patch {
+			ad[k] = v
+		}
+	}
+}

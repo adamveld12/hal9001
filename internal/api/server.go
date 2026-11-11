@@ -31,6 +31,7 @@ import (
 	"hal9001/internal/core"
 	"hal9001/internal/httpsec"
 	"hal9001/internal/notify"
+	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
@@ -63,6 +64,9 @@ type Options struct {
 	Reload func()
 	// BasePATH is the PATH custom tools start with; empty means this process's PATH.
 	BasePATH string
+	// Runtimes detects and installs the agents of runtimes; default: a manager over Home/data and BasePATH (the
+	// daemon passes the engine's, so both see the same installs).
+	Runtimes *runtimes.Manager
 	Version  string
 	// UI serves the web UI for "/", "/assets/*" and every other GET outside
 	// /api/. Nil answers those routes with a problem saying the UI is not built.
@@ -105,6 +109,11 @@ type Server struct {
 	probeMu sync.Mutex
 	probes  map[string]probeResultView
 
+	// rt detects and installs runtime agents; ownRT: the server created it and closes it.
+	rt            *runtimes.Manager
+	ownRT         bool
+	unsubRuntimes func()
+
 	// heartbeat is the SSE keepalive interval.
 	heartbeat time.Duration
 }
@@ -121,6 +130,9 @@ func New(opts Options) http.Handler {
 	s := &Server{
 		opts: opts, mux: http.NewServeMux(), readMux: http.NewServeMux(), started: time.Now().UTC(), bus: newChangeBus(),
 		probes: map[string]probeResultView{}, heartbeat: heartbeatInterval,
+	}
+	if s.rt = opts.Runtimes; s.rt == nil {
+		s.rt, s.ownRT = s.newRuntimes(), true
 	}
 	s.mcpHandler = mcp.NewStreamableHTTPHandler(s.operatorServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	s.mountContract()
@@ -143,6 +155,7 @@ func New(opts Options) http.Handler {
 	})
 	go s.hub.run()
 	s.subscribeUpdate()
+	s.subscribeRuntimes()
 	return s
 }
 
@@ -158,6 +171,10 @@ func (s *Server) Close() {
 		s.opts.Store.SetNotifier(s.prevNotifier)
 		if s.unsubUpdate != nil {
 			s.unsubUpdate()
+		}
+		s.unsubRuntimes()
+		if s.ownRT {
+			s.rt.Close()
 		}
 		s.hub.stop()
 	})
@@ -349,8 +366,11 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listAssistSamples":   s.listAssistSamples,
 		"cancelAssistSession": s.cancelAssistSession,
 
-		"listRuntimes": s.listRuntimes,
-		"probeRuntime": s.probeRuntime,
+		"listRuntimes":            s.listRuntimes,
+		"detectRuntimes":          s.detectRuntimes,
+		"probeRuntime":            s.probeRuntime,
+		"installRuntimeAdapter":   s.installRuntimeAdapter,
+		"uninstallRuntimeAdapter": s.uninstallRuntimeAdapter,
 
 		"getSettings":    s.getSettings,
 		"updateSettings": s.updateSettings,

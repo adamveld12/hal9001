@@ -62,6 +62,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "notification.created": [],
   "update.status": ["update"],
   "update.install": [],
+  "runtime.adapter": ["runtimes"],
 };
 
 export function rootsFor(type: DataStreamType): readonly QueryRoot[] {

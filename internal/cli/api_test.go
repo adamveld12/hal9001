@@ -55,7 +55,7 @@ func TestReadCommandsHitTheRightEndpointsAndPrintTheResponseAsJSON(t *testing.T)
 		{"inbox get", []string{"inbox", "get", id1}, "GET /api/inbox/" + id1, nil, inboxItem(true)},
 		{"killswitch get", []string{"killswitch", "get"}, "GET /api/killswitch", nil, killSwitch(false)},
 		{"runtimes list", []string{"runtimes", "list"}, "GET /api/runtimes", nil, map[string]any{"items": []any{
-			map[string]any{"name": "claude", "command": []string{"claude-agent-acp"}, "modes": map[string]any{"ask": "default"}, "last_probe": nil}}}},
+			runtimeItem("claude", "ready", nil)}}},
 		{"env list", []string{"env", "list"}, "GET /api/env", nil, map[string]any{"items": []any{
 			map[string]any{"key": "GITHUB_TOKEN", "secret": true, "value": nil},
 			map[string]any{"key": "LOG_LEVEL", "secret": false, "value": "debug"}}}},
