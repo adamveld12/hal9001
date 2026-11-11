@@ -76,7 +76,9 @@ func TestLoginShellPATHWithRealShell(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a real login shell")
 	}
-	got, err := LoginShellPATH(t.Context(), "/bin/sh", 0)
+	// A real login shell sources the user's profile and can take longer than the production default (10s) on a
+	// loaded machine. The test checks that the PATH is read from a real shell, not how fast the shell starts.
+	got, err := LoginShellPATH(t.Context(), "/bin/sh", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
