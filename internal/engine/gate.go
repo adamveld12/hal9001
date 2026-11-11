@@ -109,10 +109,8 @@ func (e *Engine) gateSpec(ne *nodeEnv) (ApprovalSpec, error) {
 		add("lang", n.Lang)
 		if n.Lang == spec.LangExec {
 			req.Command = red.String(truncate(strings.Join(n.Command, " "), gateScriptLimit))
-			block("Command", "", strings.Join(n.Command, " "))
 		} else {
 			req.Command = red.String(truncate(strings.TrimRight(n.Script, "\n"), gateScriptLimit))
-			block("Script", n.Lang, n.Script)
 		}
 		if n.Cwd != nil {
 			cwd, err := ne.render("cwd", n.Cwd.Path)

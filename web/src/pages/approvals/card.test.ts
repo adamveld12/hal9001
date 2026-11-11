@@ -6,8 +6,11 @@ import {
   conversationPath,
   decisionFor,
   detailSummary,
+  inConversation,
   originKindLabel,
   originText,
+  reasonText,
+  requestPath,
   unlinkedApprovals,
 } from "./card";
 import { approval } from "./fixtures";
@@ -149,6 +152,17 @@ describe("conversationPath", () => {
   });
 });
 
+describe("requestPath", () => {
+  it("links an MCP approval to its request instead of a conversation", () => {
+    const mcp = approval({
+      id: "a1",
+      origin: { kind: "mcp", label: "MCP: claude", client: "claude" },
+    });
+    expect(requestPath(mcp)).toBe("/inbox/approval/a1");
+    expect(requestPath(approval({ id: "a2" }))).toBeNull();
+  });
+});
+
 describe("description and details", () => {
   it("labels only agent-written descriptions", () => {
     expect(agentWritten(approval({ id: "a", description_by: "agent" }))).toBe(
@@ -197,5 +211,57 @@ describe("conversation approvals", () => {
     expect(unlinkedApprovals(items, new Set(["a"])).map((x) => x.id)).toEqual([
       "b",
     ]);
+  });
+});
+
+describe("inConversation", () => {
+  const a = approval({
+    id: "a",
+    conversation: {
+      id: "s1",
+      kind: "chat",
+      anchor: "m1",
+      path: "/chat/s1?message=m1",
+    },
+  });
+  it("is true only on the conversation's own page", () => {
+    expect(inConversation(a, "/chat/s1")).toBe(true);
+    expect(inConversation(a, "/chat/s2")).toBe(false);
+    expect(inConversation(a, "/inbox")).toBe(false);
+  });
+});
+
+describe("reasonText", () => {
+  const withReason = (
+    reason: string,
+    command: string | null,
+    status: "pending" | "approved" = "pending",
+  ) =>
+    approval({
+      id: "t",
+      type: "tool_call",
+      status,
+      details: {
+        body_md: "",
+        fields: [],
+        command,
+        tool: null,
+        diffs: [],
+        dry_run: false,
+      },
+      permission_request: { reason } as never,
+    });
+  it("shows a pending reason that adds something", () => {
+    expect(reasonText(withReason("Emit a result to flow f.", null))).toBe(
+      "Emit a result to flow f.",
+    );
+  });
+  it("hides a reason that only restates the command, and decided ones", () => {
+    expect(
+      reasonText(withReason("run a shell command:\n\nnpm test", "npm test")),
+    ).toBeNull();
+    expect(
+      reasonText(withReason("approved by user", null, "approved")),
+    ).toBeNull();
   });
 });

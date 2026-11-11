@@ -91,6 +91,28 @@ export function conversationPath(a: Approval): string | null {
   return a.conversation?.path ?? null;
 }
 
+/** Whether the open page is the conversation the approval links to (the link would go nowhere new). */
+export function inConversation(a: Approval, pathname: string): boolean {
+  const path = conversationPath(a);
+  return path !== null && path.split("?")[0] === pathname;
+}
+
+/**
+ * The pending tool call's own reason (policy rule, emit payload), unless it only restates the command the card shows.
+ * A decided call's reason is the decision text, so it is not shown.
+ */
+export function reasonText(a: Approval): string | null {
+  const reason = a.permission_request?.reason?.trim() ?? "";
+  if (a.status !== "pending" || reason === "") return null;
+  const command = a.details.command?.trim() ?? "";
+  return command !== "" && reason.includes(command) ? null : reason;
+}
+
+/** Where an MCP approval links to instead of a conversation: its own request in the Inbox. */
+export function requestPath(a: Approval): string | null {
+  return a.origin.kind === "mcp" ? `/inbox/approval/${a.id}` : null;
+}
+
 /** The `details` diffs as the line diffs DiffView draws. */
 export function detailDiffs(a: Approval): FileDiff[] {
   return a.details.diffs.map((d) => ({

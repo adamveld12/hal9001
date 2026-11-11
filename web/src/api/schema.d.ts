@@ -3493,8 +3493,8 @@ export interface components {
       type: "approval";
       /** @description Template. Required. */
       title: string;
-      /** @description Template. Required: one or two sentences saying what the approver is asked and why. Shown on the approval card. */
-      description: string;
+      /** @description Template. Required by validation (an empty one is an error diagnostic, so the file still parses and opens in the visual editor): one or two sentences saying what the approver is asked and why. Shown on the approval card. */
+      description?: string;
       /** @description Markdown template shown in the approval. */
       body?: string;
       /** @description Dot-paths into the node input, shown as a key/value table. */

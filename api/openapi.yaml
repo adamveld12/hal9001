@@ -4530,12 +4530,12 @@ components:
         approval before it runs with `requires_approval`; this node cannot.)
         Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
       additionalProperties: false
-      required: [id, type, title, description]
+      required: [id, type, title]
       properties:
         id: {$ref: '#/components/schemas/Slug'}
         type: {type: string, enum: [approval]}
         title: {type: string, description: Template. Required.}
-        description: {type: string, description: 'Template. Required: one or two sentences saying what the approver is asked and why. Shown on the approval card.'}
+        description: {type: string, description: 'Template. Required by validation (an empty one is an error diagnostic, so the file still parses and opens in the visual editor): one or two sentences saying what the approver is asked and why. Shown on the approval card.'}
         body: {type: string, description: Markdown template shown in the approval.}
         fields: {type: array, items: {type: string}, description: 'Dot-paths into the node input, shown as a key/value table.'}
         editable: {type: array, items: {type: string}, description: 'Dot-paths into the node input the approver may edit before approving (strings or JSON values).'}

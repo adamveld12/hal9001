@@ -182,6 +182,21 @@ func TestFlowSaveConflictsValidationAndReload(t *testing.T) {
 	if r.json()["valid"] != false || !contains(diagCodes(r), "cycle") {
 		t.Errorf("validate cycle: %s", r.Body)
 	}
+	// A Request approval node without a description is an error, and the flow still parses (the editor shows the error).
+	noDesc := flowBody("preview", "a")
+	noDesc["nodes"] = append(noDesc["nodes"].([]map[string]any), map[string]any{"id": "ask", "type": "approval", "title": "Ship it?"})
+	noDesc["edges"] = []map[string]any{{"from": "a", "to": "ask"}}
+	var open struct {
+		Valid bool `json:"valid"`
+		Flow  *struct {
+			ID string `json:"id"`
+		} `json:"flow"`
+	}
+	r = e.do("POST", "/api/flows/validate", map[string]any{"flow": noDesc}).want(200)
+	r.decode(&open)
+	if open.Valid || open.Flow == nil || !contains(diagCodes(r), "required") {
+		t.Errorf("validate approval node without description: %s", r.Body)
+	}
 	if _, err := os.Stat(filepath.Join(e.home, "flows", "preview.yaml")); err == nil {
 		t.Error("validate wrote a file")
 	}

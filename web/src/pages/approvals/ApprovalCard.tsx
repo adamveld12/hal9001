@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import type { Approval } from "../../api/approvals";
 import { JsonView } from "../../components/JsonView";
 import { Markdown } from "../../components/Markdown";
@@ -17,7 +17,10 @@ import {
   detailDiffs,
   detailSummary,
   hasDetails,
+  inConversation,
   originText,
+  reasonText,
+  requestPath,
   type DecideAction,
   type DecisionInput,
 } from "./card";
@@ -54,6 +57,7 @@ export interface ApprovalCardProps {
 function SourceLine({ a }: { a: Approval }) {
   const cls = "text-accent underline";
   const path = conversationPath(a);
+  const request = requestPath(a);
   return (
     <div
       className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted"
@@ -85,6 +89,11 @@ function SourceLine({ a }: { a: Approval }) {
       {path && (
         <Link to={path} className={cls}>
           Open conversation
+        </Link>
+      )}
+      {request && (
+        <Link to={request} className={cls}>
+          Open request
         </Link>
       )}
     </div>
@@ -133,6 +142,7 @@ function Details({ a }: { a: Approval }) {
   const diffs = detailDiffs(a);
   const body = d.body_md.trim() !== "" ? d.body_md : (a.proposal_md ?? "");
   const raw = a.permission_request?.raw_input;
+  const reason = reasonText(a);
   return (
     <section aria-label="Details" className="min-w-0 space-y-2">
       <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -144,9 +154,7 @@ function Details({ a }: { a: Approval }) {
           {d.command}
         </pre>
       )}
-      {a.status === "pending" && a.permission_request?.reason && (
-        <ReasonBlock reason={a.permission_request.reason} />
-      )}
+      {reason !== null && <ReasonBlock reason={reason} />}
       {diffs.map((diff, i) => (
         <DiffView key={`${i}:${diff.path ?? ""}`} diff={diff} />
       ))}
@@ -260,6 +268,7 @@ function Actions({
         {acts.steering && (
           <Button
             variant="ghost"
+            icon="plus"
             aria-expanded={boxShown}
             onClick={() => setOpen(!boxShown)}
           >
@@ -327,6 +336,8 @@ export function ApprovalCard({
   };
   const summary = compact ? detailSummary(a) : null;
   const path = conversationPath(a);
+  const { pathname } = useLocation();
+  const here = inConversation(a, pathname);
 
   return (
     <article
@@ -425,7 +436,7 @@ export function ApprovalCard({
 
       {pending ? (
         <>
-          {compact && a.editable.length > 0 && path && (
+          {compact && a.editable.length > 0 && (
             <p className="m-0 text-muted">
               Editable before approving:{" "}
               <Link
@@ -465,7 +476,7 @@ export function ApprovalCard({
       {compact && (
         <div className="flex flex-wrap items-center gap-x-3 text-[11px] text-muted">
           <span>{originText(a.origin)}</span>
-          {path && (
+          {path && !here && (
             <Link to={path} className="text-accent underline">
               Open conversation
             </Link>
