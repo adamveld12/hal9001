@@ -52,6 +52,9 @@ export const QUERY_ROOTS = [
   "assist-sessions",
   "assist-session",
   "assist-test",
+  "conversations",
+  "conversation",
+  "conversation-messages",
 ] as const;
 
 export type QueryRoot = (typeof QUERY_ROOTS)[number];
