@@ -1935,7 +1935,7 @@ export interface paths {
     };
     /**
      * List assist sessions
-     * @description Recent and active AI-assisted authoring sessions, newest first. `target_kind` and `target_id` narrow the list
+     * @description Recent and active assistant chats (every kind, general ones included), newest first. `target_kind` and `target_id` narrow the list
      *     to the sessions of one target (for example the sensor or flow an editor is open on). Closed sessions are not listed.
      */
     get: operations["listAssistSessions"];
@@ -5159,8 +5159,13 @@ export interface components {
       host_allowed: boolean;
       allowed_logins: string[];
     };
-    /** @enum {string} */
-    AssistTargetKind: "sensor" | "flow" | "tool";
+    /**
+     * @description What the session works on. `sensor`, `flow` and `tool` sessions hold a draft of that kind (and carry the draft tools).
+     *     `general` sessions have no draft and no draft tools: they answer questions, inspect with the read tools, move the user's
+     *     view (`navigate_ui`) and can hand the user over to a draft session (`start_draft`). `target.id` is always null for `general`.
+     * @enum {string}
+     */
+    AssistTargetKind: "general" | "sensor" | "flow" | "tool";
     /**
      * @description `idle`: no turn running. `running`: a turn is running. `awaiting_approval`: a turn is blocked on a tool-call
      *     approval (`GET /api/approvals?status=pending`). `failed`: the last turn failed (`error` says why); the session
@@ -5181,6 +5186,37 @@ export interface components {
     AssistTargetRequest: {
       kind: components["schemas"]["AssistTargetKind"];
       id?: components["schemas"]["Slug"];
+    };
+    AssistPageContextFact: {
+      label: string;
+      value: string;
+    };
+    AssistPageContextEntity: {
+      /** @description What it is: `sensor`, `flow`, `node`, `run`, `inbox_item`, `approval`, and so on. */
+      kind: string;
+      id?: string;
+      /** @description Its name or title as shown on the page. */
+      label?: string;
+      /** @description One short line: status, error, count. */
+      detail?: string;
+    };
+    /**
+     * @description What the user sees, sent by the web UI with a turn so the assistant knows where they are. It is untrusted UI data:
+     *     names, titles and errors on a page may be written by users, agents or external systems. The server renders it as a
+     *     delimited section of the turn prompt (after hal's own instructions) and truncates it to a few KB (4096 bytes rendered;
+     *     it drops entities and facts from the end and cuts long strings). It never carries secrets or environment values.
+     */
+    AssistPageContext: {
+      /** @description In-app path with query, for example `/flows/triage?view=runs`. No origin. */
+      route: string;
+      /** @description The page title as shown. */
+      title: string;
+      /** @description One or two sentences: what is on the page. */
+      summary?: string;
+      /** @description Label/value pairs: filters, counts, selected item, validation errors. */
+      facts?: components["schemas"]["AssistPageContextFact"][];
+      /** @description The things on the page that the assistant may refer to or open (capped by the client, for example 20 visible rows). */
+      entities?: components["schemas"]["AssistPageContextEntity"][];
     };
     /** @description A prompt file the agent drafted under `prompts/`. Save creates it (`POST /api/prompts`) when `exists` is false. */
     AssistDraftPrompt: {
@@ -5232,6 +5268,8 @@ export interface components {
     };
     AssistSession: {
       id: components["schemas"]["Ulid"];
+      /** @description The start of the first user message (at most 80 characters); null before the first message. For lists of chats. */
+      title: string | null;
       target: components["schemas"]["AssistTarget"];
       runtime: components["schemas"]["Slug"];
       model: string | null;
@@ -5291,8 +5329,9 @@ export interface components {
     };
     AssistSendRequest: {
       text: string;
-      /** @description Replaces the draft before the turn starts (the editor's current content). */
+      /** @description Replaces the draft before the turn starts (the editor's current content). Ignored by `general` sessions. */
       yaml?: string;
+      page_context?: components["schemas"]["AssistPageContext"];
     };
     AssistDraftRequest: {
       yaml: string;
@@ -5497,6 +5536,8 @@ export interface components {
       | "auth_event.created"
       | "assist.updated"
       | "assist.message"
+      | "assist.navigate"
+      | "assist.start_draft"
       | "update.status"
       | "update.install";
     /**
@@ -5540,6 +5581,8 @@ export interface components {
       | components["schemas"]["AuthEventCreatedEvent"]
       | components["schemas"]["AssistUpdatedEvent"]
       | components["schemas"]["AssistMessageEvent"]
+      | components["schemas"]["AssistNavigateEvent"]
+      | components["schemas"]["AssistStartDraftEvent"]
       | components["schemas"]["UpdateStatusEvent"]
       | components["schemas"]["UpdateInstallEvent"];
     StreamReady: {
@@ -5897,6 +5940,53 @@ export interface components {
        */
       type: "assist.message";
     };
+    /**
+     * @description The assistant asked the UI to open a page (the `navigate_ui` tool). `data` is `AssistNavigate`; the stream filter
+     *     `assist_session_id` applies. The path was checked against the app's routes. Clients navigate once per event and
+     *     ignore events for sessions they do not show.
+     */
+    AssistNavigateEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "assist.navigate";
+      data?: components["schemas"]["AssistNavigate"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "assist.navigate";
+    };
+    AssistNavigate: {
+      session_id: components["schemas"]["Ulid"];
+      /** @description In-app path with optional query, starting with `/`. */
+      path: string;
+      reason: string | null;
+    };
+    /**
+     * @description The assistant of a `general` session offered a draft session (the `start_draft` tool). `data` is `AssistStartDraft`;
+     *     the stream filter `assist_session_id` applies. The client switches the chat to a new session on that target and sends
+     *     `prompt` as its first message (the same as the user starting a draft from the editor).
+     */
+    AssistStartDraftEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "assist.start_draft";
+      data?: components["schemas"]["AssistStartDraft"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "assist.start_draft";
+    };
+    AssistStartDraft: {
+      session_id: components["schemas"]["Ulid"];
+      /** @enum {string} */
+      kind: "sensor" | "flow" | "tool";
+      /** @description An existing sensor, flow or tool to edit (it exists); null starts a new one. */
+      id: components["schemas"]["Slug"] | null;
+      /** @description What the user wants, as the assistant understood it. Becomes the first message of the new session. */
+      prompt: string | null;
+    };
     /** @description The updater state changed (check finished, install requested, started, progressed, failed, installer connected). `data` is `UpdateStatus`. */
     UpdateStatusEvent: components["schemas"]["StreamEnvelope"] & {
       /** @enum {unknown} */
@@ -6211,7 +6301,7 @@ export interface operations {
         flow_id?: components["schemas"]["Slug"];
         flow_run_id?: components["schemas"]["Ulid"];
         agent_run_id?: components["schemas"]["Ulid"];
-        /** @description Applies to `assist.updated`, `assist.message`, and to the agent run and approval events of that session. */
+        /** @description Applies to `assist.updated`, `assist.message`, `assist.navigate`, `assist.start_draft`, and to the agent run and approval events of that session. */
         assist_session_id?: components["schemas"]["Ulid"];
       };
       header?: {

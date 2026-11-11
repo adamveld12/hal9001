@@ -23,26 +23,28 @@ func (c *call) sessionArg(name string) (string, error) {
 func assistCmds() []*command {
 	var listKind, listID string
 	list := &leaf{
-		usage: "[--target-kind sensor|flow|tool] [--target-id ID]", maxArgs: 0,
+		usage: "[--target-kind general|sensor|flow|tool] [--target-id ID]", maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
-			fs.StringVar(&listKind, "target-kind", "", "only sessions of this target kind (sensor, flow or tool)")
+			fs.StringVar(&listKind, "target-kind", "", "only sessions of this target kind (general, sensor, flow or tool)")
 			fs.StringVar(&listID, "target-id", "", "only sessions editing this sensor, flow or tool id")
 		},
 		run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodGet, "/api/assist/sessions", query("target_kind", listKind, "target_id", listID), nil,
-				"id", "target.id", "runtime", "status", "updated_at")
+				"id", "target.kind", "target.id", "title", "runtime", "status", "updated_at")
 		},
 	}
 
 	var runtime, sensor, flowID, toolID, kind, model, createYAML string
+	var general bool
 	create := &leaf{
-		usage: "--runtime NAME [--sensor ID|--flow ID|--tool ID|--kind sensor|flow|tool] [--model M] [--yaml FILE|-]", maxArgs: 0,
+		usage: "--runtime NAME [--general|--sensor ID|--flow ID|--tool ID|--kind sensor|flow|tool] [--model M] [--yaml FILE|-]", maxArgs: 0,
 		flags: func(fs *flag.FlagSet) {
 			fs.StringVar(&runtime, "runtime", "", "ACP runtime that runs the session (required)")
 			fs.StringVar(&sensor, "sensor", "", "sensor to edit (default: author a new sensor)")
 			fs.StringVar(&flowID, "flow", "", "flow to edit")
 			fs.StringVar(&toolID, "tool", "", "custom tool to edit")
 			fs.StringVar(&kind, "kind", "", "what to author when no id is given: sensor (default), flow or tool")
+			fs.BoolVar(&general, "general", false, "a general chat without a draft: questions, inspection, opening pages, starting drafts")
 			fs.StringVar(&model, "model", "", "model for the runtime")
 			fs.StringVar(&createYAML, "yaml", "", "initial draft from this file, or - for stdin")
 		},
@@ -53,8 +55,13 @@ func assistCmds() []*command {
 			if n := countSet(sensor, flowID, toolID); n > 1 {
 				return usagef("assist create: --sensor, --flow and --tool are exclusive")
 			}
+			if general && (countSet(sensor, flowID, toolID, kind) > 0 || c.flagSet("yaml")) {
+				return usagef("assist create: --general excludes --sensor, --flow, --tool, --kind and --yaml")
+			}
 			target := map[string]any{"kind": "sensor"}
 			switch {
+			case general:
+				target = map[string]any{"kind": "general"}
 			case flowID != "":
 				target = map[string]any{"kind": "flow", "id": flowID}
 			case toolID != "":

@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	"hal9001/internal/core"
@@ -12,7 +14,7 @@ import (
 // assistDouble stands in for core.Assist. Tests script the call they exercise.
 type assistDouble struct {
 	create  func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
-	send    func(ctx context.Context, id, text string, yaml *string) (*store.AssistSession, error)
+	send    func(ctx context.Context, id, text string, yaml *string, page *core.AssistPageContext) (*store.AssistSession, error)
 	draft   func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
 	test    func(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error)
 	cancel  func(ctx context.Context, id string) (*store.AssistSession, error)
@@ -27,11 +29,11 @@ func (d *assistDouble) CreateSession(ctx context.Context, req core.AssistCreateR
 	return d.create(ctx, req)
 }
 
-func (d *assistDouble) SendMessage(ctx context.Context, id, text string, yaml *string) (*store.AssistSession, error) {
+func (d *assistDouble) SendMessage(ctx context.Context, id, text string, yaml *string, page *core.AssistPageContext) (*store.AssistSession, error) {
 	if d.send == nil {
 		return nil, errUnscripted
 	}
-	return d.send(ctx, id, text, yaml)
+	return d.send(ctx, id, text, yaml, page)
 }
 
 func (d *assistDouble) UpdateDraft(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error) {
@@ -176,12 +178,12 @@ func TestAssistMessageAndDraftErrorsMapToProblems(t *testing.T) {
 	a := e.assistSession("", "idle")
 	base := "/api/assist/sessions/" + a.ID
 
-	svc.send = func(context.Context, string, string, *string) (*store.AssistSession, error) {
+	svc.send = func(context.Context, string, string, *string, *core.AssistPageContext) (*store.AssistSession, error) {
 		return nil, errors.Join(core.ErrInvalidState)
 	}
 	e.do("POST", base+"/messages", `{"text":"hi"}`).want(409)
 	e.do("POST", base+"/messages", `{"text":"   "}`).want(422)
-	svc.send = func(_ context.Context, id, text string, yaml *string) (*store.AssistSession, error) {
+	svc.send = func(_ context.Context, id, text string, yaml *string, _ *core.AssistPageContext) (*store.AssistSession, error) {
 		if text != "go" || yaml == nil || *yaml != "id: y\n" {
 			t.Errorf("service got text %q yaml %v", text, yaml)
 		}
@@ -303,6 +305,108 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 		t.Errorf("assist.message = %v", m)
 	}
 	c.quiet() // nothing from the other session
+}
+
+func TestStreamAnnouncesAssistUIEventsToTheirSessionOnly(t *testing.T) {
+	e := newEnv(t)
+	ts := e.listen()
+	mine := e.assistSession("", "idle")
+	theirs := e.assistSession("", "idle")
+	c := e.openStream(ts, "?types=assist.navigate,assist.start_draft&assist_session_id="+mine.ID, nil)
+	c.expect("stream.ready")
+
+	e.srv.PublishAssistNavigate(theirs.ID, "/inbox", "")
+	e.srv.PublishAssistNavigate(mine.ID, "/flows/triage?view=runs", "the failing runs")
+	e.srv.PublishAssistNavigate(mine.ID, "/timeline", "")
+	e.srv.PublishAssistStartDraft(mine.ID, "flow", "triage", "add a retry node")
+	e.srv.PublishAssistStartDraft(mine.ID, "sensor", "", "")
+
+	if nav := c.expect("assist.navigate").data(); nav["session_id"] != mine.ID || nav["path"] != "/flows/triage?view=runs" || nav["reason"] != "the failing runs" {
+		t.Errorf("assist.navigate = %v", nav)
+	}
+	if nav := c.expect("assist.navigate").data(); nav["path"] != "/timeline" || nav["reason"] != nil {
+		t.Errorf("assist.navigate without a reason = %v (reason must be null)", nav)
+	}
+	if sd := c.expect("assist.start_draft").data(); sd["session_id"] != mine.ID || sd["kind"] != "flow" || sd["id"] != "triage" || sd["prompt"] != "add a retry node" {
+		t.Errorf("assist.start_draft = %v", sd)
+	}
+	if sd := c.expect("assist.start_draft").data(); sd["kind"] != "sensor" || sd["id"] != nil || sd["prompt"] != nil {
+		t.Errorf("assist.start_draft for a new sensor = %v (id and prompt must be null)", sd)
+	}
+	c.quiet() // nothing from the other session
+}
+
+func TestGeneralAssistSessionsHaveNoTargetAndShowATitle(t *testing.T) {
+	var e *env
+	e = newEnv(t, func(o *envOptions) {
+		o.assist = &assistDouble{create: func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
+			a := &store.AssistSession{
+				TargetKind: req.TargetKind, TargetID: req.TargetID, Runtime: req.Runtime, Status: store.AssistIdle,
+				DraftHash: hash64, DraftUpdatedBy: store.DraftByUser,
+			}
+			return a, e.st.CreateAssistSession(ctx, a)
+		}}
+	})
+
+	e.do("POST", "/api/assist/sessions", `{"target":{"kind":"general","id":"triage"},"runtime":"claude"}`).want(422)
+	r := e.do("POST", "/api/assist/sessions", `{"target":{"kind":"general"},"runtime":"claude"}`).want(201).json()
+	id, _ := r["id"].(string)
+	target, draft := r["target"].(map[string]any), r["draft"].(map[string]any)
+	if target["kind"] != "general" || target["id"] != nil || r["title"] != nil ||
+		draft["kind"] != "general" || draft["yaml"] != "" || draft["sensor_id"] != nil || draft["flow_id"] != nil || draft["tool_id"] != nil {
+		t.Errorf("general session = %v", r)
+	}
+	if ids := e.get("/api/assist/sessions?target_kind=general").want(200).ids(); len(ids) != 1 || ids[0] != id {
+		t.Errorf("general sessions = %v, want only %s", ids, id)
+	}
+
+	// The title is the first user message, one line, 80 characters at most; the list and the detail show it.
+	a, err := e.st.GetAssistSession(ctx(), id)
+	must(t, err)
+	a.Title = store.AssistTitle("why did   the\ntriage flow fail? " + strings.Repeat("é", 100))
+	must(t, e.st.UpdateAssistSession(ctx(), a))
+	want := "why did the triage flow fail? " + strings.Repeat("é", 50)
+	if got := e.get("/api/assist/sessions/" + id).want(200).json()["title"]; got != want {
+		t.Errorf("title = %q, want %q", got, want)
+	}
+	items := e.get("/api/assist/sessions").want(200).json()["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["title"] != want {
+		t.Errorf("listed title = %v", items)
+	}
+}
+
+func TestSendingAMessageHandsThePageContextToTheService(t *testing.T) {
+	svc := &assistDouble{}
+	e := newEnv(t, func(o *envOptions) { o.assist = svc })
+	a := e.assistSession("", "idle")
+	path := "/api/assist/sessions/" + a.ID + "/messages"
+
+	var got *core.AssistPageContext
+	svc.send = func(_ context.Context, _, _ string, _ *string, page *core.AssistPageContext) (*store.AssistSession, error) {
+		got = page
+		return a, nil
+	}
+	e.do("POST", path, `{"text":"hi"}`).want(202)
+	if got != nil {
+		t.Errorf("page context %+v without one in the request", got)
+	}
+	e.do("POST", path, `{"text":"why?","page_context":{"route":"/flows/triage?view=runs","title":"Flows","summary":"Runs of triage",`+
+		`"facts":[{"label":"status","value":"failed"}],"entities":[{"kind":"flow","id":"triage","label":"Triage","detail":"enabled"},{"kind":"run"}]}}`).want(202)
+	want := &core.AssistPageContext{
+		Route: "/flows/triage?view=runs", Title: "Flows", Summary: "Runs of triage",
+		Facts:    []core.AssistPageFact{{Label: "status", Value: "failed"}},
+		Entities: []core.AssistPageEntity{{Kind: "flow", ID: "triage", Label: "Triage", Detail: "enabled"}, {Kind: "run"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("service received %+v, want %+v", got, want)
+	}
+	got = nil
+	for _, route := range []string{"https://evil.example/x", "//evil.example", "flows", `/a\\b`, ""} {
+		e.do("POST", path, `{"text":"hi","page_context":{"route":"`+route+`","title":"T"}}`).want(422)
+	}
+	if got != nil {
+		t.Errorf("a malformed page context reached the service: %+v", got)
+	}
 }
 
 func (d *assistDouble) FlowCreated(context.Context, string) error                   { return nil }

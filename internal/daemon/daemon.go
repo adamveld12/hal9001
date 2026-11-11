@@ -231,10 +231,13 @@ func Run(ctx context.Context, opts Options) error {
 	// stream hub, which must be closed on shutdown.
 	apiServer, _ := apiHandler.(interface {
 		PublishConfigChange(paths []string)
+		assist.UIPublisher
 		Close()
 	})
 	if apiServer != nil {
 		defer apiServer.Close()
+		// navigate_ui and start_draft reach the web UI as stream events.
+		assistMgr.SetUIPublisher(apiServer)
 	}
 	handler := httpsec.Middleware(httpsec.Options{
 		Port:         port,

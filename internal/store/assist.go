@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // AssistStatus is the state of an assist session.
@@ -28,12 +30,33 @@ func (s AssistStatus) valid() bool {
 	return false
 }
 
-// Assist target kinds: a sensor, a flow or a custom tool definition.
+// Assist target kinds: a general chat (no draft), or a draft of a sensor, a flow or a custom tool definition.
 const (
-	AssistTargetSensor = "sensor"
-	AssistTargetFlow   = "flow"
-	AssistTargetTool   = "tool"
+	AssistTargetGeneral = "general"
+	AssistTargetSensor  = "sensor"
+	AssistTargetFlow    = "flow"
+	AssistTargetTool    = "tool"
 )
+
+// MaxAssistTitle is the longest AssistSession.Title, in characters.
+const MaxAssistTitle = 80
+
+// AssistTitle is the title a session takes from its first user message: whitespace collapsed to single spaces,
+// cut to MaxAssistTitle characters on a character boundary. It is empty for a blank message.
+func AssistTitle(text string) string {
+	title := strings.Join(strings.Fields(text), " ")
+	if utf8.RuneCountInString(title) <= MaxAssistTitle {
+		return title
+	}
+	n := 0
+	for i := range title {
+		if n == MaxAssistTitle {
+			return title[:i]
+		}
+		n++
+	}
+	return title
+}
 
 // Who last wrote an assist draft.
 const (
@@ -48,7 +71,7 @@ const (
 type AssistSession struct {
 	ID         string       `json:"id"`
 	TargetKind string       `json:"target_kind"`
-	TargetID   string       `json:"target_id,omitempty"` // empty: a new sensor or flow
+	TargetID   string       `json:"target_id,omitempty"` // empty: a new sensor, flow or tool; always empty for a general chat
 	Runtime    string       `json:"runtime"`
 	Model      string       `json:"model,omitempty"`
 	Status     AssistStatus `json:"status"`
@@ -70,6 +93,9 @@ type AssistSession struct {
 	// ApprovedScriptHash its identity; both are empty until then.
 	ApprovedScript     string `json:"approved_script,omitempty"`
 	ApprovedScriptHash string `json:"approved_script_hash,omitempty"`
+
+	// Title is AssistTitle of the first user message; empty before it.
+	Title string `json:"title,omitempty"`
 
 	// LastAgentRunID is the agent run of the latest turn.
 	LastAgentRunID string `json:"last_agent_run_id,omitempty"`
@@ -105,7 +131,7 @@ func validAssistRole(r string) bool {
 
 const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_id, draft_diagnostics, draft_prompts, draft_sensors,
 	draft_updated_at, draft_updated_by, last_agent_run_id, acp_session_id, created_at, updated_at, closed_at,
-	approved_script, approved_script_hash`
+	approved_script, approved_script_hash, title`
 
 func scanAssistSession(r rowScanner) (AssistSession, error) {
 	var (
@@ -116,7 +142,7 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 		closed                    sql.NullString
 	)
 	if err := r.Scan(&a.ID, &a.TargetKind, &a.TargetID, &a.Runtime, &a.Model, &status, &a.Error, &a.DraftYAML, &a.DraftHash, &a.DraftID,
-		&diags, &prompts, &sensors, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash); err != nil {
+		&diags, &prompts, &sensors, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash, &a.Title); err != nil {
 		return AssistSession{}, scanErr(err)
 	}
 	a.Status, a.DraftDiagnostics, a.DraftPrompts, a.DraftSensors = AssistStatus(status), parseRaw(diags), parseRaw(prompts), parseRaw(sensors)
@@ -138,7 +164,7 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 
 func (a *AssistSession) validate() error {
 	switch {
-	case a.TargetKind != AssistTargetSensor && a.TargetKind != AssistTargetFlow && a.TargetKind != AssistTargetTool:
+	case a.TargetKind != AssistTargetGeneral && a.TargetKind != AssistTargetSensor && a.TargetKind != AssistTargetFlow && a.TargetKind != AssistTargetTool:
 		return fmt.Errorf("%w: assist target kind %q", ErrInvalid, a.TargetKind)
 	case a.Runtime == "":
 		return fmt.Errorf("%w: assist session runtime required", ErrInvalid)
@@ -184,9 +210,9 @@ func (s *Store) CreateAssistSession(ctx context.Context, a *AssistSession) error
 		return err
 	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts, sensors,
-			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash)
+			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.Title)
 		if err != nil {
 			return fmt.Errorf("store: insert assist_session: %w", err)
 		}
@@ -207,7 +233,7 @@ func rawJSONArray(m json.RawMessage) (string, error) {
 }
 
 // UpdateAssistSession writes every mutable column (target_id, status, error, the draft,
-// the approved script, last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
+// the approved script, title, last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
 func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error {
 	if err := a.validate(); err != nil {
 		return err
@@ -228,9 +254,9 @@ func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error
 	return s.write(ctx, func(t *txn) error {
 		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET target_id=?, model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?, draft_sensors=?,
 			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=?,
-			approved_script=?, approved_script_hash=? WHERE id=?`,
+			approved_script=?, approved_script_hash=?, title=? WHERE id=?`,
 			a.TargetID, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts, sensors,
-			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.ID)
+			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.Title, a.ID)
 		if err != nil {
 			return fmt.Errorf("store: update assist_session: %w", err)
 		}

@@ -356,7 +356,8 @@ func configGuide() string {
 	w("- Use ONLY sandbox, image, runtime, tool and prompt ids that appear in those files. NEVER guess or invent one; a guessed name fails validation and at run time.\n")
 	w("- If the user asks for something that is not configured (for example a sandbox that is disabled, an image that is not listed, a runtime or tool that does not exist), say so plainly, do not write it into the draft, and tell them where to set it up: sandboxes and images in Configure > Sandboxes > <backend> (for example Configure > Sandboxes > Kubernetes), runtimes in Configure > Runtimes, custom tools in Tools. Then offer what works now.\n")
 	w("- Validation diagnostics for an unknown or disabled sandbox, an image not in the list, an unknown tool or an unknown runtime list the valid options: use them to correct the draft.\n\n")
-	w("%s", inspectGuide())
+	w("%s", inspectGuide(true))
+	w("%s", uiGuide())
 	return b.String()
 }
 

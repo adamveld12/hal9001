@@ -55,11 +55,16 @@ func (m *Manager) issueEnv() tools.IssueEnv {
 }
 
 // inspectGuide is the instructions section about the inspection tools and bug reports, shared by every session kind.
-func inspectGuide() string {
+// drafts is false for a general session, which has no draft tools.
+func inspectGuide(drafts bool) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 	w("## Looking at what hal9001 did (debugging)\n\n")
-	w("Besides the draft tools you can read everything the `hal9001` CLI can show. These tools only read: they never ask the user and never change anything. ")
+	if drafts {
+		w("Besides the draft tools you can read everything the `hal9001` CLI can show. These tools only read: they never ask the user and never change anything. ")
+	} else {
+		w("You can read everything the `hal9001` CLI can show. These tools only read: they never ask the user and never change anything. ")
+	}
 	w("Use them whenever the user asks why something happened, failed or did not fire, and before you guess.\n\n")
 	w("- Flows and runs: `flows_list`, `flow_get`, `flow_runs_list` (`flow_id`, `status`, `event_id`, `kind`, `since`, `until`, `limit`), `flow_run_get` (the run with its node runs), `node_run_get` (decision, error, stdin, stdout, stderr, agent runs), `queue_list`.\n")
 	w("- Agent runs: `agent_runs_list` (`flow_run_id`, `node_run_id`, `status`, `runtime`), `agent_run_get` (error, rendered prompt, result, approvals), `agent_run_events` (the transcript, with `after_seq`, `limit`, `kind`), `agent_run_permission_requests` (each tool call and how it was decided), `agent_run_sandbox_log` and `node_run_sandbox_log` (sandbox commands and file operations; `tail: true` for the newest).\n")
@@ -72,9 +77,17 @@ func inspectGuide() string {
 	w("If it used a sandbox, `agent_run_sandbox_log` with `tail: true`.\n")
 	w("2. \"Why did the sensor not fire?\": `sensor_get` (state, paused, last status), `sensor_runs_list` (`status: failed` for errors), `sensor_run_get` (stderr, item count), `events_list` with `sensor_id`: items whose dedup key was already seen produce no event. Then `flow_runs_list` with `event_id` for what the flows did with it.\n")
 	w("3. \"What happened to this event or item?\": `event_get` shows the flow runs it fanned out to; a transform that dropped it gives a reason on its node run.\n")
-	w("4. Report what you found in plain language: the cause, the ids of the runs you looked at (so the user can open them), and the fix. If the fix is a change to a draft you can make, make it with `draft_write`.\n\n")
+	if drafts {
+		w("4. Report what you found in plain language: the cause, the ids of the runs you looked at (so the user can open them), and the fix. If the fix is a change to a draft you can make, make it with `draft_write`.\n\n")
+	} else {
+		w("4. Report what you found in plain language: the cause, the ids of the runs you looked at (so the user can open them), and the fix. If the fix is a change to a sensor, flow or tool, offer a draft session with `start_draft`.\n\n")
+	}
 	w("Limits: lists take `limit` (at most 200) and `cursor` from the previous `next_cursor`; the transcript and the sandbox log page with `after_seq` and `after_id`; a result is at most 64 KB and a single long string (a prompt, a script, command output) is cut in the middle. Narrow the query instead of asking for everything. ")
-	w("These tools cannot run a flow or poll a sensor, and changes to saved files still go through the draft and the user's Save; tell the user to use Run now, or to do it on the page, when running something would help.\n\n")
+	if drafts {
+		w("These tools cannot run a flow or poll a sensor, and changes to saved files still go through the draft and the user's Save; tell the user to use Run now, or to do it on the page, when running something would help.\n\n")
+	} else {
+		w("These tools cannot run a flow or poll a sensor, and changes to saved files go through a draft session and the user's Save; tell the user to use Run now, or to do it on the page (open it with navigate_ui), when running something would help.\n\n")
+	}
 	w("## Reporting a bug or filing an issue\n\n")
 	w("When the user reports a bug in hal9001, or asks you to file or open an issue, draft a good one and offer the link with `github_issue_link`. It builds a GitHub new-issue link with the form filled in; nothing is created until the user opens the link and submits it, so it needs no approval and you do not ask first. ")
 	w("Investigate with the tools above first, so the issue holds facts: a short title; a body with what the user tried (steps to reproduce), what they expected, what happened instead (error text, decisions), and the ids of the runs involved (flow run, node run, agent run, sensor, event). ")

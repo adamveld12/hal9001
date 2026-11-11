@@ -76,6 +76,12 @@ func (s *session) draftPath() string { return filepath.Join(s.dir, s.draftFile()
 
 func (s *session) isFlow() bool { return s.row.TargetKind == store.AssistTargetFlow }
 
+// isGeneral reports whether the session is a general chat: no draft, no draft file, no draft tools.
+func (s *session) isGeneral() bool { return s.row.TargetKind == store.AssistTargetGeneral }
+
+// errNoDraft is what a draft operation on a general session answers.
+var errNoDraft = fmt.Errorf("%w: a general session has no draft (start a sensor, flow or tool session to draft)", core.ErrInvalidState)
+
 // applyDraft sets the draft fields of the row from yaml: hash, parsed id, the validator's diagnostics and, for a
 // flow, the prompt files in the draft directory.
 func (s *session) applyDraft(yaml, by string) {
@@ -83,6 +89,8 @@ func (s *session) applyDraft(yaml, by string) {
 	row.DraftYAML = yaml
 	row.DraftHash = spec.Hash([]byte(yaml))
 	switch {
+	case s.isGeneral():
+		row.DraftID, row.DraftDiagnostics = "", marshalDiagnostics(nil)
 	case s.isFlow():
 		row.DraftID, row.DraftDiagnostics, row.DraftPrompts, row.DraftSensors = s.m.evaluateFlow(yaml, row.TargetID, s.dir)
 	case s.isTool():
@@ -120,10 +128,14 @@ func marshalDiagnostics(ds []spec.Diagnostic) json.RawMessage {
 	return b
 }
 
-// initDir creates the draft directory with the draft, the instructions and, for a flow, its reference material.
+// initDir creates the draft directory with the draft, the instructions and, for a flow, its reference material. A
+// general session has the directory (the agent's working directory) and nothing in it.
 func (s *session) initDir() error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("assist: create draft directory: %w", err)
+	}
+	if s.isGeneral() {
+		return nil
 	}
 	if s.isFlow() {
 		for _, d := range []string{PromptsDir, SensorsDir} {
@@ -195,6 +207,9 @@ func (s *session) updateDraft(yaml, expected string) (*store.AssistSession, erro
 	if err := s.usableLocked(); err != nil {
 		return nil, err
 	}
+	if s.isGeneral() {
+		return nil, errNoDraft
+	}
 	if expected != "" && expected != s.row.DraftHash {
 		return nil, &core.DraftConflictError{Expected: expected, Current: s.row.DraftHash}
 	}
@@ -263,8 +278,8 @@ func (s *session) usableLocked() error {
 	return nil
 }
 
-// send stores the user's message and starts a turn.
-func (s *session) send(text string, yaml *string) (*store.AssistSession, error) {
+// send stores the user's message and starts a turn; page is rendered into this turn's prompt only.
+func (s *session) send(text string, yaml *string, page *core.AssistPageContext) (*store.AssistSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usableLocked(); err != nil {
@@ -273,7 +288,7 @@ func (s *session) send(text string, yaml *string) (*store.AssistSession, error) 
 	if s.turn != nil {
 		return nil, fmt.Errorf("%w: a turn is already running in this session", core.ErrInvalidState)
 	}
-	if yaml != nil && *yaml != s.row.DraftYAML {
+	if yaml != nil && !s.isGeneral() && *yaml != s.row.DraftYAML {
 		if err := s.setDraftLocked(*yaml, store.DraftByUser); err != nil {
 			return nil, err
 		}
@@ -281,6 +296,9 @@ func (s *session) send(text string, yaml *string) (*store.AssistSession, error) 
 	user := &store.AssistMessage{SessionID: s.id, Role: "user", Text: &text}
 	if err := s.m.st.CreateAssistMessage(s.m.ctx, user); err != nil {
 		return nil, err
+	}
+	if s.row.Title == "" {
+		s.row.Title = store.AssistTitle(text)
 	}
 
 	hostCtx := s.m.host.Context()
@@ -290,7 +308,7 @@ func (s *session) send(text string, yaml *string) (*store.AssistSession, error) 
 	started := s.m.host.Spawn(func(context.Context) {
 		defer untrack()
 		defer cancel(nil)
-		s.runTurn(ctx, t, text)
+		s.runTurn(ctx, t, text, page)
 	})
 	if !started {
 		untrack()
@@ -365,20 +383,23 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 }
 
 // runTurn drives one agent turn and records its outcome.
-func (s *session) runTurn(ctx context.Context, t *turn, text string) {
-	rec, perr := s.prompt(ctx, t, text)
+func (s *session) runTurn(ctx context.Context, t *turn, text string, page *core.AssistPageContext) {
+	rec, perr := s.prompt(ctx, t, text, page)
 	s.finishTurn(t, rec, perr)
 }
 
-// prompt prepares the turn and runs it.
-func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRecord, error) {
+// prompt prepares the turn and runs it. The prompt is hal's instructions (the context block and the kind's preamble),
+// then the page the user is looking at when the message carried one, then the user's text.
+func (s *session) prompt(ctx context.Context, t *turn, text string, page *core.AssistPageContext) (agent.RunRecord, error) {
 	s.mu.Lock()
 	ag, err := s.agentSessionLocked()
 	if err == nil {
 		// Samples, saved prompts and the app's configuration change between turns.
-		if s.isFlow() {
+		switch {
+		case s.isGeneral():
+		case s.isFlow():
 			err = s.m.writeReference(s.dir)
-		} else {
+		default:
 			err = s.m.writeConfigReference(s.dir)
 		}
 	}
@@ -391,16 +412,23 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 	if err != nil {
 		return agent.RunRecord{}, err
 	}
-	global, sensor := s.m.envNames(row.TargetID)
-	summary := s.m.configSummary()
-	head := preamble(row.TargetID, global, sensor, summary)
+	var head, restore string
 	switch row.TargetKind {
+	case store.AssistTargetGeneral:
+		head = generalPreamble()
+		restore = "Your previous agent session could not be restored, so this is a new one. "
 	case store.AssistTargetFlow:
-		global, _ = s.m.envNames("")
-		head = flowPreamble(row.TargetID, global, summary)
+		global, _ := s.m.envNames("")
+		head = flowPreamble(row.TargetID, global, s.m.configSummary())
 	case store.AssistTargetTool:
 		global, own := s.m.envNamesOf(row.TargetKind, row.TargetID)
-		head = toolPreamble(row.TargetID, global, own, summary)
+		head = toolPreamble(row.TargetID, global, own, s.m.configSummary())
+	default:
+		global, sensor := s.m.envNames(row.TargetID)
+		head = preamble(row.TargetID, global, sensor, s.m.configSummary())
+	}
+	if restore == "" {
+		restore = "Your previous agent session could not be restored, so this is a new one. Read the current " + draftFileOf(row.TargetKind) + " first. "
 	}
 	head = tools.Preamble(tools.PreambleData{
 		Info: tools.RunInfo{AgentRunID: t.runID, AssistSessionID: s.id}, Now: s.m.host.Clock().Now(), Tools: ht.Tools(), SystemPrompt: spec.Load(s.m.home).Config.Value.SystemPrompt,
@@ -410,11 +438,11 @@ func (s *session) prompt(ctx context.Context, t *turn, text string) (agent.RunRe
 	if n := len(msgs); n > 0 {
 		before = msgs[:n-1]
 	}
+	pageText := renderPageContext(page)
 	return ag.Prompt(ctx, agent.TurnRequest{
-		RunID:  t.runID,
-		Prompt: head + text,
-		FallbackPrompt: head + "Your previous agent session could not be restored, so this is a new one. " +
-			"Read the current " + draftFileOf(row.TargetKind) + " first. The conversation so far:\n" + recap(before) + "\nThe user now says:\n\n" + text,
+		RunID:          t.runID,
+		Prompt:         head + pageText + text,
+		FallbackPrompt: head + restore + "The conversation so far:\n" + recap(before) + "\n" + pageText + "The user now says:\n\n" + text,
 	})
 }
 
@@ -430,6 +458,7 @@ func preamble(targetID string, global, sensor []string, summary string) string {
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), sensor...)) + ".\n")
 	b.WriteString("Test the draft with draft_test; the first test after you change the script asks the user to approve it.\n")
+	b.WriteString(uiToolsLine)
 	b.WriteString(summary + "\n")
 	return b.String()
 }

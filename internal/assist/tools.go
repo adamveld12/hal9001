@@ -32,8 +32,19 @@ func (m *Manager) registerTools() {
 		if s == nil {
 			return tools.Extension{}, fmt.Errorf("assist: no session %s", rs.RunID)
 		}
-		return tools.Extension{Tools: append(s.draftTools(), s.helperTools()...)}, nil
+		return tools.Extension{Tools: s.sessionTools()}, nil
 	})
+}
+
+// sessionTools are the tools of one session: the draft tools (not for a general session, which has no draft), the read
+// tools with github_issue_link, and navigate_ui and start_draft.
+func (s *session) sessionTools() []tools.Tool {
+	var out []tools.Tool
+	if !s.isGeneral() {
+		out = s.draftTools()
+	}
+	out = append(out, s.helperTools()...)
+	return append(out, s.uiTools()...)
 }
 
 func obj(props map[string]any, required ...string) map[string]any {

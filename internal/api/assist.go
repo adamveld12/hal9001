@@ -42,6 +42,7 @@ type assistDraftView struct {
 
 type assistSessionView struct {
 	ID             string           `json:"id"`
+	Title          *string          `json:"title"`
 	Target         assistTargetView `json:"target"`
 	Runtime        string           `json:"runtime"`
 	Model          *string          `json:"model"`
@@ -80,6 +81,8 @@ func assistDraft(a store.AssistSession) assistDraftView {
 		UpdatedAt: utc(a.DraftUpdatedAt), UpdatedBy: a.DraftUpdatedBy,
 	}
 	switch a.TargetKind {
+	case store.AssistTargetGeneral:
+		// no draft: no ids
 	case store.AssistTargetFlow:
 		v.FlowID = nonEmpty(a.DraftID)
 	case store.AssistTargetTool:
@@ -100,7 +103,7 @@ func rawArray(raw json.RawMessage) json.RawMessage {
 
 func assistSession(a store.AssistSession) assistSessionView {
 	return assistSessionView{
-		ID: a.ID, Target: assistTargetView{Kind: a.TargetKind, ID: nonEmpty(a.TargetID)}, Runtime: a.Runtime, Model: nonEmpty(a.Model),
+		ID: a.ID, Title: nonEmpty(a.Title), Target: assistTargetView{Kind: a.TargetKind, ID: nonEmpty(a.TargetID)}, Runtime: a.Runtime, Model: nonEmpty(a.Model),
 		Status: string(a.Status), Error: nonEmpty(a.Error), Draft: assistDraft(a), LastAgentRunID: nonEmpty(a.LastAgentRunID),
 		CreatedAt: utc(a.CreatedAt), UpdatedAt: utc(a.UpdatedAt),
 	}
@@ -124,7 +127,7 @@ func (s *Server) assist(w http.ResponseWriter) (core.Assist, bool) {
 
 func (s *Server) listAssistSessions(w http.ResponseWriter, r *http.Request) {
 	q := newQuery(r)
-	kind := q.enum("target_kind", store.AssistTargetSensor, store.AssistTargetFlow, store.AssistTargetTool)
+	kind := q.enum("target_kind", store.AssistTargetGeneral, store.AssistTargetSensor, store.AssistTargetFlow, store.AssistTargetTool)
 	targetID := q.slug("target_id")
 	if !q.ok(w) {
 		return
@@ -159,8 +162,11 @@ func (s *Server) createAssistSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case req.Target.Kind != store.AssistTargetSensor && req.Target.Kind != store.AssistTargetFlow && req.Target.Kind != store.AssistTargetTool:
-		fieldProblem(w, "target.kind", "target.kind must be sensor, flow or tool")
+	case req.Target.Kind != store.AssistTargetGeneral && req.Target.Kind != store.AssistTargetSensor && req.Target.Kind != store.AssistTargetFlow && req.Target.Kind != store.AssistTargetTool:
+		fieldProblem(w, "target.kind", "target.kind must be general, sensor, flow or tool")
+		return
+	case req.Target.Kind == store.AssistTargetGeneral && req.Target.ID != "":
+		fieldProblem(w, "target.id", "target.id must be empty for a general session")
 		return
 	case req.Target.ID != "" && !spec.ValidID(req.Target.ID):
 		fieldProblem(w, "target.id", "target.id must be a sensor, flow or tool id")
@@ -231,8 +237,23 @@ func (s *Server) deleteAssistSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sendAssistMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text string  `json:"text"`
-		YAML *string `json:"yaml"`
+		Text        string  `json:"text"`
+		YAML        *string `json:"yaml"`
+		PageContext *struct {
+			Route   string `json:"route"`
+			Title   string `json:"title"`
+			Summary string `json:"summary"`
+			Facts   []struct {
+				Label string `json:"label"`
+				Value string `json:"value"`
+			} `json:"facts"`
+			Entities []struct {
+				Kind   string `json:"kind"`
+				ID     string `json:"id"`
+				Label  string `json:"label"`
+				Detail string `json:"detail"`
+			} `json:"entities"`
+		} `json:"page_context"`
 	}
 	if !decodeJSON(w, r, &req, false) {
 		return
@@ -245,11 +266,25 @@ func (s *Server) sendAssistMessage(w http.ResponseWriter, r *http.Request) {
 		fieldProblem(w, "text", "text is too long")
 		return
 	}
+	var page *core.AssistPageContext
+	if pc := req.PageContext; pc != nil {
+		page = &core.AssistPageContext{Route: pc.Route, Title: pc.Title, Summary: pc.Summary}
+		if !page.RouteValid() {
+			fieldProblem(w, "page_context.route", "page_context.route must be an in-app path starting with /")
+			return
+		}
+		for _, f := range pc.Facts {
+			page.Facts = append(page.Facts, core.AssistPageFact{Label: f.Label, Value: f.Value})
+		}
+		for _, e := range pc.Entities {
+			page.Entities = append(page.Entities, core.AssistPageEntity{Kind: e.Kind, ID: e.ID, Label: e.Label, Detail: e.Detail})
+		}
+	}
 	svc, ok := s.assist(w)
 	if !ok {
 		return
 	}
-	a, err := svc.SendMessage(r.Context(), r.PathValue("id"), req.Text, req.YAML)
+	a, err := svc.SendMessage(r.Context(), r.PathValue("id"), req.Text, req.YAML, page)
 	if err != nil {
 		s.writeError(w, r, err)
 		return

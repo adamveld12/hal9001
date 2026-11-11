@@ -251,6 +251,9 @@ func (m *Manager) Samples(ctx context.Context, sessionID string) ([]core.AssistS
 	if err != nil {
 		return nil, err
 	}
+	if s.isGeneral() {
+		return nil, errNoDraft
+	}
 	if !s.isFlow() {
 		return []core.AssistSample{}, nil
 	}
@@ -270,6 +273,7 @@ func flowPreamble(targetID string, globalEnv []string, summary string) string {
 	}
 	b.WriteString("Env variable names command nodes can use: " + nameList(globalEnv) + ".\n")
 	b.WriteString("Test the draft with draft_test (optionally `sample`); the first test after you change a command node asks the user to approve it.\n")
+	b.WriteString(uiToolsLine)
 	b.WriteString(summary + "\n")
 	return b.String()
 }

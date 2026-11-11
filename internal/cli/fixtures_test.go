@@ -161,7 +161,7 @@ func assistDraft() map[string]any {
 
 func assistSession(status string) map[string]any {
 	return map[string]any{
-		"id": id1, "target": map[string]any{"kind": "sensor", "id": "gh"}, "runtime": "claude", "model": nil,
+		"id": id1, "title": nil, "target": map[string]any{"kind": "sensor", "id": "gh"}, "runtime": "claude", "model": nil,
 		"status": status, "error": nil, "draft": assistDraft(), "last_agent_run_id": nil,
 		"created_at": ts, "updated_at": ts,
 	}

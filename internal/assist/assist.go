@@ -106,6 +106,7 @@ type Manager struct {
 	sessions map[string]*session
 	byRun    map[string]*session // running turn's agent run id -> session
 	stopped  bool
+	ui       UIPublisher // where navigate_ui and start_draft publish; nil until SetUIPublisher
 }
 
 var _ core.Assist = (*Manager)(nil)
@@ -210,12 +211,17 @@ func (m *Manager) session(ctx context.Context, id string) (*session, error) {
 	return s, nil
 }
 
-// CreateSession starts a session: its draft directory and draft, no agent process yet.
+// CreateSession starts a session: its draft directory and draft (a general session has the directory only), no agent
+// process yet.
 func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
 	switch req.TargetKind {
+	case store.AssistTargetGeneral:
+		if req.TargetID != "" {
+			return nil, invalid("target.id", "a general session has no target id")
+		}
 	case store.AssistTargetSensor, store.AssistTargetFlow, store.AssistTargetTool:
 	default:
-		return nil, invalid("target.kind", "target.kind must be sensor, flow or tool")
+		return nil, invalid("target.kind", "target.kind must be general, sensor, flow or tool")
 	}
 	if _, ok := m.host.Runtime(req.Runtime); !ok {
 		return nil, &core.ValidationError{Diagnostics: []spec.Diagnostic{{
@@ -224,6 +230,8 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 	}
 	var yaml string
 	switch {
+	case req.TargetKind == store.AssistTargetGeneral:
+		// no draft
 	case req.YAML != nil:
 		yaml = *req.YAML
 	case req.TargetID != "":
@@ -273,8 +281,9 @@ func (m *Manager) CreateSession(ctx context.Context, req core.AssistCreateReques
 	return &out, nil
 }
 
-// SendMessage stores the user's message and starts one agent turn.
-func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, yaml *string) (*store.AssistSession, error) {
+// SendMessage stores the user's message and starts one agent turn. page, when non-nil, is rendered into this turn's
+// prompt only (see renderPageContext). A general session has no draft and ignores yaml.
+func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, yaml *string, page *core.AssistPageContext) (*store.AssistSession, error) {
 	if yaml != nil && len(*yaml) > maxDraftBytes {
 		return nil, invalid("yaml", "the draft is too large")
 	}
@@ -282,7 +291,7 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, yaml 
 	if err != nil {
 		return nil, err
 	}
-	return s.send(text, yaml)
+	return s.send(text, yaml, page)
 }
 
 // UpdateDraft replaces the draft with the editor's content.

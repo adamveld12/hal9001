@@ -199,6 +199,7 @@ func toolPreamble(targetID string, global, own []string, summary string) string 
 	}
 	b.WriteString("Env variable names the script can use: " + nameList(append(append([]string(nil), global...), own...)) + ".\n")
 	b.WriteString("Test with draft_test (pass `args`) before you say it is done.\n")
+	b.WriteString(uiToolsLine)
 	b.WriteString(summary + "\n")
 	return b.String()
 }
