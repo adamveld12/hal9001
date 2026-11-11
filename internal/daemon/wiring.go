@@ -33,6 +33,7 @@ type engineParams struct {
 	Store     *store.Store
 	Home      string
 	BasePATH  string
+	ExactPATH bool
 	Notifier  core.Notifier
 	Log       *slog.Logger
 	UIBaseURL string

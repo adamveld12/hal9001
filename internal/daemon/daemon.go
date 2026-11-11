@@ -55,6 +55,9 @@ type Options struct {
 	// BasePATH is the PATH handed to node processes; default: this process's PATH
 	// (under launchd, `hal9001 serve` captures the login-shell PATH and passes it here).
 	BasePATH string
+	// ExactPATH makes BasePATH the only PATH hal9001 looks for the agent CLIs and Node.js on: the well-known tool
+	// directories (~/.local/bin, /opt/homebrew/bin, ...) are not added. For tests and the sandbox.
+	ExactPATH bool
 	// UIURL is the origin notification deep links point at. Empty: $HAL9001_UI_URL,
 	// else http://localhost:<port> (the daemon's own port, 9001 by default).
 	UIURL string
@@ -150,7 +153,7 @@ func Run(ctx context.Context, opts Options) error {
 		Terminal: notify.New(notify.WithLogger(log), notify.WithIcon(writeNotifyIcon(home, log))),
 	})
 	eng, err := newEngine(engineParams{
-		Store: st, Home: home, BasePATH: basePATH, Log: log,
+		Store: st, Home: home, BasePATH: basePATH, ExactPATH: opts.ExactPATH, Log: log,
 		Notifier:  notifier,
 		UIBaseURL: uiBaseURL(opts.UIURL, os.Getenv(EnvUIURL), port),
 		Clock:     opts.Clock,
