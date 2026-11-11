@@ -817,6 +817,8 @@ port (classes include `timeout`, `approval_timeout`, `spawn_failed`, `agent_exit
 
 ### Continuing an agent run in chat and emitting back
 
+![The Agent run page with Continue in chat and the chat forked from the run](images/chat/continue-in-chat-light.png) ([dark](images/chat/continue-in-chat-dark.png))
+
 On the agent run page you can **Continue in chat**: the chat is a fork of the run (the original run is not changed). The
 chat has one `emit_<port>` tool for each declared port of the agent node that has an outgoing edge, or `emit_out` for a
 node without declared ports. Calling one **sends the result to the flow**, but only after you approve it:
@@ -829,6 +831,8 @@ node without declared ports. Calling one **sends the result to the flow**, but o
    and port, the node(s) the port leads to, the payload, and that approving starts a new flow run.
 3. **Approve** starts a new flow run of kind `continuation`. **Deny** returns a tool error to the agent and the chat goes
    on. No run is started without an approval.
+
+![The approval card of an emit_<port> call: flow, node and port, next node and payload](images/chat/emit-approval-light.png) ([dark](images/chat/emit-approval-dark.png))
 
 The continuation run:
 
@@ -859,6 +863,8 @@ ID --table` show the same.
 In the web UI the Agent run page and the agent node panel of a run have a **Continue in chat** button (disabled until the
 run ends) and list the chats forked from the run. A continuation run shows a banner linking the original run and the chat,
 marks the node runs reused from the original, and the original run lists its continuation runs under **Continued by**.
+
+![A continuation run with the banner linking the original run and the chat](images/chat/continuation-run-light.png) ([dark](images/chat/continuation-run-dark.png))
 
 ### Testing agent nodes (`simulate_emit`)
 

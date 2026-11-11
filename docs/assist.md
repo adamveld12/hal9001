@@ -267,6 +267,10 @@ CLI: `hal9001 conversations list|get|messages|fork` (`list` takes `--source`, `-
 right (`/chat/<id>`; the id is an assist session id for a chat and an agent run id for a flow run). It reads
 `GET /api/conversations` and the endpoints below it; the chat itself is the same component as in the drawer.
 
+![The Chat page: conversation list, filters and a continued chat with an approval and sandbox log rows](images/chat/chat-page-light.png) ([dark](images/chat/chat-page-dark.png))
+
+![The Automate section of the sidebar with Chat](images/chat/sidebar-automate-light.png) ([dark](images/chat/sidebar-automate-dark.png))
+
 **List.** Newest activity first, 30 at a time (`Load more`). Filters: source (`All`, `Flow runs`, `Chats`), flow, runtime,
 status, a date range (`since`, `until`; the whole last day is included) and a text search (`q`, applied when typing
 pauses). They live in the URL query (`source`, `flow`, `runtime`, `status`, `since`, `until`, `q`), so a view can be linked
@@ -295,8 +299,19 @@ returns to the page you came from before the Chat page (the inbox when there is 
 - A pending tool approval shows the approval's reason as it is, in a monospace block. An emit tool puts the flow, the
   node and port, the next nodes and the payload there.
 
+A chat continued from a run starts with the divider `Continued from run X; earlier context replayed`, or `session resumed`
+when the runtime loaded its own session. The sandbox rows show that the run's sandbox was reattached.
+
+![A continued chat: earlier context replayed](images/chat/continued-chat-light.png) ([dark](images/chat/continued-chat-dark.png))
+
+![A continued chat: session resumed](images/chat/continued-chat-resumed-light.png) ([dark](images/chat/continued-chat-resumed-dark.png))
+
 **One chat at a time.** The drawer is not shown on `/chat`. The chat shown on the page receives the assistant's
 `navigate_ui` and `start_draft` requests, as the drawer's chat does elsewhere.
+
+The drawer has a `Full page` button (accessible name `Open full page`) in its header that opens the same chat on `/chat/<id>`.
+
+![The Ask AI drawer with the Full page button (accessible name Open full page)](images/chat/drawer-open-full-page-light.png) ([dark](images/chat/drawer-open-full-page-dark.png))
 
 ## The draft directory
 
