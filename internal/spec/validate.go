@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"hal9001/internal/outschema"
 	"hal9001/internal/transform"
 )
 
@@ -320,7 +321,7 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 
 var nodeFieldsAllowed = map[string][]string{
 	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "output_schema", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
 	NodeApproval:  {"title", "body", "fields", "editable", "priority", "timeout", "on_timeout"},
@@ -336,7 +337,7 @@ func (n *Node) setFields() []string {
 		{"lang", n.Lang != ""}, {"ports", len(n.Ports) > 0}, {"script", n.Script != ""}, {"command", len(n.Command) > 0},
 		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
-		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
+		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"output_schema", len(n.OutputSchema) > 0}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
 		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"editable", len(n.Editable) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
@@ -526,9 +527,19 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 		c.errorf(CodeRequired, p+".instructions", "set instructions (inline prompt) or prompt (a file in prompts/)")
 	}
 	if n.Output != "" {
-		c.enum(p+".output", n.Output, []string{OutputNote, OutputNone}, false)
+		c.enum(p+".output", n.Output, []string{OutputNote, OutputNone, OutputTool}, false)
 		if n.Instructions == "" {
 			c.errorf(CodeFieldNotAllowed, p+".output", "output is only valid with instructions; a prompt file sets its own output")
+		}
+	}
+	if len(n.OutputSchema) > 0 {
+		switch {
+		case n.Output != OutputTool:
+			c.errorf(CodeFieldNotAllowed, p+".output_schema", "output_schema is only valid with output: tool")
+		default:
+			if _, err := outschema.Compile(n.OutputSchema); err != nil {
+				c.errorf(CodeInvalidValue, p+".output_schema", "invalid output_schema: %s", err)
+			}
 		}
 	}
 	c.template(p+".instructions", n.Instructions)
