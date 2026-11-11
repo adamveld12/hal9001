@@ -21,6 +21,18 @@ run = [
 description = "Every check the hooks run, on the whole tree (static, race, sharded e2e and web in parallel)"
 depends = ["check:static", "race", "e2e", "check:web"]
 
+[tasks.wt]
+description = "Create the worktree ../hal9001-wt-<name> on branch feat/<name> (or a given branch) from origin/main; prints its path. Usage: mise run wt <name> [branch]"
+run = "scripts/wt.sh"
+
+[tasks.push]
+description = "Push the current branch to origin with gh credentials (SSH fallback for workflow-scope rejections, one retry on a known flaky pre-push test; --force-with-lease only when passed)"
+run = "scripts/push.sh"
+
+[tasks.checks]
+description = "Every pre-commit check over the whole tree in non-writing mode (fmt diff, prettier, gen:api diff, gitleaks origin/main..HEAD, go mod tidy, lint, go test -short, web lint/typecheck/test)"
+run = "scripts/checks.sh"
+
 [tasks."check:static"]
 description = "gitleaks, format, go.mod tidy, lint"
 run = [
