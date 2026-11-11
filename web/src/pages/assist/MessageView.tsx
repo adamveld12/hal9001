@@ -11,6 +11,8 @@ import { extractCommand, extractDiffs } from "../approvals/diff";
 import { DiffView } from "../approvals/DiffView";
 import { IssueLinkCard } from "./IssueLinkCard";
 import { parseIssueLink } from "./issueLink";
+import { DividerLine, NoticeLine } from "./ThreadNotices";
+import { systemTone } from "./threadItems";
 
 const KIND_ICON: Record<string, IconName> = {
   read: "note",
@@ -104,11 +106,18 @@ function ToolRow({
 export function MessageView({
   message,
   traceRunId,
+  source = "chat",
 }: {
   message: AssistMessage;
   traceRunId: string | undefined;
+  /** What the transcript belongs to: a chat, or a flow run (its system messages are notes unless the run failed). */
+  source?: "chat" | "flow";
 }) {
   let body;
+  if (message.kind === "divider")
+    return <DividerLine text={message.text ?? ""} />;
+  if (message.kind === "notice")
+    return <NoticeLine text={message.text ?? ""} />;
   switch (message.role) {
     case "user":
       return (
@@ -125,14 +134,30 @@ export function MessageView({
       ) : null;
       break;
     case "system":
-      body = (
-        <div
-          role="alert"
-          className="rounded-md border border-bad/30 bg-bad/5 px-2 py-1.5 text-xs text-bad"
-        >
-          {message.text}
-        </div>
-      );
+      body =
+        systemTone(source, message.text) === "error" ? (
+          <div
+            role="alert"
+            className="rounded-md border border-bad/30 bg-bad/5 px-2 py-1.5 text-xs text-bad"
+          >
+            {message.text}
+          </div>
+        ) : (
+          <div className="rounded-md border border-line bg-raised px-2 py-1.5 text-xs text-muted">
+            {message.text}
+            {message.approval_id && (
+              <>
+                {" "}
+                <Link
+                  to={`/inbox/approval/${message.approval_id}`}
+                  className="text-accent hover:underline"
+                >
+                  Open approval
+                </Link>
+              </>
+            )}
+          </div>
+        );
       break;
   }
   return (

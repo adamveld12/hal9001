@@ -33,13 +33,15 @@ type convJSON struct {
 }
 
 type convMsgJSON struct {
-	ID       string  `json:"id"`
-	Role     string  `json:"role"`
-	Kind     string  `json:"kind"`
-	Text     *string `json:"text"`
-	ToolCall *struct {
-		Title  string `json:"title"`
-		Status string `json:"status"`
+	ID         string  `json:"id"`
+	Role       string  `json:"role"`
+	Kind       string  `json:"kind"`
+	Text       *string `json:"text"`
+	ApprovalID *string `json:"approval_id"`
+	ToolCall   *struct {
+		ToolCallID string `json:"tool_call_id"`
+		Title      string `json:"title"`
+		Status     string `json:"status"`
 	} `json:"tool_call"`
 }
 

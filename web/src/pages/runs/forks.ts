@@ -1,7 +1,6 @@
-// Hooks for continuing an agent run in a chat and for what came from a run.
-// They sit here so this slice does not edit api/conversations.ts; they can be folded into it later.
+// Hooks for what came from a run: the chats forked from it and the continuation runs it started.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "../../api/client";
 import { qk } from "../../api/keys";
 
@@ -23,20 +22,6 @@ export function useForksOf(agentRunId: string) {
         }),
       ),
     select: (page) => page.items,
-  });
-}
-
-/** Creates a chat that continues the agent run (`POST /api/conversations/{id}/fork`). */
-export function useForkConversation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (agentRunId: string) =>
-      unwrap(
-        api.POST("/api/conversations/{id}/fork", {
-          params: { path: { id: agentRunId } },
-        }),
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk("assist-sessions") }),
   });
 }
 

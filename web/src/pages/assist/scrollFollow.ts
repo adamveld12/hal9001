@@ -31,3 +31,20 @@ export function pendingApprovalMessage(
 export function isBelowView(itemTop: number, boxBottom: number): boolean {
   return itemTop >= boxBottom - 8;
 }
+
+/**
+ * The message an approval's `anchor` points to: the last message whose id is not after it (ids sort in transcript
+ * order, and the anchor is the newest message or event at the time the approval was requested). Undefined without
+ * an anchor or when every message is after it.
+ */
+export function anchorMessage(
+  messages: readonly Pick<AssistMessage, "id">[],
+  anchor: string | null | undefined,
+): string | undefined {
+  if (!anchor) return undefined;
+  let found: string | undefined;
+  for (const m of messages) {
+    if (m.id <= anchor && (found === undefined || m.id > found)) found = m.id;
+  }
+  return found;
+}

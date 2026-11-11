@@ -139,7 +139,7 @@ func (l *lease) acquire(ctx context.Context) (sandbox.Session, string, error) {
 				return s, "", nil
 			}
 		}
-		return l.recreate(ctx, true)
+		return l.recreate(ctx, true, "")
 	}
 	if !l.started {
 		l.started = true
@@ -149,11 +149,11 @@ func (l *lease) acquire(ctx context.Context) (sandbox.Session, string, error) {
 					return l.takeOver(s, from), "", nil
 				}
 			}
-			return l.recreate(ctx, true)
+			return l.recreate(ctx, true, from)
 		}
-		return l.recreate(ctx, false)
+		return l.recreate(ctx, false, "")
 	}
-	return l.recreate(ctx, true)
+	return l.recreate(ctx, true, "")
 }
 
 // session is acquire for an operation: a notice produced here is kept for the next BeforeTurn.
@@ -204,11 +204,12 @@ func (l *lease) takeOver(s sandbox.Session, from string) sandbox.Session {
 }
 
 // recreate opens a new sandbox from the same image, repo and ref. With notify, it returns the notice that the earlier
-// sandbox is gone. The caller holds mu.
-func (l *lease) recreate(ctx context.Context, notify bool) (sandbox.Session, string, error) {
+// sandbox is gone; fromRun is the agent run whose sandbox the conversation could not take over (empty otherwise). The
+// caller holds mu.
+func (l *lease) recreate(ctx context.Context, notify bool, fromRun string) (sandbox.Session, string, error) {
 	var notice string
 	if notify {
-		notice = l.goneNotice()
+		notice = l.goneNotice(fromRun)
 	}
 	lg := l.newLog()
 	if lg != nil && notice != "" {
@@ -236,13 +237,17 @@ func (l *lease) newLog() sandbox.RunLog {
 	return l.p.opt.Log(l.ctx, l.run, l.run.Info())
 }
 
-// goneNotice is the notice for a conversation whose earlier sandbox was removed.
-func (l *lease) goneNotice() string {
+// goneNotice is the notice for a conversation whose earlier sandbox was removed. For a sandbox of an agent run that
+// the conversation could not take over (fromRun) the reason is not known: the keep_alive may have passed, another chat
+// may hold it, or the daemon stopped in between.
+func (l *lease) goneNotice(fromRun string) string {
 	var gone string
 	cfg, err := l.p.m.Config(l.run.Sandbox)
 	switch {
 	case err == nil && cfg.KeepAlive == 0:
 		gone = "The sandbox was removed as soon as it was not in use (keep_alive is 0)"
+	case err == nil && fromRun != "":
+		gone = "The sandbox of run " + fromRun + " is no longer available (keep_alive is " + cfg.KeepAlive.String() + ")"
 	case err == nil:
 		gone = "The sandbox was removed after " + cfg.KeepAlive.String() + " without activity"
 	default:

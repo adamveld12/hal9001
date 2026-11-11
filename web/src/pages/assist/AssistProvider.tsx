@@ -34,6 +34,8 @@ import {
 } from "./drawerState";
 import { startSession } from "./startSession";
 import { targetConfig, targetPath } from "./targets";
+import { chatPath, isChatPath, NEW_CHAT_ID } from "../chat/path";
+import { loadOrigin, safeOrigin } from "../chat/origin";
 
 const LEAVE_PAGE = "Leave this page? Unsaved changes will be lost.";
 /** Stream events remembered so a replay after a reconnect does not act twice. */
@@ -185,16 +187,19 @@ export function AssistProvider({ children }: { children: ReactNode }) {
   const linkParam = params.get("assist");
   useEffect(() => {
     if (linkParam === null) return;
+    const next = new URLSearchParams(params);
+    next.delete("assist");
+    if (isChatPath(latest.current.location.pathname)) {
+      // On the Chat page the link selects the conversation there.
+      void navigate(
+        { pathname: chatPath(linkParam), search: next.toString() },
+        { replace: true },
+      );
+      return;
+    }
     openSession(linkParam);
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("assist");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [linkParam, openSession, setParams]);
+    setParams(next, { replace: true });
+  }, [linkParam, params, openSession, setParams, navigate]);
 
   const pageContext = useCallback(() => {
     const loc = latest.current.location;
@@ -221,6 +226,45 @@ export function AssistProvider({ children }: { children: ReactNode }) {
     [navigate],
   );
 
+  // The chat the Chat page shows (null: none). While that page is open the
+  // drawer is not, so the assistant's requests are taken for this chat.
+  const chatPageSession = useRef<string | null>(null);
+  const registerChatPage = useCallback((id: string | null) => {
+    chatPageSession.current = id;
+  }, []);
+
+  /** Show the chat in the full page instead of the drawer; the drawer closes, the chat stays the same session. */
+  const openFullPage = useCallback(() => {
+    const id = latest.current.state.sessionId;
+    if (!go(chatPath(id ?? NEW_CHAT_ID))) return;
+    dispatch({ type: "close" });
+  }, [go]);
+
+  /** Back from the Chat page: the drawer shows `session` (or its start view) and the page that was open before returns. */
+  const returnToDrawer = useCallback(
+    (session: Pick<AssistSession, "id" | "target"> | null) => {
+      if (session === null) dispatch({ type: "open" });
+      else
+        dispatch({
+          type: "select",
+          sessionId: session.id,
+          target: session.target,
+        });
+      void navigate(safeOrigin(loadOrigin()));
+    },
+    [navigate],
+  );
+
+  /** The session a draft the assistant starts copies its runtime and model from: the one shown, in the drawer or on the Chat page. */
+  const currentSession = async () => {
+    const { location, active } = latest.current;
+    if (!isChatPath(location.pathname)) return active;
+    const id = chatPageSession.current;
+    return id === null
+      ? undefined
+      : await fetchAssistSession(qc, id).catch(() => undefined);
+  };
+
   const startDraft = async (d: AssistStartDraft) => {
     const target: DrawerTarget = { kind: d.kind, id: d.id };
     const path = targetPath(d.kind, d.id);
@@ -230,7 +274,7 @@ export function AssistProvider({ children }: { children: ReactNode }) {
       if (path !== null) go(path);
       return;
     }
-    const cur = latest.current.active;
+    const cur = await currentSession();
     if (!cur) {
       setNotice("Could not start the draft: the chat is not loaded yet.");
       return;
@@ -263,10 +307,14 @@ export function AssistProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Each stream event acts once, and only for the session the drawer shows.
+  // Each stream event acts once, and only for the session shown: the drawer's,
+  // or the Chat page's while that page is open.
   const seen = useRef(new Set<string>());
   const accept = (eventId: string, sessionId: string): boolean => {
-    if (sessionId !== latest.current.state.sessionId) return false;
+    const shown = isChatPath(latest.current.location.pathname)
+      ? chatPageSession.current
+      : latest.current.state.sessionId;
+    if (sessionId !== shown) return false;
     if (seen.current.has(eventId)) return false;
     seen.current.add(eventId);
     if (seen.current.size > SEEN_EVENTS) {
@@ -307,6 +355,9 @@ export function AssistProvider({ children }: { children: ReactNode }) {
       registerEditor,
       editor,
       pageContext,
+      openFullPage,
+      returnToDrawer,
+      registerChatPage,
     }),
     [
       state,
@@ -327,6 +378,9 @@ export function AssistProvider({ children }: { children: ReactNode }) {
       registerEditor,
       editor,
       pageContext,
+      openFullPage,
+      returnToDrawer,
+      registerChatPage,
     ],
   );
 

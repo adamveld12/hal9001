@@ -65,6 +65,17 @@ export interface Assist {
   editor: () => EditorBridge | null;
   /** The page context for a turn: the page's published description, capped, with the route. */
   pageContext: () => AssistPageContext;
+  /** Show the drawer's chat on the Chat page (`/chat/<session id>`) and close the drawer; the chat is the same session. */
+  openFullPage: () => void;
+  /** Leave the Chat page: the drawer shows `session` (null: its start view) and the page the user came from returns. */
+  returnToDrawer: (
+    session: Pick<AssistSession, "id" | "target"> | null,
+  ) => void;
+  /**
+   * The Chat page reports the chat it shows (null: none). While that page is
+   * open the assistant's navigate_ui and start_draft requests are taken for it.
+   */
+  registerChatPage: (sessionId: string | null) => void;
 }
 
 export const AssistContext = createContext<Assist | null>(null);

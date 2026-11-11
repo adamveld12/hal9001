@@ -3,6 +3,7 @@ import {
   sandboxLogUrl,
   SANDBOX_LOG_MAX,
   useAgentRunSandboxLog,
+  useConversationSandboxLog,
   useNodeRunSandboxLog,
   type SandboxScope,
 } from "../../api/runs";
@@ -159,7 +160,7 @@ function EntryBody({ e }: { e: SandboxLogEntry }) {
   );
 }
 
-function EntryRow({
+export function EntryRow({
   e,
   sessionLabel,
 }: {
@@ -426,7 +427,10 @@ export function SandboxLogSection({
 }) {
   const agent = useAgentRunSandboxLog(scope === "agent" ? id : undefined);
   const node = useNodeRunSandboxLog(scope === "node" ? id : undefined);
-  const q = scope === "agent" ? agent : node;
+  const conversation = useConversationSandboxLog(
+    scope === "conversation" ? id : undefined,
+  );
+  const q = scope === "agent" ? agent : scope === "node" ? node : conversation;
   if (id === undefined || !q.data) {
     // A failed fetch must not look like "no sandbox": say so, but stay quiet while loading.
     if (q.isError)

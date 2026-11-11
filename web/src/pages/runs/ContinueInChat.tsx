@@ -5,7 +5,8 @@ import { Button, StatusBadge } from "../../components/ui";
 import { shortId } from "../../lib/format";
 import { Mono, SectionTitle, TextLink } from "./Meta";
 import { CONTINUE_DISABLED_REASON, canContinue, chatPath } from "./continue";
-import { useContinuationsOf, useForkConversation, useForksOf } from "./forks";
+import { useForkConversation } from "../../api/conversations";
+import { useContinuationsOf, useForksOf } from "./forks";
 import type { Schemas } from "../../api/client";
 
 /** Forks the agent run into a chat and opens it. Disabled with the reason while the run is active. */
