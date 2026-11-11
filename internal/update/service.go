@@ -26,7 +26,7 @@ const (
 	ReleasesURL = "https://github.com/adamveld12/hal9001/releases/latest"
 
 	defaultStartDelay     = 15 * time.Second
-	defaultCheckInterval  = 6 * time.Hour
+	defaultCheckInterval  = 3 * time.Hour
 	defaultIdlePoll       = 10 * time.Second
 	defaultInstallTimeout = 10 * time.Minute
 	defaultMinCheckGap    = 10 * time.Second

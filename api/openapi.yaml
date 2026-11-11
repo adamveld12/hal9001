@@ -279,7 +279,7 @@ paths:
       summary: App update state
       description: |
         Whether the macOS app can update itself, the channel and auto-install settings, the newest release on the feed,
-        and where an install stands. The daemon checks the feed shortly after start, every 6 hours, on
+        and where an install stands. The daemon checks the feed shortly after start, every 3 hours, on
         `POST /api/update/check`, and when the channel changes. Changes are pushed as `update.status` on the stream.
       x-hal-service: api
       responses:
