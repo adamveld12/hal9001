@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"sync"
 	"time"
 
@@ -126,22 +125,12 @@ func (r *Recorder) RawFrames(runID string) []agent.RawFrame {
 type Broker struct {
 	mu        sync.Mutex
 	proposals []agent.ProposalApproval
-	pending   map[string]*pendingApproval
-	expired   []string
-	arrived   chan agent.ToolApproval
 	nextID    int
-}
-
-type pendingApproval struct {
-	req agent.ToolApproval
-	ch  chan agent.ToolDecision
 }
 
 var _ agent.ApprovalBroker = (*Broker)(nil)
 
-func NewBroker() *Broker {
-	return &Broker{pending: map[string]*pendingApproval{}, arrived: make(chan agent.ToolApproval, 64)}
-}
+func NewBroker() *Broker { return &Broker{} }
 
 func (b *Broker) SubmitProposal(_ context.Context, p agent.ProposalApproval) (string, error) {
 	b.mu.Lock()
@@ -151,70 +140,11 @@ func (b *Broker) SubmitProposal(_ context.Context, p agent.ProposalApproval) (st
 	return fmt.Sprintf("approval-%d", b.nextID), nil
 }
 
-func (b *Broker) AwaitToolApproval(ctx context.Context, a agent.ToolApproval) (agent.ToolDecision, error) {
-	pa := &pendingApproval{req: a, ch: make(chan agent.ToolDecision, 1)}
-	b.mu.Lock()
-	b.pending[a.PermissionRequestID] = pa
-	b.mu.Unlock()
-	b.arrived <- a
-	select {
-	case d := <-pa.ch:
-		return d, nil
-	case <-ctx.Done():
-		b.mu.Lock()
-		delete(b.pending, a.PermissionRequestID)
-		b.expired = append(b.expired, a.PermissionRequestID)
-		b.mu.Unlock()
-		return agent.ToolDecision{}, ctx.Err()
-	}
-}
-
 // Proposals returns the proposals submitted so far.
 func (b *Broker) Proposals() []agent.ProposalApproval {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]agent.ProposalApproval(nil), b.proposals...)
-}
-
-// Expired returns permission request ids whose wait ended without a decision.
-func (b *Broker) Expired() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]string(nil), b.expired...)
-}
-
-// Pending returns permission request ids currently waiting for a decision.
-func (b *Broker) Pending() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var ids []string
-	for id := range b.pending {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-// Next waits for the next tool approval to be requested.
-func (b *Broker) Next(timeout time.Duration) (agent.ToolApproval, bool) {
-	select {
-	case a := <-b.arrived:
-		return a, true
-	case <-time.After(timeout):
-		return agent.ToolApproval{}, false
-	}
-}
-
-// Decide answers a pending approval; it reports whether one was waiting.
-func (b *Broker) Decide(permissionRequestID string, d agent.ToolDecision) bool {
-	b.mu.Lock()
-	pa, ok := b.pending[permissionRequestID]
-	delete(b.pending, permissionRequestID)
-	b.mu.Unlock()
-	if ok {
-		pa.ch <- d
-	}
-	return ok
 }
 
 // ManualClock is a Clock the test advances by hand.

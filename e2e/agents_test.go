@@ -261,8 +261,8 @@ func TestScenario07ProposalDenyRoutesToDeniedPort(t *testing.T) {
 	runID := d.InjectRun("src", map[string]any{"id": "43"})
 	d.WaitRun(runID, "awaiting_approval")
 	ap := d.WaitApproval("proposal")
-	decided := d.Decide(ap.ID, false, map[string]any{"comment": "too risky"})
-	if decided.Status != "denied" || decided.Comment != "too risky" {
+	decided := d.Decide(ap.ID, false, nil)
+	if decided.Status != "denied" || decided.Comment != "" {
 		t.Errorf("decision: %+v", decided)
 	}
 	done := d.WaitRun(runID, "succeeded")
@@ -272,7 +272,7 @@ func TestScenario07ProposalDenyRoutesToDeniedPort(t *testing.T) {
 		t.Fatalf("denied node %+v runs %+v", work, runs)
 	}
 	items := d.InboxByTitle()
-	if it, ok := items["refused 43"]; !ok || it.SummaryMD != "too risky" {
+	if it, ok := items["refused 43"]; !ok || it.SummaryMD != "" {
 		t.Errorf("denied branch: %+v", items)
 	}
 	if _, ok := items["done 43"]; ok {

@@ -133,7 +133,7 @@ func TestHalMCPToolsDeny(t *testing.T) {
 	d.Decide(ap.ID, false, map[string]any{"comment": "nope"})
 	done := d.WaitRun(runID, "succeeded")
 	tr := d.Transcript(d.AgentRuns(d.Node(done, "work").ID)[0].ID)
-	if !strings.Contains(tr, "mcp[c2] is_error=true") || !strings.Contains(tr, "denied by the user: nope") {
+	if !strings.Contains(tr, "mcp[c2] is_error=true") || !strings.Contains(tr, `Denied by the user: \"nope\"`) {
 		t.Errorf("deny did not reach the agent as a tool error:\n%s", tr)
 	}
 	if !strings.Contains(tr, "mcp[c3] is_error=false") {

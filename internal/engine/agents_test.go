@@ -168,8 +168,8 @@ func TestProposalResumeFallsBackToNewSession(t *testing.T) {
 	}
 }
 
-// Scenario 7, deny: the denial is recorded, nothing runs, and the node routes
-// to its denied port.
+// Scenario 7, deny: the denial (without steering text) is recorded, nothing runs, and the node routes
+// to its denied port. A denial with steering revises the proposal instead (e2e/approvals_steering_test.go).
 func TestScenario7ProposalDenyRoutesToDenied(t *testing.T) {
 	h := newHarness(t)
 	h.idleSensor()
@@ -181,7 +181,7 @@ func TestScenario7ProposalDenyRoutesToDenied(t *testing.T) {
 	h.waitRun(runID, store.FlowRunAwaitingApproval)
 	ap := h.waitProposal()
 
-	decided, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: false, Comment: "too risky", Principal: "me"})
+	decided, err := h.eng.DecideApproval(t.Context(), ap.ID, core.ApprovalDecision{Approve: false, Principal: "me"})
 	if err != nil || decided.Status != store.ApprovalDenied {
 		t.Fatalf("decide: %+v %v", decided, err)
 	}
@@ -192,7 +192,7 @@ func TestScenario7ProposalDenyRoutesToDenied(t *testing.T) {
 		t.Fatalf("denied node %+v runs %+v", work, runs)
 	}
 	items := inboxTitles(h.inboxItems())
-	if it, ok := items["refused 43"]; !ok || it.SummaryMD != "too risky" {
+	if it, ok := items["refused 43"]; !ok || it.SummaryMD != "" {
 		t.Errorf("denied branch: %+v", items)
 	}
 	if _, ok := items["done 43"]; ok {

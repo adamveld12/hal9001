@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 )
 
 // ---- agent runs ----
@@ -472,21 +475,33 @@ func (s *Store) ListPermissionRequests(ctx context.Context, f PermissionRequestF
 // ---- approvals ----
 
 func approvalCols(slim bool) string {
-	return "id, COALESCE(agent_run_id, ''), COALESCE(node_run_id, ''), type, COALESCE(permission_request_id, ''), request, " + contentCols("proposal", slim) +
-		", status, comment, decided_by, created_at, expires_at, decided_at"
+	return "id, COALESCE(agent_run_id, ''), COALESCE(node_run_id, ''), type, COALESCE(permission_request_id, ''), request, " +
+		"title, description, description_by, priority, origin, origin_label, origin_client, conversation_id, conversation_kind, anchor, held_note, details, " +
+		contentCols("proposal", slim) + ", status, comment, decided_by, created_at, expires_at, decided_at"
 }
 
 func scanApproval(r rowScanner) (Approval, error) {
 	var a Approval
-	var typ, status, created string
+	var typ, status, created, descBy, prio, origin, convKind, details string
 	var expires, decided sql.NullString
-	dests := []any{&a.ID, &a.AgentRunID, &a.NodeRunID, &typ, &a.PermissionRequestID, &a.Request}
+	dests := []any{&a.ID, &a.AgentRunID, &a.NodeRunID, &typ, &a.PermissionRequestID, &a.Request,
+		&a.Title, &a.Description, &descBy, &prio, &origin, &a.OriginLabel, &a.OriginClient, &a.ConversationID, &convKind, &a.Anchor, &a.HeldNote, &details}
 	dests = append(dests, scanDests(&a.Proposal)...)
 	dests = append(dests, &status, &a.Comment, &a.DecidedBy, &created, &expires, &decided)
 	if err := r.Scan(dests...); err != nil {
 		return Approval{}, scanErr(err)
 	}
 	a.Type, a.Status = ApprovalType(typ), ApprovalState(status)
+	a.DescriptionBy, a.Priority, a.Origin, a.ConversationKind = DescriptionBy(descBy), Priority(prio), ApprovalOrigin(origin), ConversationKind(convKind)
+	if err := json.Unmarshal([]byte(details), &a.Details); err != nil {
+		return Approval{}, fmt.Errorf("store: approval %s: decode details: %w", a.ID, err)
+	}
+	if a.Details.Fields == nil {
+		a.Details.Fields = []RequestField{}
+	}
+	if a.Details.Diffs == nil {
+		a.Details.Diffs = []ApprovalDiff{}
+	}
 	var err error
 	if a.CreatedAt, err = parseTS(created); err != nil {
 		return Approval{}, err
@@ -498,31 +513,76 @@ func scanApproval(r rowScanner) (Approval, error) {
 	return a, err
 }
 
-// CreateApproval inserts a, assigning ID, Status (pending) and CreatedAt.
-// A tool_call approval must reference its permission request. A request approval has no agent run; it belongs to the
-// node run of an approval node, or to none at all (an operator approval, raised for an external MCP client's call).
+// CreateApproval inserts a, assigning ID, Status (pending) and CreatedAt. Only the engine's RaiseApproval calls it
+// (a test scans the tree), after it has validated and redacted the content; the store checks what the schema relies
+// on: a title and a description of at most MaxApprovalDescription characters, an origin, and the lineage the type
+// needs (a tool_call approval references its permission request).
 func (s *Store) CreateApproval(ctx context.Context, a *Approval) error {
 	switch a.Type {
 	case ApprovalRequest:
-		if a.AgentRunID != "" || a.Request == "" {
-			return fmt.Errorf("%w: request approval requires request and no agent_run_id", ErrInvalid)
+		if a.AgentRunID == "" && a.NodeRunID == "" && a.Origin != OriginMCP {
+			return fmt.Errorf("%w: request approval requires an agent run, a node run or origin mcp", ErrInvalid)
 		}
 	case ApprovalProposal:
+		if a.AgentRunID == "" {
+			return fmt.Errorf("%w: agent_run_id required", ErrInvalid)
+		}
 	case ApprovalToolCall:
 		if a.PermissionRequestID == "" {
 			return fmt.Errorf("%w: tool_call approval requires permission_request_id", ErrInvalid)
 		}
+		if a.AgentRunID == "" {
+			return fmt.Errorf("%w: agent_run_id required", ErrInvalid)
+		}
 	default:
 		return fmt.Errorf("%w: approval type %q", ErrInvalid, a.Type)
 	}
-	if a.Type != ApprovalRequest && a.AgentRunID == "" {
-		return fmt.Errorf("%w: agent_run_id required", ErrInvalid)
+	if strings.TrimSpace(a.Title) == "" {
+		return fmt.Errorf("%w: approval title required", ErrInvalid)
+	}
+	if n := utf8.RuneCountInString(a.Description); strings.TrimSpace(a.Description) == "" || n > MaxApprovalDescription {
+		return fmt.Errorf("%w: approval description must be 1 to %d characters", ErrInvalid, MaxApprovalDescription)
+	}
+	if a.DescriptionBy == "" {
+		a.DescriptionBy = DescByHal
+	}
+	if a.DescriptionBy != DescByHal && a.DescriptionBy != DescByAgent {
+		return fmt.Errorf("%w: description_by %q", ErrInvalid, a.DescriptionBy)
+	}
+	if a.Priority == "" {
+		a.Priority = PriorityNormal
+	}
+	if !a.Priority.valid() {
+		return fmt.Errorf("%w: approval priority %q", ErrInvalid, a.Priority)
+	}
+	switch a.Origin {
+	case OriginFlow, OriginChat, OriginContinuedChat, OriginMCP:
+	default:
+		return fmt.Errorf("%w: approval origin %q", ErrInvalid, a.Origin)
+	}
+	switch a.ConversationKind {
+	case "", ConvChat, ConvFlow:
+	default:
+		return fmt.Errorf("%w: conversation kind %q", ErrInvalid, a.ConversationKind)
+	}
+	if (a.ConversationID == "") != (a.ConversationKind == "") {
+		return fmt.Errorf("%w: conversation id and kind go together", ErrInvalid)
 	}
 	if a.Status == "" {
 		a.Status = ApprovalPending
 	}
 	if a.Status != ApprovalPending && a.Status != ApprovalApproved && a.Status != ApprovalDenied && a.Status != ApprovalExpired {
 		return fmt.Errorf("%w: approval status %q", ErrInvalid, a.Status)
+	}
+	if a.Details.Fields == nil {
+		a.Details.Fields = []RequestField{}
+	}
+	if a.Details.Diffs == nil {
+		a.Details.Diffs = []ApprovalDiff{}
+	}
+	details, err := json.Marshal(a.Details)
+	if err != nil {
+		return fmt.Errorf("store: encode approval details: %w", err)
 	}
 	if a.ID == "" {
 		a.ID = s.NewID()
@@ -534,9 +594,13 @@ func (s *Store) CreateApproval(ctx context.Context, a *Approval) error {
 		if err := t.prep(ctx, "approvals", "", contentField{"proposal", &a.Proposal}); err != nil {
 			return err
 		}
-		_, err := t.ExecContext(ctx, `INSERT INTO approvals (id, agent_run_id, node_run_id, type, permission_request_id, request, proposal_text, proposal_ref, proposal_size, status, comment, decided_by,
-			created_at, expires_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			a.ID, nullStr(a.AgentRunID), nullStr(a.NodeRunID), a.Type, nullStr(a.PermissionRequestID), a.Request, a.Proposal.Text, a.Proposal.Ref, a.Proposal.Size, a.Status, a.Comment, a.DecidedBy,
+		_, err := t.ExecContext(ctx, `INSERT INTO approvals (id, agent_run_id, node_run_id, type, permission_request_id, request,
+			title, description, description_by, priority, origin, origin_label, origin_client, conversation_id, conversation_kind, anchor, held_note, details,
+			proposal_text, proposal_ref, proposal_size, status, comment, decided_by, created_at, expires_at, decided_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			a.ID, nullStr(a.AgentRunID), nullStr(a.NodeRunID), a.Type, nullStr(a.PermissionRequestID), a.Request,
+			a.Title, a.Description, a.DescriptionBy, a.Priority, a.Origin, a.OriginLabel, a.OriginClient, a.ConversationID, a.ConversationKind, a.Anchor, a.HeldNote, string(details),
+			a.Proposal.Text, a.Proposal.Ref, a.Proposal.Size, a.Status, a.Comment, a.DecidedBy,
 			ts(a.CreatedAt), tsOrNil(a.ExpiresAt), tsOrNil(a.DecidedAt))
 		if err != nil {
 			return fmt.Errorf("store: insert approval: %w", err)
@@ -557,13 +621,14 @@ func (s *Store) GetApproval(ctx context.Context, id string) (*Approval, error) {
 
 // ApprovalFilter selects approvals for ListApprovals.
 type ApprovalFilter struct {
-	Statuses   []ApprovalState
-	Type       ApprovalType
-	AgentRunID string
-	NodeRunID  string // request approvals of one node run
-	FlowRunID  string
-	Time       TimeRange // on created_at
-	Slim       bool      // omit inline proposal text
+	Statuses       []ApprovalState
+	Type           ApprovalType
+	AgentRunID     string
+	NodeRunID      string // request approvals of one node run
+	FlowRunID      string
+	ConversationID string    // the approvals raised in one conversation (chat session id or flow agent run id)
+	Time           TimeRange // on created_at
+	Slim           bool      // omit inline proposal text
 	ListOpts
 }
 
@@ -572,6 +637,7 @@ func (s *Store) ListApprovals(ctx context.Context, f ApprovalFilter) (Page[Appro
 	var w where
 	w.eq("agent_run_id", f.AgentRunID)
 	w.eq("node_run_id", f.NodeRunID)
+	w.eq("conversation_id", f.ConversationID)
 	w.eq("type", string(f.Type))
 	w.in("status", strs(f.Statuses))
 	w.timeRange("created_at", f.Time)
@@ -581,6 +647,21 @@ func (s *Store) ListApprovals(ctx context.Context, f ApprovalFilter) (Page[Appro
 	}
 	return listPage(ctx, s.rdb, "SELECT "+approvalCols(f.Slim)+" FROM approvals", &w, f.ListOpts, "id",
 		scanApproval, func(a Approval) string { return a.ID })
+}
+
+// CountSteeredDenials counts the denials with a steering comment in one conversation: the approvals of that
+// conversation that were denied with a non-empty comment.
+func (s *Store) CountSteeredDenials(ctx context.Context, conversationID string) (int, error) {
+	var n int
+	err := s.rdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM approvals WHERE conversation_id = ? AND status = 'denied' AND comment <> ''`, conversationID).Scan(&n)
+	return n, err
+}
+
+// LastAgentEventSeq is the sequence number of the newest event of an agent run; 0 without events.
+func (s *Store) LastAgentEventSeq(ctx context.Context, agentRunID string) (int64, error) {
+	var seq int64
+	err := s.rdb.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM agent_events WHERE agent_run_id = ?`, agentRunID).Scan(&seq)
+	return seq, err
 }
 
 // ApprovalDecision is the outcome applied by DecideApproval.

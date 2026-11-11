@@ -805,24 +805,27 @@ func sandboxLogLeaf(format string) *leaf {
 
 func approvalCmds() []*command {
 	var lf listFlags
-	var status, typ, agentRun, flowRun string
+	var status, typ, agentRun, flowRun, conversation string
 	list := &leaf{
 		flags: func(fs *flag.FlagSet) {
 			lf.register(fs)
 			fs.StringVar(&status, "status", "", "filter by status: pending, approved, denied, expired")
-			fs.StringVar(&typ, "type", "", "filter by type: proposal, tool_call")
+			fs.StringVar(&typ, "type", "", "filter by type: proposal, tool_call, request")
 			fs.StringVar(&agentRun, "agent-run", "", "filter by agent run id")
 			fs.StringVar(&flowRun, "flow-run", "", "filter by flow run id")
+			fs.StringVar(&conversation, "conversation", "", "filter by conversation id (chat session or flow agent run)")
 		},
 		run: func(ctx context.Context, c *call) error {
-			qv := lf.apply(query("status", status, "type", typ, "agent_run_id", agentRun, "flow_run_id", flowRun))
-			return c.doEmit(ctx, http.MethodGet, "/api/approvals", qv, nil, "id", "type", "status", "flow_id", "node_id", "runtime", "created_at")
+			qv := lf.apply(query("status", status, "type", typ, "agent_run_id", agentRun, "flow_run_id", flowRun, "conversation_id", conversation))
+			return c.doEmit(ctx, http.MethodGet, "/api/approvals", qv, nil, "id", "type", "status", "title", "flow_id", "node_id", "runtime", "created_at")
 		},
 	}
 	var approveComment string
 	approve := &leaf{
 		usage: "<id> [--comment text]", minArgs: 1, maxArgs: 1,
-		flags: func(fs *flag.FlagSet) { fs.StringVar(&approveComment, "comment", "", "comment passed to the agent") },
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&approveComment, "comment", "", "comment recorded with the decision")
+		},
 		run: func(ctx context.Context, c *call) error {
 			req := map[string]any{}
 			if approveComment != "" {
@@ -837,7 +840,7 @@ func approvalCmds() []*command {
 	deny := &leaf{
 		usage: "<id> [--comment text] [--cancel-run]", minArgs: 1, maxArgs: 1,
 		flags: func(fs *flag.FlagSet) {
-			fs.StringVar(&denyComment, "comment", "", "reason, passed to the agent")
+			fs.StringVar(&denyComment, "comment", "", "additional steering: the agent gets it verbatim and does what you ask instead")
 			fs.BoolVar(&cancelRun, "cancel-run", false, "tool_call approvals: cancel the agent run instead of letting it continue")
 		},
 		run: func(ctx context.Context, c *call) error {

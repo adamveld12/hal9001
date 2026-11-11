@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,67 +23,27 @@ type storeBroker struct{ e *Engine }
 
 var _ agent.ApprovalBroker = (*storeBroker)(nil)
 
-// SubmitProposal registers a pending proposal approval and notifies.
-func (b *storeBroker) SubmitProposal(_ context.Context, p agent.ProposalApproval) (string, error) {
-	e := b.e
-	red := e.snapshot().red
-	a := &store.Approval{AgentRunID: p.RunID, Type: store.ApprovalProposal, Proposal: store.Inline(red.String(p.Proposal))}
-	if err := e.st.CreateApproval(e.dbCtx, a); err != nil {
+// SubmitProposal registers a pending proposal approval and notifies. Its title and description are the proposal's
+// summary line.
+func (b *storeBroker) SubmitProposal(ctx context.Context, p agent.ProposalApproval) (string, error) {
+	summary := proposalSummary(p.Proposal)
+	r, err := b.e.RaiseApproval(ctx, ApprovalSpec{
+		Type: store.ApprovalProposal, Title: summary, Description: summary, Proposal: p.Proposal,
+		AgentRunID: p.RunID, NodeRunID: p.NodeRunID,
+	})
+	if err != nil {
 		return "", err
 	}
-	flowID, dry := e.flowOfNodeRun(p.NodeRunID)
-	e.notify(notify.Proposal(flowID, a.ID, p.Proposal, dry, e.url(ApprovalPath(a.ID))))
-	return a.ID, nil
+	return r.Approval.ID, nil
 }
 
-// AwaitToolApproval registers a pending tool-call approval, parks the node as
-// awaiting_approval (the agent process stays alive and keeps its slot) and
-// blocks until a user decides or ctx ends.
-func (b *storeBroker) AwaitToolApproval(ctx context.Context, t agent.ToolApproval) (agent.ToolDecision, error) {
-	e := b.e
-	expires := t.ExpiresAt
-	a := &store.Approval{
-		AgentRunID: t.RunID, Type: store.ApprovalToolCall, PermissionRequestID: t.PermissionRequestID, ExpiresAt: &expires,
+// proposalSummary is the first non-empty line of a proposal with the markdown removed, at most 200 characters.
+func proposalSummary(text string) string {
+	line, _, _ := strings.Cut(notify.Body(text), "\n")
+	if line == "" {
+		return "Proposal from the agent"
 	}
-	if err := e.st.CreateApproval(e.dbCtx, a); err != nil {
-		return agent.ToolDecision{}, err
-	}
-	ch := make(chan agent.ToolDecision, 1)
-	e.waitMu.Lock()
-	e.waiters[a.ID] = ch
-	e.waitMu.Unlock()
-	defer func() {
-		e.waitMu.Lock()
-		delete(e.waiters, a.ID)
-		e.waitMu.Unlock()
-	}()
-
-	e.markToolWait(t.RunID, t.NodeRunID, true)
-	e.toolApprovalPending(t.RunID, t.ToolCallID, a.ID)
-	allowed := false
-	defer func() { e.toolApprovalResolved(t.RunID, a.ID, allowed) }()
-	flowID, dry := e.flowOfNodeRun(t.NodeRunID)
-	tool := t.Title
-	if tool == "" {
-		tool = t.ToolKind
-	}
-	e.notify(notify.ToolCall(flowID, a.ID, tool, t.RawInput, dry, e.url(ApprovalPath(a.ID))))
-	select {
-	case d := <-ch:
-		allowed = d.Verdict == agent.VerdictAllow
-		e.markToolWait(t.RunID, t.NodeRunID, false)
-		return d, nil
-	case <-ctx.Done():
-		// Nobody answered in time (or the run was cancelled): the approval can
-		// no longer be granted. The agent records the permission request itself.
-		_, err := e.st.DecideApproval(e.dbCtx, a.ID, store.ApprovalDecision{
-			Status: store.ApprovalExpired, DecidedBy: "system", Comment: "no decision: " + cancelText(ctx),
-		})
-		if err != nil && !errors.Is(err, store.ErrConflict) {
-			e.log.Warn("engine: expire tool approval", "approval", a.ID, "err", err)
-		}
-		return agent.ToolDecision{}, ctx.Err()
-	}
+	return line
 }
 
 func cancelText(ctx context.Context) string {
@@ -90,19 +51,6 @@ func cancelText(ctx context.Context) string {
 		return c.Error()
 	}
 	return "cancelled"
-}
-
-// flowOfNodeRun is the flow id and dry-run flag of a node run's flow run, for notifications. A turn of an assist
-// session has no node run: it is reported as "assistant".
-func (e *Engine) flowOfNodeRun(nodeRunID string) (flowID string, dryRun bool) {
-	if nodeRunID == "" {
-		return "assistant", false
-	}
-	nr, err := e.st.GetNodeRun(e.dbCtx, nodeRunID)
-	if err != nil {
-		return "?", false
-	}
-	return e.flowRunInfo(nr.FlowRunID)
 }
 
 func (e *Engine) flowRunInfo(flowRunID string) (flowID string, dryRun bool) {
@@ -165,10 +113,12 @@ func (e *Engine) url(path string) string {
 	return strings.TrimRight(e.opt.UIBaseURL, "/") + path
 }
 
-// DecideApproval applies a user's decision. A proposal approval resumes the
-// agent (queued behind the concurrency cap and the kill switch); a denial
-// routes the node to port denied. A tool-call decision unblocks the waiting
-// agent process. Deciding an approval that is not pending is core.ErrInvalidState.
+// DecideApproval applies a user's decision. An approved proposal resumes the
+// agent (queued behind the concurrency cap and the kill switch); a proposal
+// denied with steering makes the agent revise it and propose again, and any
+// other denial routes the node to port denied. A tool-call decision unblocks
+// the waiting agent process. The comment of a denial is the user's steering.
+// Deciding an approval that is not pending is core.ErrInvalidState.
 func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.ApprovalDecision) (*store.Approval, error) {
 	ap, err := e.st.GetApproval(ctx, approvalID)
 	if err != nil {
@@ -177,6 +127,7 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 	if ap.Status != store.ApprovalPending {
 		return nil, fmt.Errorf("%w: approval %s is already %s", core.ErrInvalidState, approvalID, ap.Status)
 	}
+	d.Comment = strings.TrimSpace(d.Comment) // the steering counter counts denials with a non-empty comment
 	dec := store.ApprovalDecision{Status: store.ApprovalDenied, Comment: d.Comment, DecidedBy: d.Principal}
 	if d.Approve {
 		dec.Status = store.ApprovalApproved
@@ -193,13 +144,13 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 			}
 			dec.Request = rq
 		}
+		kind := classifyRequest(ap)
 		var wait chan agent.ToolDecision
-		operator := ap.NodeRunID == "" // an operator approval: an external MCP client raised it
-		if operator {
+		if kind.waited() {
 			e.waitMu.Lock()
 			wait = e.waiters[ap.ID]
 			e.waitMu.Unlock()
-			if wait == nil && !isDetached(ap.Request) { // a gated call: it is blocked on this approval
+			if wait == nil && !kind.detached() { // a gated call: it is blocked on this approval
 				return nil, fmt.Errorf("%w: the MCP client is no longer waiting for this approval", core.ErrInvalidState)
 			}
 		}
@@ -207,18 +158,18 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 		if err != nil {
 			return nil, mapDecideErr(approvalID, err)
 		}
-		if operator {
+		if kind.waited() {
 			if wait != nil {
 				verdict := agent.VerdictDeny
 				if d.Approve {
 					verdict = agent.VerdictAllow
 				}
 				select {
-				case wait <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment}:
+				case wait <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment, Held: ap.Held()}:
 				default:
 				}
 			}
-			e.log.Info("engine: mcp approval decided", "approval", ap.ID, "status", decided.Status, "by", d.Principal)
+			e.log.Info("engine: approval decided", "approval", ap.ID, "kind", kind, "status", decided.Status, "by", d.Principal)
 			return decided, nil
 		}
 		e.applyRequestDecision(decided.NodeRunID)
@@ -247,7 +198,7 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 		if err != nil {
 			return nil, mapDecideErr(approvalID, err)
 		}
-		ch <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment}
+		ch <- agent.ToolDecision{Verdict: verdict, Comment: d.Comment, Held: ap.Held()}
 		return decided, nil
 	}
 
@@ -263,6 +214,44 @@ func (e *Engine) DecideApproval(ctx context.Context, approvalID string, d core.A
 	return decided, nil
 }
 
+// requestKind classifies a request approval by what its row says, never by which ids are missing.
+type requestKind int
+
+const (
+	requestNode        requestKind = iota // a Request approval node
+	requestGate                           // the gate of a node with requires_approval
+	requestMCP                            // a gated call of an MCP client: its call blocks on the decision
+	requestMCPDetached                    // an MCP client's request_approval: outlives the call
+	requestAsked                          // an agent run's request_approval: its tool call waits up to wait_seconds
+)
+
+func (k requestKind) String() string {
+	return [...]string{"node", "gate", "mcp", "mcp_detached", "asked"}[k]
+}
+
+// waited reports whether the decision goes to a waiter (an MCP call or an agent's tool call) instead of a node run.
+func (k requestKind) waited() bool { return k >= requestMCP }
+
+// detached reports whether the approval stays open after the call that raised it stops waiting: it is decided and
+// expires on its own.
+func (k requestKind) detached() bool { return k >= requestMCPDetached }
+
+func classifyRequest(ap *store.Approval) requestKind {
+	var meta store.RequestApproval
+	_ = json.Unmarshal([]byte(ap.Request), &meta) // a malformed record reads as a plain node request
+	switch {
+	case ap.Origin == store.OriginMCP && meta.Detached:
+		return requestMCPDetached
+	case ap.Origin == store.OriginMCP:
+		return requestMCP
+	case ap.AgentRunID != "":
+		return requestAsked
+	case meta.Gate:
+		return requestGate
+	}
+	return requestNode
+}
+
 func mapDecideErr(id string, err error) error {
 	if errors.Is(err, store.ErrConflict) {
 		return fmt.Errorf("%w: approval %s was decided concurrently", core.ErrInvalidState, id)
@@ -272,7 +261,8 @@ func mapDecideErr(id string, err error) error {
 
 // applyProposalDecision carries a decided proposal approval into its node run:
 // approved requeues the node (it resumes the session when claimed), denied
-// ends it on port denied. It does nothing while the node is not parked yet;
+// with steering requeues it to revise the proposal, any other denial ends it
+// on port denied. It does nothing while the node is not parked yet;
 // finishNode calls it again once the node is.
 func (e *Engine) applyProposalDecision(nodeRunID string) {
 	unlock := e.locks.lock("node:" + nodeRunID)
@@ -281,7 +271,7 @@ func (e *Engine) applyProposalDecision(nodeRunID string) {
 	if err != nil || nr.Status != store.NodeAwaitingApproval {
 		return
 	}
-	runs, err := e.st.ListAgentRuns(e.dbCtx, store.AgentRunFilter{NodeRunID: nr.ID, ListOpts: store.ListOpts{Oldest: true, Limit: 50}})
+	runs, err := e.st.ListAgentRuns(e.dbCtx, store.AgentRunFilter{NodeRunID: nr.ID, ListOpts: store.ListOpts{Oldest: true, Limit: 500}})
 	if err != nil || len(runs.Items) == 0 {
 		return
 	}
@@ -293,16 +283,22 @@ func (e *Engine) applyProposalDecision(nodeRunID string) {
 	if err != nil || len(apps.Items) == 0 {
 		return
 	}
-	switch ap := apps.Items[0]; ap.Status {
-	case store.ApprovalApproved:
-		nr.Status, nr.EndedAt, nr.Reason = store.NodeQueued, nil, "proposal approved"
+	switch ap := apps.Items[0]; {
+	case ap.Status == store.ApprovalApproved, ap.Status == store.ApprovalDenied && steersProposal(&ap):
+		// Approved: the node resumes the session and executes. Denied with steering: it runs another read-only
+		// turn that revises the proposal and parks the node again on a new approval.
+		reason := "proposal approved"
+		if ap.Status == store.ApprovalDenied {
+			reason = "proposal denied with steering; the agent revises it"
+		}
+		nr.Status, nr.EndedAt, nr.Reason = store.NodeQueued, nil, reason
 		if err := e.st.UpdateNodeRun(e.dbCtx, nr); err != nil {
-			e.log.Error("engine: requeue approved node run", "node_run", nr.ID, "err", err)
+			e.log.Error("engine: requeue decided node run", "node_run", nr.ID, "err", err)
 			return
 		}
 		e.reconcileFlowRun(nr.FlowRunID)
 		e.wake()
-	case store.ApprovalDenied:
+	case ap.Status == store.ApprovalDenied:
 		e.finishDenied(nr, &run, &ap)
 	}
 }

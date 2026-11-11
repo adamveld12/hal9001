@@ -71,7 +71,7 @@ func TestRetentionPrunesOldRunsButKeepsStarredAndPending(t *testing.T) {
 	// pending: an agent run with an undecided proposal.
 	nodes, _ := st.ListNodeRuns(ctx, store.NodeRunFilter{FlowRunID: pending.run.ID})
 	ars, _ := st.ListAgentRuns(ctx, store.AgentRunFilter{NodeRunID: nodes.Items[0].ID})
-	if err := st.CreateApproval(ctx, &store.Approval{AgentRunID: ars.Items[0].ID, Type: store.ApprovalProposal, Proposal: store.Inline("plan")}); err != nil {
+	if err := st.CreateApproval(ctx, &store.Approval{AgentRunID: ars.Items[0].ID, Type: store.ApprovalProposal, Title: "plan", Description: "plan", Origin: store.OriginFlow, Proposal: store.Inline("plan")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateInboxItem(ctx, &store.InboxItem{SourceType: store.SourceNodeRun, NodeRunID: nodeIDOf(t, st, starred.run.ID), Title: "keep me", Starred: true}); err != nil {

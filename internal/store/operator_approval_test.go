@@ -6,23 +6,26 @@ import (
 	"time"
 )
 
-// An operator approval is a request approval with neither an agent run nor a node run. It is listed and decided like
+// An MCP approval is a request approval of origin mcp with neither an agent run nor a node run. It is listed and decided like
 // any approval, expires when the daemon restarts (the MCP call that waited for it is gone) and is pruned with the rest.
 func TestOperatorApprovalLifecycle(t *testing.T) {
 	s, clk := newTestStore(t)
 
-	if err := s.CreateApproval(ctx(), &Approval{Type: ApprovalRequest}); !errors.Is(err, ErrInvalid) {
-		t.Errorf("a request approval without content: %v", err)
+	if err := s.CreateApproval(ctx(), valid(&Approval{Type: ApprovalRequest})); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a request approval with no run and no mcp origin: %v", err)
 	}
-	if err := s.CreateApproval(ctx(), &Approval{Type: ApprovalRequest, AgentRunID: "x", Request: `{}`}); !errors.Is(err, ErrInvalid) {
-		t.Errorf("a request approval with an agent run: %v", err)
+	if err := s.CreateApproval(ctx(), &Approval{Type: ApprovalRequest, Origin: OriginMCP, Title: "t"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("an approval without a description: %v", err)
 	}
-	if err := s.CreateApproval(ctx(), &Approval{Type: ApprovalProposal, Proposal: Inline("p")}); !errors.Is(err, ErrInvalid) {
+	if err := s.CreateApproval(ctx(), valid(&Approval{Type: ApprovalProposal, Proposal: Inline("p")})); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a proposal without an agent run: %v", err)
 	}
 
-	pending := &Approval{Type: ApprovalRequest, Request: `{"title":"MCP client: flow_run","body_md":"","fields":[],"priority":"normal","dry_run":false}`}
-	decided := &Approval{Type: ApprovalRequest, Request: pending.Request}
+	mcp := func(meta string) *Approval {
+		return valid(&Approval{Type: ApprovalRequest, Origin: OriginMCP, OriginClient: "claude-code", Request: meta})
+	}
+	pending := mcp(`{}`)
+	decided := mcp(`{}`)
 	must(t, s.CreateApproval(ctx(), pending))
 	must(t, s.CreateApproval(ctx(), decided))
 	if _, err := s.DecideApproval(ctx(), decided.ID, ApprovalDecision{Status: ApprovalApproved, DecidedBy: "me"}); err != nil {
@@ -46,7 +49,7 @@ func TestOperatorApprovalLifecycle(t *testing.T) {
 		t.Errorf("a decided approval changed on restart: %+v", got)
 	}
 
-	live := &Approval{Type: ApprovalRequest, Request: pending.Request}
+	live := mcp(`{}`)
 	must(t, s.CreateApproval(ctx(), live))
 	clk.Advance(40 * 24 * time.Hour)
 	if _, err := s.Prune(ctx(), clk.Now(), 30, 180); err != nil {
@@ -65,8 +68,10 @@ func TestOperatorApprovalLifecycle(t *testing.T) {
 // A detached operator approval (request_approval) outlives the call that raised it: a restart leaves it pending.
 func TestDetachedOperatorApprovalSurvivesRestart(t *testing.T) {
 	s, _ := newTestStore(t)
-	gated := &Approval{Type: ApprovalRequest, Request: `{"title":"gate","body_md":"","fields":[],"priority":"normal","dry_run":false,"source":"mcp"}`}
-	asked := &Approval{Type: ApprovalRequest, Request: `{"title":"ask","body_md":"","fields":[],"priority":"normal","dry_run":false,"source":"mcp","detached":true}`}
+	mcp := func(meta string) *Approval {
+		return valid(&Approval{Type: ApprovalRequest, Origin: OriginMCP, Request: meta})
+	}
+	gated, asked := mcp(`{}`), mcp(`{"detached":true}`)
 	must(t, s.CreateApproval(ctx(), gated))
 	must(t, s.CreateApproval(ctx(), asked))
 	if _, err := s.MarkInterrupted(ctx()); err != nil {

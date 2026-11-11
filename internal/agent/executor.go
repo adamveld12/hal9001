@@ -165,6 +165,41 @@ func (e *Executor) Resume(ctx context.Context, rr ResumeRequest) (RunRecord, err
 	})
 }
 
+// RevisePrompt is the prompt of a revise turn: the user denied the proposal with steering.
+func RevisePrompt(steering string) string {
+	return `The user denied your proposal: "` + strings.TrimSpace(steering) + `". Revise the proposal accordingly and propose again.`
+}
+
+// Revise runs another propose phase for a proposal the user denied with steering (ResumeRequest.Comment, required).
+// Like the first phase it runs read-only and submits its final message as a new proposal through the broker, which
+// parks the node again. It reloads the earlier proposal's session when the agent advertises loadSession and otherwise
+// starts a new session whose prompt carries the original prompt, the earlier proposal and the steering;
+// RunRecord.ResumedVia says which happened. RunRequest.Prompt is the original prompt without ProposalSuffix.
+func (e *Executor) Revise(ctx context.Context, rr ResumeRequest) (RunRecord, error) {
+	req := rr.RunRequest
+	req.Mode, req.Approve = ModeApprove, ApproveProposal
+	if err := e.validate(&req); err != nil {
+		return RunRecord{}, err
+	}
+	if rr.SessionID == "" || strings.TrimSpace(rr.Proposal) == "" {
+		return RunRecord{}, errors.New("revise needs the proposal's session id and proposal text")
+	}
+	if strings.TrimSpace(rr.Comment) == "" {
+		return RunRecord{}, errors.New("revise needs the user's steering comment")
+	}
+	revise := RevisePrompt(rr.Comment) + ProposalSuffix
+	fallback := rr.Prompt + "\n\n---\nYour earlier proposal for this task:\n\n" + rr.Proposal + "\n---\n\n" + revise
+	return e.execute(ctx, plan{
+		req:            req,
+		phase:          PhasePropose,
+		policy:         PolicyFor(ModeApprove, ApproveProposal, PhasePropose),
+		prompt:         revise,
+		parentRunID:    rr.PrevRunID,
+		loadSession:    rr.SessionID,
+		fallbackPrompt: fallback,
+	})
+}
+
 // DenyProposal records a denied proposal on its propose-phase run: the node
 // routes to port denied and no further agent process runs.
 func (e *Executor) DenyProposal(rec RunRecord) RunRecord {

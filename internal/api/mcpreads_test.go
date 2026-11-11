@@ -18,6 +18,9 @@ type noHost struct{}
 func (noHost) Approve(context.Context, tools.ApprovalRequest) (tools.Decision, error) {
 	return tools.Decision{}, nil
 }
+func (noHost) Ask(context.Context, tools.AskRequest) (tools.AskResult, error) {
+	return tools.AskResult{}, nil
+}
 func (noHost) Record(context.Context, tools.CallRecord) (string, error) { return "", nil }
 func (noHost) Finish(context.Context, string, string)                   {}
 

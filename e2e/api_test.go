@@ -192,6 +192,38 @@ type Approval struct {
 	CancelRun         *bool              `json:"cancel_run"`
 	DecidedBy         string             `json:"decided_by"`
 	ExpiresAt         string             `json:"expires_at"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	DescriptionBy     string             `json:"description_by"`
+	Priority          string             `json:"priority"`
+	Origin            struct {
+		Kind   string `json:"kind"`
+		Label  string `json:"label"`
+		Client string `json:"client"`
+	} `json:"origin"`
+	Details struct {
+		BodyMD  string `json:"body_md"`
+		Command string `json:"command"`
+		Tool    string `json:"tool"`
+		DryRun  bool   `json:"dry_run"`
+		Fields  []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"fields"`
+	} `json:"details"`
+	Editable []struct {
+		Key   string          `json:"key"`
+		Value json.RawMessage `json:"value"`
+	} `json:"editable"`
+	Edits        map[string]struct{ Before, After json.RawMessage } `json:"edits"`
+	Conversation *struct {
+		ID     string `json:"id"`
+		Kind   string `json:"kind"`
+		Anchor string `json:"anchor"`
+		Path   string `json:"path"`
+	} `json:"conversation"`
+	Held bool `json:"held"`
+	Gate bool `json:"gate"`
 }
 
 type InboxItem struct {

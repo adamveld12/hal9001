@@ -52,9 +52,9 @@ func (e *env) agentFixture() agentFixture {
 		Options:  json.RawMessage(`[{"optionId":"allow","name":"Allow once","kind":"allow_once"},{"optionId":"deny","name":"Reject","kind":"reject_once"}]`),
 	}
 	must(e.t, e.st.CreatePermissionRequest(ctx(), f.perm))
-	f.toolAppr = &store.Approval{AgentRunID: f.agentRun.ID, Type: store.ApprovalToolCall, PermissionRequestID: f.perm.ID}
+	f.toolAppr = seeded(&store.Approval{AgentRunID: f.agentRun.ID, Type: store.ApprovalToolCall, PermissionRequestID: f.perm.ID})
 	must(e.t, e.st.CreateApproval(ctx(), f.toolAppr))
-	f.propAppr = &store.Approval{AgentRunID: f.agentRun.ID, Type: store.ApprovalProposal, Proposal: store.Inline("## Plan\nFix it.")}
+	f.propAppr = seeded(&store.Approval{AgentRunID: f.agentRun.ID, Type: store.ApprovalProposal, Proposal: store.Inline("## Plan\nFix it.")})
 	must(e.t, e.st.CreateApproval(ctx(), f.propAppr))
 	return f
 }

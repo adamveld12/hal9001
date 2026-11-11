@@ -147,14 +147,14 @@ func TestAssistReadsRunsAndBuildsIssueLinksWithoutApproval(t *testing.T) {
 		t.Errorf("flow_run_get records = %+v", ps)
 	}
 
-	// The tools are listed to the agent (the context block names them), and no tool that acts is among them.
+	// The tools are listed to the agent (the context block names them), and no tool that acts is among them (request_approval only asks).
 	prompt := turnRun.RenderedPrompt
-	for _, tool := range []string{"flow_run_get", "node_run_get", "agent_run_events", "agent_run_sandbox_log", "events_list", "settings_get", "github_issue_link", "draft_write"} {
+	for _, tool := range []string{"flow_run_get", "node_run_get", "agent_run_events", "agent_run_sandbox_log", "events_list", "settings_get", "github_issue_link", "draft_write", "request_approval"} {
 		if !strings.Contains(prompt, "- "+tool+":") {
 			t.Errorf("the context block does not list %s", tool)
 		}
 	}
-	for _, tool := range []string{"flow_run", "sensor_poll", "flow_create", "request_approval", "send_note"} {
+	for _, tool := range []string{"flow_run", "sensor_poll", "flow_create", "send_note"} {
 		if strings.Contains(prompt, "- "+tool+":") {
 			t.Errorf("the context block lists the acting tool %s", tool)
 		}

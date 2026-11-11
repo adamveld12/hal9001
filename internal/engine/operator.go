@@ -2,10 +2,12 @@ package engine
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"hal9001/internal/agent"
@@ -24,56 +26,26 @@ var _ tools.OperatorHost = operatorHost{}
 
 var errOperatorApprovalTimeout = errors.New("operator approval timeout")
 
-// isDetached reports whether a request approval's content (its stored JSON) says it outlives the MCP call that raised it.
-func isDetached(request string) bool {
-	var rq store.RequestApproval
-	return json.Unmarshal([]byte(request), &rq) == nil && rq.Detached
-}
-
-// mcpSource marks everything an external MCP client causes: approvals (RequestApproval.Source), inbox notes
-// (store.SourceMCP) and notifications (flow id "mcp").
-const mcpSource = "mcp"
-
-// operatorRequest is the content of an operator approval, redacted, with the caller recorded.
-func (e *Engine) operatorRequest(title, bodyMD string, fields []store.RequestField, c tools.OperatorCaller) store.RequestApproval {
-	red := e.snapshot().red
-	return store.RequestApproval{
-		Title: red.String(title), BodyMD: red.String(bodyMD), Fields: fields, Priority: store.PriorityNormal, OnTimeout: "denied",
-		Source: mcpSource, Client: c.Client, Principal: c.Principal,
-	}
-}
-
-// raiseOperatorApproval stores a pending operator approval and notifies. It returns the approval and the registered
-// waiter, which DecideApproval answers; the caller deletes it with dropWaiter.
-func (e *Engine) raiseOperatorApproval(rq store.RequestApproval, expires time.Time, c tools.OperatorCaller) (*store.Approval, chan agent.ToolDecision, error) {
-	raw, err := json.Marshal(rq)
+// raiseMCPApproval raises an approval for an MCP client's call: origin mcp, the client named, the caller's principal
+// kept for the record, no conversation.
+func (e *Engine) raiseMCPApproval(ctx context.Context, s ApprovalSpec, c tools.OperatorCaller, expires time.Time) (*Raised, error) {
+	s.Type, s.Origin, s.OriginClient = store.ApprovalRequest, store.OriginMCP, c.Client
+	s.Meta.Principal, s.Meta.OnTimeout = c.Principal, "denied"
+	s.ExpiresAt, s.Wait = &expires, true
+	r, err := e.RaiseApproval(ctx, s)
 	if err != nil {
-		return nil, nil, err
+		return nil, fmt.Errorf("create approval: %w", err)
 	}
-	ap := &store.Approval{Type: store.ApprovalRequest, Request: string(raw), ExpiresAt: &expires}
-	if err := e.st.CreateApproval(e.dbCtx, ap); err != nil {
-		return nil, nil, fmt.Errorf("create approval: %w", err)
-	}
-	ch := make(chan agent.ToolDecision, 1)
-	e.waitMu.Lock()
-	e.waiters[ap.ID] = ch
-	e.waitMu.Unlock()
-	e.notify(notify.FromMCP(notify.Request(notify.MCPFlowID, ap.ID, rq, e.url(ApprovalPath(ap.ID))), c.Client, ""))
-	e.log.Info("engine: mcp approval raised", "approval", ap.ID, "title", rq.Title, "client", c.Client, "principal", c.Principal)
-	return ap, ch, nil
+	e.log.Info("engine: mcp approval raised", "approval", r.Approval.ID, "title", r.Approval.Title, "client", c.Client, "principal", c.Principal)
+	return r, nil
 }
 
-func (e *Engine) dropWaiter(id string) {
-	e.waitMu.Lock()
-	delete(e.waiters, id)
-	e.waitMu.Unlock()
-}
-
-// expireOperatorApproval records an expiry. It reports false when the user decided at the same moment.
-func (e *Engine) expireOperatorApproval(id, comment string) bool {
+// expireWaitedApproval records the expiry of an approval a call waited on or that outlives its call. It reports
+// false when the user decided at the same moment.
+func (e *Engine) expireWaitedApproval(id, comment string) bool {
 	_, err := e.st.DecideApproval(e.dbCtx, id, store.ApprovalDecision{Status: store.ApprovalExpired, DecidedBy: "system", Comment: comment})
 	if err != nil && !errors.Is(err, store.ErrConflict) {
-		e.log.Warn("engine: expire operator approval", "approval", id, "err", err)
+		e.log.Warn("engine: expire approval", "approval", id, "err", err)
 	}
 	return err == nil
 }
@@ -85,7 +57,7 @@ func (h operatorHost) ApproveOperator(ctx context.Context, req tools.OperatorApp
 	title, body := req.Title, req.BodyMD
 	var fields []store.RequestField
 	for _, f := range req.Fields {
-		fields = append(fields, store.RequestField{Key: f.Key, Value: e.snapshot().red.String(f.Value)})
+		fields = append(fields, store.RequestField{Key: f.Key, Value: f.Value})
 	}
 	if title == "" {
 		title = "MCP client: " + req.Tool
@@ -97,7 +69,7 @@ func (h operatorHost) ApproveOperator(ctx context.Context, req tools.OperatorApp
 		body = req.Reason + "\n\nAn MCP client connected to hal9001 asked for this. Approving runs it; denying tells the client it was refused."
 		fields = []store.RequestField{
 			{Key: "tool", Value: req.Tool},
-			{Key: "arguments", Value: e.snapshot().red.String(args)},
+			{Key: "arguments", Value: args},
 			{Key: "requested by", Value: req.Caller.RequestedBy()},
 		}
 	}
@@ -105,12 +77,16 @@ func (h operatorHost) ApproveOperator(ctx context.Context, req tools.OperatorApp
 	if timeout <= 0 {
 		timeout = tools.DefaultOperatorApprovalTimeout
 	}
-	rq := e.operatorRequest(title, body, fields, req.Caller)
-	ap, ch, err := e.raiseOperatorApproval(rq, e.clock.Now().Add(timeout), req.Caller)
+	desc := cmp.Or(strings.TrimSpace(req.Description), req.Caller.Label()+" asked to run "+req.Tool+".")
+	r, err := e.raiseMCPApproval(ctx, ApprovalSpec{
+		Title: title, Description: tools.ClipRunes(desc, store.MaxApprovalDescription), BodyMD: body, Fields: fields,
+		Command: tools.ExtractCommand(req.Args), Tool: req.Tool,
+	}, req.Caller, e.clock.Now().Add(timeout))
 	if err != nil {
 		return tools.Decision{}, err
 	}
-	defer e.dropWaiter(ap.ID)
+	defer r.Release()
+	ap, ch := r.Approval, r.Decision
 
 	actx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -133,7 +109,7 @@ func (h operatorHost) ApproveOperator(ctx context.Context, req tools.OperatorApp
 		if !expired {
 			comment = "the MCP client gave up waiting: " + cancelText(actx)
 		}
-		if !e.expireOperatorApproval(ap.ID, comment) {
+		if !e.expireWaitedApproval(ap.ID, comment) {
 			// The user decided at the same moment; DecideApproval sends the verdict right after it stores it.
 			select {
 			case d := <-ch:
@@ -161,8 +137,7 @@ func (h operatorHost) AskOperator(ctx context.Context, q tools.OperatorQuestion)
 	}
 	open := 0
 	for _, p := range pending.Items {
-		var rq store.RequestApproval
-		if p.NodeRunID == "" && json.Unmarshal([]byte(p.Request), &rq) == nil && rq.Detached {
+		if classifyRequest(&p) == requestMCPDetached {
 			open++
 		}
 	}
@@ -170,25 +145,24 @@ func (h operatorHost) AskOperator(ctx context.Context, q tools.OperatorQuestion)
 		return "", fmt.Errorf("%d request_approval approvals are already waiting in the Inbox (the limit); wait for the user to decide them", open)
 	}
 
-	red := e.snapshot().red
-	rq := e.operatorRequest(q.Title, q.BodyMD, []store.RequestField{{Key: "requested by", Value: q.Caller.RequestedBy()}}, q.Caller)
-	rq.Title = red.String(q.Title)
-	rq.Detached, rq.Priority = true, store.Priority(q.Priority)
-	if rq.Priority == "" {
-		rq.Priority = store.PriorityNormal
-	}
+	var editable []store.RequestEditable
 	for _, f := range q.Editable {
-		rq.Editable = append(rq.Editable, store.RequestEditable{Key: f.Key, Value: f.Value})
+		editable = append(editable, store.RequestEditable{Key: f.Key, Value: f.Value})
 	}
 	timeout := q.Timeout
 	if timeout <= 0 {
 		timeout = tools.DefaultRequestTimeout
 	}
-	ap, ch, err := e.raiseOperatorApproval(rq, e.clock.Now().Add(timeout), q.Caller)
+	r, err := e.raiseMCPApproval(ctx, ApprovalSpec{
+		Title: q.Title, Description: q.Description, DescriptionBy: store.DescByAgent, BodyMD: q.BodyMD,
+		Fields:   []store.RequestField{{Key: "requested by", Value: q.Caller.RequestedBy()}},
+		Priority: store.Priority(q.Priority), Editable: editable, Meta: store.RequestApproval{Detached: true},
+	}, q.Caller, e.clock.Now().Add(timeout))
 	if err != nil {
 		return "", err
 	}
-	defer e.dropWaiter(ap.ID)
+	defer r.Release()
+	ap, ch := r.Approval, r.Decision
 
 	wait := q.Wait
 	if wait > timeout {
@@ -200,7 +174,7 @@ func (h operatorHost) AskOperator(ctx context.Context, q tools.OperatorQuestion)
 	case <-ch: // decided; the caller reads the decision from the approval
 	case <-timer.C():
 		if wait >= timeout {
-			e.expireOperatorApproval(ap.ID, "no decision within "+timeout.String())
+			e.expireWaitedApproval(ap.ID, "no decision within "+timeout.String())
 		}
 	case <-ctx.Done():
 		return "", ctx.Err()

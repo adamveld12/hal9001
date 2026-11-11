@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -414,4 +415,14 @@ func (s *Store) ListAssistMessages(ctx context.Context, sessionID string) ([]Ass
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// NewestAssistMessageID is the id of the newest message of a session; empty when it has none.
+func (s *Store) NewestAssistMessageID(ctx context.Context, sessionID string) (string, error) {
+	var id string
+	err := s.rdb.QueryRowContext(ctx, `SELECT id FROM assist_messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sessionID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }

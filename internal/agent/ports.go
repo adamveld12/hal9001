@@ -126,38 +126,20 @@ type ProposalApproval struct {
 	Proposal  string
 }
 
-// ToolApproval asks the broker to register a pending tool-call approval and
-// wait for it.
-type ToolApproval struct {
-	RunID               string
-	NodeRunID           string
-	PermissionRequestID string
-	ToolCallID          string
-	ToolKind            string
-	Title               string
-	RawInput            json.RawMessage
-	// Content is the tool call content, including diffs.
-	Content json.RawMessage
-	// ExpiresAt is when the harness will give up waiting.
-	ExpiresAt time.Time
-}
-
-// ToolDecision is the user's answer to a ToolApproval.
+// ToolDecision is the user's answer to a gated tool call or an agent's request_approval.
 type ToolDecision struct {
 	Verdict ToolVerdict
+	// Comment is the approver's steering text.
 	Comment string
+	// Held reports that the approval was raised held (the conversation's steering cap was reached): its denial
+	// tells the agent to stop and wait.
+	Held bool
 }
 
-// ApprovalBroker connects the agent client to the approval queue. Wave 2
-// implements it over the store and the API's approve/deny endpoints.
+// ApprovalBroker connects the agent client to the approval queue.
 type ApprovalBroker interface {
 	// SubmitProposal registers a pending proposal approval and returns its id.
 	// It must not block: the agent process has exited and the approval
 	// survives daemon restarts.
 	SubmitProposal(ctx context.Context, p ProposalApproval) (approvalID string, err error)
-	// AwaitToolApproval registers a pending approval for a gated tool call
-	// and blocks until a user decides. When ctx is done first (approval
-	// timeout, run cancelled) it must mark the approval expired and return
-	// ctx.Err(); the agent distinguishes the cause itself.
-	AwaitToolApproval(ctx context.Context, a ToolApproval) (ToolDecision, error)
 }
