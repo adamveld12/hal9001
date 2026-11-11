@@ -65,7 +65,12 @@ func (s *Server) callMcpTool(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "name is required")
 		return
 	}
-	res, err := sess.Call(r.Context(), req.Name, req.Arguments)
+	ctx := r.Context()
+	if sess.Kind() == tools.KindAssist {
+		// The read tools of an assist session read hal's REST API (internal/tools/readtools.go); flow runs never get it.
+		ctx = tools.WithAPI(ctx, s.readDispatcher(r))
+	}
+	res, err := sess.Call(ctx, req.Name, req.Arguments)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"text": err.Error(), "is_error": true})
 		return

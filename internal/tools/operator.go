@@ -253,7 +253,9 @@ func (o *Operator) Call(ctx context.Context, env OperatorEnv, name string, args 
 			return Result{}, &DeniedError{Tool: name, Expired: d.Expired, Cancelled: d.Cancelled, Comment: d.Comment}
 		}
 	}
-	return t.Run(withEnv(ctx, env), Call{Name: name, Args: args, Now: time.Now()})
+	res, err := t.Run(withEnv(ctx, env), Call{Name: name, Args: args, Now: time.Now()})
+	res.Text = truncateText(res.Text) // restTool leaves the cap to the caller: ReadTools shrinks JSON instead
+	return res, err
 }
 
 var idRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -333,7 +335,7 @@ func restTool(name, desc string, schema map[string]any, need func(a map[string]a
 			if status < 200 || status > 299 {
 				return Result{}, errors.New(problemText(status, out))
 			}
-			return Result{Text: truncateText(string(out))}, nil
+			return Result{Text: string(out)}, nil
 		},
 	}}
 }
@@ -473,29 +475,52 @@ func adminTool(t operatorTool) operatorTool {
 	return t
 }
 
+// apiGetPath maps a tool without arguments to GET path.
+func apiGetPath(path string) func(map[string]any) (apiReq, error) {
+	return func(map[string]any) (apiReq, error) { return apiReq{method: http.MethodGet, path: path}, nil }
+}
+
+// getByIDPath maps the tool's id argument to GET prefix+id.
+func getByIDPath(prefix string) func(map[string]any) (apiReq, error) {
+	return func(a map[string]any) (apiReq, error) {
+		id, err := idArg(a)
+		if err != nil {
+			return apiReq{}, err
+		}
+		return apiReq{method: http.MethodGet, path: prefix + url.PathEscape(id)}, nil
+	}
+}
+
+// listPath maps the tool's filters, limit and cursor to GET path.
+func listPath(path string, strs, bools []string) func(map[string]any) (apiReq, error) {
+	return func(a map[string]any) (apiReq, error) {
+		q, err := listQuery(a, strs, bools)
+		return apiReq{method: http.MethodGet, path: path, query: q}, err
+	}
+}
+
+func withListProps(p map[string]any) map[string]any {
+	p["limit"], p["cursor"] = limitProp, cursorProp
+	return p
+}
+
+var (
+	flowRunStatuses = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "killed", "interrupted", "cancelled"}
+	flowRunKinds    = []string{"live", "replay", "test"}
+	nodeDecisions   = []string{"emitted", "dropped", "error", "skipped"}
+	sinceProp       = prop("string", "Only records created at or after this time (RFC 3339).")
+	untilProp       = prop("string", "Only records created before this time (RFC 3339).")
+)
+
 func operatorTools() []operatorTool {
-	get := func(path string) func(map[string]any) (apiReq, error) {
-		return func(map[string]any) (apiReq, error) { return apiReq{method: http.MethodGet, path: path}, nil }
-	}
-	getByID := func(prefix string) func(map[string]any) (apiReq, error) {
-		return func(a map[string]any) (apiReq, error) {
-			id, err := idArg(a)
-			if err != nil {
-				return apiReq{}, err
-			}
-			return apiReq{method: http.MethodGet, path: prefix + url.PathEscape(id)}, nil
-		}
-	}
-	list := func(path string, strs, bools []string) func(map[string]any) (apiReq, error) {
-		return func(a map[string]any) (apiReq, error) {
-			q, err := listQuery(a, strs, bools)
-			return apiReq{method: http.MethodGet, path: path, query: q}, err
-		}
-	}
-	withListProps := func(p map[string]any) map[string]any {
-		p["limit"], p["cursor"] = limitProp, cursorProp
-		return p
-	}
+	return append(operatorReadTools(true), operatorWriteTools()...)
+}
+
+// operatorReadTools are the read-only tools, each one GET of hal's REST API. ReadTools (the assist session's set)
+// reuses them; withWait offers flow_run_get's long poll, which the assist set leaves out so a call never holds a
+// turn open.
+func operatorReadTools(withWait bool) []operatorTool {
+	get, getByID, list := apiGetPath, getByIDPath, listPath
 
 	return []operatorTool{
 		restTool("status", "hal9001 header counters: pending approvals, unread inbox items, queue depth and the kill switch.",
@@ -527,28 +552,16 @@ func operatorTools() []operatorTool {
 		restTool("flows_list", "List flows with run statistics.", obj(map[string]any{}), nil, get("/api/flows")),
 		restTool("flow_get", "Read one flow: its definition, validation diagnostics and subscribed sensors.",
 			obj(map[string]any{"id": idProp("flow")}, "id"), nil, getByID("/api/flows/")),
-		restTool("flow_runs_list", "List flow runs, newest first.",
+		restTool("flow_runs_list", "List flow runs, newest first. Test runs are hidden unless kind is test.",
 			obj(withListProps(map[string]any{
-				"flow_id": idProp("flow"),
-				"status":  map[string]any{"type": "string", "enum": []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "killed", "interrupted", "cancelled"}, "description": "Run status."},
-			})), nil, list("/api/flow-runs", []string{"flow_id", "status"}, nil)),
-		restTool("flow_run_get", "Read one flow run with its node runs. With wait (for example 30s, at most 5m) it waits until the run finishes or needs an approval.",
-			obj(map[string]any{"id": idProp("flow run"), "wait": prop("string", "Long-poll duration such as 30s.")}, "id"),
-			nil, func(a map[string]any) (apiReq, error) {
-				id, err := idArg(a)
-				if err != nil {
-					return apiReq{}, err
-				}
-				q := url.Values{}
-				w, err := strArg(a, "wait")
-				if err != nil {
-					return apiReq{}, err
-				}
-				if w != "" {
-					q.Set("wait", w)
-				}
-				return apiReq{method: http.MethodGet, path: "/api/flow-runs/" + url.PathEscape(id), query: q}, nil
-			}),
+				"flow_id":  idProp("flow"),
+				"event_id": idProp("event"),
+				"status":   map[string]any{"type": "string", "enum": flowRunStatuses, "description": "Run status."},
+				"kind":     map[string]any{"type": "string", "enum": flowRunKinds, "description": "Run kind (default live and replay)."},
+				"since":    sinceProp,
+				"until":    untilProp,
+			})), nil, list("/api/flow-runs", []string{"flow_id", "event_id", "status", "kind", "since", "until"}, nil)),
+		flowRunGetTool(withWait),
 
 		restTool("sensors_list", "List sensors with their last poll status.", obj(map[string]any{}), nil, get("/api/sensors")),
 		restTool("sensor_get", "Read one sensor: its definition and state.",
@@ -557,8 +570,44 @@ func operatorTools() []operatorTool {
 			obj(withListProps(map[string]any{
 				"sensor_id": idProp("sensor"),
 				"flow_id":   idProp("flow"),
+				"status":    map[string]any{"type": "string", "enum": flowRunStatuses, "description": "Keep events with a flow run of this status."},
+				"decision":  map[string]any{"type": "string", "enum": nodeDecisions, "description": "Keep events with a flow run where a node decided this."},
+				"kind":      map[string]any{"type": "string", "enum": flowRunKinds, "description": "Flow run kind (default live and replay)."},
 				"q":         prop("string", "Case-insensitive substring search over the payload."),
-			})), nil, list("/api/events", []string{"sensor_id", "flow_id", "q"}, nil)),
+				"since":     sinceProp,
+				"until":     untilProp,
+			})), nil, list("/api/events", []string{"sensor_id", "flow_id", "status", "decision", "kind", "q", "since", "until"}, nil)),
+	}
+}
+
+// flowRunGetTool is flow_run_get; with withWait it takes a long-poll duration.
+func flowRunGetTool(withWait bool) operatorTool {
+	desc := "Read one flow run with its node runs."
+	props := map[string]any{"id": idProp("flow run")}
+	if withWait {
+		desc += " With wait (for example 30s, at most 5m) it waits until the run finishes or needs an approval."
+		props["wait"] = prop("string", "Long-poll duration such as 30s.")
+	}
+	return restTool("flow_run_get", desc, obj(props, "id"), nil, func(a map[string]any) (apiReq, error) {
+		id, err := idArg(a)
+		if err != nil {
+			return apiReq{}, err
+		}
+		q := url.Values{}
+		w, err := strArg(a, "wait")
+		if err != nil {
+			return apiReq{}, err
+		}
+		if w != "" {
+			q.Set("wait", w)
+		}
+		return apiReq{method: http.MethodGet, path: "/api/flow-runs/" + url.PathEscape(id), query: q}, nil
+	})
+}
+
+// operatorWriteTools are the tools with side effects: each waits for the user's approval.
+func operatorWriteTools() []operatorTool {
+	return []operatorTool{
 
 		adminTool(restTool("flow_run", "Run a flow now: polls the sensors it subscribes to and starts runs of this flow only. Has side effects, so it waits for the user to approve it in the hal9001 Inbox (up to 4 minutes). Returns the polls and the flow run ids; follow them with flow_run_get.",
 			obj(map[string]any{

@@ -38,8 +38,8 @@ Reads run directly:
 | `inbox_list`, `inbox_get` | Inbox notes: search, filter by priority/flow/read/starred/archived; read one in full. |
 | `approvals_list`, `approval_get` | The approval queue (default `pending`) and history. Read only. For a `request_approval` approval, `approval_get` adds `result` (below). |
 | `flows_list`, `flow_get` | Flows with run statistics; one flow's definition and diagnostics. |
-| `flow_runs_list`, `flow_run_get` | Flow runs; one run with its node runs (`wait` long-polls until it finishes or needs an approval). |
-| `sensors_list`, `sensor_get`, `events_list` | Sensors and their last poll; events with the runs they started. |
+| `flow_runs_list`, `flow_run_get` | Flow runs (filters `flow_id`, `event_id`, `status`, `kind`, `since`, `until`); one run with its node runs (`wait` long-polls until it finishes or needs an approval). |
+| `sensors_list`, `sensor_get`, `events_list` | Sensors and their last poll; events with the runs they started (filters `sensor_id`, `flow_id`, `status`, `decision`, `kind`, `q`, `since`, `until`). |
 | `flow_validate`, `sensor_validate` | Check a spec without creating anything and without asking anybody (below). |
 
 These call the same REST endpoints as `curl` or the CLI ([api.md](api.md)) and return their JSON.

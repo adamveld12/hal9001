@@ -32,7 +32,7 @@ func (m *Manager) registerTools() {
 		if s == nil {
 			return tools.Extension{}, fmt.Errorf("assist: no session %s", rs.RunID)
 		}
-		return tools.Extension{Tools: s.draftTools()}, nil
+		return tools.Extension{Tools: append(s.draftTools(), s.helperTools()...)}, nil
 	})
 }
 

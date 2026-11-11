@@ -88,6 +88,8 @@ type Options struct {
 	Executable string
 	// IdleTimeout suspends an idle agent process (default 15m).
 	IdleTimeout time.Duration
+	// Version is hal9001's version, for the diagnostics block of github_issue_link.
+	Version string
 }
 
 // Manager implements core.Assist.
