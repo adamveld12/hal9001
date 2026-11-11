@@ -327,6 +327,8 @@ default auth config local requests need nothing; otherwise pass a session cookie
 - **Open logs**: `~/Library/Logs/hal9001/hal9001.log` (the app's own log is `app.log` next to it).
 - **Launch at login**: the app itself, as a login item (`SMAppService.mainApp`).
 - **Install command-line tool**: symlinks `~/.local/bin/hal9001` to the `hal9001` inside the app, so it updates with the app, and says so when `~/.local/bin` is not on your login-shell `PATH`.
+- **Install the MCP…**: opens the web UI's Settings > MCP page in your browser.
+- **hal9001 on GitHub**: opens the project page.
 - **Updates**: the release app updates itself from signed GitHub releases: **Update available: <version> — Install & Restart** when a newer build is on your `update_channel` (`stable` or `beta`), **Check for updates**, and an install that waits for running flows ("installs when flows finish"). The daemon decides, the app downloads, verifies and swaps itself in; see [docs/macos-app.md](docs/macos-app.md#updates).
 
 Older installs: the app notices the agents of previous versions (`com.hal9001.daemon` from the removed `hal9001 install`, `dev.hal9001.menubar` from the removed `hal9001-menubar install`) and offers **Remove older launch agents…**; it does not start its own service while they hold port 9001. If a headless service (`hal9001 service install`) is installed, the app does not register its own and the menu says to run `hal9001 service uninstall` first.

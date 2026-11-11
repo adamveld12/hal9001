@@ -54,7 +54,7 @@ func TestFetchAndBuildMenu(t *testing.T) {
 		return
 	}
 	got := strings.Join(titles(m.Entries), ",")
-	want := "Running · 1.2.3|,Home: ~/.hal9001|,|,Inbox (3)|http://ui/inbox,Approvals (2)|http://ui/inbox?kind=action,Flows|,Sensors|,Settings|http://ui/settings/general,|,Quit|"
+	want := "Running · 1.2.3|,Home: ~/.hal9001|,|,Inbox (3)|http://ui/inbox,Approvals (2)|http://ui/inbox?kind=action,Flows|,Sensors|,Settings|http://ui/settings/general,|,hal9001 on GitHub|https://github.com/adamveld12/hal9001,Quit|"
 	if got != want {
 		t.Fatalf("entries\n got %s\nwant %s", got, want)
 	}
@@ -330,5 +330,32 @@ func TestAppIconIsARoundedTileWithTheEye(t *testing.T) {
 		if _, _, _, a := img.At(n/2, n/6).RGBA(); a == 0 {
 			t.Errorf("size %d: the tile body above the eye must be opaque", n)
 		}
+	}
+}
+
+func TestMenuMCPAndGitHubLinks(t *testing.T) {
+	m := BuildMenu(nil, "http://ui", ServiceState{Bundled: true, Managed: true, AppVersion: "9.9"})
+	idx := func(title string) int {
+		for i, e := range m.Entries {
+			if e.Title == title {
+				return i
+			}
+		}
+		t.Fatalf("no entry %q", title)
+		return -1
+	}
+	cli, mcp := idx("Install command-line tool…"), idx("Install the MCP…")
+	if mcp != cli+1 {
+		t.Errorf("MCP entry at %d, want directly below the CLI entry at %d", mcp, cli)
+	}
+	if e := m.Entries[mcp]; e.Kind != Link || e.URL != "http://ui/settings/mcp" {
+		t.Errorf("MCP entry = %+v", e)
+	}
+	n := len(m.Entries)
+	if e := m.Entries[n-2]; e.Kind != Link || e.Title != "hal9001 on GitHub" || e.URL != "https://github.com/adamveld12/hal9001" {
+		t.Errorf("entry above Quit = %+v", e)
+	}
+	if m.Entries[n-1].Kind != Quit {
+		t.Errorf("menu must end with Quit")
 	}
 }
