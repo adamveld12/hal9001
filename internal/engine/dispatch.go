@@ -105,6 +105,10 @@ func (e *Engine) beginFlowRun(fr *store.FlowRun) {
 		e.endFlowRun(fr, store.FlowRunFailed, err.Error())
 		return
 	}
+	if fr.Kind == store.KindContinuation {
+		e.beginContinuation(fr, flow)
+		return
+	}
 	var payload string
 	if fr.EventID != "" {
 		ev, err := e.st.GetEvent(e.dbCtx, fr.EventID)

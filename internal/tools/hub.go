@@ -476,7 +476,7 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 		}
 		recordID = id
 	}
-	res, err := t.Run(ctx, Call{Name: name, Args: args, Info: info, Now: s.h.opt.Clock(), Sandbox: s.sandbox, Approval: approvedBy})
+	res, err := t.Run(ctx, Call{Name: name, Args: args, Info: info, Now: s.h.opt.Clock(), Sandbox: s.sandbox, Approval: approvedBy, RecordID: recordID})
 	switch {
 	case err != nil:
 		s.finish(recordID, "error: "+err.Error())

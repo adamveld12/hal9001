@@ -430,7 +430,7 @@ func (h *harness) dumpRun(runID string) string {
 // dump describes every flow run, for failure messages.
 func (h *harness) dump() string {
 	page, err := h.st.ListFlowRuns(context.Background(), store.FlowRunFilter{
-		Kinds: []store.FlowRunKind{store.KindLive, store.KindReplay, store.KindTest}, ListOpts: store.ListOpts{Oldest: true, Limit: 50},
+		Kinds: []store.FlowRunKind{store.KindLive, store.KindReplay, store.KindTest, store.KindContinuation}, ListOpts: store.ListOpts{Oldest: true, Limit: 50},
 	})
 	if err != nil {
 		return err.Error()
