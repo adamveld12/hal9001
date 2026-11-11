@@ -100,8 +100,10 @@ Details: [mcp.md](mcp.md).
 
 Details: [assist.md](assist.md).
 
-- On Sensors, Flows and Tools pages. On Flows it can also draft/edit sensors and prompts and save everything in one
-  step.
+- **Ask AI** in the header of every page (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd>): one drawer that stays open while you
+  move between pages, knows which page you are on, can open pages for you and start sensor, flow and tool drafts. `New chat`
+  (or `/new`) starts a fresh chat; `History` goes back to an earlier one. Sensors, Flows and Tools keep "Create with AI" as a
+  shortcut. On Flows it can also draft/edit sensors and prompts and save everything in one step.
 - Knows your sandboxes, runtimes, tools and settings, so it doesn't guess ids.
 - Knows what you put in Settings → Context → System Prompt (your name, preferences, facts). That text is added to every agent call, flows included.
 - Fixes: kill switch doesn't block it; errors are shown; typing works immediately; Save disabled until the

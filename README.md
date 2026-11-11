@@ -12,7 +12,7 @@ approval.
   is decided by policy or by you, and recorded.
 - **Everything is traceable.** For any outcome you can see the source item, each node's input, output, exit code and
   script, the agent transcript, and what was approved.
-- **A chat assistant that can look.** The assist drawer drafts sensors, flows and tools, and can read every run,
+- **A chat assistant that can look.** **Ask AI** (header, every page) opens one chat drawer that knows which page you are on, can open pages for you, drafts sensors, flows and tools, and can read every run,
   transcript and log the CLI shows (read-only, no approval) to explain a failure. For a bug it builds a prefilled GitHub
   issue link; nothing is filed until you submit it. Edits still go through a draft, your Save and the approval gate
   ([docs/assist.md](docs/assist.md)).
@@ -277,7 +277,7 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `sensors env set <id> <KEY> [value]` | `--stdin` reads the value from stdin. Takes effect on the next poll. |
 | `sensors env unset <id> <KEY>` | |
 | `sensors validate [file.yaml\|-]` | Validate sensor YAML without saving. |
-| `assist create --runtime <name>` | Start an AI-assisted authoring session: `--sensor <id>` (edit an existing sensor), `--model`, `--yaml file\|-`. See [docs/assist.md](docs/assist.md). |
+| `assist create --runtime <name>` | Start a chat session: `--general` (the Ask AI chat, no draft), `--sensor <id>` (edit an existing sensor), `--model`, `--yaml file\|-`. See [docs/assist.md](docs/assist.md). |
 | `assist list` / `assist get <session>` | `--target-kind`, `--target-id`; `get` includes the conversation. |
 | `assist send <session> <text...>` | `--yaml file\|-` replaces the draft first. Starts one agent turn. |
 | `assist test [<session>]` / `assist draft [<session>]` | Run the draft like Poll now (redacted JSON result) / print the draft with its diagnostics. The session defaults to `HAL9001_ASSIST_SESSION`. |
@@ -412,7 +412,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
-| [docs/assist.md](docs/assist.md) | The chat assistant: AI-assisted authoring (draft, permission policy, secret model, lifecycle), the read-only tools that inspect runs, and the GitHub issue link. |
+| [docs/assist.md](docs/assist.md) | The chat assistant: Ask AI (global drawer, page context, `navigate_ui`), AI-assisted authoring (draft, permission policy, secret model, lifecycle), the read-only tools that inspect runs, and the GitHub issue link. |
 | [docs/api.md](docs/api.md) | REST API guide: auth, pagination, long-polling, SSE, errors, curl walkthrough. |
 | [docs/live-smoke.md](docs/live-smoke.md) | Live smoke tests against real runtimes and services. |
 | [cmd/fake-acp-agent/README.md](cmd/fake-acp-agent/README.md) | The scripted ACP agent used by tests. |

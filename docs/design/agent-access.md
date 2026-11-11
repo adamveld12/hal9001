@@ -38,7 +38,7 @@ Added per agent node via `tools: [ids]`: user-defined custom tools.
 Assist sessions get `draft_read`, `draft_write`, `draft_test`, `validate` (+ the always-available set) instead of editing
 files. They also get read-only inspection tools (everything the CLI can list, get and inspect: runs, transcripts, sandbox
 logs, sensors, events, inbox, approvals, config; no approval, capped results) and `github_issue_link`, which builds a
-prefilled GitHub new-issue link and calls nothing. Flow agent nodes get neither. See [../assist.md](../assist.md#tools-and-permissions).
+prefilled GitHub new-issue link and calls nothing, and `navigate_ui` / `start_draft` (they publish a stream event that moves the user's view or opens a draft chat; no approval). Flow agent nodes get none of these. See [../assist.md](../assist.md#tools-and-permissions).
 
 ## Context preamble
 
