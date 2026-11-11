@@ -6,7 +6,7 @@ import { flowDraftParseQuery, renderFlowYaml } from "../../api/flows";
 import { qk } from "../../api/keys";
 import type { Flow } from "../../flow/model";
 import { isConflict } from "../files/diagnostics";
-import { useAssistPage } from "./context";
+import { useAssist } from "./context";
 import {
   afterPush,
   applyDraft,
@@ -29,13 +29,16 @@ const PUSH_DELAY_MS = 600;
  * reports through `FlowEditor.onChange`.
  */
 export function useFlowDraftSync({
+  targetId,
   sessionId,
   editorFlow,
 }: {
+  /** The flow the canvas edits; null for a new one. The drawer feeds the canvas only while it is on this flow. */
+  targetId: string | null;
   sessionId: string | null;
   editorFlow: Flow | null;
 }) {
-  const page = useAssistPage();
+  const assist = useAssist();
   const qc = useQueryClient();
   const session = useAssistSession(sessionId);
   const draft = session.data?.draft ?? null;
@@ -134,9 +137,11 @@ export function useFlowDraftSync({
   }, [pushOnce]);
 
   // Offer the canvas to the drawer: edits it holds that the draft lacks travel with the message.
-  const { registerEditor } = page;
+  const { registerEditor } = assist;
   useEffect(() => {
     registerEditor({
+      kind: "flow",
+      id: targetId,
       flush,
       undecided: () =>
         pendingUpdate(latest.current.sync, latest.current.editorFlow) !== null,
@@ -148,7 +153,7 @@ export function useFlowDraftSync({
       },
     });
     return () => registerEditor(null);
-  }, [registerEditor, flush]);
+  }, [registerEditor, flush, targetId]);
 
   const pendingFlow = pendingUpdate(sync, editorFlow);
 

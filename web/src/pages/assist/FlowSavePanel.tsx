@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAssistSession } from "../../api/assist";
 import { Button } from "../../components/ui";
 import { hasErrors } from "../files/diagnostics";
-import { useAssistPage } from "./context";
+import { useAssist } from "./context";
 import { describeSavePlan } from "./flowSave";
 import { findingLabel } from "./sensorDrafts";
 import { isBusy } from "./sessions";
@@ -17,7 +17,7 @@ import { useFlowSave } from "./useFlowSave";
 export function FlowSavePanel({ sessionId }: { sessionId: string }) {
   const session = useAssistSession(sessionId).data;
   const save = useFlowSave(sessionId);
-  const { targetId } = useAssistPage();
+  const { id: targetId } = useAssist().target;
   const [notice, setNotice] = useState<string | null>(null);
   const draft = session?.draft;
 

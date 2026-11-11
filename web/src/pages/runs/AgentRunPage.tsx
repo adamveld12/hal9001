@@ -17,9 +17,12 @@ import {
   Spinner,
   StatusBadge,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, trimText } from "../../lib/contextSummary";
 import { useNow } from "../approvals/timeLeft";
 import { durationBetween, formatBytes, shortId } from "../../lib/format";
 import { Meta, Mono, TextLink } from "./Meta";
+import { useAssist } from "../assist/context";
 import { PermissionRequests } from "./PermissionRequests";
 import { PhaseTimeline } from "./PhaseTimeline";
 import { TranscriptView } from "./TranscriptView";
@@ -77,6 +80,30 @@ export function AgentRunPage() {
   const { id = "" } = useParams();
   const q = useAgentRun(id);
   const now = useNow();
+  const detail = q.data;
+  usePageContext(
+    detail
+      ? {
+          title: "Agent run",
+          facts: factList([
+            ["agent run id", detail.id],
+            ["status", detail.status],
+            ["runtime", detail.runtime],
+            ["mode", detail.mode],
+            ["phase", detail.phase],
+            ["stop reason", detail.stop_reason],
+            ["error", trimText(detail.error)],
+            ["flow run", detail.flow_run_id],
+            ["flow", detail.flow_id],
+            ["node", detail.node_id],
+            ["node run", detail.node_run_id],
+            ["assist session", detail.assist_session_id],
+          ]),
+        }
+      : null,
+  );
+
+  const { openSession } = useAssist();
 
   if (q.isPending) return <LoadingState label="Loading agent run" />;
   if (q.isError) {
@@ -126,9 +153,13 @@ export function AgentRunPage() {
               </TextLink>
             )}
             {run.assist_session_id && (
-              <TextLink to={`/sensors?assist=${run.assist_session_id}`}>
+              <button
+                type="button"
+                className="text-accent hover:underline"
+                onClick={() => openSession(run.assist_session_id as string)}
+              >
                 Assist session <Mono>{shortId(run.assist_session_id)}</Mono>
-              </TextLink>
+              </button>
             )}
             {run.raw_size > 0 ? (
               <a

@@ -9,6 +9,8 @@ import {
   Panel,
   TextArea,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList } from "../../lib/contextSummary";
 import {
   byteLength,
   MAX_SYSTEM_PROMPT_BYTES,
@@ -46,6 +48,14 @@ function SystemPromptPanel({ saved }: { saved: string }) {
   const dirty = draft !== null && draft !== saved;
   const error = systemPromptError(value);
   const bytes = byteLength(value);
+  usePageContext({
+    title: "Settings: Context",
+    facts: factList([
+      ["system prompt set", saved.length > 0],
+      ["saved system prompt bytes", byteLength(saved)],
+      ["unsaved edits", dirty || undefined],
+    ]),
+  });
 
   return (
     <Panel title="System Prompt">

@@ -594,6 +594,31 @@ func (s *Server) publishFileChange(k spec.Kind, id string) {
 	s.PublishConfigChange([]string{k.Rel(id)})
 }
 
+// PublishAssistNavigate announces that the assistant of a session asked the UI to open path (an in-app path the assist
+// service checked against the app's routes) as an `assist.navigate` event. reason may be empty. The event carries the
+// `assist_session_id` stream filter.
+func (s *Server) PublishAssistNavigate(sessionID, path, reason string) {
+	v := struct {
+		SessionID string  `json:"session_id"`
+		Path      string  `json:"path"`
+		Reason    *string `json:"reason"`
+	}{sessionID, path, nonEmpty(reason)}
+	s.hub.publish("assist.navigate", v, map[string]string{"assist_session_id": sessionID}, false)
+}
+
+// PublishAssistStartDraft announces that the assistant of a general session offered a draft session on a sensor, flow
+// or tool as an `assist.start_draft` event. id and prompt may be empty. The event carries the `assist_session_id`
+// stream filter.
+func (s *Server) PublishAssistStartDraft(sessionID, kind, id, prompt string) {
+	v := struct {
+		SessionID string  `json:"session_id"`
+		Kind      string  `json:"kind"`
+		ID        *string `json:"id"`
+		Prompt    *string `json:"prompt"`
+	}{sessionID, kind, nonEmpty(id), nonEmpty(prompt)}
+	s.hub.publish("assist.start_draft", v, map[string]string{"assist_session_id": sessionID}, false)
+}
+
 // ---- handler ----
 
 // discardWriter lets the admin probe run Require without producing output.

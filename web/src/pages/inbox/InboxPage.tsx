@@ -56,6 +56,9 @@ import {
   filtersToQuery,
   type InboxFilters,
 } from "./filters";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, rowEntities, trimText } from "../../lib/contextSummary";
+import { approvalEntity } from "../approvals/context";
 import { useHotkeys } from "./hotkeys";
 import { InboxDetail } from "./InboxDetail";
 import { InboxFilterBar } from "./InboxFilterBar";
@@ -428,6 +431,51 @@ export function InboxPage() {
       ? undefined
       : `${unread} unread${pending ? `, ${pending} need action` : ""}`;
   const showApprovalError = decide.isError && !isAlreadyDecided(decide.error);
+  const activeFilters = factList([
+    ["kind", filters.kind],
+    ["unread only", filters.unread || undefined],
+    ["starred only", filters.starred || undefined],
+    ["archived only", filters.archived || undefined],
+    ["min priority", filters.priority],
+    ["dry runs", filters.dryRun === "any" ? undefined : filters.dryRun],
+    ["search", trimText(filters.q, 60)],
+    ["sort", filters.sort],
+  ]);
+  const selectedFact = openApprovalId
+    ? shownApproval
+      ? `approval ${shownApproval.id}: ${trimText(approvalEntity(shownApproval).label, 80)} (${shownApproval.status})`
+      : `approval ${openApprovalId}`
+    : openId
+      ? shown
+        ? `note ${shown.id}: ${trimText(shown.title, 80)} (${shown.read ? "read" : "unread"})`
+        : `note ${openId}`
+      : undefined;
+  usePageContext(
+    list.isPending
+      ? null
+      : {
+          title: "Inbox",
+          facts: [
+            ...activeFilters,
+            ...factList([
+              ["rows", rows.length],
+              ["unread", unread],
+              ["pending approvals", pending],
+              ["selected", selectedFact],
+            ]),
+          ],
+          entities: rowEntities(rows, (r) =>
+            r.kind === "approval"
+              ? approvalEntity(r.approval)
+              : {
+                  kind: "inbox_item",
+                  id: r.item.id,
+                  label: trimText(r.item.title, 80),
+                  detail: `${r.item.priority}, ${r.item.read ? "read" : "unread"}, flow ${r.item.flow_id}`,
+                },
+          ),
+        },
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -2,46 +2,32 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import {
   useAssistSession,
-  useAssistSessions,
   useCancelAssistTurn,
   useCreateAssistSession,
   useEndAssistSession,
   useSendAssistMessage,
   type AssistMessage,
-  type AssistSession,
-  type AssistStatus,
   type AssistTargetKind,
 } from "../../api/assist";
 import { ApiError } from "../../api/client";
 import { useRuntimes } from "../../api/settings";
 import { Icon } from "../../components/icons";
-import {
-  Badge,
-  Button,
-  LoadingState,
-  Select,
-  TextInput,
-} from "../../components/ui";
+import { Button, LoadingState, Select, TextInput } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import { noFocusOnClick } from "../../lib/focus";
-import { relativeTime } from "../../lib/format";
-import type { Tone } from "../../lib/status";
 import { ConfirmButton } from "../files/ConfirmButton";
 import { Composer } from "./Composer";
+import { useAssist } from "./context";
 import { startSession } from "./startSession";
-import { useAssistPage } from "./context";
 import { FlowSavePanel } from "./FlowSavePanel";
 import { FlowTestPanel } from "./FlowTestPanel";
+import { HistoryPanel } from "./HistoryPanel";
 import { SensorDraftCards } from "./SensorDraftCards";
 import { MessageView } from "./MessageView";
 import { traceLinks } from "./messages";
-import {
-  bindSession,
-  clampDrawerWidth,
-  isBusy,
-  parseStoredWidth,
-} from "./sessions";
-import { selectResumable, starterPrompts, targetConfig } from "./targets";
+import { clampDrawerWidth, isBusy, parseStoredWidth } from "./sessions";
+import { StatusPill } from "./StatusPill";
+import { starterPrompts, targetConfig, targetPath } from "./targets";
 import {
   pendingApprovalMessage,
   isBelowView,
@@ -53,26 +39,6 @@ import { useAssistLive } from "./useAssistLive";
 import { useTestDraft } from "./useTestDraft";
 
 const WIDTH_STORAGE_ITEM = "hal9001.assist.drawerWidth";
-
-const STATUS: Record<AssistStatus, { label: string; tone: Tone }> = {
-  idle: { label: "idle", tone: "muted" },
-  running: { label: "running", tone: "run" },
-  awaiting_approval: { label: "awaiting approval", tone: "warn" },
-  failed: { label: "failed", tone: "bad" },
-  closed: { label: "ended", tone: "muted" },
-};
-
-function StatusPill({ status }: { status: AssistStatus }) {
-  const s = STATUS[status];
-  return (
-    <Badge tone={s.tone} className="gap-1.5">
-      {status === "running" && (
-        <span className="size-2 animate-spin rounded-full border border-run/40 border-t-run" />
-      )}
-      {s.label}
-    </Badge>
-  );
-}
 
 function storedWidth(): number {
   let raw: string | null = null;
@@ -87,6 +53,25 @@ function storedWidth(): number {
 function saveWidth(w: number) {
   try {
     localStorage.setItem(WIDTH_STORAGE_ITEM, String(w));
+  } catch {
+    // not persisted
+  }
+}
+
+const RUNTIME_STORAGE_ITEM = "hal9001.assist.runtime";
+
+/** The runtime of the last chat the user started, so a new chat does not reset it to the first one. */
+function storedRuntime(): string | null {
+  try {
+    return localStorage.getItem(RUNTIME_STORAGE_ITEM);
+  } catch {
+    return null;
+  }
+}
+
+function saveRuntime(name: string) {
+  try {
+    localStorage.setItem(RUNTIME_STORAGE_ITEM, name);
   } catch {
     // not persisted
   }
@@ -136,6 +121,45 @@ function Resizer({
   );
 }
 
+/** The drawer's own toolbar: always shown, whatever the view. */
+function DrawerBar({
+  historyOpen,
+  onHistory,
+}: {
+  historyOpen: boolean;
+  onHistory: () => void;
+}) {
+  const { close, newChat } = useAssist();
+  return (
+    <div className="flex items-center gap-1.5 border-b border-line px-3 py-2">
+      <Icon name="agent" size={15} className="shrink-0 text-accent" />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
+        Ask AI
+      </span>
+      <Button
+        icon="timeline"
+        aria-pressed={historyOpen}
+        title="Recent chats"
+        onClick={onHistory}
+      >
+        History
+      </Button>
+      <Button icon="plus" title="Start a new chat (/new)" onClick={newChat}>
+        New chat
+      </Button>
+      <button
+        type="button"
+        aria-label="Close assistant"
+        title="Close (Esc). The session keeps running."
+        className="rounded-md p-1 text-muted hover:bg-raised hover:text-fg"
+        onClick={close}
+      >
+        <Icon name="close" size={15} />
+      </button>
+    </div>
+  );
+}
+
 function Header({
   title,
   badge,
@@ -147,24 +171,13 @@ function Header({
   children?: ReactNode;
   actions?: ReactNode;
 }) {
-  const { close } = useAssistPage();
   return (
     <header className="space-y-2 border-b border-line px-3 py-2">
       <div className="flex items-center gap-2">
-        <Icon name="agent" size={15} className="shrink-0 text-accent" />
         <h2 className="m-0 min-w-0 flex-1 truncate text-[13px] font-semibold">
           {title}
         </h2>
         {badge}
-        <button
-          type="button"
-          aria-label="Close assistant"
-          title="Close (Esc). The session keeps running."
-          className="rounded-md p-1 text-muted hover:bg-raised hover:text-fg"
-          onClick={close}
-        >
-          <Icon name="close" size={15} />
-        </button>
       </div>
       {children}
       {actions && (
@@ -227,12 +240,11 @@ function RuntimeControls({
 function StarterPrompts({
   kind,
   targetId,
-  onPick,
 }: {
   kind: AssistTargetKind;
   targetId: string | null;
-  onPick: (text: string) => void;
 }) {
+  const { seedText } = useAssist();
   return (
     <div className="space-y-1.5">
       <div className="text-[11px] font-medium text-muted">Try asking</div>
@@ -242,7 +254,7 @@ function StarterPrompts({
             key={p}
             type="button"
             className="rounded-full border border-line bg-panel px-2.5 py-1 text-xs hover:bg-raised"
-            onClick={() => onPick(p)}
+            onClick={() => seedText(p)}
           >
             {p}
           </button>
@@ -252,26 +264,28 @@ function StarterPrompts({
   );
 }
 
-/** Before a session exists: pick runtime and model, resume an earlier session, or send the first message. */
+/** Before a session exists: pick runtime and model, or send the first message. */
 function StartView() {
-  const page = useAssistPage();
-  const { kind, targetId } = page;
+  const assist = useAssist();
+  const { kind, id: targetId } = assist.target;
   const cfg = targetConfig(kind);
   const runtimes = useRuntimes();
-  const sessions = useAssistSessions(kind, targetId);
   const create = useCreateAssistSession();
   const send = useSendAssistMessage();
   const end = useEndAssistSession();
   const [runtimeChoice, setRuntime] = useState<string | null>(null);
   const [model, setModel] = useState("");
-  const [prefill, setPrefill] = useState<{ text: string; n: number } | null>(
-    null,
-  );
-  const runtime = runtimeChoice ?? runtimes.data?.[0]?.name ?? "";
-  const resumable = selectResumable(sessions.data ?? [], kind, targetId);
+  const names = runtimes.data?.map((r) => r.name) ?? [];
+  const remembered = storedRuntime();
+  const runtime =
+    runtimeChoice ??
+    (remembered !== null && names.includes(remembered)
+      ? remembered
+      : (names[0] ?? ""));
 
   const start = async (text: string) => {
-    const yaml = await page.editor()?.getText();
+    saveRuntime(runtime);
+    const yaml = await assist.editor()?.getText();
     await startSession({
       create: () =>
         create.mutateAsync({
@@ -280,9 +294,10 @@ function StartView() {
           model: model.trim() === "" ? undefined : model.trim(),
           yaml,
         }),
-      send: (id) => send.mutateAsync({ id, text }),
+      send: (id) =>
+        send.mutateAsync({ id, text, page_context: assist.pageContext() }),
       end: (id) => end.mutateAsync(id),
-      bind: page.bind,
+      bind: (id) => assist.bind(id),
     });
   };
 
@@ -312,25 +327,7 @@ function StartView() {
             in config.yaml.
           </div>
         )}
-        {resumable.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="text-[11px] font-medium text-muted">
-              Resume a session
-            </div>
-            <ul className="m-0 list-none space-y-1 p-0">
-              {resumable.map((s) => (
-                <li key={s.id}>
-                  <ResumeRow session={s} onResume={() => page.bind(s.id)} />
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <StarterPrompts
-          kind={kind}
-          targetId={targetId}
-          onPick={(text) => setPrefill((p) => ({ text, n: (p?.n ?? 0) + 1 }))}
-        />
+        <StarterPrompts kind={kind} targetId={targetId} />
       </div>
       <div className="border-t border-line p-3">
         <Composer
@@ -340,34 +337,14 @@ function StartView() {
               ? cfg.composerPlaceholder.new
               : cfg.composerPlaceholder.existing
           }
-          prefill={prefill}
+          prefill={assist.seed}
+          onPrefillApplied={assist.consumeSeed}
           autoFocus
           onSend={start}
+          onNewChat={assist.newChat}
         />
       </div>
     </>
-  );
-}
-
-function ResumeRow({
-  session,
-  onResume,
-}: {
-  session: AssistSession;
-  onResume: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center gap-2 rounded-md border border-line bg-panel px-2.5 py-1.5 text-left text-xs hover:bg-raised"
-      onClick={onResume}
-    >
-      <span className="font-medium">{session.runtime}</span>
-      <StatusPill status={session.status} />
-      <span className="ml-auto text-muted">
-        {relativeTime(session.updated_at)}
-      </span>
-    </button>
   );
 }
 
@@ -476,9 +453,15 @@ function MessageList({
 }
 
 /** "Test draft" as a card at the end of the conversation; the result opens under the button. */
-function TestPanel({ sessionId }: { sessionId: string }) {
+function TestPanel({
+  sessionId,
+  kind,
+}: {
+  sessionId: string;
+  kind: AssistTargetKind;
+}) {
   const test = useTestDraft(sessionId);
-  const isTool = useAssistPage().kind === "tool";
+  const isTool = kind === "tool";
   const [argsText, setArgsText] = useState("{}");
   let args: Record<string, unknown> | undefined;
   try {
@@ -545,14 +528,11 @@ function TestPanel({ sessionId }: { sessionId: string }) {
 }
 
 function SessionView({ id }: { id: string }) {
-  const page = useAssistPage();
+  const assist = useAssist();
   const q = useAssistSession(id);
   const send = useSendAssistMessage();
   const cancel = useCancelAssistTurn(id);
   const end = useEndAssistSession();
-  const [prefill, setPrefill] = useState<{ text: string; n: number } | null>(
-    null,
-  );
   const s = q.data;
 
   if (q.isPending) {
@@ -572,7 +552,7 @@ function SessionView({ id }: { id: string }) {
           <div role="alert" className="text-bad">
             {gone ? "This session no longer exists." : q.error?.message}
           </div>
-          <Button onClick={page.open}>Start a new session</Button>
+          <Button onClick={assist.newChat}>Start a new chat</Button>
         </div>
       </>
     );
@@ -580,19 +560,21 @@ function SessionView({ id }: { id: string }) {
 
   const busy = isBusy(s.status);
   const closed = s.status === "closed";
-  const cfg = targetConfig(s.target.kind);
-  const binding = bindSession(s, page.kind, page.targetId);
-  const elsewhere =
-    s.target.kind !== page.kind
-      ? cfg.draftPath(id)
-      : binding.otherTarget !== null
-        ? cfg.editorPath(binding.otherTarget, id)
-        : null;
+  const kind = s.target.kind;
+  const cfg = targetConfig(kind);
+  // The saved id once a new target was saved; the session's own until then.
+  const targetId = assist.target.kind === kind ? assist.target.id : s.target.id;
+  const editorPath = targetPath(kind, targetId);
+  const elsewhere = !closed && !assist.editorActive ? editorPath : null;
 
   return (
     <>
       <Header
-        title={cfg.sessionTitle(s.target.id ?? page.targetId)}
+        title={
+          kind === "general"
+            ? (s.title ?? "New chat")
+            : cfg.sessionTitle(targetId)
+        }
         badge={<StatusPill status={s.status} />}
         actions={
           <>
@@ -612,7 +594,7 @@ function SessionView({ id }: { id: string }) {
               confirmLabel="End and discard"
               disabled={end.isPending}
               onConfirm={() =>
-                end.mutate(id, { onSuccess: () => page.close() })
+                end.mutate(id, { onSuccess: () => assist.newChat() })
               }
             />
           </>
@@ -626,36 +608,30 @@ function SessionView({ id }: { id: string }) {
           className="border-b border-line bg-raised px-3 py-1.5 text-xs"
         >
           This session edits{" "}
-          {binding.otherTarget !== null
-            ? `${cfg.noun} `
-            : `a ${cfg.noun} elsewhere `}
+          {targetId === null ? `a new ${cfg.noun}` : `${cfg.noun} ${targetId}`}.{" "}
           <Link className="text-accent underline" to={elsewhere}>
-            {binding.otherTarget ?? "open it"}
-          </Link>
-          , not the one open here, so the editor is not synced with it.
+            Open {targetId === null ? `the new ${cfg.noun} draft` : targetId}
+          </Link>{" "}
+          to see its draft in the editor.
         </div>
       )}
       <MessageList
         messages={s.messages}
         runtime={s.runtime}
         tail={
-          closed ? null : s.target.kind === "flow" ? (
+          closed || kind === "general" ? null : kind === "flow" ? (
             <>
               <SensorDraftCards sessionId={id} />
               <FlowTestPanel sessionId={id} />
             </>
           ) : (
-            <TestPanel sessionId={id} />
+            <TestPanel sessionId={id} kind={kind} />
           )
         }
       />
       {s.messages.length === 0 && !closed && (
         <div className="px-3 pb-3">
-          <StarterPrompts
-            kind={s.target.kind}
-            targetId={s.target.id}
-            onPick={(text) => setPrefill((p) => ({ text, n: (p?.n ?? 0) + 1 }))}
-          />
+          <StarterPrompts kind={kind} targetId={s.target.id} />
         </div>
       )}
       {s.status === "failed" && s.error && (
@@ -670,12 +646,12 @@ function SessionView({ id }: { id: string }) {
         <div className="space-y-2 border-t border-line p-3 text-xs text-muted">
           This session has ended.
           <div>
-            <Button onClick={page.open}>Start a new session</Button>
+            <Button onClick={assist.newChat}>Start a new chat</Button>
           </div>
         </div>
       ) : (
         <>
-          {s.target.kind === "flow" && (
+          {kind === "flow" && (
             <div className="max-h-48 overflow-auto">
               <FlowSavePanel sessionId={id} />
             </div>
@@ -686,14 +662,17 @@ function SessionView({ id }: { id: string }) {
               placeholder={
                 busy ? "Waiting for the agent…" : "Message the agent…"
               }
-              prefill={prefill}
+              prefill={assist.seed}
+              onPrefillApplied={assist.consumeSeed}
               autoFocus
+              onNewChat={assist.newChat}
               onSend={async (text) => {
-                await page.editor()?.flush();
+                await assist.editor()?.flush();
                 await send.mutateAsync({
                   id,
                   text,
-                  yaml: await page.editor()?.getText(),
+                  yaml: await assist.editor()?.getText(),
+                  page_context: assist.pageContext(),
                 });
               }}
             />
@@ -704,19 +683,27 @@ function SessionView({ id }: { id: string }) {
   );
 }
 
-/** The chat drawer: beside the editor on wide screens, over it on narrow ones. */
+/**
+ * The global chat drawer, docked at the right of the app shell: beside the page
+ * on wide screens, over it on narrow ones. Mounted while open; the shell keeps
+ * it across route changes.
+ */
 export function AssistDrawer() {
-  const { sessionId, close } = useAssistPage();
+  const assist = useAssist();
+  const { sessionId, target, close, notice, dismissNotice } = assist;
   useAssistLive(sessionId);
   const [width, setWidth] = useState(storedWidth);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) close();
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (historyOpen) setHistoryOpen(false);
+      else close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [close]);
+  }, [close, historyOpen]);
 
   useEffect(() => {
     const onResize = () =>
@@ -742,7 +729,32 @@ export function AssistDrawer() {
         )}
       >
         <Resizer width={width} onChange={setWidth} />
-        {sessionId === null ? <StartView /> : <SessionView id={sessionId} />}
+        <DrawerBar
+          historyOpen={historyOpen}
+          onHistory={() => setHistoryOpen((o) => !o)}
+        />
+        {historyOpen && <HistoryPanel onPicked={() => setHistoryOpen(false)} />}
+        {notice !== null && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 border-b border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
+          >
+            <span className="min-w-0 flex-1">{notice}</span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              className="shrink-0 hover:text-fg"
+              onClick={dismissNotice}
+            >
+              <Icon name="close" size={13} />
+            </button>
+          </div>
+        )}
+        {sessionId === null ? (
+          <StartView key={`${target.kind}:${target.id ?? ""}`} />
+        ) : (
+          <SessionView key={sessionId} id={sessionId} />
+        )}
       </aside>
     </>
   );

@@ -3,11 +3,12 @@ import {
   usePutAssistDraft,
   useAssistSession,
   type AssistSessionDetail,
+  type AssistTargetKind,
 } from "../../api/assist";
 import { useQueryClient } from "@tanstack/react-query";
 import { qk } from "../../api/keys";
 import { isConflict } from "../files/diagnostics";
-import { useAssistPage } from "./context";
+import { useAssist } from "./context";
 import {
   changedLines,
   initSync,
@@ -26,21 +27,22 @@ import { bindSession } from "./sessions";
 const PUSH_DELAY_MS = 600;
 
 /**
- * The session the open editor belongs to: the one in the URL, provided it edits
- * this target (`targetId`) or one that had no file yet and is still open (see
- * `bindSession`). Anything else leaves the editor on its own.
+ * The session the open editor belongs to: the one the drawer shows while it is
+ * open, provided it edits this target (`targetId` of `kind`) or one that had
+ * no file yet and is still open (see `bindSession`). Anything else leaves the
+ * editor on its own.
  */
-export function useBoundSession(targetId: string | null): {
+export function useBoundSession(
+  kind: AssistTargetKind,
+  targetId: string | null,
+): {
   session: AssistSessionDetail | undefined;
   sessionId: string | null;
-  /** The URL names a session of another target. */
-  otherTarget: string | null;
 } {
-  const page = useAssistPage();
-  const q = useAssistSession(page.sessionId);
+  const assist = useAssist();
+  const q = useAssistSession(assist.open ? assist.sessionId : null);
   const session = q.data;
-  const b = bindSession(session, page.kind, targetId);
-  return { session, sessionId: b.sessionId, otherTarget: b.otherTarget };
+  return { session, sessionId: bindSession(session, kind, targetId) };
 }
 
 /**
@@ -49,18 +51,30 @@ export function useBoundSession(targetId: string | null): {
  * typed over, pushes the user's edits, and exposes the undecided case.
  */
 export function useDraftSync({
+  kind,
+  targetId,
   sessionId,
   text,
   setText,
   dirty,
+  leaveMessage,
 }: {
+  /** What the editor edits; the drawer feeds it text only while it is on this target. */
+  kind: AssistTargetKind;
+  targetId: string | null;
   sessionId: string | null;
   text: string;
   setText: (t: string) => void;
   /** The editor holds unsaved edits (relevant when the session is first bound). */
   dirty: boolean;
+  /**
+   * Set for an editor that is on screen only while the drawer is on its target
+   * (the new-sensor pane): asked, when there are unsaved edits, before the
+   * drawer closes or moves away.
+   */
+  leaveMessage?: string;
 }) {
-  const page = useAssistPage();
+  const assist = useAssist();
   const qc = useQueryClient();
   const session = useAssistSession(sessionId);
   const draft = session.data?.draft ?? null;
@@ -78,9 +92,9 @@ export function useDraftSync({
   }
   const { sync, ai } = cur;
 
-  const latest = useRef({ sync, text, put });
+  const latest = useRef({ sync, text, put, dirty });
   useEffect(() => {
-    latest.current = { sync, text, put };
+    latest.current = { sync, text, put, dirty };
   });
 
   const apply = useCallback(
@@ -129,11 +143,21 @@ export function useDraftSync({
   }, [push]);
 
   // Offer the editor to the drawer.
-  const { registerEditor } = page;
+  const { registerEditor } = assist;
   useEffect(() => {
-    registerEditor({ getText: () => latest.current.text, flush });
+    registerEditor({
+      kind,
+      id: targetId,
+      getText: () => latest.current.text,
+      flush,
+      dirty: () => latest.current.dirty,
+      confirmLeave:
+        leaveMessage === undefined
+          ? undefined
+          : () => !latest.current.dirty || window.confirm(leaveMessage),
+    });
     return () => registerEditor(null);
-  }, [registerEditor, flush]);
+  }, [registerEditor, flush, kind, targetId, leaveMessage]);
 
   const marks = useMemo(
     () => (ai ? changedLines(ai.before, ai.after) : []),

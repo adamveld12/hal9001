@@ -5,6 +5,8 @@ import {
   type SandboxBackend,
 } from "../../api/sandboxes";
 import { Badge, PageHeader } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList } from "../../lib/contextSummary";
 import { cx } from "../../lib/cx";
 import { SandboxEditor } from "./SandboxEditor";
 
@@ -17,6 +19,19 @@ export function SandboxesPage() {
   const { backend } = useParams<{ backend: string }>();
   const navigate = useNavigate();
   const list = useSandboxes();
+  usePageContext(
+    list.data
+      ? {
+          title: "Sandboxes",
+          facts: factList([["selected backend", backend]]),
+          entities: list.data.map((s) => ({
+            kind: "sandbox_backend",
+            id: s.backend,
+            detail: `${s.enabled ? "enabled" : "disabled"}, ${s.configured ? "configured" : "not configured"}, ${s.valid ? "valid" : "invalid"}, lifecycle ${s.lifecycle}, approval ${s.approval}`,
+          })),
+        }
+      : null,
+  );
   if (backend === undefined) return <Navigate to="/sandboxes/local" replace />;
   if (!isBackend(backend)) return <Navigate to="/sandboxes/local" replace />;
   const summary = (key: string) => list.data?.find((s) => s.backend === key);

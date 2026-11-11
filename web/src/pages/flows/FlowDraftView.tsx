@@ -18,10 +18,17 @@ const NO_SAVE = () => Promise.reject(new Error("saved from the assistant"));
  * follows the agent's updates, and writes the user's edits back to the draft.
  * The flow is saved from the drawer, so the editor has no Save of its own.
  */
-export function FlowDraftView({ sessionId }: { sessionId: string }) {
+export function FlowDraftView({
+  targetId,
+  sessionId,
+}: {
+  /** The flow the canvas stands for; null for a new one. */
+  targetId: string | null;
+  sessionId: string;
+}) {
   const [editorFlow, setEditorFlow] = useState<Flow | null>(null);
   const onChange = useCallback((flow: Flow) => setEditorFlow(flow), []);
-  const sync = useFlowDraftSync({ sessionId, editorFlow });
+  const sync = useFlowDraftSync({ targetId, sessionId, editorFlow });
   const sensors = useSensorIds();
   const prompts = usePromptNames();
   const runtimes = useRuntimeNames();

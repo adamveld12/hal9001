@@ -27,9 +27,11 @@ import {
   LoadingState,
   Panel,
 } from "../../components/ui";
-import { useAssistPage } from "../assist/context";
+import { usePageContext } from "../../layout/pageContext";
+import { useAssist } from "../assist/context";
 import { DraftBanners } from "../assist/DraftBanners";
 import { pickChecked } from "../assist/draftSync";
+import { sensorContext } from "../assist/pageContexts";
 import { useBoundSession, useDraftSync } from "../assist/useDraftSync";
 import { useTestDraft } from "../assist/useTestDraft";
 import { ConfirmButton } from "../files/ConfirmButton";
@@ -88,9 +90,11 @@ function Editor({
   const [resetOpen, setResetOpen] = useState(false);
 
   // AI assistant: while a session for this sensor is open the editor shows and feeds its draft.
-  const assist = useAssistPage();
-  const bound = useBoundSession(id);
+  const assist = useAssist();
+  const bound = useBoundSession("sensor", id);
   const sync = useDraftSync({
+    kind: "sensor",
+    targetId: id,
     sessionId: bound.sessionId,
     text: state.draft,
     setText: (v) => dispatch({ type: "edit", draft: v }),
@@ -110,6 +114,17 @@ function Editor({
     pickChecked(state.draft, checked, assistChecked),
   );
   const busy = update.isPending || del.isPending;
+  usePageContext(
+    sensorContext({
+      id,
+      description: detail.sensor?.description,
+      state: detail.status.state,
+      paused: detail.status.paused,
+      dirty,
+      diagnostics: shown.diagnostics,
+      drafting: bound.sessionId !== null,
+    }),
+  );
 
   const save = (expectedHash: string) => {
     const text = state.draft;
@@ -364,9 +379,13 @@ function Editor({
             )}
             <Button
               icon="agent"
-              disabled={assist.param !== null}
+              disabled={
+                assist.open &&
+                assist.target.kind === "sensor" &&
+                assist.target.id === id
+              }
               title="Chat with an AI agent that edits this sensor's draft"
-              onClick={assist.open}
+              onClick={() => assist.openTarget({ kind: "sensor", id })}
             >
               Ask AI
             </Button>

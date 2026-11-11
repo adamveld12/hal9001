@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useCreateSensor, useValidateSensor } from "../../api/sensors";
 import { CodeEditor } from "../../components/CodeEditor";
-import { Button, EmptyState, Panel } from "../../components/ui";
-import { useAssistPage } from "../assist/context";
+import { Button, Panel } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
 import { DraftBanners } from "../assist/DraftBanners";
+import { newDraftContext } from "../assist/pageContexts";
 import { pickChecked } from "../assist/draftSync";
 import { useBoundSession, useDraftSync } from "../assist/useDraftSync";
 import { useTestDraft } from "../assist/useTestDraft";
@@ -27,6 +28,9 @@ key: "{{.id}}"
 first_run: baseline
 `;
 
+const LEAVE_NEW =
+  "Leave this new sensor? Text not saved as a sensor is dropped here; the session keeps its draft.";
+
 /**
  * Editor for a sensor that does not exist yet, shown for "Create with AI". The
  * text is the session's draft once there is one; Save creates the sensor file
@@ -37,18 +41,20 @@ export function SensorDraftPane({
   onCreated,
 }: {
   onDirtyChange: (dirty: boolean) => void;
-  onCreated: (id: string, sessionId: string | null) => void;
+  onCreated: (id: string) => void;
 }) {
-  const page = useAssistPage();
-  const bound = useBoundSession(null);
+  const bound = useBoundSession("sensor", null);
   const [text, setText] = useState(NEW_SENSOR_SKELETON);
   const [checked, setChecked] = useState<Checked | null>(null);
   const dirty = text !== NEW_SENSOR_SKELETON;
   const sync = useDraftSync({
+    kind: "sensor",
+    targetId: null,
     sessionId: bound.sessionId,
     text,
     setText,
     dirty,
+    leaveMessage: LEAVE_NEW,
   });
   const create = useCreateSensor();
   const validate = useValidateSensor();
@@ -65,18 +71,12 @@ export function SensorDraftPane({
     assistChecked ?? { text: "", diagnostics: [] },
     pickChecked(text, checked),
   );
+  usePageContext(
+    newDraftContext("sensor", { dirty, diagnostics: shown.diagnostics }),
+  );
   const createDiagnostics = diagnosticsOf(create.error);
   const otherError =
     create.error && !createDiagnostics ? errorMessage(create.error) : null;
-
-  if (bound.otherTarget !== null) {
-    return (
-      <EmptyState
-        title="Opening the sensor"
-        hint="This session belongs to an existing sensor."
-      />
-    );
-  }
 
   return (
     <div className="space-y-4 p-4">
@@ -117,7 +117,7 @@ export function SensorDraftPane({
               onClick={() => {
                 const t = text;
                 create.mutate(t, {
-                  onSuccess: (d) => onCreated(d.id, page.sessionId),
+                  onSuccess: (d) => onCreated(d.id),
                   onError: (e) => {
                     const ds = diagnosticsOf(e);
                     if (ds) setChecked({ text: t, diagnostics: ds });

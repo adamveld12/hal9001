@@ -1,42 +1,32 @@
 import type { AssistSession, AssistTargetKind } from "../../api/assist";
 
-export interface SessionBinding {
-  /** The session the open editor shows and feeds; null when it belongs to the editor of another target. */
-  sessionId: string | null;
-  /** Id of the other target when the session edits one. */
-  otherTarget: string | null;
-}
-
 /**
- * Whether `session` belongs to the editor of the target `targetId` (null: the
- * page for a new target) of `kind`. A session started for a new target stays
- * attached after its first Save, when the page moves to the saved target. A
- * sensor session is matched on the target alone; a flow draft names its own
- * id, so a new-flow session belongs to the flow page of that id only. Closed
- * sessions and sessions of another kind leave the editor on its own.
+ * The id of `session` when it belongs to the editor of the target `targetId`
+ * (null: the page for a new target) of `kind`, else null. A session started for
+ * a new target stays attached after its first Save, when the page moves to the
+ * saved target. A sensor or tool session is matched on the target alone; a flow
+ * draft names its own id, so a new-flow session belongs to the flow page of that
+ * id only. Closed sessions and sessions of another kind leave the editor on its
+ * own.
  */
 export function bindSession(
   session:
     Pick<AssistSession, "id" | "status" | "target" | "draft"> | undefined,
   kind: AssistTargetKind,
   targetId: string | null,
-): SessionBinding {
-  const none: SessionBinding = { sessionId: null, otherTarget: null };
+): string | null {
   if (!session || session.status === "closed" || session.target.kind !== kind) {
-    return none;
+    return null;
   }
   const t = session.target.id;
-  const bound: SessionBinding = { sessionId: session.id, otherTarget: null };
   if (kind === "sensor" || kind === "tool") {
-    return t === null || t === targetId
-      ? bound
-      : { sessionId: null, otherTarget: t };
+    return t === null || t === targetId ? session.id : null;
   }
-  if (t === targetId) return bound;
+  if (t === targetId) return session.id;
   if (t === null && targetId !== null && session.draft.flow_id === targetId) {
-    return bound;
+    return session.id;
   }
-  return { sessionId: null, otherTarget: t ?? session.draft.flow_id };
+  return null;
 }
 
 export const DEFAULT_DRAWER_WIDTH = 420;

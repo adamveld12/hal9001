@@ -1,5 +1,10 @@
+import { useAuthSessions, usePasskeys } from "../../api/auth";
+import { useSettings } from "../../api/settings";
+import { usePageContext } from "../../layout/pageContext";
+import { factList } from "../../lib/contextSummary";
 import { Navigate, useSearchParams } from "react-router";
 import { PageHeader } from "../../components/ui";
+import { stackViews } from "./authView";
 import { AuthEventsPanel } from "./AuthEventsPanel";
 import { AuthStackPanel, TailscalePanel } from "./AuthConfigPanels";
 import { ContextSection } from "./ContextSection";
@@ -83,6 +88,7 @@ export function SettingsUpdatesPage() {
 }
 
 export function SettingsAuthPage() {
+  useAuthPageContext();
   return (
     <SettingsPageShell title="Auth">
       <SessionsPanel />
@@ -91,6 +97,29 @@ export function SettingsAuthPage() {
       <TailscalePanel />
       <AuthEventsPanel />
     </SettingsPageShell>
+  );
+}
+
+/** Counts and names of the auth setup; never session ids, passkey ids or stack options. */
+function useAuthPageContext() {
+  const settings = useSettings();
+  const passkeys = usePasskeys();
+  const sessions = useAuthSessions();
+  usePageContext(
+    settings.data
+      ? {
+          title: "Settings: Auth",
+          facts: factList([
+            ["passkeys", passkeys.data?.credentials.length],
+            ["active sessions", sessions.data?.sessions.length],
+          ]),
+          entities: stackViews(settings.data.config.auth).map((s) => ({
+            kind: "auth_stack",
+            id: s.name,
+            detail: `guards ${s.services.join(", ") || "nothing"}; modules ${s.entries.map((e) => `${e.module} (${e.control})`).join(", ")}`,
+          })),
+        }
+      : null,
   );
 }
 

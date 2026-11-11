@@ -17,6 +17,9 @@ import {
   Td,
   Th,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { useAssist } from "../assist/context";
+import { countBy, factList, rowEntities } from "../../lib/contextSummary";
 import { durationBetween, shortId } from "../../lib/format";
 import {
   AGENT_RUN_STATUSES,
@@ -31,6 +34,7 @@ import {
 import type { AgentRun } from "../../api/runs";
 
 function Owner({ run }: { run: AgentRun }) {
+  const { openSession } = useAssist();
   const o = agentRunOwner(run);
   if (o.kind === "flow") {
     return (
@@ -51,12 +55,13 @@ function Owner({ run }: { run: AgentRun }) {
   }
   if (o.kind === "assist") {
     return (
-      <Link
-        to={`/sensors?assist=${o.sessionId}`}
+      <button
+        type="button"
         className="inline-flex items-center gap-1.5 text-accent"
+        onClick={() => openSession(o.sessionId)}
       >
         Assist session <span className="font-mono">{shortId(o.sessionId)}</span>
-      </Link>
+      </button>
     );
   }
   return <span className="text-muted">–</span>;
@@ -71,6 +76,26 @@ export function AgentRunsPage() {
   const list = useAgentRunList(agentRunFiltersToQuery(filters));
   const runs = list.data?.pages.flatMap((p) => p.items) ?? [];
   const active = hasActive(filters);
+  usePageContext(
+    list.isPending
+      ? null
+      : {
+          title: "Agent runs",
+          facts: factList([
+            ["status filter", filters.status],
+            ["runtime filter", filters.runtime],
+            ["runs loaded", runs.length],
+            ["by status", countBy(runs, (r) => r.status)],
+            ["more pages", list.hasNextPage],
+          ]),
+          entities: rowEntities(runs, (r) => ({
+            kind: "agent_run",
+            id: r.id,
+            label: r.runtime,
+            detail: r.status,
+          })),
+        },
+  );
 
   const runtimeNames = [...(runtimes.data ?? [])];
   if (filters.runtime && !runtimeNames.includes(filters.runtime))

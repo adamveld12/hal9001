@@ -11,6 +11,8 @@ import {
   Td,
   Th,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList } from "../../lib/contextSummary";
 import {
   CLAUDE_SCOPES,
   clientGuide,
@@ -30,6 +32,31 @@ const code = "font-mono text-[11px]";
 
 export function McpSection() {
   const info = useMcpInfo();
+  usePageContext(
+    info.data
+      ? {
+          title: "Settings: MCP",
+          facts: factList([
+            ["tools", info.data.tools.length],
+            [
+              "tools needing approval",
+              info.data.tools
+                .filter((t) => t.needs_approval)
+                .map((t) => t.name)
+                .join(", "),
+            ],
+            [
+              "tools needing admin",
+              info.data.tools
+                .filter((t) => t.needs_admin)
+                .map((t) => t.name)
+                .join(", "),
+            ],
+            ["approval timeout seconds", info.data.approval_timeout_seconds],
+          ]),
+        }
+      : null,
+  );
   if (info.isPending) return <LoadingState />;
   if (info.isError) {
     return (

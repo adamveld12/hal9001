@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
+	"unicode"
 
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -198,8 +200,8 @@ type Notifier interface {
 
 // AssistCreateRequest is POST /api/assist/sessions.
 type AssistCreateRequest struct {
-	TargetKind string // "sensor" | "flow" | "tool"
-	// TargetID is the sensor or flow to edit; empty authors a new one.
+	TargetKind string // "general" | "sensor" | "flow" | "tool"
+	// TargetID is the sensor, flow or tool to edit; empty authors a new one. It is always empty for "general".
 	TargetID string
 	Runtime  string
 	Model    string
@@ -207,6 +209,36 @@ type AssistCreateRequest struct {
 	YAML *string
 	// Principal is the authenticated caller, recorded on the session's agent runs.
 	Principal string
+}
+
+// AssistPageContext is what the web UI shows the user when they send a message (the contract's AssistPageContext).
+// It is untrusted data: the assist service renders it into that turn's prompt only, delimited and size-capped, and never
+// stores it.
+type AssistPageContext struct {
+	// Route is the in-app path with its query, for example /flows/triage?view=runs.
+	Route string
+	Title string
+	// Summary is one or two sentences about what the page shows; it may be empty.
+	Summary  string
+	Facts    []AssistPageFact
+	Entities []AssistPageEntity
+}
+
+// AssistPageFact is one label/value pair of a page context.
+type AssistPageFact struct{ Label, Value string }
+
+// AssistPageEntity is a thing on the page the assistant may refer to: Kind (sensor, flow, run, ...) with an optional
+// id, label and one detail line.
+type AssistPageEntity struct{ Kind, ID, Label, Detail string }
+
+// RouteValid reports whether Route looks like an in-app path: it starts with a single "/" and has no backslash or
+// control character (so no scheme, host or line break).
+func (p *AssistPageContext) RouteValid() bool {
+	r := p.Route
+	if r == "" || r[0] != '/' || strings.HasPrefix(r, "//") || strings.ContainsRune(r, '\\') {
+		return false
+	}
+	return strings.IndexFunc(r, unicode.IsControl) < 0
 }
 
 // AssistTestItem is one parsed item of a draft test run.
@@ -375,8 +407,9 @@ type AssistFlowTestResult struct {
 type Assist interface {
 	CreateSession(ctx context.Context, req AssistCreateRequest) (*store.AssistSession, error)
 	// SendMessage stores the user's message and starts one agent turn. yaml, when non-nil,
-	// first replaces the draft. ErrInvalidState while a turn runs; ErrPaused under the kill switch.
-	SendMessage(ctx context.Context, sessionID, text string, yaml *string) (*store.AssistSession, error)
+	// first replaces the draft (general sessions have none and ignore it). page, when non-nil, is rendered into this
+	// turn's prompt only. ErrInvalidState while a turn runs; ErrPaused under the kill switch.
+	SendMessage(ctx context.Context, sessionID, text string, yaml *string, page *AssistPageContext) (*store.AssistSession, error)
 	// UpdateDraft replaces the draft (updated_by user). expectedHash, when non-empty, must equal
 	// the current draft hash, else *DraftConflictError.
 	UpdateDraft(ctx context.Context, sessionID, yaml, expectedHash string) (*store.AssistSession, error)

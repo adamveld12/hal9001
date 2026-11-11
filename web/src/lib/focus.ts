@@ -22,6 +22,22 @@ export function assistDrawerOpen(
   return doc.querySelector(ASSIST_DRAWER_SELECTOR) !== null;
 }
 
+/** Cmd+K (macOS) or Ctrl+K: toggles the Ask AI drawer, also while typing. */
+export function isAskAiShortcut(e: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}): boolean {
+  return (
+    e.key.toLowerCase() === "k" &&
+    (e.metaKey || e.ctrlKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  );
+}
+
 /**
  * Props for a drawer button that must not take focus when clicked with the
  * mouse. Keyboard activation (Tab, Enter, Space) is unaffected.

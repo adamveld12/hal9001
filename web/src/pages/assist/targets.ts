@@ -1,9 +1,10 @@
 // What differs between the kinds of thing the assistant edits. The drawer, the
 // session lookup and the draft sync take these from here instead of branching
 // on the kind themselves. Pure data and functions; the panels that need React
-// (test, save) are chosen by kind in AssistDrawer.tsx.
+// (test, save) are chosen by kind in AssistDrawer.tsx. `general` is the chat
+// that edits nothing.
 
-import type { AssistSession, AssistTargetKind } from "../../api/assist";
+import type { AssistTargetKind } from "../../api/assist";
 
 export interface AssistTargetConfig {
   kind: AssistTargetKind;
@@ -19,10 +20,6 @@ export interface AssistTargetConfig {
   intro: string;
   composerPlaceholder: { new: string; existing: string };
   starterPrompts: { new: readonly string[]; existing: readonly string[] };
-  /** Page that edits the target `id` with the session open. */
-  editorPath: (id: string, sessionId: string) => string;
-  /** Page that shows the session before its target has a file. */
-  draftPath: (sessionId: string) => string;
 }
 
 const SENSOR: AssistTargetConfig = {
@@ -51,8 +48,6 @@ const SENSOR: AssistTargetConfig = {
       "Reduce the polling frequency",
     ],
   },
-  editorPath: (id, sessionId) => `/sensors/${id}?assist=${sessionId}`,
-  draftPath: (sessionId) => `/sensors?assist=${sessionId}`,
 };
 
 const FLOW: AssistTargetConfig = {
@@ -79,8 +74,6 @@ const FLOW: AssistTargetConfig = {
       "Drop events that are not about me",
     ],
   },
-  editorPath: (id, sessionId) => `/flows/${id}?assist=${sessionId}`,
-  draftPath: (sessionId) => `/flows?assist=${sessionId}`,
 };
 
 const TOOL: AssistTargetConfig = {
@@ -102,11 +95,36 @@ const TOOL: AssistTargetConfig = {
     ],
     existing: ["Explain what this tool does", "Add a parameter"],
   },
-  editorPath: (id, sessionId) => `/tools/${id}?assist=${sessionId}`,
-  draftPath: (sessionId) => `/tools?assist=${sessionId}`,
+};
+
+const GENERAL: AssistTargetConfig = {
+  kind: "general",
+  noun: "chat",
+  newTitle: "Ask AI",
+  existingTitle: () => "Ask AI",
+  sessionTitle: () => "Ask AI",
+  intro:
+    "Ask about what hal9001 is doing. The assistant sees the page you are on, can read your sensors, flows, runs and approvals, and can open pages for you. It can also start a draft session to create or change a sensor, flow or tool. It never sees your secrets.",
+  composerPlaceholder: {
+    new: "Ask about your flows, sensors or runs…",
+    existing: "Ask about your flows, sensors or runs…",
+  },
+  starterPrompts: {
+    new: [
+      "What needs my attention?",
+      "Why did my last flow run fail?",
+      "Help me create a sensor",
+    ],
+    existing: [
+      "What needs my attention?",
+      "Why did my last flow run fail?",
+      "Help me create a sensor",
+    ],
+  },
 };
 
 const TARGETS: Record<AssistTargetKind, AssistTargetConfig> = {
+  general: GENERAL,
   sensor: SENSOR,
   flow: FLOW,
   tool: TOOL,
@@ -125,23 +143,20 @@ export function starterPrompts(
   return targetId === null ? p.new : p.existing;
 }
 
+const PAGES = {
+  sensor: "/sensors",
+  flow: "/flows",
+  tool: "/tools",
+} as const;
+
 /**
- * Sessions of the same target that can be picked up again, newest first.
- * `targetId` null is a new target that has no file yet.
+ * The page that edits a target: its editor, or the list page where a new one
+ * is drafted. Null for a general chat, which has no page.
  */
-export function selectResumable(
-  sessions: readonly AssistSession[],
+export function targetPath(
   kind: AssistTargetKind,
-  targetId: string | null,
-): AssistSession[] {
-  return sessions
-    .filter(
-      (s) =>
-        s.status !== "closed" &&
-        s.target.kind === kind &&
-        s.target.id === targetId,
-    )
-    .toSorted((a, b) =>
-      a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0,
-    );
+  id: string | null,
+): string | null {
+  if (kind === "general") return null;
+  return id === null ? PAGES[kind] : `${PAGES[kind]}/${id}`;
 }

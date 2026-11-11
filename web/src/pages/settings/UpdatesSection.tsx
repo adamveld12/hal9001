@@ -11,6 +11,8 @@ import {
   Select,
   Toggle,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, trimText } from "../../lib/contextSummary";
 import { formatTime, relativeTime } from "../../lib/format";
 
 export function UpdatesSection() {
@@ -18,6 +20,22 @@ export function UpdatesSection() {
   const settings = useSettings();
   const save = useUpdateSettings();
   const check = useCheckUpdate();
+  usePageContext(
+    status.data
+      ? {
+          title: "Settings: Updates",
+          facts: factList([
+            ["current version", status.data.current.version || "unknown"],
+            ["channel", status.data.channel],
+            ["auto install when idle", status.data.auto_install_when_idle],
+            ["updates enabled", status.data.enabled],
+            ["state", status.data.state],
+            ["latest version", status.data.latest?.version],
+            ["error", trimText(status.data.error)],
+          ]),
+        }
+      : null,
+  );
 
   if (status.isPending || settings.isPending) return <LoadingState />;
   if (status.isError)

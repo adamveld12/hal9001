@@ -73,6 +73,7 @@ describe("mergeMessage", () => {
 
 const session: AssistSession = {
   id: "s1",
+  title: null,
   target: { kind: "sensor", id: null },
   runtime: "claude",
   model: null,

@@ -33,6 +33,9 @@ func (m *Manager) TestDraft(ctx context.Context, sessionID string, byAgent bool,
 	if err != nil {
 		return core.AssistTestOutcome{}, err
 	}
+	if s.isGeneral() {
+		return core.AssistTestOutcome{}, errNoDraft
+	}
 	if s.isFlow() {
 		if err := checkFlowRequest(req); err != nil {
 			return core.AssistTestOutcome{}, err

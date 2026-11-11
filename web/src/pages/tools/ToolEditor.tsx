@@ -19,8 +19,10 @@ import {
   LoadingState,
   Panel,
 } from "../../components/ui";
-import { useAssistPage } from "../assist/context";
+import { usePageContext } from "../../layout/pageContext";
+import { useAssist } from "../assist/context";
 import { DraftBanners } from "../assist/DraftBanners";
+import { toolContext } from "../assist/pageContexts";
 import { useBoundSession, useDraftSync } from "../assist/useDraftSync";
 import { useTestDraft } from "../assist/useTestDraft";
 import { ConfirmButton } from "../files/ConfirmButton";
@@ -57,9 +59,11 @@ function Editor({
   const tool = useTool(id);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const assist = useAssistPage();
-  const bound = useBoundSession(id);
+  const assist = useAssist();
+  const bound = useBoundSession("tool", id);
   const sync = useDraftSync({
+    kind: "tool",
+    targetId: id,
     sessionId: bound.sessionId,
     text: state.draft,
     setText: (v) => dispatch({ type: "edit", draft: v }),
@@ -70,6 +74,17 @@ function Editor({
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const busy = update.isPending || del.isPending;
+  usePageContext(
+    toolContext({
+      id,
+      description: detail.tool?.description,
+      paramNames: Object.keys(detail.tool?.params ?? {}),
+      approve: detail.tool?.approve,
+      dirty,
+      diagnostics: sync.draft?.diagnostics ?? detail.diagnostics,
+      drafting: bound.sessionId !== null,
+    }),
+  );
 
   const save = (expectedHash: string) => {
     const text = state.draft;
@@ -216,9 +231,13 @@ function Editor({
             )}
             <Button
               icon="agent"
-              disabled={assist.param !== null}
+              disabled={
+                assist.open &&
+                assist.target.kind === "tool" &&
+                assist.target.id === id
+              }
               title="Chat with an AI agent that edits this tool's draft"
-              onClick={assist.open}
+              onClick={() => assist.openTarget({ kind: "tool", id })}
             >
               Ask AI
             </Button>

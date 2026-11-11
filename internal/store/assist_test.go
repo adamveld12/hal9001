@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // A database written by the previous schema (v2) keeps its flow-run agent
@@ -292,5 +294,80 @@ func TestPruneDeletesOldAssistSessionsWithTheirTurns(t *testing.T) {
 		if _, err := s.GetAssistSession(ctx(), a.ID); err != nil {
 			t.Errorf("%s session was pruned: %v", name, err)
 		}
+	}
+}
+
+func TestAssistTitleIsTheFirstLineOfTheMessageCutToEightyCharacters(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                             "",
+		" \n\t ":                       "",
+		"why did\n  the flow\tfail?  ": "why did the flow fail?",
+		strings.Repeat("a", 80):        strings.Repeat("a", 80),
+		strings.Repeat("a", 81):        strings.Repeat("a", 80),
+		strings.Repeat("é", 90):        strings.Repeat("é", 80),
+		"日本語 " + strings.Repeat("語", 100): "日本語 " + strings.Repeat("語", 76),
+	} {
+		if got := AssistTitle(in); got != want || !utf8.ValidString(got) {
+			t.Errorf("AssistTitle(%.30q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A general session is stored without a draft, and the migration that admits it gives the sessions of an older database
+// the title of their first user message.
+func TestMigrationToGeneralSessionsKeepsSessionsAndTitlesThem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hal.db")
+	raw, err := sql.Open("sqlite", dsn(path, true))
+	must(t, err)
+	migs, err := loadMigrations()
+	must(t, err)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := raw.Exec(q, args...); err != nil {
+			t.Fatalf("%v\n%s", err, q)
+		}
+	}
+	exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`)
+	for _, m := range migs {
+		if m.version >= 16 {
+			continue
+		}
+		exec(m.sql)
+		exec(`INSERT INTO schema_migrations VALUES (?, ?, ?)`, m.version, m.name, "2026-11-05T12:00:00.000000000Z")
+	}
+	const now = "2026-11-05T12:00:00.000000000Z"
+	exec(`INSERT INTO assist_sessions (id, target_kind, target_id, runtime, status, draft_hash, draft_updated_at, draft_updated_by, created_at, updated_at)
+		VALUES ('S1', 'flow', 'triage', 'claude', 'idle', 'h', ?, 'user', ?, ?), ('S2', 'sensor', '', 'claude', 'idle', 'h', ?, 'user', ?, ?)`, now, now, now, now, now, now)
+	exec(`INSERT INTO assist_messages (id, session_id, role, text, created_at) VALUES
+		('M0', 'S1', 'assistant', 'hello', ?), ('M1', 'S1', 'user', 'make it   retry
+twice', ?), ('M2', 'S1', 'user', 'second', ?)`, now, now, now)
+	must(t, raw.Close())
+
+	s, err := Open(path)
+	must(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	a, err := s.GetAssistSession(ctx(), "S1")
+	must(t, err)
+	// The migration folds line breaks to spaces and cuts at 80 characters; it leaves runs of spaces alone.
+	if a.TargetKind != AssistTargetFlow || a.TargetID != "triage" || a.Title != "make it   retry twice" {
+		t.Errorf("session after migration = %+v", a)
+	}
+	if b, err := s.GetAssistSession(ctx(), "S2"); err != nil || b.Title != "" {
+		t.Errorf("session without messages = %+v, %v; want an empty title", b, err)
+	}
+	if msgs, err := s.ListAssistMessages(ctx(), "S1"); err != nil || len(msgs) != 3 {
+		t.Errorf("messages after migration = %d, %v; want 3", len(msgs), err)
+	}
+
+	g := &AssistSession{TargetKind: AssistTargetGeneral, Runtime: "claude", DraftHash: "h0", DraftUpdatedBy: DraftByUser, Title: "what failed?"}
+	must(t, s.CreateAssistSession(ctx(), g))
+	if got, err := s.GetAssistSession(ctx(), g.ID); err != nil || got.TargetKind != AssistTargetGeneral || got.Title != "what failed?" {
+		t.Errorf("general session = %+v, %v", got, err)
+	}
+	page, err := s.ListAssistSessions(ctx(), AssistSessionFilter{TargetKind: AssistTargetGeneral})
+	must(t, err)
+	if len(page.Items) != 1 || page.Items[0].ID != g.ID {
+		t.Errorf("general sessions = %+v", page.Items)
 	}
 }

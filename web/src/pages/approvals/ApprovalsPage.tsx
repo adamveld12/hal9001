@@ -11,6 +11,9 @@ import {
   PageHeader,
   Select,
 } from "../../components/ui";
+import { usePageContext } from "../../layout/pageContext";
+import { factList, rowEntities } from "../../lib/contextSummary";
+import { approvalEntity } from "./context";
 import { ApprovalList } from "./ApprovalList";
 import {
   HISTORY_STATUSES,
@@ -51,6 +54,21 @@ export function ApprovalsPage() {
     count: t.key === "pending" ? pendingCount : undefined,
   }));
   const filtered = view.type !== null || view.status !== null;
+  usePageContext(
+    list.isPending
+      ? null
+      : {
+          title: "Approvals",
+          facts: factList([
+            ["tab", view.tab],
+            ["status filter", view.status],
+            ["type filter", view.type],
+            ["pending approvals", pendingCount],
+            ["rows loaded", items.length],
+          ]),
+          entities: rowEntities(items, approvalEntity),
+        },
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
