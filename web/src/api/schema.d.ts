@@ -2146,6 +2146,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/runtimes/detect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Re-detect every runtime */
+    post: operations["detectRuntimes"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/runtimes/{name}/adapter": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RuntimeName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Install the ACP adapter
+     * @description Starts `npm install` of the pinned adapter into hal's data folder. Progress arrives as `runtime.adapter` stream events.
+     */
+    post: operations["installRuntimeAdapter"];
+    /** Remove the managed ACP adapter */
+    delete: operations["uninstallRuntimeAdapter"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/runtimes/{name}/probe": {
     parameters: {
       query?: never;
@@ -4301,6 +4341,70 @@ export interface components {
       env_keys?: string[];
       /** @description Result of the last probe since the daemon started. */
       last_probe: components["schemas"]["ProbeResult"] | null;
+      /**
+       * @description Built-in runtime kind this runtime was configured with.
+       * @enum {string|null}
+       */
+      kind: "claude" | "codex" | "omp" | null;
+      detection: components["schemas"]["RuntimeDetection"];
+    };
+    RuntimeDetection: {
+      /** @enum {string} */
+      status: "ready" | "warning" | "unavailable";
+      cli: {
+        name: string;
+        found: boolean;
+        path: string | null;
+        version: string | null;
+      };
+      auth: {
+        /** @enum {string} */
+        status: "ok" | "missing" | "unknown";
+        /** @description Command that signs in. */
+        command: string | null;
+      };
+      adapter: {
+        /** @enum {string} */
+        source: "builtin" | "managed" | "custom" | "none";
+        installed: boolean;
+        version: string | null;
+        pinned_version: string | null;
+        path: string | null;
+        installable: boolean;
+        installing: boolean;
+      };
+      node: {
+        found: boolean;
+        version: string | null;
+        ok: boolean;
+      };
+      /** @description The resolved command the runtime would spawn. */
+      command: string[] | null;
+      warnings: components["schemas"]["RuntimeWarning"][];
+      checked_at: components["schemas"]["Timestamp"];
+    };
+    RuntimeWarning: {
+      /** @enum {string} */
+      code:
+        | "cli_missing"
+        | "auth_missing"
+        | "auth_unknown"
+        | "node_missing"
+        | "node_old"
+        | "adapter_missing"
+        | "providers_missing"
+        | "adapter_install_failed";
+      message: string;
+      command: string | null;
+      url: string | null;
+    };
+    RuntimeAdapterProgress: {
+      name: components["schemas"]["Slug"];
+      /** @enum {string} */
+      phase: "installing" | "done" | "failed";
+      /** @description Latest output line of the installer. */
+      line?: string;
+      error?: string;
     };
     RuntimeList: {
       items: components["schemas"]["Runtime"][];
@@ -5603,7 +5707,8 @@ export interface components {
       | "assist.navigate"
       | "assist.start_draft"
       | "update.status"
-      | "update.install";
+      | "update.install"
+      | "runtime.adapter";
     /**
      * @description Fields shared by every message. `id` equals the SSE `id:` field and increases monotonically within one daemon
      *     run. Records in `data` have text previews truncated to 4 KiB; fetch the resource for full content.
@@ -5648,7 +5753,8 @@ export interface components {
       | components["schemas"]["AssistNavigateEvent"]
       | components["schemas"]["AssistStartDraftEvent"]
       | components["schemas"]["UpdateStatusEvent"]
-      | components["schemas"]["UpdateInstallEvent"];
+      | components["schemas"]["UpdateInstallEvent"]
+      | components["schemas"]["RuntimeAdapterEvent"];
     StreamReady: {
       server_time: components["schemas"]["Timestamp"];
       version: string;
@@ -6078,6 +6184,18 @@ export interface components {
        * @enum {string}
        */
       type: "update.install";
+    };
+    /** @description Progress of installing or removing the hal-managed ACP adapter of a runtime. `data` is `RuntimeAdapterProgress`. */
+    RuntimeAdapterEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "runtime.adapter";
+      data?: components["schemas"]["RuntimeAdapterProgress"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "runtime.adapter";
     };
   };
   responses: {
@@ -9411,6 +9529,94 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  detectRuntimes: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": Record<string, never>;
+      };
+    };
+    responses: {
+      /** @description All runtimes after detection. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RuntimeList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  installRuntimeAdapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RuntimeName"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": Record<string, never>;
+      };
+    };
+    responses: {
+      /** @description Install started; the runtime has `adapter.installing` set. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Runtime"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  uninstallRuntimeAdapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RuntimeName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The runtime after removal. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Runtime"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       default: components["responses"]["Error"];
     };
   };

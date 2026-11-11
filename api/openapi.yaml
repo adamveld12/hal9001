@@ -210,6 +210,7 @@ paths:
         assist.start_draft: '#/components/schemas/AssistStartDraftEvent'
         update.status: '#/components/schemas/UpdateStatusEvent'
         update.install: '#/components/schemas/UpdateInstallEvent'
+        runtime.adapter: '#/components/schemas/RuntimeAdapterEvent'
       parameters:
         - name: types
           in: query
@@ -2840,6 +2841,70 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         default: {$ref: '#/components/responses/Error'}
+  /api/runtimes/detect:
+    post:
+      operationId: detectRuntimes
+      tags: [runtimes]
+      summary: Re-detect every runtime
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: All runtimes after detection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/runtimes/{name}/adapter:
+    parameters:
+      - {$ref: '#/components/parameters/RuntimeName'}
+    post:
+      operationId: installRuntimeAdapter
+      tags: [runtimes]
+      summary: Install the ACP adapter
+      description: Starts `npm install` of the pinned adapter into hal's data folder. Progress arrives as `runtime.adapter` stream events.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '202':
+          description: Install started; the runtime has `adapter.installing` set.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Runtime'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: uninstallRuntimeAdapter
+      tags: [runtimes]
+      summary: Remove the managed ACP adapter
+      x-hal-service: admin
+      responses:
+        '200':
+          description: The runtime after removal.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Runtime'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
   /api/runtimes/{name}/probe:
     parameters:
       - {$ref: '#/components/parameters/RuntimeName'}
@@ -5305,7 +5370,7 @@ components:
         version: {type: string}
     Runtime:
       type: object
-      required: [name, command, modes, last_probe]
+      required: [name, command, modes, last_probe, kind, detection]
       properties:
         name: {$ref: '#/components/schemas/Slug'}
         command: {type: array, items: {type: string}}
@@ -5316,6 +5381,66 @@ components:
             full: {type: string}
         env_keys: {type: array, items: {type: string}, description: Names of the extra environment variables; values are never returned.}
         last_probe: {oneOf: [{$ref: '#/components/schemas/ProbeResult'}, {type: 'null'}], description: Result of the last probe since the daemon started.}
+        kind: {type: [string, 'null'], enum: [claude, codex, omp, null], description: Built-in runtime kind this runtime was configured with.}
+        detection: {$ref: '#/components/schemas/RuntimeDetection'}
+    RuntimeDetection:
+      type: object
+      required: [status, cli, auth, adapter, node, command, warnings, checked_at]
+      properties:
+        status: {type: string, enum: [ready, warning, unavailable]}
+        cli:
+          type: object
+          required: [name, found, path, version]
+          properties:
+            name: {type: string}
+            found: {type: boolean}
+            path: {type: [string, 'null']}
+            version: {type: [string, 'null']}
+        auth:
+          type: object
+          required: [status, command]
+          properties:
+            status: {type: string, enum: [ok, missing, unknown]}
+            command: {type: [string, 'null'], description: Command that signs in.}
+        adapter:
+          type: object
+          required: [source, installed, version, pinned_version, path, installable, installing]
+          properties:
+            source: {type: string, enum: [builtin, managed, custom, none]}
+            installed: {type: boolean}
+            version: {type: [string, 'null']}
+            pinned_version: {type: [string, 'null']}
+            path: {type: [string, 'null']}
+            installable: {type: boolean}
+            installing: {type: boolean}
+        node:
+          type: object
+          required: [found, version, ok]
+          properties:
+            found: {type: boolean}
+            version: {type: [string, 'null']}
+            ok: {type: boolean}
+        command: {type: [array, 'null'], items: {type: string}, description: The resolved command the runtime would spawn.}
+        warnings:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeWarning'}
+        checked_at: {$ref: '#/components/schemas/Timestamp'}
+    RuntimeWarning:
+      type: object
+      required: [code, message, command, url]
+      properties:
+        code: {type: string, enum: [cli_missing, auth_missing, auth_unknown, node_missing, node_old, adapter_missing, providers_missing, adapter_install_failed]}
+        message: {type: string}
+        command: {type: [string, 'null']}
+        url: {type: [string, 'null']}
+    RuntimeAdapterProgress:
+      type: object
+      required: [name, phase]
+      properties:
+        name: {$ref: '#/components/schemas/Slug'}
+        phase: {type: string, enum: [installing, done, failed]}
+        line: {type: string, description: Latest output line of the installer.}
+        error: {type: string}
     RuntimeList:
       type: object
       required: [items]
@@ -6580,6 +6705,7 @@ components:
         - assist.start_draft
         - update.status
         - update.install
+        - runtime.adapter
     StreamEnvelope:
       type: object
       description: |
@@ -6627,6 +6753,7 @@ components:
         - {$ref: '#/components/schemas/AssistStartDraftEvent'}
         - {$ref: '#/components/schemas/UpdateStatusEvent'}
         - {$ref: '#/components/schemas/UpdateInstallEvent'}
+        - {$ref: '#/components/schemas/RuntimeAdapterEvent'}
       discriminator:
         propertyName: type
         mapping:
@@ -6663,6 +6790,7 @@ components:
           assist.start_draft: '#/components/schemas/AssistStartDraftEvent'
           update.status: '#/components/schemas/UpdateStatusEvent'
           update.install: '#/components/schemas/UpdateInstallEvent'
+          runtime.adapter: '#/components/schemas/RuntimeAdapterEvent'
     StreamReady:
       type: object
       required: [server_time, version, last_event_id]
@@ -6962,3 +7090,11 @@ components:
           properties:
             type: {enum: [update.install]}
             data: {$ref: '#/components/schemas/UpdateInstall'}
+    RuntimeAdapterEvent:
+      description: 'Progress of installing or removing the hal-managed ACP adapter of a runtime. `data` is `RuntimeAdapterProgress`.'
+      allOf:
+        - {$ref: '#/components/schemas/StreamEnvelope'}
+        - type: object
+          properties:
+            type: {enum: [runtime.adapter]}
+            data: {$ref: '#/components/schemas/RuntimeAdapterProgress'}
