@@ -69,6 +69,10 @@ func TestBaselineDecisions(t *testing.T) {
 		{"PUT text/plain", "PUT", "localhost:9001", "text/plain", nil, 415, httpsec.TypeUnsupportedMedia},
 		{"PATCH text/plain", "PATCH", "localhost:9001", "text/plain", nil, 415, httpsec.TypeUnsupportedMedia},
 		{"DELETE text/plain", "DELETE", "localhost:9001", "text/plain", nil, 415, httpsec.TypeUnsupportedMedia},
+		{"funnel request on an allowed host", "GET", "mac.tail1234.ts.net", "", map[string]string{"Tailscale-Funnel-Request": "?1"}, 403, httpsec.TypeForbidden},
+		{"funnel request on localhost", "GET", "localhost:9001", "", map[string]string{"tailscale-funnel-request": "?1"}, 403, httpsec.TypeForbidden},
+		{"funnel request, any value", "POST", "localhost:9001", js, map[string]string{"Tailscale-Funnel-Request": ""}, 403, httpsec.TypeForbidden},
+		{"funnel check precedes host check", "GET", "evil.example", "", map[string]string{"Tailscale-Funnel-Request": "?1"}, 403, httpsec.TypeForbidden},
 		{"host check precedes content-type check", "POST", "evil.example", "text/plain", nil, 403, httpsec.TypeHostNotAllowed},
 	}
 	for _, tt := range tests {

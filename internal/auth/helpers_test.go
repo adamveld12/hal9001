@@ -15,6 +15,7 @@ import (
 
 	"hal9001/internal/auth"
 	"hal9001/internal/httpsec"
+	"hal9001/internal/tailscale"
 )
 
 const (
@@ -27,7 +28,7 @@ const (
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile("testdata/" + name)
+	b, err := os.ReadFile("../tailscale/testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,9 +75,9 @@ func (c *fakeClock) Advance(d time.Duration) {
 // fakeTailscale serves canned whois/status data and counts calls.
 type fakeTailscale struct {
 	mu          sync.Mutex
-	whois       map[netip.Addr]auth.Whois
-	status      auth.TailscaleStatus
-	serve       auth.ServeConfig
+	whois       map[netip.Addr]tailscale.Whois
+	status      tailscale.Status
+	serve       tailscale.ServeConfig
 	err         error
 	whoisCalls  int
 	statusCalls int
@@ -84,16 +85,16 @@ type fakeTailscale struct {
 
 func newFakeTailscale(t *testing.T) *fakeTailscale {
 	t.Helper()
-	st, err := auth.ParseStatus(fixture(t, "status.json"))
+	st, err := tailscale.ParseStatus(fixture(t, "status.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fakeTailscale{whois: map[netip.Addr]auth.Whois{}, status: st}
+	return &fakeTailscale{whois: map[netip.Addr]tailscale.Whois{}, status: st}
 }
 
 func (f *fakeTailscale) setWhois(t *testing.T, ip, fixtureName string) {
 	t.Helper()
-	w, err := auth.ParseWhois(fixture(t, fixtureName))
+	w, err := tailscale.ParseWhois(fixture(t, fixtureName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,31 +103,31 @@ func (f *fakeTailscale) setWhois(t *testing.T, ip, fixtureName string) {
 	f.whois[netip.MustParseAddr(ip)] = w
 }
 
-func (f *fakeTailscale) Whois(_ context.Context, ip netip.Addr) (auth.Whois, error) {
+func (f *fakeTailscale) Whois(_ context.Context, ip netip.Addr) (tailscale.Whois, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.whoisCalls++
 	if f.err != nil {
-		return auth.Whois{}, f.err
+		return tailscale.Whois{}, f.err
 	}
 	w, ok := f.whois[ip]
 	if !ok {
-		return auth.Whois{}, &noMatchError{ip}
+		return tailscale.Whois{}, &noMatchError{ip}
 	}
 	return w, nil
 }
 
-func (f *fakeTailscale) Status(context.Context) (auth.TailscaleStatus, error) {
+func (f *fakeTailscale) Status(context.Context) (tailscale.Status, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statusCalls++
 	if f.err != nil {
-		return auth.TailscaleStatus{}, f.err
+		return tailscale.Status{}, f.err
 	}
 	return f.status, nil
 }
 
-func (f *fakeTailscale) ServeStatus(context.Context) (auth.ServeConfig, error) {
+func (f *fakeTailscale) ServeStatus(context.Context) (tailscale.ServeConfig, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.serve, f.err
@@ -166,12 +167,12 @@ type envOpt func(*envConfig)
 type envConfig struct {
 	cfg     auth.Config
 	modules []auth.Module
-	ts      auth.Tailscale
+	ts      tailscale.Client
 }
 
 func withConfig(c auth.Config) envOpt     { return func(e *envConfig) { e.cfg = c } }
 func withModules(m ...auth.Module) envOpt { return func(e *envConfig) { e.modules = m } }
-func withTailscale(ts auth.Tailscale) envOpt {
+func withTailscale(ts tailscale.Client) envOpt {
 	return func(e *envConfig) { e.ts = ts }
 }
 
@@ -208,7 +209,7 @@ func newEnv(t *testing.T, opts ...envOpt) *env {
 	e.m = m
 
 	mux := http.NewServeMux()
-	m.Routes(mux, 9001)
+	m.Routes(mux)
 	for _, svc := range auth.Services {
 		mux.Handle("GET /api/ping/"+string(svc), m.Require(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, _ := auth.IdentityFrom(r.Context())

@@ -67,6 +67,7 @@ var uiRoutes = []uiRoute{
 	{"/settings/context", "settings: the context text every agent gets", nil},
 	{"/settings/runtimes", "settings: agent runtimes", nil},
 	{"/settings/auth", "settings: sign-in and access", nil},
+	{"/settings/tailscale", "settings: share hal on your tailnet (Tailscale)", nil},
 	{"/settings/mcp", "settings: hal's MCP server", nil},
 	{"/settings/updates", "settings: updates", nil},
 	{"/sandboxes", "the sandbox backends", nil},

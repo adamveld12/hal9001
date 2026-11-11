@@ -52,6 +52,7 @@ tags:
   - {name: sandboxes, description: 'Sandbox backends: config, environment, connectivity check'}
   - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
+  - {name: tailscale, description: 'Share hal9001 on your tailnet: detection, `tailscale serve`, allowed_hosts'}
   - {name: mcp, description: 'hal MCP server: the remote endpoint and connection info for external clients, and the per-run backend of the stdio server hal injects into agent sessions (authorized by a capability token)'}
 paths:
   /:
@@ -3390,16 +3391,19 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         default: {$ref: '#/components/responses/Error'}
-  /api/auth/tailscale:
+  /api/tailscale:
     get:
       operationId: getTailscaleStatus
-      tags: [auth]
-      summary: Tailscale exposure status
+      tags: [tailscale]
+      summary: Tailscale sharing status
       description: |
-        Whether the `tailscale` CLI is reachable, this Mac's tailnet hostname and owner login, whether `tailscale
-        serve` is configured for the daemon port, whether anything is exposed through funnel, and whether the hostname
-        is in `allowed_hosts`. The daemon never runs `tailscale serve` itself. A missing CLI is a 200 with
-        `available: false`.
+        What hal9001 found about Tailscale on this Mac: the `tailscale` CLI (also the macOS app's and Homebrew's, looked
+        up like the agent CLIs), whether you are signed in, this Mac's MagicDNS name and tailnet, whether HTTPS
+        certificates are enabled for the tailnet, the `tailscale serve` mapping for the HTTPS port hal9001 would use
+        (and whether it points at hal9001), the URL, whether the name is in `allowed_hosts`, the logins
+        `tailscale-identity` accepts, and `warnings` with the fix for each problem. Answers are cached for a few
+        seconds; `POST /api/tailscale/refresh` checks again. A missing CLI or an unreachable tailscaled is a 200 with
+        `cli.found: false` or `error` set. The daemon runs only read-only commands here.
       x-hal-service: admin
       responses:
         '200':
@@ -3409,6 +3413,82 @@ paths:
               schema: {$ref: '#/components/schemas/TailscaleStatus'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tailscale/refresh:
+    post:
+      operationId: refreshTailscale
+      tags: [tailscale]
+      summary: Check Tailscale again
+      description: Forgets the cached detection and checks again (CLI, sign-in, certificates, serve status). Read-only.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Freshly detected status.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TailscaleStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/tailscale/serve:
+    post:
+      operationId: enableTailscaleServe
+      tags: [tailscale]
+      summary: Share hal9001 on your tailnet
+      description: |
+        Runs `tailscale serve --bg --yes --https=<https_port> http://127.0.0.1:<daemon port>` (tailnet only; `tailscale
+        funnel` is never used), then adds this Mac's MagicDNS name (`<name>`, or `<name>:<port>` when the port is not
+        443) to `allowed_hosts` in `config.yaml` unless it is already there, and sets `tailscale.serve: true` and
+        `tailscale.https_port`. The edit keeps the comments of the file; entries you added are never touched. Nothing is
+        run when the mapping already points at hal9001 (only the config is brought in line). The daemon re-applies the
+        mapping at start while `tailscale.serve` is true.
+
+        409 `already-exists` (`target`, `https_port`): the HTTPS port already serves something else; send `replace: true`
+        to overwrite it. 409 `invalid-state`: Tailscale is not ready (CLI missing, signed out, stopped, HTTPS
+        certificates disabled); the `warnings` extension lists the fixes. 409 `invalid-state` with `funnel_on_port:
+        true` (and `https_port`): `tailscale funnel` exposes the HTTPS port to the public internet, which hal9001 never
+        does; nothing is run or written, with or without `replace` and even when the mapping already points at
+        hal9001. Turn funnel off (`tailscale funnel --https=<port> off`) or pick another port. 503 `unavailable`: the command failed
+        (`detail` has its output).
+      x-hal-service: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TailscaleServeRequest'}
+      responses:
+        '200':
+          description: Shared. The status after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TailscaleStatus'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: disableTailscaleServe
+      tags: [tailscale]
+      summary: Stop sharing hal9001 on your tailnet
+      description: |
+        Sets `tailscale.serve: false` and runs `tailscale serve --https=<https_port> off`, but only when the mapping on
+        that port points at hal9001; a mapping to anything else is left alone. The MagicDNS name is removed from
+        `allowed_hosts` only when hal9001 added it (it keeps a record in `<home>/data/tailscale.json`); entries you
+        wrote are kept. Idempotent.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Not shared. The status after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TailscaleStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
   /api/auth/webauthn/credentials:
     get:
@@ -3660,8 +3740,9 @@ components:
           schema: {$ref: '#/components/schemas/UnauthorizedProblem'}
     Forbidden:
       description: |
-        The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`) or the session does not grant the
-        service (`forbidden`).
+        The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`), the request came through
+        `tailscale funnel` (a `Tailscale-Funnel-Request` header: always `forbidden`, on every path), or the session does
+        not grant the service (`forbidden`).
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/ForbiddenProblem'}
@@ -4533,6 +4614,7 @@ components:
         session_ttl: {$ref: '#/components/schemas/Duration'}
         allowed_hosts: {type: array, items: {type: string}}
         allowed_logins: {type: array, items: {type: string}}
+        tailscale: {$ref: '#/components/schemas/TailscaleConfig'}
         runtimes:
           type: object
           additionalProperties: {$ref: '#/components/schemas/RuntimeConfig'}
@@ -6341,19 +6423,75 @@ components:
       properties:
         registration_id: {type: string}
         credential: {type: object, additionalProperties: true, description: 'The `PublicKeyCredential` (attestation) JSON from the browser.'}
+    TailscaleServeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        https_port: {type: integer, minimum: 1, maximum: 65535, description: 'The tailnet HTTPS port. Default: `tailscale.https_port` of the config (443).'}
+        replace: {type: boolean, default: false, description: Overwrite what the HTTPS port serves now when it is not hal9001.}
+    TailscaleWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable identifier of the problem.
+          enum: [cli_not_found, daemon_unreachable, logged_out, stopped, needs_machine_auth, https_disabled, magicdns_disabled, funnel_enabled, funnel_on_port, port_conflict, serve_missing, host_missing, host_renamed, reapply_failed]
+        message: {type: string}
+        command: {type: [string, 'null'], description: 'A command that fixes it, to copy into a terminal.'}
+        url: {type: [string, 'null'], description: A page that fixes it (for example the admin console).}
+    TailscaleCLI:
+      type: object
+      required: [found, path, version]
+      properties:
+        found: {type: boolean}
+        path: {type: [string, 'null'], description: The `tailscale` executable hal9001 uses.}
+        version: {type: [string, 'null']}
+    TailscaleServe:
+      type: object
+      required: [enabled, https_port, target, active, points_at_hal, conflict, funnel, funnel_on_port]
+      properties:
+        enabled: {type: boolean, description: '`tailscale.serve` in `config.yaml`: hal9001 keeps the mapping in place.'}
+        https_port: {type: integer, description: The tailnet HTTPS port hal9001 uses or would use.}
+        target: {type: string, description: 'What hal9001 maps the port to, `http://127.0.0.1:<daemon port>`.'}
+        active: {type: boolean, description: The HTTPS port has a mapping now (to anything).}
+        points_at_hal: {type: boolean, description: The mapping of the port proxies to the daemon.}
+        conflict: {type: [string, 'null'], description: 'What the port serves when it is not hal9001 (a proxy target or a description), else null.'}
+        funnel: {type: boolean, description: Anything of this Mac is exposed to the internet through funnel. hal9001 never does this.}
+        funnel_on_port: {type: boolean, description: 'Funnel exposes the HTTPS port (`https_port`) to the public internet. hal9001 refuses to share on it (`POST /api/tailscale/serve` is a 409) until funnel is turned off there.'}
+    TailscaleAllowedHost:
+      type: object
+      required: [entry, present, added_by_hal]
+      properties:
+        entry: {type: [string, 'null'], description: 'The `allowed_hosts` entry that matches the URL (`<name>` or `<name>:<port>`); null without a MagicDNS name.'}
+        present: {type: boolean}
+        added_by_hal: {type: boolean, description: hal9001 added it when it enabled sharing; disabling removes it.}
     TailscaleStatus:
       type: object
-      required: [available, serve_configured, funnel_enabled, host_allowed, allowed_logins]
+      required: [cli, backend_state, logged_in, dns_name, tailnet, owner_login, https_enabled, magic_dns_enabled, serve, url, allowed_host, allowed_logins, warnings, error, checked_at]
       properties:
-        available: {type: boolean, description: 'False when the CLI is missing or tailscaled is unreachable; `error` says why.'}
-        error: {type: string}
-        backend_state: {type: string, examples: [Running]}
-        hostname: {type: string, description: This Mac's tailnet DNS name.}
-        owner_login: {type: string}
-        serve_configured: {type: boolean, description: '`tailscale serve` proxies to the daemon port.'}
-        funnel_enabled: {type: boolean, description: Any serve entry is exposed to the internet. hal9001 never wants this.}
-        host_allowed: {type: boolean, description: '`hostname` is in `allowed_hosts`.'}
-        allowed_logins: {type: array, items: {type: string}}
+        cli: {$ref: '#/components/schemas/TailscaleCLI'}
+        backend_state: {type: [string, 'null'], description: 'tailscaled state: `Running`, `NeedsLogin`, `Stopped`, `NeedsMachineAuth`, ...; null when it cannot be read.', examples: [Running]}
+        logged_in: {type: boolean, description: Signed in and running.}
+        dns_name: {type: [string, 'null'], description: 'This Mac''s MagicDNS name without the trailing dot, e.g. `hal-mac.example-tailnet.ts.net`.'}
+        tailnet: {type: [string, 'null']}
+        owner_login: {type: [string, 'null'], description: The login that owns this Mac.}
+        https_enabled: {type: boolean, description: 'HTTPS certificates are enabled for the tailnet (`tailscale serve` over HTTPS needs them).'}
+        magic_dns_enabled: {type: boolean}
+        serve: {$ref: '#/components/schemas/TailscaleServe'}
+        url: {type: [string, 'null'], description: 'Where this Mac answers on the tailnet when shared: `https://<dns_name>[:<port>]/`. Set whenever the name is known.'}
+        allowed_host: {$ref: '#/components/schemas/TailscaleAllowedHost'}
+        allowed_logins: {type: array, items: {type: string}, description: 'Logins `tailscale-identity` accepts: `allowed_logins` or, when empty, `owner_login`.'}
+        warnings: {type: array, items: {$ref: '#/components/schemas/TailscaleWarning'}}
+        error: {type: [string, 'null'], description: 'Why Tailscale could not be read (CLI missing, tailscaled unreachable).'}
+        checked_at: {type: string, format: date-time}
+    TailscaleConfig:
+      type: object
+      additionalProperties: false
+      description: What hal9001 keeps in place for `tailscale serve` (see `POST /api/tailscale/serve`).
+      properties:
+        serve: {type: boolean, default: false}
+        https_port: {type: integer, minimum: 1, maximum: 65535, default: 443}
     # ---------------------------------------------------------------- assist (AI-assisted sensor authoring)
     AssistTargetKind:
       type: string

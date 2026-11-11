@@ -9,7 +9,6 @@ export type AuthChallenge = Schemas["AuthChallenge"];
 export type Session = Schemas["Session"];
 export type AuthEvent = Schemas["AuthEvent"];
 export type Passkey = Schemas["Passkey"];
-export type TailscaleStatus = Schemas["TailscaleStatus"];
 
 // Login exchange. These are plain functions, not hooks: a login is a short
 // imperative sequence (begin, maybe answer a challenge) that the caller drives.
@@ -120,13 +119,6 @@ export function useDeletePasskey() {
         qc.invalidateQueries({ queryKey: qk("passkeys") }),
         qc.invalidateQueries({ queryKey: qk("auth-events") }),
       ]),
-  });
-}
-
-export function useTailscaleStatus() {
-  return useQuery({
-    queryKey: qk("tailscale"),
-    queryFn: () => unwrap(api.GET("/api/auth/tailscale")),
   });
 }
 

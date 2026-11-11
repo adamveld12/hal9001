@@ -45,6 +45,8 @@ const PATHS = {
   env: "M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h2M16 4h2a2 2 0 012 2v12a2 2 0 01-2 2h-2M9 9h6M9 13h6",
   lock: "M6 11h12v9H6zM8 11V8a4 4 0 018 0v3",
   box: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9",
+  network:
+    "M12 4a2 2 0 100 4 2 2 0 000-4zM5 16a2 2 0 100 4 2 2 0 000-4zM19 16a2 2 0 100 4 2 2 0 000-4zM12 8v4M12 12l-6 4M12 12l6 4",
 } as const;
 
 export type IconName = keyof typeof PATHS;

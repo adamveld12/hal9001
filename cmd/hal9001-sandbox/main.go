@@ -41,7 +41,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	script := fs.String("script", "", "fake-acp-agent script (JSON) for the `fake` runtime (default: a one-line reply)")
 	webDir := fs.String("web-dir", "", "serve the UI from this directory (default: embedded UI, else web/dist)")
 	keep := fs.Bool("keep", false, "keep the temporary home on exit")
-	path := fs.String("path", "", "the only PATH for finding the claude/codex/omp CLIs, node and npm (default: this process's PATH plus the usual tool directories); point it at stub executables to try runtime detection")
+	path := fs.String("path", "", "the only PATH for finding the claude/codex/omp CLIs, node, npm and tailscale (default: this process's PATH plus the usual tool directories for the agent CLIs; no tailscale CLI at all, never the machine's own); point it at stub executables to try runtime and Tailscale detection")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	defer stop()
 
 	opts := daemon.Options{
-		Home: home, Version: "sandbox", WebDir: *webDir, Executable: halBin, BasePATH: *path, ExactPATH: *path != "",
+		Home: home, Version: "sandbox", WebDir: *webDir, Executable: halBin, BasePATH: *path, ExactPATH: *path != "", TailscaleExact: true, TailscalePATH: *path,
 		ListenAddr: net.JoinHostPort("127.0.0.1", fmt.Sprint(*port)),
 		Log:        slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		Ready: func(addr net.Addr) {

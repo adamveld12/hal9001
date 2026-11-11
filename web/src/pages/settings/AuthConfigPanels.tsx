@@ -1,4 +1,5 @@
-import { useTailscaleStatus } from "../../api/auth";
+import { Link } from "react-router";
+import { useTailscaleStatus } from "../../api/tailscale";
 import { useSettings } from "../../api/settings";
 import {
   Badge,
@@ -8,6 +9,7 @@ import {
   Panel,
 } from "../../components/ui";
 import { stackViews } from "./authView";
+import { funnelMessage, funnelOffCommand } from "./tailscaleView";
 
 const CONTROL_TONE = {
   required: "warn",
@@ -90,71 +92,85 @@ export function AuthStackPanel() {
   );
 }
 
+/** What Tailscale means for sign-in; sharing itself is set up under Settings, Tailscale. */
 export function TailscalePanel() {
   const ts = useTailscaleStatus();
+  const s = ts.data;
   return (
     <Panel
       title="Tailscale"
       actions={
-        <Button icon="refresh" onClick={() => void ts.refetch()}>
-          Check
-        </Button>
+        <>
+          <Link to="/settings/tailscale" className="text-accent underline">
+            Tailscale settings
+          </Link>
+          <Button icon="refresh" onClick={() => void ts.refetch()}>
+            Check
+          </Button>
+        </>
       }
     >
       {ts.isPending && <LoadingState />}
       {ts.isError && (
         <ErrorState error={ts.error} onRetry={() => void ts.refetch()} />
       )}
-      {ts.isSuccess && !ts.data.available && (
+      {s && !s.cli.found && (
         <p className="m-0 text-xs text-muted">
           Tailscale is not available
-          {ts.data.error ? `: ${ts.data.error}` : "."}
+          {s.error ? `: ${s.error}` : "."}
         </p>
       )}
-      {ts.isSuccess && ts.data.available && (
+      {s && s.cli.found && (
         <div className="space-y-3">
           <dl className="m-0 grid grid-cols-[10rem_1fr] gap-x-3 gap-y-1.5 text-xs">
             <dt className="text-muted">State</dt>
-            <dd className="m-0">{ts.data.backend_state ?? "–"}</dd>
+            <dd className="m-0">{s.backend_state ?? "–"}</dd>
             <dt className="text-muted">Hostname</dt>
-            <dd className="m-0 font-mono">{ts.data.hostname ?? "–"}</dd>
+            <dd className="m-0 font-mono">{s.dns_name ?? "–"}</dd>
             <dt className="text-muted">Owner</dt>
-            <dd className="m-0">{ts.data.owner_login ?? "–"}</dd>
+            <dd className="m-0">{s.owner_login ?? "–"}</dd>
             <dt className="text-muted">Serve to daemon port</dt>
             <dd className="m-0">
-              <Badge tone={ts.data.serve_configured ? "ok" : "muted"}>
-                {ts.data.serve_configured ? "configured" : "not configured"}
+              <Badge tone={s.serve.points_at_hal ? "ok" : "muted"}>
+                {s.serve.points_at_hal ? "configured" : "not configured"}
               </Badge>
             </dd>
             <dt className="text-muted">Hostname in allowed_hosts</dt>
             <dd className="m-0">
-              <Badge tone={ts.data.host_allowed ? "ok" : "warn"}>
-                {ts.data.host_allowed ? "yes" : "no"}
+              <Badge tone={s.allowed_host.present ? "ok" : "warn"}>
+                {s.allowed_host.present ? "yes" : "no"}
               </Badge>
             </dd>
             <dt className="text-muted">Allowed logins</dt>
             <dd className="m-0 font-mono">
-              {ts.data.allowed_logins.length > 0
-                ? ts.data.allowed_logins.join(", ")
-                : "–"}
+              {s.allowed_logins.length > 0 ? s.allowed_logins.join(", ") : "–"}
             </dd>
           </dl>
-          {ts.data.funnel_enabled && (
+          {s.serve.funnel_on_port && (
+            <p role="alert" className="m-0 text-xs text-bad">
+              {funnelMessage(s.serve.https_port)} Run{" "}
+              <code className="font-mono">
+                {funnelOffCommand(s.serve.https_port)}
+              </code>
+              .
+            </p>
+          )}
+          {s.serve.funnel && (
             <p role="alert" className="m-0 text-xs text-bad">
               Funnel is on: something is exposed to the internet. Turn it off
               with `tailscale funnel reset`.
             </p>
           )}
-          {ts.data.serve_configured && !ts.data.host_allowed && (
+          {s.serve.points_at_hal && !s.allowed_host.present && (
             <p className="m-0 text-xs text-warn">
               Requests through Tailscale are rejected until the hostname is in
               allowed_hosts in config.yaml.
             </p>
           )}
-          {!ts.data.serve_configured && (
+          {!s.serve.points_at_hal && (
             <p className="m-0 text-[11px] text-muted">
-              hal9001 never runs `tailscale serve` itself. To publish on your
-              tailnet: `tailscale serve --bg --https=443 http://127.0.0.1:9001`.
+              hal is not shared on your tailnet. Share it from Tailscale
+              settings.
             </p>
           )}
         </div>

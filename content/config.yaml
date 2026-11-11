@@ -20,7 +20,11 @@ notify_min_priority: normal
 approval_timeout: 1h
 
 # Hostnames (besides localhost:9001 and 127.0.0.1:9001) the server accepts.
-# Add your Tailscale hostname, e.g. my-mac.my-tailnet.ts.net, to use `tailscale serve`.
+# "Share on your tailnet" (Settings > Tailscale, `hal9001 tailscale serve`) adds
+# this Mac's Tailscale name (e.g. my-mac.my-tailnet.ts.net) here itself. Only edit
+# this by hand for a setup hal9001 does not manage. The same action writes a
+# `tailscale: {serve: true, https_port: 443}` section at the end of this file;
+# while serve is true, hal9001 puts the mapping back at start if Tailscale lost it.
 allowed_hosts: []
 
 # Logins accepted by the tailscale-identity auth module. Empty = the login that

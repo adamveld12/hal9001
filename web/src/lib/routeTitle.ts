@@ -28,6 +28,7 @@ const TITLES: readonly (readonly [RegExp, string])[] = [
   [/^\/settings\/runtimes$/, "Runtimes"],
   [/^\/settings\/auth$/, "Auth"],
   [/^\/settings\/mcp$/, "MCP"],
+  [/^\/settings\/tailscale$/, "Tailscale"],
   [/^\/settings\/updates$/, "Updates"],
   [/^\/sandboxes$/, "Sandboxes"],
   [/^\/sandboxes\/[^/]+$/, "Sandbox"],

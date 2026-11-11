@@ -5,7 +5,6 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -565,23 +564,33 @@ func TestScenario24TailscaleIdentity(t *testing.T) {
 		t.Errorf("success event: %+v %v", e, ok)
 	}
 
-	// GET /api/auth/tailscale and the CLI report the fake's state.
-	var rep struct {
-		Available       bool     `json:"available"`
-		BackendState    string   `json:"backend_state"`
-		Hostname        string   `json:"hostname"`
-		OwnerLogin      string   `json:"owner_login"`
-		HostAllowed     bool     `json:"host_allowed"`
-		ServeConfigured bool     `json:"serve_configured"`
-		FunnelEnabled   bool     `json:"funnel_enabled"`
-		AllowedLogins   []string `json:"allowed_logins"`
-	}
-	d.Get("/api/auth/tailscale").Want(200).JSON(&rep)
-	if !rep.Available || rep.BackendState != "Running" || rep.Hostname != tsHost || rep.OwnerLogin != tsOwner || !rep.HostAllowed ||
-		rep.ServeConfigured || rep.FunnelEnabled || !slices.Equal(rep.AllowedLogins, []string{tsOwner}) {
+	// GET /api/tailscale and the CLI report the fake's state.
+	var rep tsReport
+	d.Get("/api/tailscale").Want(200).JSON(&rep)
+	if !rep.CLI.Found || rep.BackendState != "Running" || rep.DNSName != tsHost || rep.OwnerLogin != tsOwner || !rep.AllowedHost.Present ||
+		rep.Serve.PointsAtHal || rep.Serve.Funnel || !slices.Equal(rep.AllowedLogins, []string{tsOwner}) {
 		t.Errorf("tailscale report: %+v", rep)
 	}
-	d.sameAsAPI("tailscale status", d.cliJSON("", "tailscale", "status"), "/api/auth/tailscale")
+	d.sameAsAPI("tailscale status", d.cliJSON("", "tailscale", "status"), "/api/tailscale")
+}
+
+// tsReport is the part of GET /api/tailscale the auth scenarios check.
+type tsReport struct {
+	CLI struct {
+		Found bool `json:"found"`
+	} `json:"cli"`
+	BackendState string `json:"backend_state"`
+	DNSName      string `json:"dns_name"`
+	OwnerLogin   string `json:"owner_login"`
+	AllowedHost  struct {
+		Present bool `json:"present"`
+	} `json:"allowed_host"`
+	Serve struct {
+		PointsAtHal bool `json:"points_at_hal"`
+		Funnel      bool `json:"funnel"`
+	} `json:"serve"`
+	AllowedLogins []string `json:"allowed_logins"`
+	Error         string   `json:"error"`
 }
 
 // Scenario 24: with allowed_logins empty, the owner of this Mac (from
@@ -597,11 +606,8 @@ func TestScenario24TailscaleDefaultAllowedLoginIsOwner(t *testing.T) {
 	if _, ok := tsEvent(d.AuthEvents(), "fail", "is not in allowed_logins"); !ok {
 		t.Error("no auth event for the non-owner login")
 	}
-	var rep struct {
-		OwnerLogin    string   `json:"owner_login"`
-		AllowedLogins []string `json:"allowed_logins"`
-	}
-	d.Get("/api/auth/tailscale").Want(200).JSON(&rep)
+	var rep tsReport
+	d.Get("/api/tailscale").Want(200).JSON(&rep)
 	if rep.OwnerLogin != tsOwner || !slices.Equal(rep.AllowedLogins, []string{tsOwner}) {
 		t.Errorf("report: %+v", rep)
 	}
@@ -621,16 +627,13 @@ func TestScenario24TailscaleUnavailableIsIgnored(t *testing.T) {
 	if !ok || e.Outcome != "fail" || !strings.Contains(e.Reason, "no module succeeded") {
 		t.Errorf("auth event: %+v %v", e, ok)
 	}
-	var rep struct {
-		Available bool   `json:"available"`
-		Error     string `json:"error"`
-	}
-	d.Get("/api/auth/tailscale").Want(200).JSON(&rep)
-	if rep.Available || !strings.Contains(rep.Error, "unavailable") {
+	var rep tsReport
+	d.Get("/api/tailscale").Want(200).JSON(&rep)
+	if rep.BackendState != "" || !strings.Contains(rep.Error, "unavailable") {
 		t.Errorf("report with tailscaled down: %+v", rep)
 	}
 	out, _, code := d.CLI("", "tailscale", "status")
-	if code != 0 || !strings.Contains(out, `"available": false`) && !strings.Contains(out, `"available":false`) {
+	if code != 0 || !strings.Contains(out, `"logged_in": false`) && !strings.Contains(out, `"logged_in":false`) {
 		t.Errorf("CLI tailscale status: exit %d %s", code, out)
 	}
 
@@ -642,18 +645,12 @@ func TestScenario24TailscaleUnavailableIsIgnored(t *testing.T) {
 }
 
 // Scenario 24: with no tailscale CLI at all the module ignores the request.
-// The test needs a machine without a real tailscale CLI on PATH or in the app
-// bundle, so that removing the fake leaves none.
+// The harness looks for tailscale only in the daemon's Bin directory, so removing
+// the fake leaves none whatever is installed on the machine.
 func TestScenario24TailscaleCLIMissingIsIgnored(t *testing.T) {
 	d := tsDaemon(t, "allowed_logins: ["+tsOwner+"]\n")
 	if err := os.Remove(filepath.Join(d.Bin, "tailscale")); err != nil {
 		t.Fatal(err)
-	}
-	if p, err := exec.LookPath("tailscale"); err == nil {
-		t.Skipf("a real tailscale CLI is installed at %s; the missing-CLI case is not deterministic here", p)
-	}
-	if _, err := os.Stat("/Applications/Tailscale.app/Contents/MacOS/Tailscale"); err == nil {
-		t.Skip("the Tailscale app bundle is installed; the missing-CLI case is not deterministic here")
 	}
 	d.Start()
 
@@ -663,11 +660,9 @@ func TestScenario24TailscaleCLIMissingIsIgnored(t *testing.T) {
 	if e, ok := tsEvent(d.AuthEvents(), "ignore", "unavailable"); !ok || e.Outcome != "fail" {
 		t.Errorf("auth event: %+v %v", e, ok)
 	}
-	var rep struct {
-		Available bool `json:"available"`
-	}
-	d.Get("/api/auth/tailscale").Want(200).JSON(&rep)
-	if rep.Available {
-		t.Error("report claims tailscale is available")
+	var rep tsReport
+	d.Get("/api/tailscale").Want(200).JSON(&rep)
+	if rep.CLI.Found {
+		t.Error("report claims the tailscale CLI was found")
 	}
 }

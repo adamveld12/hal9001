@@ -13,6 +13,7 @@ import { GeneralSection } from "./GeneralSection";
 import { McpSection } from "./McpSection";
 import { PasskeysPanel } from "./PasskeysPanel";
 import { RuntimesSection } from "./RuntimesSection";
+import { TailscaleSection } from "./TailscaleSection";
 import { SessionsPanel } from "./SessionsPanel";
 import { UpdatesSection } from "./UpdatesSection";
 
@@ -127,6 +128,14 @@ export function SettingsMcpPage() {
   return (
     <SettingsPageShell title="MCP">
       <McpSection />
+    </SettingsPageShell>
+  );
+}
+
+export function SettingsTailscalePage() {
+  return (
+    <SettingsPageShell title="Tailscale">
+      <TailscaleSection />
     </SettingsPageShell>
   );
 }

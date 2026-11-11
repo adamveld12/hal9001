@@ -29,6 +29,7 @@ import (
 	"hal9001/internal/sandbox"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tailscale"
 	"hal9001/internal/tools"
 	"hal9001/internal/update"
 	"hal9001/internal/webui"
@@ -58,6 +59,12 @@ type Options struct {
 	// ExactPATH makes BasePATH the only PATH hal9001 looks for the agent CLIs and Node.js on: the well-known tool
 	// directories (~/.local/bin, /opt/homebrew/bin, ...) are not added. For tests and the sandbox.
 	ExactPATH bool
+	// TailscaleExact makes TailscalePATH the only place the tailscale CLI is looked for: BasePATH, the well-known tool
+	// directories (Homebrew, ...) and the macOS app bundle are not tried. For tests and the sandbox, so they never
+	// reach the Tailscale of the machine they run on.
+	TailscaleExact bool
+	// TailscalePATH is the PATH used with TailscaleExact; empty means no tailscale CLI at all.
+	TailscalePATH string
 	// UIURL is the origin notification deep links point at. Empty: $HAL9001_UI_URL,
 	// else http://localhost:<port> (the daemon's own port, 9001 by default).
 	UIURL string
@@ -164,7 +171,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	d.engine = eng
 
-	mgr, err := auth.New(auth.Options{Config: AuthConfig(ws.Config.Value), Store: authstore.New(st), Logger: log})
+	tsCLI := tailscale.CLI{Path: basePATH}
+	if opts.TailscaleExact {
+		tsCLI = tailscale.CLI{Path: opts.TailscalePATH, Exact: true}
+	}
+	tsMgr := tailscale.New(tailscale.Options{Home: home, Port: port, CLI: tsCLI, Log: log})
+	mgr, err := auth.New(auth.Options{Config: AuthConfig(ws.Config.Value), Store: authstore.New(st), Logger: log, Tailscale: tsMgr.Client()})
 	if err != nil {
 		return fmt.Errorf("daemon: auth: %w", err)
 	}
@@ -232,7 +244,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
-		Operator: operator, Port: port, Executable: opts.Executable,
+		Operator: operator, Port: port, Executable: opts.Executable, Tailscale: tsMgr,
 		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH, Runtimes: eng.Runtimes(),
 		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update,
 	})
@@ -282,6 +294,15 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}()
 
+	// Sharing on the tailnet: put the mapping back if Tailscale lost it, in the background because tailscaled may
+	// still be starting. The config edits it makes reach the engine through the watcher above.
+	var tsDone sync.WaitGroup
+	tsDone.Add(1)
+	go func() {
+		defer tsDone.Done()
+		tsMgr.Reconcile(runCtx)
+	}()
+
 	serveErr := make(chan error, 1)
 	serving = true
 	go func() { serveErr <- srv.Serve(ln) }()
@@ -307,6 +328,7 @@ func Run(ctx context.Context, opts Options) error {
 	shutCancel()
 	cancel()
 	watchDone.Wait()
+	tsDone.Wait()
 
 	stopCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), engineShutdownTimeout)
 	defer stop()

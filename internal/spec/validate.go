@@ -198,6 +198,9 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 			c.errorf(CodeInvalidValue, fmt.Sprintf("allowed_hosts[%d]", i), "allowed host %q must be a bare hostname with optional port (no scheme or path)", h)
 		}
 	}
+	if p := g.Tailscale.HTTPSPort; p < 1 || p > 65535 {
+		c.errorf(CodeInvalidValue, "tailscale.https_port", "tailscale.https_port must be between 1 and 65535, got %d", p)
+	}
 	for i, l := range g.AllowedLogins {
 		if strings.TrimSpace(l) == "" {
 			c.errorf(CodeInvalidValue, fmt.Sprintf("allowed_logins[%d]", i), "allowed login must not be empty")

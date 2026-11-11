@@ -21,6 +21,7 @@ import (
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tailscale"
 	"hal9001/internal/tools"
 	"hal9001/internal/update"
 )
@@ -168,6 +169,8 @@ type envOptions struct {
 	// runtimes detects and installs agents; the default sees an empty PATH, so no test depends on the CLIs of the
 	// machine it runs on.
 	runtimes func(e *env) *runtimes.Manager
+	// tailscale is the Tailscale manager; without one the /api/tailscale operations answer 503.
+	tailscale func(e *env) *tailscale.Manager
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -205,8 +208,13 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 		rm = runtimes.New(runtimes.Options{Data: filepath.Join(e.home, "data"), Path: t.TempDir(), ExactPath: true})
 	}
 	t.Cleanup(rm.Close)
+	var tsm *tailscale.Manager
+	if eo.tailscale != nil {
+		tsm = eo.tailscale(e)
+	}
 	e.srv = New(Options{
-		Store: st, Home: e.home, Engine: e.eng, Auth: e.mgr, Runtimes: rm,
+		Tailscale: tsm,
+		Store:     st, Home: e.home, Engine: e.eng, Auth: e.mgr, Runtimes: rm,
 		Workspace: func() *spec.Workspace { return e.ws.Load() },
 		Reload: func() {
 			e.reloads.Add(1)

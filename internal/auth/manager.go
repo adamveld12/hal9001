@@ -18,6 +18,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"hal9001/internal/httpsec"
+	"hal9001/internal/tailscale"
 )
 
 // SessionCookie is the name of the session cookie.
@@ -32,7 +33,7 @@ type Options struct {
 	Config Config
 	Store  Store
 	// Tailscale is the CLI abstraction; nil means the real CLI.
-	Tailscale Tailscale
+	Tailscale tailscale.Client
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 	// Modules are extra modules to register next to the built-in ones.
@@ -71,7 +72,7 @@ func New(opts Options) (*Manager, error) {
 	}
 	ts := opts.Tailscale
 	if ts == nil {
-		ts = CLI{}
+		ts = tailscale.CLI{}
 	}
 	m.ts = NewTailscaleIdentity(ts, m.now)
 	m.wa = NewWebAuthn(opts.Store, m.now)
@@ -98,11 +99,6 @@ func (m *Manager) Reload(c Config) error {
 
 // Config returns the active configuration.
 func (m *Manager) Config() Config { return *m.cfg.Load() }
-
-// TailscaleReport backs `hal9001 tailscale status`.
-func (m *Manager) TailscaleReport(ctx context.Context, port int) TailscaleReport {
-	return m.ts.Report(ctx, m.Config().settings(), port)
-}
 
 func (m *Manager) stackFor(c Config, svc Service) *Stack {
 	name := c.Services[svc]

@@ -13,6 +13,7 @@ import (
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
+	"hal9001/internal/tailscale"
 	"hal9001/internal/tools"
 	"hal9001/internal/update"
 )
@@ -64,4 +65,5 @@ type apiParams struct {
 	Log        *slog.Logger
 	Sinks      *notify.Sinks
 	Update     *update.Service
+	Tailscale  *tailscale.Manager
 }
