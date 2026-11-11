@@ -34,6 +34,7 @@ gitleaks_range() {
 }
 
 step "flaky-classify tests" scripts/flaky-classify.test.sh
+step "skill frontmatter" mise exec -- go run ./scripts/skillcheck
 step "golangci-lint fmt --diff" mise exec -- golangci-lint fmt --diff ./...
 step "prettier --check" mise exec -- pnpm --dir web format:check
 step "gen:api diff" gen_api_diff

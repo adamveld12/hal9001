@@ -1,6 +1,7 @@
 ---
 name: hal-parallel-prs
-description: Use when coordinating parallel or stacked hal9001 PRs: briefing agents, contract-first openapi, worktrees, migration numbering, schema.d.ts conflicts, and the squash-merge procedure for stacked PRs.
+description: >-
+  Use when coordinating parallel or stacked hal9001 PRs: briefing agents, contract-first openapi, worktrees, migration numbering, schema.d.ts conflicts, and the squash-merge procedure for stacked PRs.
 ---
 
 # Parallel and stacked PRs
