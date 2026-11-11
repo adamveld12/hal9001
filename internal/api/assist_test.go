@@ -308,3 +308,20 @@ func TestStreamAnnouncesAssistSessionsAndMessages(t *testing.T) {
 func (d *assistDouble) FlowCreated(context.Context, string) error                   { return nil }
 func (d *assistDouble) TargetRenamed(context.Context, string, string, string) error { return nil }
 func (d *assistDouble) ToolCreated(context.Context, string) error                   { return nil }
+
+func TestAssistTestRejectsMalformedSimulateEmit(t *testing.T) {
+	e := newEnv(t)
+	a := e.assistSession("", "idle")
+	for _, body := range map[string]string{
+		"bad node id":    `{"simulate_emit":{"bad id":{"port":"ok"}}}`,
+		"bad port":       `{"simulate_emit":{"n":{"port":"Not-A-Port"}}}`,
+		"missing port":   `{"simulate_emit":{"n":{}}}`,
+		"output a list":  `{"simulate_emit":{"n":{"port":"ok","output":[1]}}}`,
+		"output a value": `{"simulate_emit":{"n":{"port":"ok","output":"x"}}}`,
+	} {
+		e.do("POST", "/api/assist/sessions/"+a.ID+"/test", body).want(422)
+	}
+	e.do("POST", "/api/assist/sessions/"+a.ID+"/test", `{"simulate_emit":{"n":{"port":"ok","other":1}}}`).want(400)
+	// A well-formed request gets past validation and reaches the missing service.
+	e.do("POST", "/api/assist/sessions/"+a.ID+"/test", `{"simulate_emit":{"n":{"port":"ok","output":{"a":1}}}}`).want(503)
+}

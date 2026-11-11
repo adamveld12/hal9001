@@ -137,9 +137,14 @@ type AgentRun struct {
 	StopReason     string          `json:"stop_reason"`
 	FinalMessage   string          `json:"final_message"`
 	Result         json.RawMessage `json:"result"`
-	ParseError     bool            `json:"parse_error"`
-	Error          string          `json:"error"`
-	AgentInfo      *struct {
+	Output         json.RawMessage `json:"output"`
+	Emissions      []struct {
+		Port   string          `json:"port"`
+		Output json.RawMessage `json:"output"`
+	} `json:"emissions"`
+	ParseError bool   `json:"parse_error"`
+	Error      string `json:"error"`
+	AgentInfo  *struct {
 		Name string `json:"name"`
 	} `json:"agent_info"`
 }

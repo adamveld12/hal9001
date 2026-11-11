@@ -443,19 +443,44 @@ const maxRecoveryPrompts = 2
 // follow-up prompt that says what happened.
 func (r *run) prompt() {
 	text := r.rec.Prompt
-	for round := 0; ; round++ {
+	recoveries, askedOutput := 0, false
+	for {
 		r.promptOnce(text)
-		rej, ok := r.policyEndedTurn()
-		if !ok || round == maxRecoveryPrompts || r.ctx.Err() != nil {
+		if r.ctx.Err() != nil {
 			return
 		}
-		text = recoveryPrompt(rej.title)
-		r.mu.Lock()
-		r.lastReject, r.prompted, r.stop = nil, false, ""
-		r.cur.Reset() // the final message is the answer to the follow-up
-		r.mu.Unlock()
-		r.harness(map[string]any{"action": "recovery_prompt", "rejected": rej.title, "round": round + 1, "prompt": text})
+		if rej, ok := r.policyEndedTurn(); ok && recoveries < maxRecoveryPrompts {
+			recoveries++
+			text = recoveryPrompt(rej.title)
+			r.mu.Lock()
+			r.lastReject, r.prompted, r.stop = nil, false, ""
+			r.cur.Reset() // the final message is the answer to the follow-up
+			r.mu.Unlock()
+			r.harness(map[string]any{"action": "recovery_prompt", "rejected": rej.title, "round": recoveries, "prompt": text})
+			continue
+		}
+		if !askedOutput && r.needsOutput() {
+			askedOutput = true
+			text = r.p.req.Output.FollowUp
+			r.mu.Lock()
+			r.prompted, r.stop = false, ""
+			r.mu.Unlock()
+			r.harness(map[string]any{"action": "output_prompt", "last_error": r.p.req.Output.LastError(), "prompt": text})
+			continue
+		}
+		return
 	}
+}
+
+// needsOutput reports that the turn just ended normally but a required emit_<port> call is still missing.
+func (r *run) needsOutput() bool {
+	h := r.p.req.Output
+	if h == nil || !h.Required || r.p.phase == PhasePropose || h.Done() || r.failed() {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prompted && r.stop == acp.StopReasonEndTurn
 }
 
 // recoveryPrompt tells the agent its call was rejected by policy and asks it to finish read-only.
@@ -645,11 +670,41 @@ func (r *run) finishCompleted() {
 		return
 	}
 
+	var output json.RawMessage
+	var emissions []Emission
+	if h := r.p.req.Output; h != nil {
+		if h.Done() {
+			if h.Value != nil {
+				output = h.Value()
+			}
+			if h.Emissions != nil {
+				emissions = h.Emissions()
+			}
+		} else if h.Required {
+			msg := "the agent ended its turn without a valid emit_<port> call, even after a reminder"
+			if last := h.LastError(); last != "" {
+				msg += "; the last call was refused: " + last
+			}
+			r.end(StatusFailed, ReasonNoOutput, msg)
+			return
+		}
+	}
+
 	now := r.now()
 	r.mu.Lock()
 	r.rec.Status = StatusSucceeded
 	r.rec.EndedAt = &now
-	if r.p.req.ExpectNote {
+	r.rec.Output = output
+	r.rec.Emissions = emissions
+	switch {
+	case output != nil && r.p.req.Output.AsNote:
+		// Validated against the note schema by the tool: no text parsing.
+		if note, err := NoteFromJSON(output); err == nil {
+			r.rec.Note = &note
+		} else {
+			r.rec.NoteParseError = err.Error()
+		}
+	case r.p.req.ExpectNote:
 		note, err := ParseNote(final)
 		if err != nil {
 			note, err = parseNoteFallback(final, full, err)

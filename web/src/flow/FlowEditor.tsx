@@ -388,6 +388,7 @@ export function FlowEditor(props: FlowEditorProps) {
               runtimes={props.runtimes}
               idTaken={(id) => state.nodes.some((n) => n.id === id)}
               flowId={flow.id}
+              flow={flow}
               onChange={(patch, coalesce) =>
                 dispatch({
                   type: "updateNode",
@@ -398,6 +399,12 @@ export function FlowEditor(props: FlowEditorProps) {
               }
               onRename={(to) =>
                 dispatch({ type: "renameNode", id: selected.id, to })
+              }
+              onRenamePort={(from, to) =>
+                dispatch({ type: "renameAgentPort", id: selected.id, from, to })
+              }
+              onRemovePort={(port) =>
+                dispatch({ type: "removeAgentPort", id: selected.id, port })
               }
               onDelete={() =>
                 dispatch({

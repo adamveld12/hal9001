@@ -242,7 +242,11 @@ export function AgentRunPage() {
             </Panel>
           )}
 
-          {(run.final_message || run.result || run.parse_error) && (
+          {(run.final_message ||
+            run.result ||
+            run.output != null ||
+            run.emissions.length > 0 ||
+            run.parse_error) && (
             <Panel
               title="Result"
               actions={
@@ -256,6 +260,29 @@ export function AgentRunPage() {
                   <Badge tone="warn">
                     final message did not parse as a note
                   </Badge>
+                )}
+                {run.output != null && (
+                  <div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      Submitted output (submit_output)
+                    </div>
+                    <JsonView value={run.output} />
+                  </div>
+                )}
+                {run.emissions.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      Emissions (emit tools)
+                    </div>
+                    {run.emissions.map((e, i) => (
+                      <div key={i}>
+                        <div className="mb-1 font-mono text-[11px]">
+                          {i + 1}. port <Badge tone="info">{e.port}</Badge>
+                        </div>
+                        <JsonView value={e.output} />
+                      </div>
+                    ))}
+                  </div>
                 )}
                 {run.result && <JsonView value={run.result} />}
                 {run.final_message && (

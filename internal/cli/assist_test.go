@@ -40,6 +40,12 @@ func TestAssistCommandsHitTheRightEndpointsAndPrintTheResponse(t *testing.T) {
 			canned{status: 204}, nil},
 		{"test posts an empty object", []string{"assist", "test", id1}, "", "POST /api/assist/sessions/" + id1 + "/test", nil, map[string]any{},
 			ok(assistTestResult(0)), assistTestResult(0)},
+		{"test --simulate-emit is repeatable", []string{"assist", "test", id1, "--simulate-emit", "triage:needs_human", "--simulate-emit", `review:ok={"title":"a=b"}`}, "",
+			"POST /api/assist/sessions/" + id1 + "/test", nil,
+			map[string]any{"simulate_emit": map[string]any{
+				"triage": map[string]any{"port": "needs_human"},
+				"review": map[string]any{"port": "ok", "output": map[string]any{"title": "a=b"}}}},
+			ok(assistTestResult(0)), assistTestResult(0)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

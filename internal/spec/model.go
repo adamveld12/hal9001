@@ -251,7 +251,7 @@ type Flow struct {
 // validation rejects fields that do not belong to the node's type.
 //
 //	command: lang, script|command, ports, cwd (dir only), timeout, side_effect
-//	agent:   runtime, mode, approve, prompt|instructions, output, extra_prompt, model, cwd, timeout,
+//	agent:   runtime, mode, approve, prompt|instructions, output, ports, emit, extra_prompt, model, cwd, timeout,
 //	         approval_timeout, allow, mcp_servers, sandbox, image, repo, ref, tools
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
@@ -268,7 +268,7 @@ type Node struct {
 
 	// command
 	Lang    string   `yaml:"lang,omitempty" json:"lang,omitempty"`
-	Ports   []string `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Ports   Ports    `yaml:"ports,omitempty" json:"ports,omitzero"`
 	Script  string   `yaml:"script,omitempty" json:"script,omitempty"`
 	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 
@@ -283,6 +283,9 @@ type Node struct {
 	Instructions string `yaml:"instructions,omitempty" json:"instructions,omitempty"`
 	Output       string `yaml:"output,omitempty" json:"output,omitempty"`
 	Model        string `yaml:"model,omitempty" json:"model,omitempty"`
+	// Emit (one|many, default one) applies to an agent node with ports: one emission (the last valid call) or one per
+	// valid emit_<port> call.
+	Emit string `yaml:"emit,omitempty" json:"emit,omitempty"`
 
 	// inbox
 	Title          string `yaml:"title,omitempty" json:"title,omitempty"`

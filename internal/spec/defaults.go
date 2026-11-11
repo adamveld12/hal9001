@@ -187,12 +187,15 @@ func (f *Flow) ApplyDefaults() {
 			if n.Timeout == 0 {
 				n.Timeout = DefaultCommandTimeout
 			}
-			if len(n.Ports) == 0 {
-				n.Ports = []string{PortOut}
+			if n.Ports.IsZero() {
+				n.Ports = NamePorts(PortOut)
 			}
 		case NodeAgent:
 			if n.Timeout == 0 {
 				n.Timeout = DefaultAgentTimeout
+			}
+			if !n.Ports.IsZero() && n.Emit == "" {
+				n.Emit = EmitOne
 			}
 			if n.Mode == ModeApprove && n.Approve == "" {
 				n.Approve = ApproveProposal
@@ -229,6 +232,7 @@ func (f *Flow) ApplyDefaults() {
 func (n Node) clone() Node {
 	n.Steps = transform.Clone(n.Steps)
 	n.Command = slices.Clone(n.Command)
+	n.Ports = n.Ports.Clone()
 	n.Links = slices.Clone(n.Links)
 	n.Fields = slices.Clone(n.Fields)
 	n.Editable = slices.Clone(n.Editable)
@@ -273,12 +277,15 @@ func (f Flow) Minimal() Flow {
 			if n.Timeout == DefaultCommandTimeout {
 				n.Timeout = 0
 			}
-			if slices.Equal(n.Ports, []string{PortOut}) {
-				n.Ports = nil
+			if !n.Ports.Map && slices.Equal(n.Ports.Names(), []string{PortOut}) {
+				n.Ports = Ports{}
 			}
 		case NodeAgent:
 			if n.Timeout == DefaultAgentTimeout {
 				n.Timeout = 0
+			}
+			if n.Emit == EmitOne {
+				n.Emit = ""
 			}
 			if n.Mode == ModeApprove && n.Approve == ApproveProposal {
 				n.Approve = ""
@@ -339,18 +346,22 @@ func (f *Flow) EntryNodes() []string {
 	return out
 }
 
-// OutPorts returns every port the node may emit on: the declared ports plus
+// OutPorts returns every port the node may emit on: the declared ports (an agent node without ports: out) plus
 // the implicit error port, plus denied for agent nodes in approve mode and nodes with requires_approval. Call
 // it on a node of a flow that has had defaults applied.
 func (n *Node) OutPorts() []string {
 	var ports []string
 	switch n.Type {
 	case NodeCommand:
-		ports = slices.Clone(n.Ports)
+		ports = n.Ports.Names()
 	case NodeTransform:
 		ports = transform.Ports(n.Steps)
 	case NodeApproval:
 		ports = []string{PortApproved, PortDenied}
+	case NodeAgent:
+		if ports = n.Ports.Names(); len(ports) == 0 {
+			ports = []string{PortOut}
+		}
 	default:
 		ports = []string{PortOut}
 	}

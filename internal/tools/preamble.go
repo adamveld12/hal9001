@@ -17,6 +17,8 @@ type PreambleData struct {
 	Now  time.Time
 	// Tools are the session's tools (Session.Tools).
 	Tools []ToolInfo
+	// Output, when set, is the run's output sink: the preamble tells the agent how the result is returned.
+	Output *OutputSink
 	// SystemPrompt is the user's app-wide system prompt (Config.SystemPrompt); empty adds nothing.
 	SystemPrompt string
 }
@@ -69,6 +71,9 @@ func Preamble(d PreambleData) string {
 		for _, t := range d.Tools {
 			fmt.Fprintf(&b, "- %s: %s\n", t.Name, firstSentence(t.Description))
 		}
+	}
+	if d.Output != nil {
+		b.WriteString(d.Output.PreambleLine() + "\n")
 	}
 	b.WriteString("</hal_context>\n\n")
 	return b.String()

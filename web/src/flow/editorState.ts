@@ -34,6 +34,7 @@ import {
   type NodeType,
   type UIPos,
 } from "./model";
+import { removePort, renamePort } from "./agentPorts";
 import { wouldCreateCycle } from "./validate";
 
 interface Snapshot {
@@ -69,6 +70,10 @@ export type EditorAction =
       coalesce?: string;
     }
   | { type: "renameNode"; id: string; to: string }
+  /** Rename an output port of an agent node; its edges follow. */
+  | { type: "renameAgentPort"; id: string; from: string; to: string }
+  /** Remove an output port of an agent node together with its edges. */
+  | { type: "removeAgentPort"; id: string; port: string }
   | { type: "updateMeta"; patch: Partial<FlowMeta> & { subscribe?: never } }
   | { type: "markSaved"; flow: Flow }
   | { type: "undo" }
@@ -290,6 +295,47 @@ function reduce(s: EditorState, a: EditorAction): EditorState {
           target,
         };
       });
+      return withHistory(s, { nodes, edges });
+    }
+
+    case "renameAgentPort": {
+      let changed = false;
+      const nodes = s.nodes.map((n) => {
+        if (n.id !== a.id || !isFlowNode(n) || n.data.node.type !== "agent")
+          return n;
+        const node = renamePort(n.data.node, a.from, a.to);
+        if (node === n.data.node) return n;
+        changed = true;
+        return { ...n, data: { ...n.data, node } } as FlowGraphNode;
+      });
+      if (!changed) return s;
+      const edges = s.edges.map((e) =>
+        e.source === a.id && (e.sourceHandle ?? "out") === a.from
+          ? {
+              ...e,
+              id: `${e.source}|${a.to}|${e.target}`,
+              sourceHandle: a.to,
+            }
+          : e,
+      );
+      return withHistory(s, { nodes, edges });
+    }
+
+    case "removeAgentPort": {
+      let changed = false;
+      const nodes = s.nodes.map((n) => {
+        if (n.id !== a.id || !isFlowNode(n) || n.data.node.type !== "agent")
+          return n;
+        changed = true;
+        return {
+          ...n,
+          data: { ...n.data, node: removePort(n.data.node, a.port) },
+        } as FlowGraphNode;
+      });
+      if (!changed) return s;
+      const edges = s.edges.filter(
+        (e) => !(e.source === a.id && (e.sourceHandle ?? "out") === a.port),
+      );
       return withHistory(s, { nodes, edges });
     }
 

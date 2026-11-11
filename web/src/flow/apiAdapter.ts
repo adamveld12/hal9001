@@ -1,5 +1,5 @@
 import type { components } from "../api/schema";
-import type { Flow } from "./model";
+import type { Flow, Priority } from "./model";
 
 type ApiFlow = components["schemas"]["Flow"];
 
@@ -18,5 +18,11 @@ export function flowFromApi(f: ApiFlow): Flow {
  * OpenAPI schema and model.ts drift apart this stops compiling.
  */
 export function flowToApi(f: Flow): ApiFlow {
-  return f;
+  // An inbox priority may be a template; the contract still lists the names only.
+  return {
+    ...f,
+    nodes: f.nodes.map((n) =>
+      n.type === "inbox" ? { ...n, priority: n.priority as Priority } : n,
+    ),
+  };
 }

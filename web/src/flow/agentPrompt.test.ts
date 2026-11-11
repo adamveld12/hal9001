@@ -46,4 +46,10 @@ describe("agent prompt source", () => {
       templateHints([".", "title", "labels[]", "labels[].name", "user.login"]),
     ).toEqual(["{{.input.title}}", "{{.input.user.login}}"]);
   });
+
+  it("inline prompts of a node with ports get no output", () => {
+    const n = { ...fresh(), ports: { done: {} } } as AgentNode;
+    delete n.output;
+    expect(toInlinePrompt(toSavedPrompt(n, "p")).output).toBeUndefined();
+  });
 });

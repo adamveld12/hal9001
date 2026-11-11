@@ -3078,13 +3078,30 @@ export interface components {
         needs_admin: boolean;
       }[];
     };
+    AgentPort: {
+      /** @description Shown to the agent as the description of the `emit_<port>` tool. */
+      description?: string;
+      /** @description JSON Schema (draft 2020-12 unless `$schema` says otherwise) of the tool arguments; the top level must have `type: object`; only local `$ref`s ("#/$defs/x") are allowed. Omitted: the inbox note schema, only when every edge from the port goes directly to an `inbox` node. */
+      schema?: {
+        [key: string]: unknown;
+      };
+    };
     /**
-     * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve` or `requires_approval` is set.
+     * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve` or `requires_approval` is set;
+     *     with `ports` declared, those declared ports replace `out`.
      *     A `denied` payload says which approval refused it: a proposal denial carries `agent` (with the `proposal` and `comment`),
      *     a `requires_approval` denial carries `approval` and the agent did not start.
      *     `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
      *     Exactly one of `prompt` (a library prompt name) or `instructions` (inline prompt template) is required.
-     *     `output` (`note` default, or `none`) applies to inline `instructions` only.
+     *     `output` (`note` default, or `none`) applies to inline `instructions` only. With `note` the agent ends its
+     *     final message with the inbox note JSON; hal also gives it the `submit_output` tool (note schema) and uses a valid
+     *     call instead of parsing the text.
+     *     `ports` declares output ports (names `[a-z0-9_]+`, not `out`, `error`, `denied`): hal gives the agent run one
+     *     `emit_<port>` tool per declared port that has an outgoing edge, validated against the port's `schema`. The
+     *     agent must finish by calling one; the validated arguments reach downstream nodes as `agent.output` together with
+     *     `agent.port`. A run that ends without a valid call after one reminder fails with class `no_output` (error
+     *     port). `ports` cannot be combined with an explicit `output`. A port without `schema` is only valid when every
+     *     edge from it goes directly to an `inbox` node (the inbox note schema is used).
      */
     AgentNode: {
       id: components["schemas"]["Slug"];
@@ -3100,6 +3117,16 @@ export interface components {
       instructions?: string;
       /** @enum {string} */
       output?: "note" | "none";
+      /** @description Output ports in declaration order. Each becomes the tool `emit_<port>` of the agent run when the port has an outgoing edge. */
+      ports?: {
+        [key: string]: components["schemas"]["AgentPort"];
+      };
+      /**
+       * @description With `ports`: `one` (the last valid call is the single emission) or `many` (every valid call is an emission and downstream runs once per emission).
+       * @default one
+       * @enum {string}
+       */
+      emit?: "one" | "many";
       extra_prompt?: string;
       model?: string;
       cwd?: components["schemas"]["Cwd"];
@@ -3121,7 +3148,13 @@ export interface components {
       tools?: components["schemas"]["NodeToolRef"][];
       ui?: components["schemas"]["NodeUI"];
     };
-    /** @description Writes an inbox item. Fields are Go templates over `{.event, .input, .flow, .run}`. Port `out` only. */
+    /**
+     * @description Writes an inbox item. Fields are Go templates over `{.event, .input, .flow, .run}`. Port `out` only.
+     *     `priority` is a priority name or a template that must render to one at run time (otherwise the node fails with
+     *     error class `template`). `title` is required, except on an inbox node fed only by agent ports without a schema
+     *     (the inbox shortcut): a missing `title` or `summary_md` is then taken from the agent's emission
+     *     (`agent.output.title`, `agent.output.summary_md`); templates set here override it.
+     */
     InboxNode: {
       id: components["schemas"]["Slug"];
       /**
@@ -3129,8 +3162,9 @@ export interface components {
        * @enum {string}
        */
       type: "inbox";
-      title: string;
-      priority?: components["schemas"]["Priority"];
+      title?: string;
+      /** @description One of `low`, `normal`, `high`, `urgent`, or a template that renders to one. Default `normal`. */
+      priority?: string;
       summary_md?: string;
       suggested_reply?: string;
       links?: components["schemas"]["NoteLink"][];
@@ -4004,6 +4038,22 @@ export interface components {
        * @enum {string}
        */
       simulate_approval?: "approved" | "denied";
+      /** @description For an `agent` node: emit on a port instead of running the agent. The node run is `done` with the reason `simulated: emit_<port>` and its stdout is the emitted payload. Outputs are not routed (a node test runs one node). */
+      simulate_emit?: components["schemas"]["SimulatedEmit"];
+    };
+    /**
+     * @description Makes an agent node emit in a test instead of running the agent. `port` must be a declared port of the node
+     *     with an outgoing edge. The emitted payload is the downstream payload of a real emission, with
+     *     `agent.status` `simulated` and `agent.output` the validated `output`. The request is rejected (400) when the
+     *     node is not an agent node, the port is not declared or has no outgoing edge, or `output` does not match the
+     *     port's schema (the error names each path and reason).
+     */
+    SimulatedEmit: {
+      port: string;
+      /** @description The emitted arguments. When omitted, a minimal payload is generated from the port's schema: required fields only; `const`, `default`, the first example or the first enum value when present, a placeholder string named after the property, `minimum` or 0, false, an empty array, nested required objects. */
+      output?: {
+        [key: string]: unknown;
+      } | null;
     };
     TestNodeResult: {
       flow_run: components["schemas"]["FlowRun"];
@@ -4502,7 +4552,7 @@ export interface components {
       decision: components["schemas"]["NodeRunDecision"] | null;
       /** @description `_reason` from the output, a skip reason such as `dry_run`, or an error summary. */
       reason: string | null;
-      /** @description Error class: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`, `interrupted`, `approval_timeout`, `denied`. */
+      /** @description Error class: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`, `interrupted`, `approval_timeout`, `denied`, and for agent nodes also `no_output`, `spawn_failed`, `agent_exit`, `agent_error`, `mode_unavailable`, `model_rejected`, `policy_rejected`, `empty_proposal`. */
       error: string | null;
       /** @description Distinct ports the node emitted on. Empty when dropped. */
       ports: string[];
@@ -4570,6 +4620,13 @@ export interface components {
       final_message: string | null;
       /** @description Parsed structured note when the prompt's `output` is `note` and parsing succeeded. */
       result: components["schemas"]["StructuredNote"] | null;
+      /** @description The arguments of the valid `submit_output` call (validated against the note schema; agent nodes with `output: note`); null when the run made none. */
+      output: components["schemas"]["JsonValue"];
+      /** @description Valid `emit_<port>` calls of an agent node with `ports`, in call order; with `emit: one` the last one is the node's output. Empty without ports. */
+      emissions: {
+        port: string;
+        output: components["schemas"]["JsonValue"];
+      }[];
       /** @description The prompt expects a note but the final message did not parse. */
       parse_error: boolean;
       error: string | null;
@@ -5335,7 +5392,8 @@ export interface components {
     /**
      * @description What one node did in a flow test, in the order the nodes ran. A node that did not run (a branch that was not
      *     taken) is absent. Agent nodes are `skipped` with the reason `assist test: agent nodes are not run`, and
-     *     their branch ends there. An inbox node records the item it would create in `would_create` and creates nothing.
+     *     their branch ends there, unless the request simulates an emit for them (`simulate_emit`): then `simulated` is
+     *     true, the reason is `simulated: emit_<port>`, and the node's outputs feed the downstream nodes. An inbox node records the item it would create in `would_create` and creates nothing.
      */
     AssistFlowTestNode: {
       node_id: components["schemas"]["Slug"];
@@ -5349,6 +5407,8 @@ export interface components {
       /** @description Ports the node emitted on. */
       ports: string[];
       outputs: components["schemas"]["AssistFlowTestOutput"][];
+      /** @description An agent node that emitted through `simulate_emit` instead of running. */
+      simulated: boolean;
       /** @description Inbox nodes only: the item a real run would create. */
       would_create: components["schemas"]["AssistInboxPreview"] | null;
       /** @description Redacted, at most 4 KiB. */
@@ -5450,6 +5510,10 @@ export interface components {
        * @enum {string}
        */
       simulate_approval?: "approved" | "denied";
+      /** @description Flow sessions: agent nodes that emit instead of running, keyed by node id. Downstream nodes run as for a live emission. A node that does not exist, is not an agent node, or names a port that is not declared with an outgoing edge, or an output that does not match the port's schema, is a request error. */
+      simulate_emit?: {
+        [key: string]: components["schemas"]["SimulatedEmit"];
+      };
     };
     AssistSample: {
       index: number;

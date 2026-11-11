@@ -520,6 +520,8 @@ type agentRunView struct {
 	StopReason      *string         `json:"stop_reason"`
 	FinalMessage    *string         `json:"final_message"`
 	Result          *noteView       `json:"result"`
+	Output          json.RawMessage `json:"output"`
+	Emissions       []emissionView  `json:"emissions"`
 	ParseError      bool            `json:"parse_error"`
 	Error           *string         `json:"error"`
 	RawBlob         *string         `json:"raw_blob"`
@@ -537,41 +539,63 @@ func rawOrNull(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
+// emissionView is one valid emit_<port> call of an agent run.
+type emissionView struct {
+	Port   string          `json:"port"`
+	Output json.RawMessage `json:"output"`
+}
+
+// parsedAgentResult is store.AgentRun.Result decoded.
+type parsedAgentResult struct {
+	final *string
+	note  *noteView
+	// output is the validated submit_output arguments (null when the run made no valid call), emissions the valid
+	// emit_<port> calls.
+	output         json.RawMessage
+	emissions      []emissionView
+	parseErr       bool
+	resumeFallback *string
+}
+
 // parseAgentResult reads store.AgentRun.Result. The engine stores a JSON
-// object {"final_message", "note", "parse_error", "resume_fallback"}; a bare
+// object {"final_message", "note", "output", "emissions", "parse_error", "resume_fallback"}; a bare
 // structured note and plain text are accepted too.
-func parseAgentResult(text string) (final *string, note *noteView, parseErr bool, resumeFallback *string) {
+func parseAgentResult(text string) parsedAgentResult {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, nil, false, nil
+		return parsedAgentResult{}
 	}
 	var obj map[string]json.RawMessage
 	if json.Unmarshal([]byte(text), &obj) != nil {
-		return &text, nil, false, nil
+		return parsedAgentResult{final: &text}
 	}
-	_, hasFinal := obj["final_message"]
-	_, hasNote := obj["note"]
-	_, hasParse := obj["parse_error"]
-	_, hasFallback := obj["resume_fallback"]
+	envelope := false
+	for _, k := range []string{"final_message", "note", "parse_error", "resume_fallback", "output", "emissions"} {
+		if _, ok := obj[k]; ok {
+			envelope = true
+		}
+	}
 	switch {
-	case hasFinal || hasNote || hasParse || hasFallback:
+	case envelope:
 		var env struct {
-			FinalMessage   *string   `json:"final_message"`
-			Note           *noteView `json:"note"`
-			ParseError     bool      `json:"parse_error"`
-			ResumeFallback *string   `json:"resume_fallback"`
+			FinalMessage   *string         `json:"final_message"`
+			Note           *noteView       `json:"note"`
+			Output         json.RawMessage `json:"output"`
+			Emissions      []emissionView  `json:"emissions"`
+			ParseError     bool            `json:"parse_error"`
+			ResumeFallback *string         `json:"resume_fallback"`
 		}
 		if json.Unmarshal([]byte(text), &env) != nil {
-			return &text, nil, false, nil
+			return parsedAgentResult{final: &text}
 		}
-		return env.FinalMessage, env.Note, env.ParseError, env.ResumeFallback
+		return parsedAgentResult{final: env.FinalMessage, note: env.Note, output: env.Output, emissions: env.Emissions, parseErr: env.ParseError, resumeFallback: env.ResumeFallback}
 	case obj["title"] != nil && obj["summary_md"] != nil:
 		var n noteView
 		if json.Unmarshal([]byte(text), &n) == nil {
-			return nil, &n, false, nil
+			return parsedAgentResult{note: &n}
 		}
 	}
-	return &text, nil, false, nil
+	return parsedAgentResult{final: &text}
 }
 
 func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView, error) {
@@ -580,13 +604,16 @@ func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView,
 		return agentRunView{}, err
 	}
 	prompt := rv.s.contentString(ar.Prompt)
-	final, note, parseErr, resumeFallback := parseAgentResult(rv.s.contentString(ar.Result))
+	res := parseAgentResult(rv.s.contentString(ar.Result))
 	if preview {
 		prompt = cutUTF8(prompt, previewLimit)
-		if final != nil {
-			f := cutUTF8(*final, previewLimit)
-			final = &f
+		if res.final != nil {
+			f := cutUTF8(*res.final, previewLimit)
+			res.final = &f
 		}
+	}
+	if res.emissions == nil {
+		res.emissions = []emissionView{}
 	}
 	argv := ar.Argv
 	if argv == nil {
@@ -598,7 +625,7 @@ func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView,
 		AgentInfo: rawOrNull(ar.AgentInfo), Capabilities: rawOrNull(ar.Capabilities), Mode: string(ar.Mode),
 		Policy: string(ar.Policy), Phase: string(ar.Phase), SessionID: nonEmpty(ar.SessionID), Cwd: nonEmpty(ar.Cwd),
 		RenderedPromp: prompt, Argv: argv, Status: string(ar.Status), StopReason: nonEmpty(ar.StopReason),
-		FinalMessage: final, Result: note, ParseError: parseErr, ResumeFall: resumeFallback, Error: nonEmpty(ar.Error), RawSize: ar.RawJSONRPC.Size,
+		FinalMessage: res.final, Result: res.note, Output: rawOrNull(res.output), Emissions: res.emissions, ParseError: res.parseErr, ResumeFall: res.resumeFallback, Error: nonEmpty(ar.Error), RawSize: ar.RawJSONRPC.Size,
 		CreatedAt: utc(ar.CreatedAt), StartedAt: utcPtr(ar.StartedAt), EndedAt: utcPtr(ar.EndedAt),
 	}
 	if ar.ApproveStyle != "" {

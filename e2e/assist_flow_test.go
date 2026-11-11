@@ -54,6 +54,7 @@ type flowTestNode struct {
 	Decision  *string `json:"decision"`
 	Reason    *string `json:"reason"`
 	Ports     []string
+	Simulated bool `json:"simulated"`
 	Outputs   []struct {
 		Port    string         `json:"port"`
 		Payload map[string]any `json:"payload"`

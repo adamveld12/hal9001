@@ -73,7 +73,8 @@ then everything in the `env` file, then:
 stderr, scripts and argv.
 
 Error classes recorded on a failed node run: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`,
-`interrupted`, `template`, `config`, `start_failed`. Defaults: command timeout 60s, agent timeout 30m.
+`interrupted`, `template`, `config`, `start_failed`, and for agent nodes `no_output` (see [Outputs and ports](#outputs-and-ports))
+and the classes listed under [What an agent node emits](#what-an-agent-node-emits). Defaults: command timeout 60s, agent timeout 30m.
 
 ### Examples
 
@@ -417,7 +418,10 @@ a flow carry paths such as `nodes[2].steps[1].conditions[0].value`.
     - {label: Open, url: "{{.input.url}}"}
 ```
 
-`title` is required and must not render empty. The node creates an inbox item and passes its input through on `out`. In
+`title` is required and must not render empty, except for an inbox node that is fed directly by an agent port without a
+schema (see [Outputs and ports](#outputs-and-ports), "Inbox shortcut"): it may omit `title` and `summary_md`. `priority`
+may be a template; it must render to `low`, `normal`, `high` or `urgent`, otherwise the node fails with the error class
+`template`. The node creates an inbox item and passes its input through on `out`. In
 a dry-run flow the item is tagged `dry-run`. Items at or above `notify_min_priority` raise a macOS notification that
 opens the item in the UI. Manage items with `hal9001 inbox list|get|read|star|archive`.
 
@@ -483,7 +487,7 @@ dry run: approving or denying only exercises the flow's branches."; the notifica
 
 **Tests.** "Run node on sample" (`POST /api/flows/{id}/test-node`, `hal9001 flows test-node`) and the assist flow test
 (`draft_test`, `hal9001 assist test`) never wait: they take the decision `simulate_approval` (`approved` default, or
-`denied`; `--simulate-approval`) and create no approval.
+`denied`; `--simulate-approval`) and create no approval. Agent nodes can be told what to emit instead of running (see [Testing agent nodes](#testing-agent-nodes-simulate_emit)).
 
 ### Asking for approval before any node runs (`requires_approval`)
 
@@ -538,7 +542,11 @@ notification.
   prompt: pr-review        # a library prompt (prompts/pr-review.md) ...
   # instructions: |        # ... or, instead of prompt, the prompt written inline (same template data)
   #   Review {{.input.url}}.
-  # output: note           # inline only: note (default) | none
+  # output: note           # note (default for inline instructions) | none; not combinable with ports
+  # ports:                 # instead of output: named outputs, each becomes an emit_<name> tool (see "Outputs and ports")
+  #   reviewed: {description: "The PR is fine.", schema: {...}}   # schema optional, see below
+  #   needs_human: {description: "A person must look."}
+  # emit: one              # one (default) | many; only with ports
   extra_prompt: "Focus on tests. Title: {{.input.title}}"
   model: sonnet            # optional; set through the agent's `model` config option
   cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
@@ -557,9 +565,16 @@ notification.
 ```
 
 Every agent session also gets hal's own MCP server (`hal`): `gh_api`, `pr_view`, `pr_diff`, `pr_list`, `issue_view`,
-`search`, `now`, `run_context`, `node_input`, `event`. Reads run without a prompt; a call that writes (for example a
+`search`, `now`, `run_context`, `node_input`, `event`, `submit_output` for nodes with `output: note` and `emit_<port>`
+for each declared port that has an outgoing edge (see [Outputs and ports](#outputs-and-ports)). Reads run without a prompt; a call that writes (for example a
 `gh_api` POST) becomes a tool-call Approval and the agent waits up to `approval_timeout`. The first prompt of the run starts
 with a context block (ids, time, trigger, node input, available tools). See `docs/design/agent-access.md`.
+
+| Field | Meaning |
+|---|---|
+| `ports` | Optional map `<name>: {description, schema}` (order kept; both fields optional). Each port is an output of the node and, when an edge leaves it, a required tool `emit_<name>`. Names match `[a-z0-9_]+` and are not `out`, `error` or `denied`. A node with ports has no `out` port; `error` (and `denied` in approve mode) stay. Not combinable with `output: note` or `output: none`. (A `command` node's `ports` is a plain list of names.) |
+| `emit` | `one` (default) or `many`; only meaningful with `ports`. |
+| `output` | `note` (default for inline instructions) or `none`. See [Prompts and notes](#prompts-and-notes). |
 
 ### Modes
 
@@ -568,12 +583,13 @@ decides each call inside its server. The modes differ in what a write may do.
 
 | Mode | Behavior | Output |
 |---|---|---|
-| `readonly` | Calls that would change something (for example a `gh_api` POST) fail without asking. Produces a structured note. | Inbox item and notification; port `out`. |
-| `auto` | Calls that need approval still ask: hal's approval rules are not bypassed by the mode. | Port `out`; an inbox item only if the prompt has `output: note`. |
-| `approve` + `proposal` | Phase 1 is read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) with "Approved. Execute the plan." plus your comment. Denying routes to port `denied`. | Port `out` after phase 2. |
-| `approve` + `per_tool` | One session; every call that needs approval becomes a tool-call Approval showing the tool and its arguments. Allow runs the call; deny returns a tool error and the agent continues. After `approval_timeout` the call fails with a tool error. | Port `out`. |
+| `readonly` | Calls that would change something (for example a `gh_api` POST) fail without asking. `emit_<port>` tools still work: they change nothing outside hal. | Port `out`, or the declared ports. An inbox item and notification only with `output: note` (see the behavior change below). |
+| `auto` | Calls that need approval still ask: hal's approval rules are not bypassed by the mode. | Port `out`, or the declared ports; an inbox item only with `output: note`. |
+| `approve` + `proposal` | Phase 1 is read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) with "Approved. Execute the plan." plus your comment (and the Outputs section when the node has ports). Denying routes to port `denied`. With ports, the `emit_<port>` tools and the Outputs section exist only in phase 2. | Port `out` (or the declared ports) after phase 2. |
+| `approve` + `per_tool` | One session (emit tools available throughout); every call that needs approval becomes a tool-call Approval showing the tool and its arguments. Allow runs the call; deny returns a tool error and the agent continues. After `approval_timeout` the call fails with a tool error. | Port `out` (or the declared ports). |
 
 A flow run waiting on an approval has status `awaiting_approval`; downstream nodes run after the agent finishes.
+Emit tools are hal-internal and need no approval in any mode.
 Proposal approvals never expire and survive daemon restarts. Tool-call approvals die with the agent process: a restart
 marks them `expired` and the run `interrupted`. Decide with `hal9001 approvals approve|deny <id> [--comment ...]` or in
 the UI.
@@ -620,12 +636,19 @@ You are reviewing {{.input.url}}.
 
 Give each agent node exactly one of `prompt` (a library prompt) or `instructions` (inline text on the node); both or
 neither is a validation error. Inline `instructions` is rendered exactly like a prompt file body, and its `output`
-(`note` by default, or `none`) replaces the prompt file's front matter `output`. Use a prompt file when several nodes share
+(`note` by default, or `none`) replaces the prompt file's front matter `output` (`note` or `none`). Use a prompt file when several nodes share
 the text; the flow editor's "Save as reusable prompt" turns inline instructions into one. `extra_prompt` works with either.
 
-The prompt body is a template over the data model above. The node's `extra_prompt` (also a template) is appended. The
-rendered prompt is stored on the agent run. With `output: note`, or in `readonly` mode, the agent ends its final message
-with one JSON object, which becomes the inbox item:
+The prompt body is a template over the data model above. The node's `extra_prompt` (also a template) is appended, and
+for a node with `ports` hal then appends the generated [Outputs section](#the-generated-outputs-section). The
+rendered prompt, including that section, is stored on the agent run. With `output: note` the agent ends its final message with one JSON object, or
+calls `submit_output` with it (preferred); either way it becomes the inbox item. `submit_output` takes the note schema,
+exists only in that run's tool session, needs no approval and works in `readonly` and dry runs. A valid call is the inbox item
+with no text parsing; without one the final message is parsed as below (no reminder is sent).
+
+**Behavior change:** the readonly mode alone no longer creates an inbox note. A node makes a note only with `output: note`
+(a prompt file with `output: note`, or inline instructions without `output`, which default to `note`); with `output: none`
+or with `ports` it never does.
 
 ```json
 {
@@ -640,13 +663,156 @@ with one JSON object, which becomes the inbox item:
 If parsing fails, an item is still created with the raw final message, priority `normal`, and a `parse_error` flag.
 Starter prompts are in `content/prompts/` (`pr-review`, `triage-slack`, `linear-triage`, `email-secretary`).
 
+### Outputs and ports
+
+Declare `ports` on an agent node when later nodes need to branch on the agent's decision or consume structured fields.
+Each port is an output of the node and a required tool call for the agent:
+
+```yaml
+- id: review
+  type: agent
+  runtime: claude
+  mode: readonly
+  instructions: |
+    Review {{.input.url}} and decide whether it can merge.
+  ports:
+    reviewed:
+      description: The PR is fine; summarize the review.
+    needs_human:
+      description: A person must look before this can merge; say why.
+- {id: note-ok, type: inbox, title: "Review: {{.input.input.url}}", priority: low}
+- {id: note-human, type: inbox, title: "Needs your review: {{.input.input.url}}", priority: high}
+edges:
+  - {from: review, port: reviewed, to: note-ok}
+  - {from: review, port: needs_human, to: note-human}
+```
+
+Edges use `port: <name>`. The instructions do not describe the output format: hal appends it. The ports above have no
+schema and lead only to inbox nodes, so the agent's call uses the inbox note schema (see "Inbox shortcut"); the inbox nodes
+set their own `title`, which wins over the agent's.
+
+- **Tools.** For every declared port with at least one outgoing edge, hal's per-run MCP server exposes `emit_<port>` to
+  that agent run only (scoped to the one run and node; never visible to another). A declared port without an edge gets no
+  tool and a validation warning. The tool's input schema is the port schema, its description is the port description plus
+  `Leads to: <summary>.` (default description without one: `Finish through the port <name>.`). Emit tools are hal-internal,
+  change nothing outside hal, need no approval and work in every mode, including `readonly` and dry runs. Routing to a
+  port never bypasses approval rules: a downstream `approval` node still asks.
+- **Validation of a call.** The call is checked against the port schema. A failure is a tool error listing each mismatch
+  as `<path>: <reason>` (for example `/priority: value must be one of 'urgent', 'high', 'normal', 'low'` or
+  `(root): missing properties 'verdict'`) so the agent retries; success returns `ok` and records the emission.
+- **`emit: one`** (default): the last valid call before the turn ends wins; a later invalid call does not discard an earlier
+  valid one. **`emit: many`**: every valid call is a separate emission; each one goes out on its port and the downstream
+  nodes run once per emission (fan-out).
+- **`no_output`.** If the turn ends with no valid emission, hal sends **one** follow-up message in the same session
+  ("You must finish by calling one of: emit_a, emit_b."). If that turn also ends without one, the node fails with the
+  error class `no_output`, routed to the `error` port when wired. The agent's final message is kept in the error payload as
+  `final_message`.
+- **Approve + proposal.** The planning phase has no emit tools and no Outputs section and still ends with a plan; both
+  appear in phase 2, with the Outputs section included in the approved message.
+- **Dry runs.** Calls work as in any run; inbox items made downstream are tagged `dry-run`.
+
+#### The generated Outputs section
+
+At run time hal appends this section to the rendered prompt, after the instructions and `extra_prompt`, for inline
+`instructions` and prompt-file nodes alike. It is stored with the rendered prompt on the agent run and never in the YAML.
+
+```
+## Outputs
+Finish by calling exactly one of these tools:
+- emit_reviewed: The PR is fine; summarize the review.
+  Leads to: inbox note "Review: ..."
+- emit_needs_human: A person must look before this can merge; say why.
+  Leads to: inbox note "Needs your review: ...".
+Do not put the output in your final message; it is ignored.
+```
+
+With `emit: many` the second line reads `Finish by calling one or more of these tools (each call is a separate output):`.
+Only ports with tools are listed. "Leads to" describes the first downstream node of the port: `inbox note "<title>"`,
+`approval "<title>"`, otherwise `<type> node`; template expressions in a title are shown as `...`.
+
+#### Inbox shortcut
+
+A port **without** a schema whose edges all go directly to `inbox` nodes uses the inbox note schema (`title`, `summary_md`,
+`priority`, `suggested_reply`, `links`). Such an inbox node may omit `title` (and `summary_md`): missing ones are filled from the
+emission (`agent.output.title`, `agent.output.summary_md`); templates on the inbox node override the emission. An inbox node
+with no `title` is a note node and also takes `suggested_reply`, `links` and, while it keeps the default `normal`, `priority`
+from the emission. Inbox
+`priority` may be a template; it must render to `low|normal|high|urgent`, else the node fails with error class `template`.
+Any other port without a schema (for example one leading to a command or approval node) needs a schema.
+
+#### Schemas and a second example
+
+A port `schema` is a JSON Schema written as YAML (JSON also works), draft 2020-12 unless `$schema` says another draft. The root must be
+`type: object`; only local `$ref`s (`#/$defs/name`) are allowed.
+
+```yaml
+- id: triage
+  type: agent
+  runtime: claude
+  mode: readonly
+  instructions: Triage {{.input.subject.url}}.
+  ports:
+    fix:
+      description: A concrete fix is needed.
+      schema:
+        type: object
+        required: [priority, reply]
+        properties:
+          priority: {enum: [urgent, high, normal, low]}
+          reply: {type: string}
+- id: format
+  type: command
+  lang: jq
+  script: '{title: "[\(.agent.output.priority)] reply", body: .agent.output.reply}'
+- id: ask
+  type: approval
+  title: "Send reply? {{.input.agent.output.priority}}"
+  body: "{{.input.agent.output.reply}}"
+edges:
+  - {from: triage, port: fix, to: format}
+  - {from: format, to: ask}
+```
+
+#### Validation
+
+| Severity | Condition (code) |
+|---|---|
+| error | Port named `error`, `denied` or `out`, or not `[a-z0-9_]+`. |
+| error | `ports` together with explicit `output: note` or `output: none`. |
+| error | `schema` is not a valid JSON Schema, its root is not `type: object`, or it uses a non-local `$ref`. |
+| error | A port without a schema whose edges are not all directly to inbox nodes (`port_needs_schema`). |
+| warning | A declared port without an outgoing edge (`unused_port`): no tool is created. |
+| warning | A downstream template reads `.input.agent.output.<field>` that is not in the port's schema (`template_field`; best effort, templates only). |
+
+Diagnostics carry node and port paths. `hal9001 validate`, the flow editor and the API validate endpoint report them.
+
 ### What an agent node emits
 
-Downstream nodes receive `{"input": <the agent node's input>, "agent": {"run_id", "status", "final_message", "note",
-"proposal", "comment"}}`, for example `{{.input.agent.note.title}}` or `{{.input.input.url}}`. The same shape goes out on
-`denied` for a denied proposal (a node with `requires_approval` that is denied before it starts emits
-`{"input", "approval"}` on `denied` instead, see [above](#asking-for-approval-before-any-node-runs-requires_approval)). Agent failures go to the `error` port (classes include `timeout`, `approval_timeout`, `spawn_failed`,
-`agent_exit`, `agent_error`, `mode_unavailable`, `model_rejected`, `policy_rejected`, `empty_proposal`).
+Each emission on a port is delivered downstream as `{"input": <the agent node's input>, "agent": {"run_id", "status",
+"port", "output", "final_message", "note", "proposal", "comment"}}`, for example `{{.input.agent.output.priority}}`,
+`{{.input.agent.port}}` or `{{.input.input.url}}` (in a jq command node the payload is the input: `.agent.output.priority`).
+`output` holds the validated `emit_<port>` arguments, `port` the port name, `final_message` the agent's final text,
+`note` the parsed or submitted note (`null` when the node makes none). Nodes without ports keep emitting on `out` with
+`agent.note` and `agent.final_message` as before. The same shape goes out on `denied` for a denied proposal (a node with
+`requires_approval` that is denied before it starts emits `{"input", "approval"}` on `denied` instead, see
+[above](#asking-for-approval-before-any-node-runs-requires_approval)). Agent failures go to the `error`
+port (classes include `timeout`, `approval_timeout`, `spawn_failed`, `agent_exit`, `agent_error`, `mode_unavailable`,
+`model_rejected`, `policy_rejected`, `empty_proposal`, `no_output`).
+
+### Testing agent nodes (`simulate_emit`)
+
+Flow tests (`test-node`, assist draft tests) skip agent nodes unless told what to emit. `simulate_emit` makes the node
+`simulated`: no agent runs, the node run has the reason `simulated: emit_<port>`, its stdout is the emitted payload JSON
+(status `simulated`), and downstream nodes run as live. Flow-test node results carry `simulated: true`.
+
+- `hal9001 flows test-node <flow> <node> --simulate-emit <port>[=<json>]`; request field `simulate_emit: {port, output?}` for the node under test.
+- Assist draft tests: `POST /api/assist/sessions/{id}/test` field `simulate_emit: {"<node_id>": {port, output?}, ...}`; CLI
+  `hal9001 assist test --simulate-emit <node>:<port>[=<json>]` (repeatable); the assist `draft_test` tool takes the same field.
+
+Without `output`, hal generates a minimal payload from the schema: required fields only; the first `enum` value; the
+property name as placeholder string; empty arrays; `0` or `false`; nested objects recursively; `const`, `default`,
+`examples[0]` and `minimum` are honored. An explicit `output` is validated like a real call; an invalid one is a request
+error naming path and reason. Simulation is not available for real runs.
 
 ## Dry-run, replay and test-node
 

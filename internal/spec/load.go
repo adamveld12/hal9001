@@ -83,7 +83,7 @@ func find[T any](files []*File[T], name string) *File[T] {
 // Refs returns the references flows may use: every sensor and prompt file
 // present (valid or not) and the configured runtimes.
 func (w *Workspace) Refs() *Refs {
-	r := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, Runtimes: map[string]Runtime{}, Tools: map[string]bool{}}
+	r := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, PromptOutputs: map[string]string{}, Runtimes: map[string]Runtime{}, Tools: map[string]bool{}}
 	for _, t := range w.Tools {
 		r.Tools[t.Name] = true
 	}
@@ -92,6 +92,9 @@ func (w *Workspace) Refs() *Refs {
 	}
 	for _, p := range w.Prompts {
 		r.Prompts[p.Name] = true
+		if p.Value != nil {
+			r.PromptOutputs[p.Name] = p.Value.Output
+		}
 	}
 	if w.Config.Value != nil {
 		for k, v := range w.Config.Value.Runtimes {
@@ -157,7 +160,7 @@ func Load(home string) *Workspace {
 	promptNames := w.listDir(DirPrompts, ".md")
 
 	// References use file names, so they exist before any file is validated.
-	refs := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, Runtimes: map[string]Runtime{}, Tools: map[string]bool{}}
+	refs := &Refs{Sensors: map[string]bool{}, Prompts: map[string]bool{}, PromptOutputs: map[string]string{}, Runtimes: map[string]Runtime{}, Tools: map[string]bool{}}
 	for _, n := range w.listDir(DirTools, ".yaml") {
 		refs.Tools[n] = true
 	}

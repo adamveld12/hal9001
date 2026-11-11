@@ -17,7 +17,7 @@ export function toInlinePrompt(node: AgentNode, text?: string): AgentNode {
   return {
     ...rest,
     instructions: text ?? (node.instructions || DEFAULT_INSTRUCTIONS),
-    output: node.output ?? "note",
+    ...(node.ports ? {} : { output: node.output ?? "note" }),
   };
 }
 

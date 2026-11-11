@@ -51,6 +51,7 @@ const tnode = (over: Partial<AssistFlowTestNode>): AssistFlowTestNode => ({
   ports: ["urgent"],
   outputs: [{ port: "urgent", payload: { n: 1 } }],
   would_create: null,
+  simulated: false,
   stdout: null,
   stderr: null,
   exit_code: 0,

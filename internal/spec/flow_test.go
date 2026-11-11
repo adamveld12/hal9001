@@ -88,7 +88,7 @@ func TestFlowDefaults(t *testing.T) {
 	if filter.Timeout.Std() != 60*time.Second {
 		t.Errorf("command timeout = %v, want 60s", filter.Timeout)
 	}
-	if got := strings.Join(filter.Ports, ","); got != "out" {
+	if got := strings.Join(filter.Ports.Names(), ","); got != "out" {
 		t.Errorf("default ports = %q, want out", got)
 	}
 	if got := strings.Join(classify.OutPorts(), ","); got != "small,large,error" {
@@ -260,6 +260,11 @@ func TestFlowValidationErrors(t *testing.T) {
 			name: "agent with neither prompt nor instructions",
 			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, extra_prompt: hi}\n", "  []\n"),
 			code: CodeRequired, path: "nodes[0].instructions", node: "a", msg: "set instructions (inline prompt) or prompt (a file in prompts/)",
+		},
+		{
+			name: "unknown output",
+			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, instructions: hi, output: json}\n", "  []\n"),
+			code: CodeInvalidEnum, path: "nodes[0].output", node: "a", msg: "note | none",
 		},
 		{
 			name: "invalid lang",

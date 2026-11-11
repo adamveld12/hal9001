@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -295,7 +296,7 @@ func flowCmds() []*command {
 			return nil
 		},
 	}
-	var event, nodeRun, jsonInput, wait, simulate string
+	var event, nodeRun, jsonInput, wait, simulate, simulateEmit string
 	var dry bool
 	testNode := &leaf{
 		usage: "<flow-id> <node-id> [--event <id> | --node-run <id>[:<output-index>] | --json <value>] (default input: stdin JSON)", minArgs: 2, maxArgs: 2,
@@ -306,6 +307,7 @@ func flowCmds() []*command {
 			fs.StringVar(&wait, "wait", "", "how long to wait for the node run, e.g. 60s (server default 30s)")
 			fs.BoolVar(&dry, "dry-run", false, "run with dry-run semantics")
 			fs.StringVar(&simulate, "simulate-approval", "", "approval nodes and requires_approval gates: the decision to take instead of waiting, approved (default) or denied")
+			fs.StringVar(&simulateEmit, "simulate-emit", "", "agent nodes: emit on <port> instead of running the agent, optionally with output: <port>[=<json object>] (default: a minimal payload from the port's schema)")
 		},
 		run: func(ctx context.Context, c *call) error {
 			input, err := testNodeInput(c, event, nodeRun, jsonInput)
@@ -315,6 +317,13 @@ func flowCmds() []*command {
 			req := map[string]any{"node_id": c.args[1], "input": input, "dry_run": dry}
 			if simulate != "" {
 				req["simulate_approval"] = simulate
+			}
+			if simulateEmit != "" {
+				em, err := simulateEmitPort(simulateEmit)
+				if err != nil {
+					return err
+				}
+				req["simulate_emit"] = em
 			}
 			body, _ := jsonBody(req)
 			return c.doEmit(ctx, http.MethodPost, "/api/flows/"+esc(c.args[0])+"/test-node", query("wait", wait), body)
@@ -369,6 +378,63 @@ func testNodeInput(c *call, event, nodeRun, jsonInput string) (map[string]any, e
 	}
 	return map[string]any{"source": "json", "json": json.RawMessage(raw)}, nil
 }
+
+// splitSimulateEmit splits a --simulate-emit value "<target>[=<json>]" at the first "=" into the target and the
+// optional output, which must be a JSON object. cmd names the command in usage errors.
+func splitSimulateEmit(cmd, v string) (target string, output json.RawMessage, err error) {
+	target, raw, hasOutput := strings.Cut(v, "=")
+	target = strings.TrimSpace(target)
+	if !hasOutput {
+		return target, nil, nil
+	}
+	var obj map[string]any
+	if json.Unmarshal([]byte(raw), &obj) != nil || obj == nil {
+		return "", nil, usagef("%s: --simulate-emit output must be a JSON object, got %q", cmd, raw)
+	}
+	return target, json.RawMessage(raw), nil
+}
+
+// simulateEmitPort parses `<port>[=<json>]` of flows test-node.
+func simulateEmitPort(v string) (map[string]any, error) {
+	port, output, err := splitSimulateEmit("flows test-node", v)
+	if err != nil {
+		return nil, err
+	}
+	if !simulatePortRE.MatchString(port) {
+		return nil, usagef("flows test-node: --simulate-emit takes <port>[=<json>] with a port name, got %q", v)
+	}
+	em := map[string]any{"port": port}
+	if output != nil {
+		em["output"] = output
+	}
+	return em, nil
+}
+
+// simulateEmitNodes parses the repeatable `<node>:<port>[=<json>]` of assist test into a map keyed by node id.
+func simulateEmitNodes(values []string) (map[string]any, error) {
+	out := map[string]any{}
+	for _, v := range values {
+		target, output, err := splitSimulateEmit("assist test", v)
+		if err != nil {
+			return nil, err
+		}
+		node, port, ok := strings.Cut(target, ":")
+		if !ok || node == "" || !simulatePortRE.MatchString(port) {
+			return nil, usagef("assist test: --simulate-emit takes <node>:<port>[=<json>], got %q", v)
+		}
+		if _, dup := out[node]; dup {
+			return nil, usagef("assist test: --simulate-emit names node %q twice", node)
+		}
+		em := map[string]any{"port": port}
+		if output != nil {
+			em["output"] = output
+		}
+		out[node] = em
+	}
+	return out, nil
+}
+
+var simulatePortRE = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // stringList is a repeatable string flag.
 type stringList []string
