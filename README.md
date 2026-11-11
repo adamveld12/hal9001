@@ -293,7 +293,7 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `flows validate [file.yaml\|-]` | Validate flow YAML without saving. |
 | `flows run <id>` | Run now: poll every sensor the flow subscribes to and run only this flow on what they return (also a flow with `enabled: false`). `--rerun-seen` replays seen items into it, `--wait`/`--timeout 10m` wait for the created runs and print their final status. |
 | `flows test-node <flow-id> <node-id>` | Input from one of `--event <id>`, `--node-run <id>[:<index>]`, `--json <value>`, or stdin. `--dry-run`, `--wait 60s`. |
-| `runs list` | `--flow`, `--event`, `--kind` (`live`, `replay`, `test`), `--status`, `--replay-of`, `--since`, `--until`, `--limit`, `--cursor` |
+| `runs list` | `--flow`, `--event`, `--kind` (`live`, `replay`, `test`, `continuation`), `--status`, `--replay-of`, `--continuation-of`, `--conversation`, `--since`, `--until`, `--limit`, `--cursor` |
 | `runs get <id>` | `--wait` (block until finished or awaiting approval), `--timeout 10m` |
 | `node-runs get <id>` | `--wait`, `--timeout 10m` |
 | `agent-runs list` | `--flow-run`, `--node-run`, `--runtime`, `--status`, `--limit`, `--cursor` |

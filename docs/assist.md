@@ -199,6 +199,13 @@ The agent layer allows these tools and rejects every other permission request. A
 or in the Approvals page; a denial returns a tool error and the agent continues. The assist session's secrets never reach
 the agent: the environment holds no env-file values and `draft_test` redacts the output.
 
+### Continued chats can emit back into the flow
+
+A chat forked from a flow's agent run also has the `emit_<port>` tools (`emit_out` for a node without ports). They are
+the only tools of that chat that start work in a flow: a call waits for your approval as a `tool_call` approval and then
+starts a new flow run of kind `continuation`. The agent calls them only when you ask it to send the result to the flow.
+See [Continuing an agent run in chat and emitting back](flows.md#continuing-an-agent-run-in-chat-and-emitting-back).
+
 ### Read tools: debugging with the CLI's view
 
 The chat can read everything the `hal9001` CLI shows, so "why did my flow fail?" is answered from the run itself. Every

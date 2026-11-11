@@ -343,6 +343,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 - Kill switch: pauses sensors and stops starting new nodes. Optionally "pause + kill running" (SIGTERM, then SIGKILL after 10s; runs marked `killed`). State persisted.
 - Daemon restart: in-flight NodeRuns → `interrupted` (not auto-retried); queued runs resume; proposal approvals preserved; per-tool approvals → `expired`.
 - Replay: re-run a stored event through the **current** version of a flow → new FlowRun linked to the original (`replay_of`). Optional dry-run toggle at replay time.
+- Continuation: an approved emit of a chat that continues an agent run starts a FlowRun with `kind: continuation`, linked to the original run and the chat. It runs the stored flow version of the original run, reuses the upstream node runs, records the agent node as emitted on the chosen port and runs only the nodes behind that port. Shown in default run lists. See docs/flows.md, "Continuing an agent run in chat and emitting back".
 - Run node on sample: in the editor, execute one node against a chosen input (a stored event, an upstream NodeRun output, or pasted JSON). Recorded as a FlowRun with `kind: test` (filtered out of default timeline views).
 - Dry-run per flow: agent nodes forced to `readonly`, `side_effect` nodes skipped, `HAL_DRY_RUN=1`, inbox items tagged `dry-run`.
 
@@ -353,7 +354,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 | sensor_runs | sensor_id, started/ended, exit, item_count, new_count, stdout/stderr blob refs |
 | events | id, sensor_id, sensor_run_id, dedup_key, payload, created_at |
 | flow_versions | flow_id, hash, yaml |
-| flow_runs | id, flow_id, flow_hash, event_id, kind (live/replay/test), replay_of, dry_run, status, timestamps |
+| flow_runs | id, flow_id, flow_hash, event_id, kind (live/replay/test/continuation), replay_of, continuation_of_run_id / continuation_session_id / continuation_node_id / continuation_port / continuation_approval_id (set for kind continuation), dry_run, status, timestamps |
 | node_runs | id, flow_run_id, node_id, parent_node_run_id, status, decision (emitted/dropped/error/skipped), reason, port(s), command/script snapshot, env keys (values redacted), stdin, stdout, stderr, exit, duration |
 | agent_runs | id, node_run_id (null for an assist turn), assist_session_id (assist turns only), runtime, agent info + capabilities from `initialize`, mode, approve style, policy, phase (propose/execute), session_id, resumed_via (load/new_session), cwd, rendered prompt, argv, status, stop_reason, result JSON, raw JSON-RPC blob |
 | agent_events | agent_run_id, seq, ts, kind (message/thought/tool_call/tool_call_update/plan/...), tool_call_id, payload (the `session/update` body) |
