@@ -43,7 +43,13 @@ keep their "Create with AI"/"Ask AI" buttons as shortcuts: they open the same dr
 a fresh **general** chat. It does not end the old one and does not cancel a running turn of it: the old chat keeps
 running (and keeps asking for approvals) until you stop it. `History` lists your recent chats (first message as the
 title, kind, time, and `running` or `awaiting approval`); pick one to go back to it. A link from an agent run or an
-approval to its assist session (`?assist=<session id>`) opens that chat in the drawer.
+approval to its assist session (`?assist=<session id>`) opens that chat in the drawer (on the Chat page it selects the
+chat there).
+
+**Open full page.** The drawer header has `Open full page`. It shows the active chat on the [Chat page](#the-chat-page)
+(`/chat/<session id>`) and closes the drawer. It is the same session, so nothing is lost: a running turn keeps running
+and approvals stay open. While the Chat page is shown the drawer is not (there is one chat on screen), and Ask AI in the
+header (or `Cmd/Ctrl+K`) puts the cursor in the page's message box, or opens a new chat when the page has none.
 
 **Session kinds** (`target.kind`):
 
@@ -96,6 +102,7 @@ environment values.
 | Flows, Flow editor | Count, up to 20 flows (enabled, node count), queue; for one: id, name, description, enabled, node count, selected node, tab, unsaved changes, first 5 validation findings. |
 | Flow version | Flow, version hash, whether it is current. |
 | Tools, Prompts, Sandboxes | Lists (names, flags), the selected item (never a script or prompt body). |
+| Chat | Filters (`source`, `flow`, `runtime`, `status`, `since`, `until`, `q`), how many conversations are loaded and by status, whether more pages exist, the selected conversation (id, source, status, flow and node, runtime, the run it continues, fork count) and up to 20 rows (id, title, source, flow and node, runtime, status). Never message text. |
 | Settings | Section and the non-secret values it shows; Environment: the variable count and names (never values); Context: whether a system prompt is set and its length. |
 
 ### `navigate_ui` and `start_draft`
@@ -118,6 +125,8 @@ The routes the agent may open: `/inbox` (query `kind`, `unread`, `starred`, `arc
 `decision`, `kind`, `q`), `/events/:id`, `/runs/:id` (`node`, `run`), `/agent-runs` (`status`, `runtime`),
 `/agent-runs/:id`, `/flows` (`view`, `flow`, `status`, `kind`), `/flows/:id`, `/flows/:id/versions/:hash` (`tab`),
 `/sensors`, `/sensors/:id`, `/tools`, `/tools/:id`, `/prompts` (`new`), `/prompts/:name` (`tab`, `sample`, `event`),
+`/chat` and `/chat/:id` (`source`, `flow`, `runtime`, `status`, `since`, `until`, `q`; `:id` is an assist session id or an
+agent run id, `new` opens a new chat),
 `/settings/{general,environment,context,runtimes,auth,mcp,updates}`, `/sandboxes`, `/sandboxes/:backend`. The agent is
 given this catalog in its instructions (`uiGuide`).
 
@@ -251,6 +260,43 @@ becomes a `system` message with `kind: notice`.
 
 CLI: `hal9001 conversations list|get|messages|fork` (`list` takes `--source`, `--flow`, `--node`, `--runtime`, `--status`,
 `--q`, `--since`, `--until`, `--forked-from`).
+
+### The Chat page
+
+`Chat` in the sidebar (section Automate, `g h`) opens `/chat`: every conversation ever on the left, one transcript on the
+right (`/chat/<id>`; the id is an assist session id for a chat and an agent run id for a flow run). It reads
+`GET /api/conversations` and the endpoints below it; the chat itself is the same component as in the drawer.
+
+**List.** Newest activity first, 30 at a time (`Load more`). Filters: source (`All`, `Flow runs`, `Chats`), flow, runtime,
+status, a date range (`since`, `until`; the whole last day is included) and a text search (`q`, applied when typing
+pauses). They live in the URL query (`source`, `flow`, `runtime`, `status`, `since`, `until`, `q`), so a view can be linked
+and the assistant can open one with `navigate_ui`. A row shows the title, a `Flow run` or `Chat` badge, flow and node, the
+runtime, the status (a running row shows a spinner, one that waits for an approval a pulsing dot), the time of the last
+activity, a `fork` marker for a chat that continues a run and the number of forks of a run. The selected row is the id in the
+URL; picking a row keeps the filters. `New chat` opens `/chat/new`, the same start view as the drawer (the runtime of
+the last chat, a `general` chat); the chat opens as soon as its first message is accepted.
+
+**Conversation.** The header has the title, the status, the source, runtime and model, and links to where it came from: the
+flow run, the node in it, the agent run and the flow, or for a fork `Continued from run X` (the run it continues). A flow
+run lists the chats continued from it. Actions: `Continue in chat` for a finished flow run (creates the fork and opens
+it), `Stop` for a running turn of a chat, `Back to drawer` for a chat. `Back to drawer` shows the chat in the drawer and
+returns to the page you came from before the Chat page (the inbox when there is none).
+
+- A **chat** uses the live path of the drawer (the session and its stream), with the message box, approval cards,
+  starter prompts and notices. A draft chat (sensor, flow, tool) points to the editor and to the drawer, where its Save and
+  Test cards are.
+- A **flow run** shows its transcript from `GET /api/conversations/{id}/messages`, refetched on the events of its head run
+  (agent events, status, approvals) so a running run can be watched, and its approvals can be decided in place. The message
+  box is replaced by a note and `Continue in chat`.
+- Entries of kind `divider` are a centered line (the run id links to the agent run) and `notice` a muted system note.
+- The conversation's sandbox log (`GET /api/conversations/{id}/sandbox-log`) is interleaved by time as compact rows
+  (`Sandbox`, N entries) that open to the log entries, in the drawer and on the page. It updates with
+  `sandbox_log.appended`. `Load earlier` appears when older entries were left out.
+- A pending tool approval shows the approval's reason as it is, in a monospace block. An emit tool puts the flow, the
+  node and port, the next nodes and the payload there.
+
+**One chat at a time.** The drawer is not shown on `/chat`. The chat shown on the page receives the assistant's
+`navigate_ui` and `start_draft` requests, as the drawer's chat does elsewhere.
 
 ## The draft directory
 

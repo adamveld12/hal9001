@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useFaviconActivity } from "./faviconActivity";
 import { eyeLabel, eyeThrobs } from "./halEye";
 import { useStatus } from "../api/status";
@@ -13,6 +13,8 @@ import { assistDrawerOpen, isAskAiShortcut } from "../lib/focus";
 import { AssistDrawer } from "../pages/assist/AssistDrawer";
 import { AssistProvider } from "../pages/assist/AssistProvider";
 import { useAssist } from "../pages/assist/context";
+import { chatPath, isChatPath, NEW_CHAT_ID } from "../pages/chat/path";
+import { useTrackOrigin } from "../pages/chat/useTrackOrigin";
 import { KillSwitch } from "./KillSwitch";
 import { PageContextProvider } from "./PageContextProvider";
 import { UpdateBanner } from "./UpdateBanner";
@@ -49,6 +51,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: "/sensors", label: "Sensors", icon: "sensors", key: "s" },
       { to: "/flows", label: "Flows", icon: "flows", key: "f" },
       { to: "/prompts", label: "Prompts", icon: "prompts", key: "p" },
+      { to: "/chat", label: "Chat", icon: "chat", key: "h" },
     ],
   },
   {
@@ -212,8 +215,24 @@ function Count({
 
 function Shell() {
   useGoToShortcuts();
+  useTrackOrigin();
   const assist = useAssist();
-  useAskAiShortcut(assist.toggle);
+  const navigate = useNavigate();
+  const onChatPage = isChatPath(useLocation().pathname);
+  // On the Chat page the drawer is not shown (one chat at a time): Ask AI
+  // moves to that page's message box, or starts a new chat when it has none.
+  const askAi = () => {
+    if (!onChatPage) {
+      assist.toggle();
+      return;
+    }
+    const input = document.querySelector<HTMLTextAreaElement>(
+      "[data-chat-composer] textarea",
+    );
+    if (input && !input.disabled) input.focus();
+    else void navigate(chatPath(NEW_CHAT_ID));
+  };
+  useAskAiShortcut(askAi);
   const [collapsed, toggle] = useNavCollapsed();
   const status = useStatus();
   const stream = useStreamState();
@@ -340,8 +359,9 @@ function Shell() {
           {!collapsed && (
             <span>
               <Kbd>g</Kbd> then <Kbd>i</Kbd> <Kbd>a</Kbd> <Kbd>s</Kbd>{" "}
-              <Kbd>f</Kbd> <Kbd>p</Kbd> <Kbd>t</Kbd> <Kbd>r</Kbd> <Kbd>,</Kbd>{" "}
-              <Kbd>e</Kbd> <Kbd>m</Kbd> <Kbd>b</Kbd> <Kbd>u</Kbd> to jump
+              <Kbd>f</Kbd> <Kbd>p</Kbd> <Kbd>h</Kbd> <Kbd>t</Kbd> <Kbd>r</Kbd>{" "}
+              <Kbd>,</Kbd> <Kbd>e</Kbd> <Kbd>m</Kbd> <Kbd>b</Kbd> <Kbd>u</Kbd>{" "}
+              to jump
             </span>
           )}
         </div>
@@ -372,15 +392,19 @@ function Shell() {
           <div className="ml-auto flex items-center gap-3">
             <button
               type="button"
-              aria-pressed={assist.open}
-              title={`Ask AI (${MOD_KEY} K)`}
+              aria-pressed={assist.open && !onChatPage}
+              title={
+                onChatPage
+                  ? `Message box (${MOD_KEY} K)`
+                  : `Ask AI (${MOD_KEY} K)`
+              }
               className={cx(
                 "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium",
-                assist.open
+                assist.open && !onChatPage
                   ? "border-accent/50 bg-accent/10 text-accent"
                   : "border-line hover:bg-raised",
               )}
-              onClick={assist.toggle}
+              onClick={askAi}
             >
               <Icon name="agent" size={14} />
               Ask AI
@@ -462,7 +486,7 @@ function Shell() {
             <UpdateBanner />
             <Outlet />
           </main>
-          {assist.open && <AssistDrawer />}
+          {assist.open && !onChatPage && <AssistDrawer />}
         </div>
       </div>
     </div>

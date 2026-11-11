@@ -7,6 +7,11 @@ describe("defaultTitle", () => {
     expect(defaultTitle("/flows/triage")).toBe("Flow");
     expect(defaultTitle("/flows/triage/versions/abc")).toBe("Flow version");
     expect(defaultTitle("/inbox/approval/01H")).toBe("Approval");
+    expect(defaultTitle("/chat")).toBe("Chat");
+    expect(defaultTitle("/chat/new")).toBe("New chat");
+    expect(defaultTitle("/chat/01JC7Z3K9Q8V5T2M4N6P8R0S1T")).toBe(
+      "Conversation",
+    );
     expect(defaultTitle("/settings/runtimes")).toBe("Runtimes");
   });
 
