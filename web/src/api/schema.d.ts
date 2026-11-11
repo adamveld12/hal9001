@@ -2179,6 +2179,128 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/conversations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List conversations
+     * @description Every assistant chat (an assist session of any kind, closed ones included; `source: chat`, `id` = the session id) and
+     *     every agent run of a flow node (`source: flow`, `id` = the run's last phase) in one list, ordered by last activity,
+     *     newest first, then by id. The turns of a chat are not listed on their own. A propose-phase run that has an
+     *     execute-phase run (`prev_agent_run_id`) belongs to that run's conversation and is not listed separately.
+     *
+     *     `status` is normalised. A chat's `idle`, `running`, `awaiting_approval`, `failed` and `closed` are kept. An agent run's
+     *     `succeeded`, `failed`, `denied`, `killed`, `interrupted`, `timeout`, `running` and `awaiting_approval` are kept and
+     *     `queued` is `running`. So `running` and `awaiting_approval` cover both sources, and `idle` and `closed` only chats.
+     *
+     *     `q` is a case-insensitive substring (ASCII) match on the title, ids, flow and node ids, the text of a chat's messages
+     *     and the prompt and result text of a flow run (prompts and results over 64 KiB are stored outside the database and not
+     *     searched). `forked_from` lists the chats forked from that agent run (or from another phase of its node run).
+     *     `since` is inclusive and `until` exclusive, on the last activity. The cursor is opaque and stable while rows
+     *     share a timestamp.
+     */
+    get: operations["listConversations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description An assist session id or an agent run id of a flow node. */
+        id: components["parameters"]["ConversationId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Get a conversation
+     * @description One conversation with the chats forked from it. `id` is an assist session id or an agent run id of a flow node; a
+     *     propose-phase run that has an execute-phase run resolves to the conversation of the execute-phase run (its `id`
+     *     is the execute-phase run's). 404 for anything else, including an agent run that is a turn of a chat.
+     */
+    get: operations["getConversation"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description An assist session id or an agent run id of a flow node. */
+        id: components["parameters"]["ConversationId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Get the transcript of a conversation
+     * @description The transcript in one shape for both sources, oldest first, at most the newest 2000 entries (`truncated` says
+     *     older ones were left out). A chat's entries are its stored messages (`id` is the message id; the same entries as
+     *     `GET /api/assist/sessions/{id}`). For a flow conversation the server folds the agent run's events into the same
+     *     shape, like the Agent run page: the rendered prompt is the first `user` message, adjacent chunks of the agent's text
+     *     are one `assistant` message, a tool call and its updates are one `tool` message (with its arguments and results;
+     *     `approval_id` is the approval that gated it), thoughts and plans are left out, a proposal approval and the way the
+     *     run ended (finished, failed, emitted on a port) are `system` messages. Their `id` is
+     *     `<agent_run_id>:<zero padded seq>`, stable while the run grows. A propose-phase run that has an execute-phase run
+     *     contributes its entries first. Content is redacted as in the other endpoints.
+     */
+    get: operations["listConversationMessages"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/conversations/{id}/fork": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description An assist session id or an agent run id of a flow node. */
+        id: components["parameters"]["ConversationId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Continue an agent run in a chat
+     * @description Creates a chat that continues the agent run of a flow node (`id` is the run, or the propose-phase run of a node
+     *     run whose execute-phase run is then the one continued). The run is not changed. The chat is an assist session of
+     *     kind `general` with the node's runtime and model, a divider message ("Continued from run X") and the link
+     *     `forked_from`. No agent process starts and nothing is sent: the user's first message (`POST
+     *     /api/assist/sessions/{id}/messages`) starts the first turn, which restores the run's context by loading the
+     *     runtime's own session when it supports that and the run's working directory still exists (`fork_context`
+     *     `resumed`), else by sending a compacted transcript of the run (`replayed`); the divider then says which. The chat has
+     *     the node's custom tools, the node's sandbox tools (a sandbox the run still keeps alive is taken over), the read
+     *     tools and, for the ports of the node that lead somewhere, `emit_<port>` tools that start a new flow run once the user
+     *     approves. 404 for an unknown run or one that is a turn of a chat; 409 `invalid-state` while the run is running or
+     *     waiting for an approval; 422 when the node's runtime is no longer configured.
+     */
+    post: operations["forkConversation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/runtimes": {
     parameters: {
       query?: never;
@@ -5696,6 +5818,10 @@ export interface components {
       draft: components["schemas"]["AssistDraft"];
       /** @description The agent run of the latest turn (`GET /api/agent-runs/{id}`). Every turn is one agent run. */
       last_agent_run_id: components["schemas"]["Ulid"] | null;
+      /** @description Set for a chat that continues the agent run of a flow node (`POST /api/conversations/{id}/fork`); null otherwise. Always present. */
+      forked_from_agent_run_id?: components["schemas"]["Ulid"] | null;
+      /** @description How a fork restored the run's context; null before its first turn and for a chat that is not a fork. Always present. */
+      fork_context?: components["schemas"]["ForkContext"] | null;
       created_at: components["schemas"]["Timestamp"];
       updated_at: components["schemas"]["Timestamp"];
     };
@@ -5728,10 +5854,113 @@ export interface components {
       tool_call: components["schemas"]["AssistToolCall"] | null;
       /** @description The tool-call approval that gated this call, to be decided with `POST /api/approvals/{id}/approve|deny`. */
       approval_id: components["schemas"]["Ulid"] | null;
+      kind?: components["schemas"]["ConversationMessageKind"];
       created_at: components["schemas"]["Timestamp"];
     };
     AssistStreamMessage: components["schemas"]["AssistMessage"] & {
       session_id: components["schemas"]["Ulid"];
+    };
+    /** @enum {string} */
+    ConversationSource: "flow" | "chat";
+    /**
+     * @description A chat's assist target kind, or `agent` for the agent run of a flow node.
+     * @enum {string}
+     */
+    ConversationKind: "general" | "sensor" | "flow" | "tool" | "agent";
+    /**
+     * @description Normalised status. `running`: a chat turn or an agent run (queued or running) is in progress. `awaiting_approval`: blocked
+     *     on an approval. `idle`: a chat without a running turn. `closed`: an ended chat. `succeeded`, `denied`, `killed`,
+     *     `interrupted` and `timeout`: how an agent run ended; `failed` is both a failed run and a chat whose last turn failed.
+     * @enum {string}
+     */
+    ConversationStatus:
+      | "running"
+      | "awaiting_approval"
+      | "idle"
+      | "succeeded"
+      | "failed"
+      | "killed"
+      | "denied"
+      | "interrupted"
+      | "timeout"
+      | "closed";
+    /**
+     * @description How a fork restored the run's context: `resumed` (session/load) or `replayed` (a compacted transcript in the first prompt).
+     * @enum {string}
+     */
+    ForkContext: "resumed" | "replayed";
+    /** @description The agent run a chat continues. */
+    ConversationForkRef: {
+      agent_run_id: components["schemas"]["Ulid"];
+      /** @description Null when the run was pruned. */
+      flow_id: components["schemas"]["Slug"] | null;
+      flow_run_id: components["schemas"]["NullableUlid"];
+      node_id: components["schemas"]["Slug"] | null;
+    };
+    Conversation: {
+      id: components["schemas"]["Ulid"];
+      source: components["schemas"]["ConversationSource"];
+      kind: components["schemas"]["ConversationKind"];
+      /** @description A chat's title (the start of its first message; "New chat" before it, "Continued: <flow> / <node>" for a fork without a message), or `<flow> / <node>` for a flow conversation. */
+      title: string;
+      status: components["schemas"]["ConversationStatus"];
+      /** @description A turn or run is in progress (`running` or `awaiting_approval`). */
+      running: boolean;
+      /** @description A flow run that ended can be continued in a chat (`POST /api/conversations/{id}/fork`); a chat can be continued unless it is closed. */
+      continuable: boolean;
+      runtime: components["schemas"]["Slug"];
+      model: string | null;
+      /** @description The flow of a flow conversation; for a fork the flow of the run it continues; for a chat that drafts a flow, that flow. */
+      flow_id: components["schemas"]["Slug"] | null;
+      flow_run_id: components["schemas"]["NullableUlid"];
+      node_id: components["schemas"]["Slug"] | null;
+      node_run_id: components["schemas"]["NullableUlid"];
+      /** @description Flow conversations: the last phase of the node run (`GET /api/agent-runs/{id}`). Null for a chat. */
+      agent_run_id: components["schemas"]["Ulid"] | null;
+      /** @description Chats: the assist session (`GET /api/assist/sessions/{id}`; the same as `id`). Null for a flow conversation. */
+      assist_session_id: components["schemas"]["Ulid"] | null;
+      forked_from: components["schemas"]["ConversationForkRef"] | null;
+      /** @description Null for a chat that is not a fork and before a fork's first turn. */
+      fork_context: components["schemas"]["ForkContext"] | null;
+      /** @description Chats forked from this flow conversation (any of its phases). Always 0 for a chat. */
+      fork_count: number;
+      started_at: components["schemas"]["Timestamp"];
+      updated_at: components["schemas"]["Timestamp"];
+      ended_at: components["schemas"]["NullableTimestamp"];
+      /** @description The start of the last user or assistant text of a chat, or of the result of a flow run (its error or prompt when it has no result); at most 160 characters, one line. */
+      preview: string;
+    };
+    ConversationList: {
+      items: components["schemas"]["Conversation"][];
+      next_cursor: components["schemas"]["NextCursor"];
+    };
+    ConversationDetail: components["schemas"]["Conversation"] & {
+      /** @description Chats forked from this conversation, newest activity first, at most 50. Empty for a chat. */
+      forks: components["schemas"]["Conversation"][];
+    };
+    /**
+     * @description `divider`: the "Continued from run X" line at the start of a fork. `notice`: a system notice (for example that the sandbox was recreated). Empty for every other message.
+     * @enum {string}
+     */
+    ConversationMessageKind: "" | "divider" | "notice";
+    /** @description One transcript entry, in the shape of `AssistMessage` (see there for `tool_call`) with a string `id` and a `kind`. */
+    ConversationMessage: {
+      /** @description A chat message's id, or `<agent_run_id>:<zero padded seq>` for a flow conversation. */
+      id: string;
+      role: components["schemas"]["AssistRole"];
+      kind: components["schemas"]["ConversationMessageKind"];
+      /** @description Null for `tool` messages. */
+      text: string | null;
+      agent_run_id: components["schemas"]["NullableUlid"];
+      tool_call: components["schemas"]["AssistToolCall"] | null;
+      approval_id: components["schemas"]["NullableUlid"];
+      created_at: components["schemas"]["Timestamp"];
+    };
+    ConversationMessageList: {
+      /** @description Oldest first. */
+      items: components["schemas"]["ConversationMessage"][];
+      /** @description Older entries were left out (only the newest 2000 are returned). */
+      truncated: boolean;
     };
     AssistSessionDetail: components["schemas"]["AssistSession"] & {
       /** @description Oldest first. */
@@ -6606,6 +6835,12 @@ export interface components {
     ApprovalId: components["schemas"]["Ulid"];
     InboxId: components["schemas"]["Ulid"];
     AssistSessionId: components["schemas"]["Ulid"];
+    /** @description An assist session id or an agent run id of a flow node. */
+    ConversationId: components["schemas"]["Ulid"];
+    /** @description Only conversations with activity at or after this time. */
+    ConversationSince: string;
+    /** @description Only conversations with activity before this time. */
+    ConversationUntil: string;
     /** @description Session handle from `Session.id`. */
     SessionId: string;
     /** @description Credential id from `Passkey.id` (base64url). */
@@ -9842,6 +10077,138 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listConversations: {
+    parameters: {
+      query?: {
+        /** @description Opaque cursor from a previous response's `next_cursor`. */
+        cursor?: components["parameters"]["Cursor"];
+        limit?: components["parameters"]["Limit"];
+        source?: components["schemas"]["ConversationSource"];
+        /** @description A chat's target kind, or `agent` for flow conversations. */
+        kind?: components["schemas"]["ConversationKind"];
+        /** @description Flow id: runs of that flow, forks of them and chats that draft that flow. */
+        flow?: components["schemas"]["Slug"];
+        /** @description Node id. */
+        node?: components["schemas"]["Slug"];
+        /** @description Flow run id: its agent runs and the forks of them. */
+        flow_run?: components["schemas"]["Ulid"];
+        runtime?: components["schemas"]["Slug"];
+        status?: components["schemas"]["ConversationStatus"];
+        /** @description Agent run id: only the chats forked from it. */
+        forked_from?: components["schemas"]["Ulid"];
+        /** @description Text to search for (at most 200 characters). */
+        q?: string;
+        /** @description Only conversations with activity at or after this time. */
+        since?: components["parameters"]["ConversationSince"];
+        /** @description Only conversations with activity before this time. */
+        until?: components["parameters"]["ConversationUntil"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description One page. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationList"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getConversation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description An assist session id or an agent run id of a flow node. */
+        id: components["parameters"]["ConversationId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The conversation. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listConversationMessages: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description An assist session id or an agent run id of a flow node. */
+        id: components["parameters"]["ConversationId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The transcript. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConversationMessageList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  forkConversation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description An assist session id or an agent run id of a flow node. */
+        id: components["parameters"]["ConversationId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The new conversation (source `chat`). */
+      201: {
+        headers: {
+          Location: components["headers"]["Location"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Conversation"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };

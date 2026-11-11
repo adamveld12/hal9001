@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"sync"
 
