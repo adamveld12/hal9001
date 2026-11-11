@@ -15,7 +15,7 @@ import (
 	"hal9001/internal/store"
 )
 
-// Approval nodes ("Request approval") raise a request approval and park the node as awaiting_approval, holding no
+// Approval nodes ("Request approval", and the approval gate of nodes with requires_approval: gate.go) raise a request approval and park the node as awaiting_approval, holding no
 // concurrency slot. The decision (or its expiry) is applied by applyRequestDecision straight from DecideApproval, from
 // finishNode when the decision beat the parking, and from reconcileRequests after a restart; it emits the node's input
 // plus the decision on port approved or denied. Test runs (node tests and flow tests) never wait: they take the
@@ -37,6 +37,8 @@ type approvalInfo struct {
 	Comment   string  `json:"comment"`
 	DecidedBy string  `json:"decided_by"`
 	DecidedAt *string `json:"decided_at"`
+	// ApprovalID is the id of the approval; set on the denied payload of a node's approval gate (requires_approval).
+	ApprovalID string `json:"approval_id,omitempty"`
 	// Edited is true when the approver changed editable input values; Edits then lists them by path.
 	Edited bool                         `json:"edited"`
 	Edits  map[string]store.RequestEdit `json:"edits,omitempty"`
@@ -147,7 +149,11 @@ func (e *Engine) applyRequestDecision(nodeRunID string) {
 	unlock := e.locks.lock("node:" + nodeRunID)
 	defer unlock()
 	nr, err := e.st.GetNodeRun(e.dbCtx, nodeRunID)
-	if err != nil || nr.Status != store.NodeAwaitingApproval || nr.NodeType != store.NodeApproval {
+	if err != nil || nr.Status != store.NodeAwaitingApproval {
+		return
+	}
+	if nr.NodeType != store.NodeApproval { // a node waiting on its approval gate (requires_approval)
+		e.applyGateDecision(nr)
 		return
 	}
 	apps, err := e.st.ListApprovals(e.dbCtx, store.ApprovalFilter{NodeRunID: nr.ID, Type: store.ApprovalRequest, ListOpts: store.ListOpts{Limit: 1}})
@@ -241,10 +247,11 @@ func (e *Engine) requestExpiryLoop(ctx context.Context) {
 	}
 }
 
-// reconcileRequests applies request decisions made while the engine was not running (or before the node parked).
+// reconcileRequests applies request decisions made while the engine was not running (or before the node parked),
+// of approval nodes and of nodes waiting on their approval gate.
 func (e *Engine) reconcileRequests(ctx context.Context) error {
 	nodes, err := e.st.ListNodeRuns(ctx, store.NodeRunFilter{
-		NodeType: store.NodeApproval, Statuses: []store.NodeRunStatus{store.NodeAwaitingApproval}, Slim: true, ListOpts: store.ListOpts{Limit: 500},
+		Statuses: []store.NodeRunStatus{store.NodeAwaitingApproval}, Slim: true, ListOpts: store.ListOpts{Limit: 500},
 	})
 	if err != nil {
 		return err

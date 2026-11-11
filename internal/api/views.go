@@ -737,6 +737,8 @@ type approvalRequestView struct {
 	Priority  store.Priority               `json:"priority"`
 	DryRun    bool                         `json:"dry_run"`
 	OnTimeout *string                      `json:"on_timeout"`
+	// Gate is true for the approval a node with requires_approval raised before running.
+	Gate bool `json:"gate"`
 	// Source is "mcp" when an external MCP client raised the approval, Client its name.
 	Source *string `json:"source"`
 	Client *string `json:"client"`
@@ -804,7 +806,7 @@ func (rv *resolver) requestApprovalView(a store.Approval) (approvalView, error) 
 	if req.Editable == nil {
 		req.Editable = []store.RequestEditable{}
 	}
-	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Editable: req.Editable, Edits: req.Edits, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout), Source: nonEmpty(req.Source), Client: nonEmpty(req.Client)}
+	rq := &approvalRequestView{Title: req.Title, BodyMD: req.BodyMD, Fields: req.Fields, Editable: req.Editable, Edits: req.Edits, Priority: req.Priority, DryRun: req.DryRun, OnTimeout: nonEmpty(req.OnTimeout), Gate: req.Gate, Source: nonEmpty(req.Source), Client: nonEmpty(req.Client)}
 	return approvalView{
 		ID: a.ID, NodeRunID: nonEmpty(a.NodeRunID), FlowRunID: nonEmpty(l.FlowRunID), FlowID: nonEmpty(l.FlowID), NodeID: nonEmpty(l.NodeID),
 		EventID: nonEmpty(l.EventID), Type: string(a.Type), Request: rq, Status: string(a.Status), Comment: nonEmpty(a.Comment),

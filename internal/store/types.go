@@ -578,6 +578,9 @@ type RequestApproval struct {
 	// Detached marks an approval that outlives the MCP call that raised it (request_approval): it is decided and
 	// expires on its own, survives a daemon restart, and nobody has to be waiting on it.
 	Detached bool `json:"detached,omitempty"`
+	// Gate marks the approval a node with requires_approval raised before running: approving runs the node, denying
+	// sends its input down port denied.
+	Gate bool `json:"gate,omitempty"`
 }
 
 // RequestEditable is one input path of a request approval the approver may edit, with its current value.

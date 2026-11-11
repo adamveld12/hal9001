@@ -102,6 +102,12 @@ func (e *Engine) execNode(parent context.Context, nr *store.NodeRun) {
 		e.reconcileFlowRun(fr.ID)
 		return
 	}
+	if ctx.Err() == nil && ne.node.RequiresApproval {
+		if out, held := e.gate(ne); held {
+			e.finishNode(ne, out)
+			return
+		}
+	}
 	var out nodeOutcome
 	switch {
 	case ctx.Err() != nil:
