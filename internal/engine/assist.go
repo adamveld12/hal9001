@@ -96,3 +96,8 @@ func (h assistHost) Clock() agent.Clock { return h.e.clock }
 func (h assistHost) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error) {
 	return h.e.TestFlow(ctx, req)
 }
+
+// EmitTools is Engine.EmitTools (emit.go).
+func (h assistHost) EmitTools(ctx context.Context, fork core.ForkNode, conversationID string) ([]tools.Tool, error) {
+	return h.e.EmitTools(ctx, fork, conversationID)
+}

@@ -31,6 +31,9 @@ type session struct {
 	// halTools is the hal MCP session of the agent process (token valid while ag lives); runID is the running turn's
 	// agent run id, "" between turns.
 	halTools *tools.Session
+	// fork is the node of the run a forked session continues (see fork.go); nil until resolved, and for a session that
+	// is not a fork.
+	fork *core.ForkNode
 	// toolTest is the draft_test call that was just queued for approval, until approvalPending links it to its approval.
 	toolTest  *pendingTest
 	runID     atomic.Pointer[string]
@@ -51,6 +54,8 @@ type turn struct {
 	done   chan struct{}
 	// linked is set once the session's last_agent_run_id names this turn's run.
 	linked bool
+	// forkFirst marks the turn that restores the context of a forked session's run (see finishForkTurn).
+	forkFirst bool
 
 	// Conversation state, guarded by session.mu.
 	text        *store.AssistMessage
@@ -346,7 +351,7 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 	if !ok {
 		return nil, fmt.Errorf("runtime %q is no longer configured in config.yaml", s.row.Runtime)
 	}
-	ht, err := s.m.host.Tools().Open(s.m.host.Context(), tools.RunSpec{
+	rs := tools.RunSpec{
 		Kind: tools.KindAssist, RunID: s.id,
 		Info: func() tools.RunInfo {
 			info := tools.RunInfo{AssistSessionID: s.id}
@@ -355,7 +360,20 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 			}
 			return info
 		},
-	})
+	}
+	cwd, loadID := s.dir, s.row.ACPSessionID
+	if s.forked() {
+		f, err := s.forkNodeLocked()
+		if err != nil {
+			return nil, fmt.Errorf("resolve the run this chat continues: %w", err)
+		}
+		if f != nil {
+			plan := s.planForkLocked(*f)
+			cwd, loadID = plan.cwd, plan.loadID
+			s.forkRunSpecLocked(&rs, *f)
+		}
+	}
+	ht, err := s.m.host.Tools().Open(s.m.host.Context(), rs)
 	if err != nil {
 		return nil, fmt.Errorf("hal tools: %w", err)
 	}
@@ -368,7 +386,7 @@ func (s *session) agentSessionLocked() (*agent.Session, error) {
 		ClientVersion: "hal9001",
 	}
 	ag, err := ex.NewSession(agent.SessionRequest{
-		Runtime: s.row.Runtime, Config: rt, Cwd: s.dir, Model: s.row.Model, LoadSessionID: s.row.ACPSessionID,
+		Runtime: s.row.Runtime, Config: rt, Cwd: cwd, Model: s.row.Model, LoadSessionID: loadID,
 		ToolsReady: tools.ToolsReady(ht),
 		MCPServers: []agent.MCPServer{{
 			Name: tools.ServerName, Type: "stdio", Command: s.m.opt.Executable, Args: tools.ServerArgs(s.m.opt.URL, ht.Token()),
@@ -403,10 +421,21 @@ func (s *session) prompt(ctx context.Context, t *turn, text string, page *core.A
 			err = s.m.writeConfigReference(s.dir)
 		}
 	}
-	row, ht := s.row, s.halTools
+	row, ht, fork := s.row, s.halTools, s.fork
+	var plan forkPlan
+	if err == nil && fork != nil {
+		plan = s.planForkLocked(*fork)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return agent.RunRecord{}, err
+	}
+	// The tools make sure what they need exists (a conversation's sandbox is recreated when it was removed) and report
+	// what the user should know; the notices land in the conversation before the agent's answer.
+	notices, err := ht.BeforeTurn(ctx)
+	s.postNotices(notices)
+	if err != nil {
+		return agent.RunRecord{}, fmt.Errorf("prepare the turn: %w", err)
 	}
 	msgs, err := s.m.st.ListAssistMessages(s.m.ctx, s.id)
 	if err != nil {
@@ -416,6 +445,9 @@ func (s *session) prompt(ctx context.Context, t *turn, text string, page *core.A
 	switch row.TargetKind {
 	case store.AssistTargetGeneral:
 		head = generalPreamble()
+		if fork != nil {
+			head += forkPreamble(*fork)
+		}
 		restore = "Your previous agent session could not be restored, so this is a new one. "
 	case store.AssistTargetFlow:
 		global, _ := s.m.envNames("")
@@ -439,11 +471,15 @@ func (s *session) prompt(ctx context.Context, t *turn, text string, page *core.A
 		before = msgs[:n-1]
 	}
 	pageText := renderPageContext(page)
-	return ag.Prompt(ctx, agent.TurnRequest{
+	req := agent.TurnRequest{
 		RunID:          t.runID,
 		Prompt:         head + pageText + text,
 		FallbackPrompt: head + restore + "The conversation so far:\n" + recap(before) + "\n" + pageText + "The user now says:\n\n" + text,
-	})
+	}
+	if fork != nil {
+		s.forkTurn(ctx, t, &req, *fork, plan, forkPrompt{head: head, restore: restore, page: pageText, text: text, before: before, forkContext: row.ForkContext})
+	}
+	return ag.Prompt(ctx, req)
 }
 
 // preamble prefixes every prompt: it names the draft and repeats what changes between turns.
@@ -472,6 +508,7 @@ func (s *session) finishTurn(t *turn, rec agent.RunRecord, runErr error) {
 
 	status, errText, note := outcome(rec, runErr, s.m.redactString)
 	s.row.Status, s.row.Error = status, errText
+	s.finishForkTurn(t, rec)
 	if rec.ID != "" {
 		s.row.LastAgentRunID = rec.ID
 	}
@@ -485,6 +522,9 @@ func (s *session) finishTurn(t *turn, rec agent.RunRecord, runErr error) {
 		if err := s.m.st.CreateAssistMessage(s.m.ctx, msg); err != nil {
 			s.m.log.Error("assist: store system message", "session", s.id, "err", err)
 		}
+	}
+	if s.halTools != nil {
+		s.halTools.AfterTurn()
 	}
 	s.turn = nil
 	s.runID.Store(nil)

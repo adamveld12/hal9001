@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -43,8 +44,9 @@ type sandboxLogView struct {
 // sandboxLogAppendedView is the data of `sandbox_log.appended`.
 type sandboxLogAppendedView struct {
 	sandboxEntryView
-	AgentRunID string `json:"agent_run_id"`
-	NodeRunID  string `json:"node_run_id"`
+	AgentRunID      string `json:"agent_run_id"`
+	NodeRunID       string `json:"node_run_id"`
+	AssistSessionID string `json:"assist_session_id"`
 }
 
 func (s *Server) getAgentRunSandboxLog(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +55,31 @@ func (s *Server) getAgentRunSandboxLog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getNodeRunSandboxLog(w http.ResponseWriter, r *http.Request) {
 	s.sandboxLog(w, r, store.SandboxFilter{NodeRunID: r.PathValue("id")}, false)
+}
+
+// conversationSandboxFilter selects the sessions of a conversation: a chat's own (assist session id), or the agent
+// run's for a conversation that is a flow node's agent run.
+func (s *Server) conversationSandboxFilter(w http.ResponseWriter, r *http.Request) (store.SandboxFilter, bool) {
+	id := r.PathValue("id")
+	if _, err := s.opts.Store.GetAssistSession(r.Context(), id); err == nil {
+		return store.SandboxFilter{AssistSessionID: id}, true
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, r, err)
+		return store.SandboxFilter{}, false
+	}
+	return store.SandboxFilter{AgentRunID: id}, true
+}
+
+func (s *Server) getConversationSandboxLog(w http.ResponseWriter, r *http.Request) {
+	if f, ok := s.conversationSandboxFilter(w, r); ok {
+		s.sandboxLog(w, r, f, false)
+	}
+}
+
+func (s *Server) downloadConversationSandboxLog(w http.ResponseWriter, r *http.Request) {
+	if f, ok := s.conversationSandboxFilter(w, r); ok {
+		s.sandboxLog(w, r, f, true)
+	}
 }
 
 func (s *Server) downloadAgentRunSandboxLog(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +165,9 @@ func (s *Server) writeSandboxRaw(w http.ResponseWriter, r *http.Request, f store
 	id := f.AgentRunID
 	if id == "" {
 		id = f.NodeRunID
+	}
+	if id == "" {
+		id = f.AssistSessionID
 	}
 	var b strings.Builder
 	b.WriteString(renderSandboxHeader(sessions))
@@ -250,7 +280,7 @@ func renderSandboxEntry(e store.SandboxLogEntry) string {
 
 // sandboxMeta resolves the stream filters of a session.
 func (rv *resolver) sandboxMeta(ss store.SandboxSession) map[string]string {
-	meta := map[string]string{"agent_run_id": ss.AgentRunID}
+	meta := map[string]string{"agent_run_id": ss.AgentRunID, "assist_session_id": ss.AssistSessionID}
 	if nr, err := rv.nodeRun(ss.NodeRunID); err == nil && nr != nil {
 		meta["flow_run_id"] = nr.FlowRunID
 		if fr, err := rv.flowRun(nr.FlowRunID); err == nil && fr != nil {

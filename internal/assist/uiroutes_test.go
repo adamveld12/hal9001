@@ -23,6 +23,10 @@ func TestCleanUIPathAcceptsTheAppsPagesAndNormalisesThem(t *testing.T) {
 		"/timeline?q=out+of+memory":                       "/timeline?q=out+of+memory",
 		"/timeline?q=a%26b%3Dc":                           "/timeline?q=a%26b%3Dc",
 		"/runs/01JC7Z3K9Q8V5T2M4N6P8R0S1T?run=r1&node=n1": "/runs/01JC7Z3K9Q8V5T2M4N6P8R0S1T?node=n1&run=r1",
+		"/chat": "/chat",
+		"/chat?status=awaiting_approval&source=flow&q=out+of+memory&since=2026-11-01": "/chat?q=out+of+memory&since=2026-11-01&source=flow&status=awaiting_approval",
+		"/chat/01JC7Z3K9Q8V5T2M4N6P8R0S1T?flow=triage":                                "/chat/01JC7Z3K9Q8V5T2M4N6P8R0S1T?flow=triage",
+		"/chat/new": "/chat/new",
 	} {
 		got, err := cleanUIPath(in)
 		if err != nil || got != want {
@@ -64,6 +68,8 @@ func TestCleanUIPathRefusesAnythingButAnInAppPageOfTheCatalog(t *testing.T) {
 		"/flows/triage?view=runs",               // /flows/:id takes no query
 		"/inbox?next=https://evil.example",
 		"/inbox?q=a&redirect=/x",
+		"/chat?assist=01JC7Z3K9Q8V5T2M4N6P8R0S1T", // the drawer's link key, not a filter of the page
+		"/chat/01JC7Z3K9Q8V5T2M4N6P8R0S1T/extra",
 		"/inbox?=x",
 		"/inbox?q=a%0Ab",
 		"/inbox?q=%zz",

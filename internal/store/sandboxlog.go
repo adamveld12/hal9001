@@ -33,28 +33,32 @@ const (
 	SandboxError = "error"
 )
 
-// SandboxSession is one sandbox an agent run opened: the header of its log. AgentRunID is the id the agent run gets; its row
-// may not exist yet (the sandbox is provisioned first) or ever (provisioning failed).
+// SandboxSession is one sandbox an agent run or a conversation opened: the header of its log. AgentRunID is the id the
+// agent run gets; its row may not exist yet (the sandbox is provisioned first) or ever (provisioning failed). A session
+// of a conversation has AssistSessionID set (the chat's assist session id), AgentRunID = that id and NodeRunID = the
+// node run of the run the chat continues, which keeps retention following that node run.
 type SandboxSession struct {
-	ID          string     `json:"id"`
-	NodeRunID   string     `json:"node_run_id"`
-	AgentRunID  string     `json:"agent_run_id"`
-	Backend     string     `json:"backend"`
-	Status      string     `json:"status"`
-	SandboxID   string     `json:"sandbox_id,omitempty"`
-	SandboxName string     `json:"sandbox_name,omitempty"`
-	Image       string     `json:"image,omitempty"`
-	Repo        string     `json:"repo,omitempty"`
-	Ref         string     `json:"ref,omitempty"`
-	Lifecycle   string     `json:"lifecycle,omitempty"`
-	Workdir     string     `json:"workdir,omitempty"`
-	EnvNames    []string   `json:"env_names"`
-	Error       string     `json:"error,omitempty"`
-	Truncated   bool       `json:"truncated"`
-	EntryCount  int        `json:"entry_count"`
-	StartedAt   time.Time  `json:"started_at"`
-	ReadyAt     *time.Time `json:"ready_at,omitempty"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	ID         string `json:"id"`
+	NodeRunID  string `json:"node_run_id"`
+	AgentRunID string `json:"agent_run_id"`
+	// AssistSessionID is empty for the sandbox of an agent run.
+	AssistSessionID string     `json:"assist_session_id"`
+	Backend         string     `json:"backend"`
+	Status          string     `json:"status"`
+	SandboxID       string     `json:"sandbox_id,omitempty"`
+	SandboxName     string     `json:"sandbox_name,omitempty"`
+	Image           string     `json:"image,omitempty"`
+	Repo            string     `json:"repo,omitempty"`
+	Ref             string     `json:"ref,omitempty"`
+	Lifecycle       string     `json:"lifecycle,omitempty"`
+	Workdir         string     `json:"workdir,omitempty"`
+	EnvNames        []string   `json:"env_names"`
+	Error           string     `json:"error,omitempty"`
+	Truncated       bool       `json:"truncated"`
+	EntryCount      int        `json:"entry_count"`
+	StartedAt       time.Time  `json:"started_at"`
+	ReadyAt         *time.Time `json:"ready_at,omitempty"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
 }
 
 // SandboxLogData is the kind-specific part of an entry, stored as JSON in SandboxLogEntry.Data.
@@ -100,7 +104,7 @@ func (e SandboxLogEntry) Decode() SandboxLogData {
 	return d
 }
 
-const sandboxSessionCols = `id, node_run_id, agent_run_id, backend, status, sandbox_id, sandbox_name, image, repo, ref, lifecycle, workdir,
+const sandboxSessionCols = `id, node_run_id, agent_run_id, assist_session_id, backend, status, sandbox_id, sandbox_name, image, repo, ref, lifecycle, workdir,
 	env_names, error, truncated, entry_count, started_at, ready_at, ended_at`
 
 func scanSandboxSession(r rowScanner) (SandboxSession, error) {
@@ -111,7 +115,7 @@ func scanSandboxSession(r rowScanner) (SandboxSession, error) {
 		started        string
 		ready, endedAt sql.NullString
 	)
-	if err := r.Scan(&s.ID, &s.NodeRunID, &s.AgentRunID, &s.Backend, &s.Status, &s.SandboxID, &s.SandboxName, &s.Image, &s.Repo, &s.Ref,
+	if err := r.Scan(&s.ID, &s.NodeRunID, &s.AgentRunID, &s.AssistSessionID, &s.Backend, &s.Status, &s.SandboxID, &s.SandboxName, &s.Image, &s.Repo, &s.Ref,
 		&s.Lifecycle, &s.Workdir, &env, &s.Error, &trunc, &s.EntryCount, &started, &ready, &endedAt); err != nil {
 		return SandboxSession{}, scanErr(err)
 	}
@@ -147,8 +151,8 @@ func (s *Store) CreateSandboxSession(ctx context.Context, ss *SandboxSession) er
 		ss.StartedAt = s.Now()
 	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO sandbox_sessions (`+sandboxSessionCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			ss.ID, ss.NodeRunID, ss.AgentRunID, ss.Backend, ss.Status, ss.SandboxID, ss.SandboxName, ss.Image, ss.Repo, ss.Ref, ss.Lifecycle,
+		_, err := t.ExecContext(ctx, `INSERT INTO sandbox_sessions (`+sandboxSessionCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			ss.ID, ss.NodeRunID, ss.AgentRunID, ss.AssistSessionID, ss.Backend, ss.Status, ss.SandboxID, ss.SandboxName, ss.Image, ss.Repo, ss.Ref, ss.Lifecycle,
 			ss.Workdir, stringsText(ss.EnvNames), ss.Error, b2i(ss.Truncated), ss.EntryCount, ts(ss.StartedAt), tsOrNil(ss.ReadyAt), tsOrNil(ss.EndedAt))
 		if err != nil {
 			return fmt.Errorf("store: insert sandbox_session: %w", err)
@@ -185,27 +189,45 @@ func (s *Store) GetSandboxSession(ctx context.Context, id string) (*SandboxSessi
 	return &ss, nil
 }
 
-// SandboxFilter selects the sessions (and so the log entries) of an agent run or of a node run. Set one of them.
+// SandboxFilter selects the sessions (and so the log entries) of an agent run, of a node run or of a conversation. Set
+// exactly one of them. The agent run and node run filters leave out the sessions of conversations.
 type SandboxFilter struct {
-	AgentRunID string
-	NodeRunID  string
+	AgentRunID      string
+	NodeRunID       string
+	AssistSessionID string
 }
 
 func (f SandboxFilter) valid() error {
-	if (f.AgentRunID == "") == (f.NodeRunID == "") {
-		return fmt.Errorf("%w: set exactly one of agent_run_id and node_run_id", ErrInvalid)
+	n := 0
+	for _, v := range []string{f.AgentRunID, f.NodeRunID, f.AssistSessionID} {
+		if v != "" {
+			n++
+		}
+	}
+	if n != 1 {
+		return fmt.Errorf("%w: set exactly one of agent_run_id, node_run_id and assist_session_id", ErrInvalid)
 	}
 	return nil
 }
 
-// ListSandboxSessions returns the sessions of an agent run or node run, oldest first.
+// sessionWhere adds the conditions selecting f's sessions from sandbox_sessions.
+func (f SandboxFilter) sessionWhere(w *where) {
+	if f.AssistSessionID != "" {
+		w.add("assist_session_id = ?", f.AssistSessionID)
+		return
+	}
+	w.add("assist_session_id = ''")
+	w.eq("agent_run_id", f.AgentRunID)
+	w.eq("node_run_id", f.NodeRunID)
+}
+
+// ListSandboxSessions returns the sessions of an agent run, node run or conversation, oldest first.
 func (s *Store) ListSandboxSessions(ctx context.Context, f SandboxFilter) ([]SandboxSession, error) {
 	if err := f.valid(); err != nil {
 		return nil, err
 	}
 	var w where
-	w.eq("agent_run_id", f.AgentRunID)
-	w.eq("node_run_id", f.NodeRunID)
+	f.sessionWhere(&w)
 	out, err := queryAll(ctx, s.rdb, scanSandboxSession, sqlJoin("SELECT ", sandboxSessionCols, " FROM sandbox_sessions", w.clause(), " ORDER BY id"), w.args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list sandbox_sessions: %w", err)
@@ -298,11 +320,9 @@ func (s *Store) ListSandboxLogEntries(ctx context.Context, f SandboxEntryFilter)
 	limit = min(limit, 1000)
 	var w where
 	w.add("e.id > ?", f.AfterID)
-	if f.AgentRunID != "" {
-		w.add("e.session_id IN (SELECT id FROM sandbox_sessions WHERE agent_run_id = ?)", f.AgentRunID)
-	} else {
-		w.add("e.session_id IN (SELECT id FROM sandbox_sessions WHERE node_run_id = ?)", f.NodeRunID)
-	}
+	var sw where
+	f.sessionWhere(&sw)
+	w.add("e.session_id IN (SELECT id FROM sandbox_sessions"+sw.clause()+")", sw.args...)
 	order := "ASC"
 	if f.Tail {
 		order = "DESC"

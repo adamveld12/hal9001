@@ -56,12 +56,12 @@ func TestSandboxConfigAndCheck(t *testing.T) {
 	d.Get("/api/sandboxes/nope").Want(404)
 
 	cur := d.sandbox("local")
-	if cur.Configured || cur.Config["lifecycle"] != "per_run" || cur.Config["approval"] != "rules" {
+	if cur.Configured || cur.Config["lifecycle"] != "per_run" || cur.Config["approval"] != "rules" || cur.Config["keep_alive"] != "1m" {
 		t.Fatalf("defaults = %+v", cur)
 	}
 	root := filepath.Join(t.TempDir(), "sbx")
 	cfg := cur.Config
-	cfg["enabled"], cfg["root"], cfg["approval"] = true, root, "rules"
+	cfg["enabled"], cfg["root"], cfg["approval"], cfg["keep_alive"] = true, root, "rules", "90s"
 	cfg["approval_rules"] = map[string]any{
 		"shell":    []any{map[string]any{"match": "^ls\\b", "action": "auto"}},
 		"fs_write": []any{map[string]any{"path": "notes/**", "action": "auto"}},
@@ -72,7 +72,7 @@ func TestSandboxConfigAndCheck(t *testing.T) {
 	if !saved.Configured || saved.Hash == cur.Hash || saved.Config["root"] != root {
 		t.Fatalf("after write: %+v", saved)
 	}
-	if yaml := d.Read("sandboxes/local.yaml"); !strings.Contains(yaml, "root: "+root) || !strings.Contains(yaml, "match: ^ls\\b") {
+	if yaml := d.Read("sandboxes/local.yaml"); !strings.Contains(yaml, "root: "+root) || !strings.Contains(yaml, "match: ^ls\\b") || !strings.Contains(yaml, "keep_alive: 1m30s") {
 		t.Fatalf("file:\n%s", yaml)
 	}
 	// A write based on the stale hash conflicts.
@@ -88,6 +88,25 @@ func TestSandboxConfigAndCheck(t *testing.T) {
 	if !strings.Contains(resp.String(), "lifecycle") || !strings.Contains(resp.String(), "invalid_regex") {
 		t.Errorf("422 body: %s", resp)
 	}
+	// keep_alive takes any duration from 0 up; a negative one is refused and 0 is kept as 0, not turned into the default.
+	neg := map[string]any{}
+	for k, v := range cfg {
+		neg[k] = v
+	}
+	neg["keep_alive"] = "-1m"
+	if resp := d.Put("/api/sandboxes/local", map[string]any{"expected_hash": saved.Hash, "config": neg}).Want(422); !strings.Contains(resp.String(), "keep_alive") {
+		t.Errorf("422 body: %s", resp)
+	}
+	if d.sandbox("local").Hash != saved.Hash {
+		t.Error("a rejected write changed the file")
+	}
+	neg["keep_alive"] = "0s"
+	d.Put("/api/sandboxes/local", map[string]any{"expected_hash": saved.Hash, "config": neg}).Want(200)
+	if got := d.sandbox("local").Config["keep_alive"]; got != "0s" {
+		t.Errorf("keep_alive 0s was stored as %v", got)
+	}
+	cfg["keep_alive"] = "0s"
+	saved = d.sandbox("local")
 	d.Put("/api/sandboxes/ssh", map[string]any{"expected_hash": d.sandbox("ssh").Hash,
 		"config": func() map[string]any { c := d.sandbox("ssh").Config; c["enabled"] = true; c["host"] = ""; return c }()}).Want(422)
 	if d.sandbox("local").Hash != saved.Hash {

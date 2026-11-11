@@ -76,15 +76,21 @@ func (s *Store) ListFlowVersions(ctx context.Context, flowID string) ([]FlowVers
 
 // ---- flow runs ----
 
-const flowRunCols = `id, flow_id, flow_hash, COALESCE(event_id, ''), kind, COALESCE(replay_of, ''), dry_run, status, error, created_at, started_at, ended_at, cancelled_by`
+const flowRunCols = `id, flow_id, flow_hash, COALESCE(event_id, ''), kind, COALESCE(replay_of, ''), dry_run, status, error, created_at, started_at, ended_at, cancelled_by,
+	continuation_of_run_id, continuation_session_id, continuation_node_id, continuation_port, continuation_approval_id`
 
 func scanFlowRun(r rowScanner) (FlowRun, error) {
 	var fr FlowRun
 	var kind, status, created string
 	var dry int
 	var started, ended sql.NullString
-	if err := r.Scan(&fr.ID, &fr.FlowID, &fr.FlowHash, &fr.EventID, &kind, &fr.ReplayOf, &dry, &status, &fr.Error, &created, &started, &ended, &fr.CancelledBy); err != nil {
+	var c Continuation
+	if err := r.Scan(&fr.ID, &fr.FlowID, &fr.FlowHash, &fr.EventID, &kind, &fr.ReplayOf, &dry, &status, &fr.Error, &created, &started, &ended, &fr.CancelledBy,
+		&c.OfRunID, &c.ConversationID, &c.NodeID, &c.Port, &c.ApprovalID); err != nil {
 		return FlowRun{}, scanErr(err)
+	}
+	if c.OfRunID != "" {
+		fr.Continuation = &c
 	}
 	fr.Kind, fr.Status, fr.DryRun = FlowRunKind(kind), FlowRunStatus(status), dry != 0
 	var err error
@@ -104,6 +110,39 @@ func scanFlowRun(r rowScanner) (FlowRun, error) {
 // CreatedAt (now) when unset. The (FlowID, FlowHash) version must exist unless
 // fr.FlowYAML is set, in which case it is stored in the same transaction.
 func (s *Store) CreateFlowRun(ctx context.Context, fr *FlowRun) error {
+	if fr.Kind == KindContinuation {
+		return fmt.Errorf("%w: create continuation runs with CreateContinuationRun", ErrInvalid)
+	}
+	if err := s.defaultFlowRun(fr); err != nil {
+		return err
+	}
+	return s.write(ctx, func(t *txn) error { return t.insertFlowRun(ctx, fr, nil) })
+}
+
+// CreateContinuationRun inserts a flow run of kind continuation together with the node runs that seed it (the
+// reused upstream results and the recorded emission of the agent node), in one transaction. The run is still queued,
+// so a reader or the dispatcher never sees it without its seed. fr.Continuation must be set; every seed is inserted as
+// given (ID, parent and times are the caller's), with FlowRunID set to the new run.
+func (s *Store) CreateContinuationRun(ctx context.Context, fr *FlowRun, seeds []*NodeRun) error {
+	if fr.Continuation == nil || fr.Continuation.OfRunID == "" {
+		return fmt.Errorf("%w: a continuation run needs its continuation link", ErrInvalid)
+	}
+	fr.Kind = KindContinuation
+	if err := s.defaultFlowRun(fr); err != nil {
+		return err
+	}
+	for _, n := range seeds {
+		n.FlowRunID = fr.ID
+		if err := s.defaultNodeRun(n); err != nil {
+			return err
+		}
+	}
+	return s.write(ctx, func(t *txn) error { return t.insertFlowRun(ctx, fr, seeds) })
+}
+
+// defaultFlowRun validates fr for insertion and assigns the Kind (live), Status (queued), ID and CreatedAt (now) that
+// are unset.
+func (s *Store) defaultFlowRun(fr *FlowRun) error {
 	if fr.FlowID == "" || fr.FlowHash == "" {
 		return fmt.Errorf("%w: flow_id and flow_hash required", ErrInvalid)
 	}
@@ -122,22 +161,34 @@ func (s *Store) CreateFlowRun(ctx context.Context, fr *FlowRun) error {
 	if fr.CreatedAt.IsZero() {
 		fr.CreatedAt = s.Now()
 	}
-	return s.write(ctx, func(t *txn) error {
-		if fr.FlowYAML != "" {
-			if _, err := t.putFlowVersion(ctx, fr.FlowID, fr.FlowHash, fr.FlowYAML); err != nil {
-				return err
-			}
+	return nil
+}
+
+func (t *txn) insertFlowRun(ctx context.Context, fr *FlowRun, seeds []*NodeRun) error {
+	if fr.FlowYAML != "" {
+		if _, err := t.putFlowVersion(ctx, fr.FlowID, fr.FlowHash, fr.FlowYAML); err != nil {
+			return err
 		}
-		_, err := t.ExecContext(ctx, `INSERT INTO flow_runs (id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, created_at, started_at, ended_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-			fr.ID, fr.FlowID, fr.FlowHash, nullStr(fr.EventID), fr.Kind, nullStr(fr.ReplayOf), b2i(fr.DryRun), fr.Status, fr.Error,
-			ts(fr.CreatedAt), tsOrNil(fr.StartedAt), tsOrNil(fr.EndedAt))
-		if err != nil {
-			return fmt.Errorf("store: insert flow_run: %w", err)
+	}
+	var c Continuation
+	if fr.Continuation != nil {
+		c = *fr.Continuation
+	}
+	_, err := t.ExecContext(ctx, `INSERT INTO flow_runs (id, flow_id, flow_hash, event_id, kind, replay_of, dry_run, status, error, created_at, started_at, ended_at,
+		continuation_of_run_id, continuation_session_id, continuation_node_id, continuation_port, continuation_approval_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		fr.ID, fr.FlowID, fr.FlowHash, nullStr(fr.EventID), fr.Kind, nullStr(fr.ReplayOf), b2i(fr.DryRun), fr.Status, fr.Error,
+		ts(fr.CreatedAt), tsOrNil(fr.StartedAt), tsOrNil(fr.EndedAt), c.OfRunID, c.ConversationID, c.NodeID, c.Port, c.ApprovalID)
+	if err != nil {
+		return fmt.Errorf("store: insert flow_run: %w", err)
+	}
+	t.note(ResFlowRun, fr.ID, OpCreate)
+	for _, n := range seeds {
+		if err := t.insertNodeRun(ctx, n); err != nil {
+			return err
 		}
-		t.note(ResFlowRun, fr.ID, OpCreate)
-		return nil
-	})
+	}
+	return nil
 }
 
 // UpdateFlowRun writes the mutable columns: status, error, started_at, ended_at.
@@ -178,9 +229,14 @@ type FlowRunFilter struct {
 	SensorID string // via the run's event
 	EventID  string
 	ReplayOf string
-	Statuses []FlowRunStatus
+	// ContinuationOf selects the continuation runs of one original flow run; Conversation those started from one
+	// conversation (assist session id).
+	ContinuationOf string
+	Conversation   string
+	Statuses       []FlowRunStatus
 	// Kinds restricts run kinds. When empty, test runs are excluded so they
-	// do not clutter timelines (REQUIREMENTS §8); list them with Kinds: {KindTest}.
+	// do not clutter timelines (REQUIREMENTS §8); list them with Kinds: {KindTest}. Continuation runs are real runs
+	// and are listed like live and replay runs.
 	Kinds    []FlowRunKind
 	Decision NodeDecision // runs with at least one node run carrying this decision
 	Search   string       // case-insensitive substring of the event's inline payload or dedup key
@@ -194,6 +250,8 @@ func (s *Store) ListFlowRuns(ctx context.Context, f FlowRunFilter) (Page[FlowRun
 	w.eq("flow_id", f.FlowID)
 	w.eq("event_id", f.EventID)
 	w.eq("replay_of", f.ReplayOf)
+	w.eq("continuation_of_run_id", f.ContinuationOf)
+	w.eq("continuation_session_id", f.Conversation)
 	w.in("status", strs(f.Statuses))
 	if len(f.Kinds) > 0 {
 		w.in("kind", strs(f.Kinds))

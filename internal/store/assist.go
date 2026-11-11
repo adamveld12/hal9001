@@ -38,6 +38,18 @@ const (
 	AssistTargetTool    = "tool"
 )
 
+// How a forked session restored the context of the agent run it continues (AssistSession.ForkContext).
+const (
+	ForkResumed  = "resumed"  // the runtime's own session was loaded (session/load)
+	ForkReplayed = "replayed" // a compacted transcript of the run was sent with the first prompt
+)
+
+// Kinds of AssistMessage that are not ordinary chat entries ("" is an ordinary one).
+const (
+	MessageDivider = "divider" // "Continued from run X; ..." at the start of a forked chat
+	MessageNotice  = "notice"  // a system notice for the user (for example that the sandbox was recreated)
+)
+
 // MaxAssistTitle is the longest AssistSession.Title, in characters.
 const MaxAssistTitle = 80
 
@@ -97,6 +109,12 @@ type AssistSession struct {
 	// Title is AssistTitle of the first user message; empty before it.
 	Title string `json:"title,omitempty"`
 
+	// ForkedFromAgentRunID is the agent run of a flow node this session continues; empty for a session that is not a
+	// fork. ForkContext (ForkResumed or ForkReplayed) says how the first turn restored the run's context; it is empty
+	// until that turn.
+	ForkedFromAgentRunID string `json:"forked_from_agent_run_id,omitempty"`
+	ForkContext          string `json:"fork_context,omitempty"`
+
 	// LastAgentRunID is the agent run of the latest turn.
 	LastAgentRunID string `json:"last_agent_run_id,omitempty"`
 	// ACPSessionID is the agent's own session id, kept so a later process can session/load it.
@@ -112,7 +130,8 @@ type AssistSession struct {
 type AssistMessage struct {
 	ID         string          `json:"id"`
 	SessionID  string          `json:"session_id"`
-	Role       string          `json:"role"` // user | assistant | tool | system
+	Role       string          `json:"role"`           // user | assistant | tool | system
+	Kind       string          `json:"kind,omitempty"` // "" | MessageDivider | MessageNotice
 	Text       *string         `json:"text,omitempty"`
 	AgentRunID string          `json:"agent_run_id,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
@@ -131,7 +150,7 @@ func validAssistRole(r string) bool {
 
 const assistCols = `id, target_kind, target_id, runtime, model, status, error, draft_yaml, draft_hash, draft_id, draft_diagnostics, draft_prompts, draft_sensors,
 	draft_updated_at, draft_updated_by, last_agent_run_id, acp_session_id, created_at, updated_at, closed_at,
-	approved_script, approved_script_hash, title`
+	approved_script, approved_script_hash, title, forked_from_agent_run_id, fork_context`
 
 func scanAssistSession(r rowScanner) (AssistSession, error) {
 	var (
@@ -142,7 +161,7 @@ func scanAssistSession(r rowScanner) (AssistSession, error) {
 		closed                    sql.NullString
 	)
 	if err := r.Scan(&a.ID, &a.TargetKind, &a.TargetID, &a.Runtime, &a.Model, &status, &a.Error, &a.DraftYAML, &a.DraftHash, &a.DraftID,
-		&diags, &prompts, &sensors, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash, &a.Title); err != nil {
+		&diags, &prompts, &sensors, &draftAt, &a.DraftUpdatedBy, &a.LastAgentRunID, &a.ACPSessionID, &created, &updated, &closed, &a.ApprovedScript, &a.ApprovedScriptHash, &a.Title, &a.ForkedFromAgentRunID, &a.ForkContext); err != nil {
 		return AssistSession{}, scanErr(err)
 	}
 	a.Status, a.DraftDiagnostics, a.DraftPrompts, a.DraftSensors = AssistStatus(status), parseRaw(diags), parseRaw(prompts), parseRaw(sensors)
@@ -174,6 +193,10 @@ func (a *AssistSession) validate() error {
 		return fmt.Errorf("%w: assist draft hash required", ErrInvalid)
 	case a.DraftUpdatedBy != DraftByAgent && a.DraftUpdatedBy != DraftByUser:
 		return fmt.Errorf("%w: assist draft author %q", ErrInvalid, a.DraftUpdatedBy)
+	case a.ForkContext != "" && a.ForkContext != ForkResumed && a.ForkContext != ForkReplayed:
+		return fmt.Errorf("%w: assist fork context %q", ErrInvalid, a.ForkContext)
+	case a.ForkContext != "" && a.ForkedFromAgentRunID == "":
+		return fmt.Errorf("%w: assist fork context without a forked-from run", ErrInvalid)
 	}
 	return nil
 }
@@ -210,9 +233,9 @@ func (s *Store) CreateAssistSession(ctx context.Context, a *AssistSession) error
 		return err
 	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err := t.ExecContext(ctx, `INSERT INTO assist_sessions (`+assistCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			a.ID, a.TargetKind, a.TargetID, a.Runtime, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts, sensors,
-			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.Title)
+			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.CreatedAt), ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.Title, a.ForkedFromAgentRunID, a.ForkContext)
 		if err != nil {
 			return fmt.Errorf("store: insert assist_session: %w", err)
 		}
@@ -233,7 +256,7 @@ func rawJSONArray(m json.RawMessage) (string, error) {
 }
 
 // UpdateAssistSession writes every mutable column (target_id, status, error, the draft,
-// the approved script, title, last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
+// the approved script, title, fork_context, last_agent_run_id, acp_session_id, closed_at) and sets UpdatedAt to now.
 func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error {
 	if err := a.validate(); err != nil {
 		return err
@@ -254,9 +277,9 @@ func (s *Store) UpdateAssistSession(ctx context.Context, a *AssistSession) error
 	return s.write(ctx, func(t *txn) error {
 		res, err := t.ExecContext(ctx, `UPDATE assist_sessions SET target_id=?, model=?, status=?, error=?, draft_yaml=?, draft_hash=?, draft_id=?, draft_diagnostics=?, draft_prompts=?, draft_sensors=?,
 			draft_updated_at=?, draft_updated_by=?, last_agent_run_id=?, acp_session_id=?, updated_at=?, closed_at=?,
-			approved_script=?, approved_script_hash=?, title=? WHERE id=?`,
+			approved_script=?, approved_script_hash=?, title=?, fork_context=? WHERE id=?`,
 			a.TargetID, a.Model, a.Status, a.Error, a.DraftYAML, a.DraftHash, a.DraftID, diags, prompts, sensors,
-			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.Title, a.ID)
+			ts(a.DraftUpdatedAt), a.DraftUpdatedBy, a.LastAgentRunID, a.ACPSessionID, ts(a.UpdatedAt), tsOrNil(a.ClosedAt), a.ApprovedScript, a.ApprovedScriptHash, a.Title, a.ForkContext, a.ID)
 		if err != nil {
 			return fmt.Errorf("store: update assist_session: %w", err)
 		}
@@ -300,7 +323,7 @@ func (s *Store) ListAssistSessions(ctx context.Context, f AssistSessionFilter) (
 		scanAssistSession, func(a AssistSession) string { return a.ID })
 }
 
-const assistMsgCols = `id, session_id, role, text, agent_run_id, tool_call_id, tool_call, approval_id, created_at`
+const assistMsgCols = `id, session_id, role, kind, text, agent_run_id, tool_call_id, tool_call, approval_id, created_at`
 
 func scanAssistMessage(r rowScanner) (AssistMessage, error) {
 	var (
@@ -308,7 +331,7 @@ func scanAssistMessage(r rowScanner) (AssistMessage, error) {
 		text, toolCall sql.NullString
 		created        string
 	)
-	if err := r.Scan(&m.ID, &m.SessionID, &m.Role, &text, &m.AgentRunID, &m.ToolCallID, &toolCall, &m.ApprovalID, &created); err != nil {
+	if err := r.Scan(&m.ID, &m.SessionID, &m.Role, &m.Kind, &text, &m.AgentRunID, &m.ToolCallID, &toolCall, &m.ApprovalID, &created); err != nil {
 		return AssistMessage{}, scanErr(err)
 	}
 	if text.Valid {
@@ -328,6 +351,8 @@ func (m *AssistMessage) validate() error {
 		return fmt.Errorf("%w: assist message session_id required", ErrInvalid)
 	case !validAssistRole(m.Role):
 		return fmt.Errorf("%w: assist message role %q", ErrInvalid, m.Role)
+	case m.Kind != "" && m.Kind != MessageDivider && m.Kind != MessageNotice:
+		return fmt.Errorf("%w: assist message kind %q", ErrInvalid, m.Kind)
 	case len(m.ToolCall) > 0 && !json.Valid(m.ToolCall):
 		return fmt.Errorf("%w: assist message tool_call is not valid JSON", ErrInvalid)
 	}
@@ -360,8 +385,8 @@ func (s *Store) CreateAssistMessage(ctx context.Context, m *AssistMessage) error
 		m.CreatedAt = s.Now()
 	}
 	return s.write(ctx, func(t *txn) error {
-		_, err := t.ExecContext(ctx, `INSERT INTO assist_messages (`+assistMsgCols+`) VALUES (?,?,?,?,?,?,?,?,?)`,
-			m.ID, m.SessionID, m.Role, m.textArg(), m.AgentRunID, m.ToolCallID, m.toolCallArg(), m.ApprovalID, ts(m.CreatedAt))
+		_, err := t.ExecContext(ctx, `INSERT INTO assist_messages (`+assistMsgCols+`) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			m.ID, m.SessionID, m.Role, m.Kind, m.textArg(), m.AgentRunID, m.ToolCallID, m.toolCallArg(), m.ApprovalID, ts(m.CreatedAt))
 		if err != nil {
 			return fmt.Errorf("store: insert assist_message: %w", err)
 		}

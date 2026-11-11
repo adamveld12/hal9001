@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"hal9001/internal/core"
+	"hal9001/internal/spec"
 )
 
 // Files of a session's draft directory.
@@ -120,4 +123,63 @@ func nameList(names []string) string {
 		s[i] = "`" + n + "`"
 	}
 	return strings.Join(s, ", ")
+}
+
+// forkPreamble is the section a forked chat adds to the general preamble: which run it continues, what the node's own
+// tools and sandbox are, and the rules for the tools that send a result back to the flow.
+func forkPreamble(f core.ForkNode) string {
+	var b strings.Builder
+	b.WriteString("\n## This chat continues a flow run\n\n")
+	b.WriteString("This chat is a continuation of agent run " + f.AgentRunID + " of flow `" + f.FlowID + "`, node `" + f.NodeID + "` (flow run " + f.FlowRunID + "). " +
+		"The run has ended and stays as it was; the user now talks to you about it and may ask you to go on.\n")
+	b.WriteString("Besides the read tools you have the node's own tools. They follow the node's approval rules, so a call can ask the user.")
+	if f.Sandbox != "" {
+		b.WriteString(" The node ran in the sandbox `" + f.Sandbox + "`" + sandboxDetails(f) + ": fs_read, fs_write, fs_list, fs_search and shell work in it.")
+	} else {
+		b.WriteString(" The node used no sandbox.")
+	}
+	if len(f.ToolIDs) > 0 {
+		b.WriteString(" Custom tools: " + strings.Join(f.ToolIDs, ", ") + ".")
+	}
+	b.WriteString("\n")
+	if len(f.Ports) == 0 {
+		b.WriteString("This node has no output that leads anywhere, so you cannot send a result back to the flow.\n")
+		return b.String()
+	}
+	b.WriteString("You can send a result back to the flow with these tools:\n")
+	for _, p := range f.Ports {
+		desc := p.Description
+		if desc == "" {
+			desc = "Send this node's output through the port " + p.Name + "."
+		}
+		b.WriteString("- " + spec.EmitToolName(p.Name) + ": " + desc)
+		if len(p.Next) > 0 {
+			b.WriteString(" Leads to: " + strings.Join(p.Next, "; ") + ".")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("A call to one of them does not run anything by itself. It asks the user for approval, and an approval starts a new flow run from this node's output. " +
+		"Call one only when the user explicitly asks you to send or emit the result to the flow; never on your own. " +
+		"Tell the user once, in one sentence, that you can do this when they want it, and do not repeat it. " +
+		"Without such an approval nothing you do starts or changes a flow run.\n")
+	return b.String()
+}
+
+// sandboxDetails describes the image and repository of the node's sandbox for forkPreamble.
+func sandboxDetails(f core.ForkNode) string {
+	var parts []string
+	if f.Image != "" {
+		parts = append(parts, "image "+f.Image)
+	}
+	if f.Repo != "" {
+		r := "repo " + f.Repo
+		if f.Ref != "" {
+			r += " at " + f.Ref
+		}
+		parts = append(parts, r)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }

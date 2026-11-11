@@ -57,6 +57,7 @@ const ApprovalsPage = page(
   "ApprovalsPage",
 );
 const FlowsPage = page(() => import("./pages/flows/FlowsPage"), "FlowsPage");
+const ChatPage = page(() => import("./pages/chat/ChatPage"), "ChatPage");
 const FlowEditorPage = page(
   () => import("./pages/flows/FlowEditorPage"),
   "FlowEditorPage",
@@ -173,6 +174,8 @@ function AuthGate() {
           <Route path="tools/:id" element={<ToolsPage />} />
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="prompts/:name" element={<PromptsPage />} />
+          <Route path="chat" element={<ChatPage />} />
+          <Route path="chat/:id" element={<ChatPage />} />
           <Route path="settings" element={<SettingsRedirect />} />
           <Route path="settings/general" element={<SettingsGeneralPage />} />
           <Route

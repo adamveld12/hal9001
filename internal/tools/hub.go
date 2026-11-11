@@ -109,6 +109,28 @@ type RunSpec struct {
 	Tools   []string
 	// ToolApprove holds the per-node approval overrides of Tools, by tool id.
 	ToolApprove map[string]spec.ToolApprove
+
+	// ExtraTools are tools the opener supplies itself (for a continued conversation: emit_<port>, which needs the
+	// engine). They are registered after the built-in tools and the providers' tools.
+	ExtraTools []Tool
+	// Conversation, when set, says the sandbox of this session belongs to a conversation (an assist chat continued
+	// from an agent run) instead of one run: see ConversationSandbox.
+	Conversation *ConversationSandbox
+}
+
+// ConversationSandbox links a session's sandbox to a conversation. The sandbox is kept alive between replies
+// (the sandbox's keep_alive setting); when it is gone the next BeforeTurn recreates it from the same image, repo and ref.
+type ConversationSandbox struct {
+	// ConversationID is the assist session id; the sandbox is held under it between replies and its log belongs to it.
+	ConversationID string
+	// FromAgentRunID is the agent run the conversation was forked from. Its sandbox is taken over when it is still
+	// being kept alive; otherwise a new one is created (and BeforeTurn reports that the run's file changes are gone).
+	FromAgentRunID string
+	// NodeRunID is the original run's node run: the conversation's sandbox sessions are recorded under it (they are
+	// pruned with it) but belong to the conversation. Input is the node's input payload, written to input.json of a
+	// recreated sandbox like the original.
+	NodeRunID string
+	Input     json.RawMessage
 }
 
 // Extension is what a Provider adds to one session.
@@ -122,6 +144,12 @@ type Extension struct {
 	// Sandbox, when set, is the run's sandbox session: Call.Sandbox hands it to every tool of the session (custom
 	// tools with runs_in_sandbox run in it). At most one extension sets it.
 	Sandbox sandbox.Session
+	// BeforeTurn, when set, runs before every turn of a long-lived session (an assist chat): it makes sure the
+	// extension's resources exist (a conversation's sandbox is recreated when it was removed) and returns notices
+	// for the user's conversation (for example that the run's file changes are gone). May be nil.
+	BeforeTurn func(ctx context.Context) (notices []string, err error)
+	// AfterTurn, when set, runs when a turn ends (a conversation's sandbox keep-alive timer restarts). May be nil.
+	AfterTurn func()
 }
 
 // Provider contributes tools to a session (sandbox fs/shell, custom tools, assist draft tools).
@@ -187,7 +215,10 @@ type Session struct {
 	mu      sync.Mutex
 	closers []func(success bool)
 	sandbox sandbox.Session
-	closed  bool
+	// beforeTurn and afterTurn are the extensions' turn hooks, in provider order.
+	beforeTurn []func(ctx context.Context) ([]string, error)
+	afterTurn  []func()
+	closed     bool
 }
 
 // MarkReady records that the agent's MCP client finished its handshake with hal's MCP server (`hal9001 mcp` reports
@@ -249,6 +280,12 @@ func (h *Hub) Open(ctx context.Context, spec RunSpec) (*Session, error) {
 		if ext.Sandbox != nil {
 			s.sandbox = ext.Sandbox
 		}
+		if ext.BeforeTurn != nil {
+			s.beforeTurn = append(s.beforeTurn, ext.BeforeTurn)
+		}
+		if ext.AfterTurn != nil {
+			s.afterTurn = append(s.afterTurn, ext.AfterTurn)
+		}
 		if ext.CloseWith != nil {
 			s.closers = append(s.closers, ext.CloseWith)
 		}
@@ -259,6 +296,10 @@ func (h *Hub) Open(ctx context.Context, spec RunSpec) (*Session, error) {
 			s.release(false)
 			return nil, err
 		}
+	}
+	if err := s.reg.Register(spec.ExtraTools...); err != nil {
+		s.release(false)
+		return nil, err
 	}
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -295,6 +336,27 @@ func (s *Session) Token() string { return s.token }
 
 // Kind is the session's kind: KindFlow or KindAssist.
 func (s *Session) Kind() string { return s.spec.Kind }
+
+// BeforeTurn runs the extensions' before-turn hooks (a conversation's sandbox is recreated when it was removed) and
+// returns the notices they produced for the user's conversation. The first error stops the turn.
+func (s *Session) BeforeTurn(ctx context.Context) ([]string, error) {
+	var notices []string
+	for _, f := range s.beforeTurn {
+		n, err := f(ctx)
+		notices = append(notices, n...)
+		if err != nil {
+			return notices, err
+		}
+	}
+	return notices, nil
+}
+
+// AfterTurn tells the extensions that a turn ended.
+func (s *Session) AfterTurn() {
+	for _, f := range s.afterTurn {
+		f()
+	}
+}
 
 // Tools lists the session's tools.
 func (s *Session) Tools() []ToolInfo { return s.reg.List() }
@@ -414,7 +476,7 @@ func (s *Session) Call(ctx context.Context, name string, args json.RawMessage) (
 		}
 		recordID = id
 	}
-	res, err := t.Run(ctx, Call{Name: name, Args: args, Info: info, Now: s.h.opt.Clock(), Sandbox: s.sandbox, Approval: approvedBy})
+	res, err := t.Run(ctx, Call{Name: name, Args: args, Info: info, Now: s.h.opt.Clock(), Sandbox: s.sandbox, Approval: approvedBy, RecordID: recordID})
 	switch {
 	case err != nil:
 		s.finish(recordID, "error: "+err.Error())

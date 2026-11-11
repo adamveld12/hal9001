@@ -174,11 +174,13 @@ function fetchSandboxLog(
   return unwrap(
     scope === "agent"
       ? api.GET("/api/agent-runs/{id}/sandbox-log", { params, signal })
-      : api.GET("/api/node-runs/{id}/sandbox-log", { params, signal }),
+      : scope === "node"
+        ? api.GET("/api/node-runs/{id}/sandbox-log", { params, signal })
+        : api.GET("/api/conversations/{id}/sandbox-log", { params, signal }),
   );
 }
 
-export type SandboxScope = "agent" | "node";
+export type SandboxScope = "agent" | "node" | "conversation";
 
 /** URL of the log (`raw`: the plain-text download). */
 export function sandboxLogUrl(
@@ -186,7 +188,12 @@ export function sandboxLogUrl(
   id: string,
   raw = false,
 ): string {
-  const base = scope === "agent" ? "agent-runs" : "node-runs";
+  const base =
+    scope === "agent"
+      ? "agent-runs"
+      : scope === "node"
+        ? "node-runs"
+        : "conversations";
   return `/api/${base}/${id}/sandbox-log${raw ? "/raw" : ""}`;
 }
 
@@ -255,6 +262,11 @@ export function useAgentRunSandboxLog(id: string | undefined) {
 /** Pass `undefined` for nodes that are not agent nodes: nothing is fetched. */
 export function useNodeRunSandboxLog(id: string | undefined) {
   return useSandboxLog("node", id);
+}
+
+/** The sandbox log of a conversation: a chat's own sandbox sessions, or the log of a flow conversation's run. */
+export function useConversationSandboxLog(id: string | undefined) {
+  return useSandboxLog("conversation", id);
 }
 
 /** One version is immutable, so it never refetches. */

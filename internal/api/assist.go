@@ -50,13 +50,17 @@ type assistSessionView struct {
 	Error          *string          `json:"error"`
 	Draft          assistDraftView  `json:"draft"`
 	LastAgentRunID *string          `json:"last_agent_run_id"`
-	CreatedAt      time.Time        `json:"created_at"`
-	UpdatedAt      time.Time        `json:"updated_at"`
+	// ForkedFromAgentRunID and ForkContext are set for a chat forked from the agent run of a flow node.
+	ForkedFromAgentRunID *string   `json:"forked_from_agent_run_id"`
+	ForkContext          *string   `json:"fork_context"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type assistMessageView struct {
 	ID         string          `json:"id"`
 	Role       string          `json:"role"`
+	Kind       string          `json:"kind"`
 	Text       *string         `json:"text"`
 	AgentRunID *string         `json:"agent_run_id"`
 	ToolCall   json.RawMessage `json:"tool_call"`
@@ -105,13 +109,14 @@ func assistSession(a store.AssistSession) assistSessionView {
 	return assistSessionView{
 		ID: a.ID, Title: nonEmpty(a.Title), Target: assistTargetView{Kind: a.TargetKind, ID: nonEmpty(a.TargetID)}, Runtime: a.Runtime, Model: nonEmpty(a.Model),
 		Status: string(a.Status), Error: nonEmpty(a.Error), Draft: assistDraft(a), LastAgentRunID: nonEmpty(a.LastAgentRunID),
+		ForkedFromAgentRunID: nonEmpty(a.ForkedFromAgentRunID), ForkContext: nonEmpty(a.ForkContext),
 		CreatedAt: utc(a.CreatedAt), UpdatedAt: utc(a.UpdatedAt),
 	}
 }
 
 func assistMessage(m store.AssistMessage) assistMessageView {
 	return assistMessageView{
-		ID: m.ID, Role: m.Role, Text: m.Text, AgentRunID: nonEmpty(m.AgentRunID), ToolCall: rawOrNull(m.ToolCall),
+		ID: m.ID, Role: m.Role, Kind: m.Kind, Text: m.Text, AgentRunID: nonEmpty(m.AgentRunID), ToolCall: rawOrNull(m.ToolCall),
 		ApprovalID: nonEmpty(m.ApprovalID), CreatedAt: utc(m.CreatedAt),
 	}
 }

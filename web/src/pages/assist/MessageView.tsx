@@ -17,6 +17,9 @@ import { DiffView } from "../approvals/DiffView";
 import { noFocusOnClick } from "../../lib/focus";
 import { IssueLinkCard } from "./IssueLinkCard";
 import { parseIssueLink } from "./issueLink";
+import { ApprovalReason } from "./ApprovalReason";
+import { DividerLine, NoticeLine } from "./ThreadNotices";
+import { systemTone } from "./threadItems";
 
 const KIND_ICON: Record<string, IconName> = {
   read: "note",
@@ -79,12 +82,25 @@ function ApprovalPrompt({
       </div>
     ) : null;
   }
+  const reason = a.permission_request?.reason;
   if (a.status !== "pending") {
     return (
-      <div className="flex items-center gap-2 text-xs">
-        <StatusBadge status={a.status} />
-        {a.cancel_run && <span className="text-muted">turn stopped</span>}
-        {a.comment && <span className="text-muted">{a.comment}</span>}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 text-xs">
+          <StatusBadge status={a.status} />
+          {a.cancel_run && <span className="text-muted">turn stopped</span>}
+          {a.comment && <span className="text-muted">{a.comment}</span>}
+        </div>
+        {reason?.trim() && (
+          <details className="text-xs">
+            <summary className="cursor-pointer select-none text-muted">
+              What was asked
+            </summary>
+            <div className="mt-1">
+              <ApprovalReason reason={reason} />
+            </div>
+          </details>
+        )}
       </div>
     );
   }
@@ -96,6 +112,7 @@ function ApprovalPrompt({
       className="space-y-2 rounded-md border border-warn/40 bg-warn/5 p-2 text-xs"
     >
       <div className="font-medium text-warn">Approval needed</div>
+      <ApprovalReason reason={reason} />
       <div className="flex flex-wrap gap-2">
         <Button
           variant="primary"
@@ -194,12 +211,19 @@ export function MessageView({
   message,
   runtime,
   traceRunId,
+  source = "chat",
 }: {
   message: AssistMessage;
   runtime: string;
   traceRunId: string | undefined;
+  /** What the transcript belongs to: a chat, or a flow run (its system messages are notes unless the run failed). */
+  source?: "chat" | "flow";
 }) {
   let body;
+  if (message.kind === "divider")
+    return <DividerLine text={message.text ?? ""} />;
+  if (message.kind === "notice")
+    return <NoticeLine text={message.text ?? ""} />;
   switch (message.role) {
     case "user":
       return (
@@ -216,14 +240,30 @@ export function MessageView({
       ) : null;
       break;
     case "system":
-      body = (
-        <div
-          role="alert"
-          className="rounded-md border border-bad/30 bg-bad/5 px-2 py-1.5 text-xs text-bad"
-        >
-          {message.text}
-        </div>
-      );
+      body =
+        systemTone(source, message.text) === "error" ? (
+          <div
+            role="alert"
+            className="rounded-md border border-bad/30 bg-bad/5 px-2 py-1.5 text-xs text-bad"
+          >
+            {message.text}
+          </div>
+        ) : (
+          <div className="rounded-md border border-line bg-raised px-2 py-1.5 text-xs text-muted">
+            {message.text}
+            {message.approval_id && (
+              <>
+                {" "}
+                <Link
+                  to={`/inbox/approval/${message.approval_id}`}
+                  className="text-accent hover:underline"
+                >
+                  Open approval
+                </Link>
+              </>
+            )}
+          </div>
+        );
       break;
   }
   return (

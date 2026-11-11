@@ -38,6 +38,13 @@ var inboxQuery = []uiQuery{
 	{"dry", "only|hide"}, {"q", "search text"}, {"sort", "time"},
 }
 
+// chatQuery is the query of the chat routes; a conversation opens in the same page, which reads the same filters.
+var chatQuery = []uiQuery{
+	{"source", "flow|chat"}, {"flow", "flow id"}, {"runtime", "runtime name"},
+	{"status", "a conversation status: running, awaiting_approval, idle, succeeded, failed, killed, denied, interrupted, timeout, closed"},
+	{"since", "a day, YYYY-MM-DD"}, {"until", "a day, YYYY-MM-DD"}, {"q", "search text"},
+}
+
 // uiRoutes is the route catalog, in the order the guide lists it.
 var uiRoutes = []uiRoute{
 	{"/inbox", "the inbox: items that need the user's attention, and notes", inboxQuery},
@@ -62,6 +69,8 @@ var uiRoutes = []uiRoute{
 	{"/tools/:id", "the editor of one custom tool (:id is the tool id)", nil},
 	{"/prompts", "the prompt files list", []uiQuery{{"new", "1: start a new prompt"}}},
 	{"/prompts/:name", "the editor of one prompt (:name is the prompt name)", []uiQuery{{"tab", "preview"}, {"sample", "json"}, {"event", "event id, for the preview"}}},
+	{"/chat", "the chat page: every conversation (chats and the agent runs of flow nodes) in a list with filters", chatQuery},
+	{"/chat/:id", "one conversation in the chat page (:id is the assist session id of a chat, or the agent run id of a flow run; new starts a new chat)", chatQuery},
 	{"/settings/general", "settings: general", nil},
 	{"/settings/environment", "settings: environment variables (names only)", nil},
 	{"/settings/context", "settings: the context text every agent gets", nil},

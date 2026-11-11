@@ -73,6 +73,13 @@ type Host interface {
 	Clock() agent.Clock
 	// TestFlow runs a validated flow draft once on one input as a dry-run test run and returns what every node did.
 	TestFlow(ctx context.Context, req core.FlowTestRequest) (core.AssistFlowTestResult, error)
+	// ForkNode resolves the agent node run a conversation is forked from: its flow, node settings (runtime, sandbox,
+	// custom tools, emit targets) and the original ACP session. store.ErrNotFound for an unknown or non-flow agent run.
+	ForkNode(ctx context.Context, agentRunID string) (core.ForkNode, error)
+	// EmitTools returns the emit tools of a conversation forked from fork (emit_<port>, or emit_out for a node without
+	// ports). A call does not start anything by itself: it raises an approval request, and only an approval starts a
+	// new flow run of kind continuation. conversationID is the assist session id.
+	EmitTools(ctx context.Context, fork core.ForkNode, conversationID string) ([]tools.Tool, error)
 }
 
 // Options configures New.

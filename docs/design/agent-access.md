@@ -71,11 +71,12 @@ summary of available tools.
 One config per backend, one tab each. Stored in `<home>/sandboxes/<backend>.yaml`; per-sandbox env in
 `env.d/sandboxes/<backend>.env` (plain/secret markers as elsewhere).
 
-Common fields: `enabled`, `lifecycle: per_run | persistent`, `approval` (above), `env` (via the env section), `timeout`.
+Common fields: `enabled`, `lifecycle: per_run | persistent`, `approval` (above), `env` (via the env section), `timeout`,
+`keep_alive` (below).
 
 | Backend | Config | per_run | persistent |
 |---|---|---|---|
-| `local` | `root` dir | `<root>/runs/<run-id>/`, removed after a successful run | `<root>` |
+| `local` | `root` dir | `<root>/runs/<run-id>/`, removed after a successful run (once `keep_alive` has passed) | `<root>` |
 | `docker` | `socket` (default from env/`DOCKER_HOST`), `images: [..]`, resources, network on/off | container per run, removed at end | one long-lived container per image, per-run workdir |
 | `depot` | token (secret), `org_id`, `image_ref` (Depot snapshot image), `architecture`, `resources`, `timeout_minutes`, `disable_tailnet`, `disable_depot_cache`, CI `secrets` mapping | `Sandbox.create` per run, stopped at end | one sandbox kept alive (refreshed timeout), per-run workdir |
 | `kubernetes` | `kubeconfig`, `context`, `namespace`, `images: [..]`, resources, `service_account` | `kubectl run` one pod per run, deleted at end | one hal-created pod per image, per-run workdir |
@@ -86,13 +87,45 @@ Common fields: `enabled`, `lifecycle: per_run | persistent`, `approval` (above),
 - Agent node picks the sandbox and, for Docker/Kubernetes, the `image:` from that sandbox's list (default first).
 - Failed per_run sandboxes are kept for debugging until retention.
 
+### Keep alive
+
+`keep_alive` (Settings → Sandboxes → Keep alive) is how long the sandbox of a run stays after the run ends, so a chat
+can continue in it ("Continue in chat" on the agent run page). It is a duration like `timeout` (`30s`, `1m`, `2h`),
+default `1m` when the field is absent, and any value from `0` up is accepted: `0` removes the sandbox as soon as the run
+ends (the behaviour before this setting existed). Negative or unparsable values are validation errors.
+
+![Settings > Sandboxes > Local with the Keep alive field](../images/chat/sandbox-keep-alive-light.png) ([dark](../images/chat/sandbox-keep-alive-dark.png))
+
+It applies to every sandboxed agent run, whatever its outcome:
+- When the run ends, hal keeps the sandbox for `keep_alive` and then tears it down as before (`Close(success)`: a failed
+  per_run workspace is still kept for debugging until retention). The run's sandbox log gets the entry
+  `Run ended; sandbox kept for <d>`, and later the usual teardown entries.
+- The propose and execute phases of an approve node share one workspace (keyed by the node run). Opening the second
+  phase closes the sandbox still held from the first.
+- `sandbox.Keeper` (`internal/sandbox/keepalive.go`) holds the sessions, keyed by agent run id. It takes an injectable
+  clock, and the daemon closes it (every held sandbox is torn down) at shutdown, before the sandbox manager.
+
+A chat continued from the run uses a lease on the sandbox (`tools.RunSpec.Conversation`):
+- Before the first reply the chat takes over the run's sandbox if it is still held: same workdir, same files. If it is
+  gone (expired, or `keep_alive` is `0`), the chat creates a new sandbox from the same image, repo and ref (and
+  `input.json`) and shows a notice that the run's file changes are gone.
+- While the agent replies no timer runs. When the reply ends the sandbox is held for `keep_alive` again, so every reply
+  restarts the window. A message sent after the window has passed recreates the sandbox with the same notice.
+- A recreated sandbox is keyed by the conversation id, so its workdir can differ from the run's. The sandbox tool
+  descriptions therefore do not name the workdir; commands run in it and paths are relative.
+- Closing the chat (or stopping the daemon) closes the sandbox at once. The chat has no run outcome: its sandbox is
+  always closed like a successful run's (a per_run workspace is removed).
+- The node's sandbox tools keep their approval policy.
+
 ## Sandbox run log
 
 Every agent run that uses a sandbox gets a log, so you can see what happened without the backend's own console. It is
 shown under **Sandbox** on the agent run page and on the node run in the flow run detail, updates live while the sandbox
 is in use, and can be copied or downloaded as text. The same data is served by `GET /api/agent-runs/{id}/sandbox-log`
 and `GET /api/node-runs/{id}/sandbox-log` (a provisioning failure has a node run but no agent run), and
-`hal9001 agent-runs sandbox-log <id>`.
+`hal9001 agent-runs sandbox-log <id>`. The sandbox of a chat continued from a run is logged on the chat:
+`GET /api/conversations/{id}/sandbox-log` (same response and `after_id` / `limit` / `tail` parameters; the id is the
+assist session id, or an agent run id for the run's own log) and `hal9001 conversations sandbox-log <id>`.
 
 Captured:
 - Header: backend, sandbox id or name (Depot sandbox id, container name, pod name, `user@host`, run directory), image,
@@ -117,8 +150,12 @@ Limits and redaction:
   after the entry limit only lifecycle entries are kept. The header says `truncated`.
 - Stored in `sandbox_sessions` and `sandbox_log_entries`, deleted with the node run by retention pruning. Sandboxes still
   open when the daemon stops are marked `interrupted` at the next start.
-- Denials of custom tools that run in a sandbox are in the agent run's trace, not in the sandbox log; assist sessions
-  cannot use sandboxes, so they have no log.
+- Conversation sessions have `assist_session_id` set (migration 0019). Their `node_run_id` stays the original node run, so
+  they are pruned with it. Taking over a held sandbox creates a new session for the chat (header copied, entry
+  `Reattached sandbox of run <id>`); the run's session ends with `Sandbox handed over to conversation <id>` and is
+  otherwise unchanged. Recreating an expired sandbox starts another session on the chat. The agent-run and node-run logs
+  list only the sessions without `assist_session_id`.
+- Denials of custom tools that run in a sandbox are in the agent run's trace, not in the sandbox log.
 
 ## Workspace seeding
 
