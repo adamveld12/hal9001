@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { commandSnapshot, indexText, runDuration, runLabels } from "./runView";
+import {
+  awaitedApprovalId,
+  commandSnapshot,
+  indexText,
+  runDuration,
+  runLabels,
+} from "./runView";
 
 describe("runLabels", () => {
   it("numbers fan-out runs per node and names the upstream run", () => {
@@ -23,6 +29,29 @@ describe("runLabels", () => {
       { id: "x", node_id: "n", parent_node_run_id: "missing" },
     ]);
     expect(labels.get("x")?.parent).toBeNull();
+  });
+});
+
+describe("awaitedApprovalId", () => {
+  it("reads the approval id from a parked run's reason", () => {
+    expect(
+      awaitedApprovalId({
+        status: "awaiting_approval",
+        reason: "awaiting approval ap_123",
+      }),
+    ).toBe("ap_123");
+  });
+
+  it("is null for other statuses and reasons", () => {
+    expect(
+      awaitedApprovalId({ status: "done", reason: "awaiting approval ap_1" }),
+    ).toBeNull();
+    expect(
+      awaitedApprovalId({ status: "awaiting_approval", reason: null }),
+    ).toBeNull();
+    expect(
+      awaitedApprovalId({ status: "awaiting_approval", reason: "approved" }),
+    ).toBeNull();
   });
 });
 

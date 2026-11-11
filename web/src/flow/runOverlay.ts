@@ -42,7 +42,7 @@ export function groupByNode<T extends { node_id: string }>(
 
 /** Visual of one node run. */
 export function runVisual(nr: OverlayNodeRun): NodeVisual {
-  return nodeVisual(nr.status, nr.decision);
+  return nodeVisual(nr.status, nr.decision, nr);
 }
 
 function singleDetail(
@@ -64,6 +64,7 @@ const BREAKDOWN_ORDER: readonly NodeVisual[] = [
   "awaiting",
   "running",
   "queued",
+  "denied",
   "emitted",
   "dropped",
   "skipped",

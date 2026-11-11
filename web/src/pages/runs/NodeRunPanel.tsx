@@ -7,13 +7,19 @@ import { Time } from "../../components/Time";
 import { cx } from "../../lib/cx";
 import { langForCommand } from "../../lib/codeLang";
 import { shortId } from "../../lib/format";
-import { VISUAL_LABEL, VISUAL_TONE } from "../../flow/overlay";
+import {
+  GATE_OUTCOME_TEXT,
+  gateOutcome,
+  VISUAL_LABEL,
+  VISUAL_TONE,
+} from "../../flow/overlay";
 import { runVisual } from "../../flow/runOverlay";
 import { summarizeStep } from "../../flow/transform/steps";
 import type { TransformNode } from "../../flow/transform/types";
 import { Meta, Mono, SectionTitle, TextLink } from "./Meta";
 import { SandboxLogSection } from "./SandboxLog";
 import {
+  awaitedApprovalId,
   commandSnapshot,
   indexText,
   runDuration,
@@ -181,6 +187,8 @@ export function NodeRunPanel({
 }) {
   const run = runs.find((r) => r.id === selectedRunId) ?? runs[0];
   const parent = run ? labels.get(run.id)?.parent : null;
+  const approvalId = run ? awaitedApprovalId(run) : null;
+  const outcome = run ? gateOutcome(run) : null;
   return (
     <div className="space-y-4 p-3 text-xs">
       <div className="flex items-center gap-2">
@@ -214,7 +222,16 @@ export function NodeRunPanel({
                 value: (
                   <span className="inline-flex flex-wrap items-center gap-1.5">
                     <StatusBadge status={run.status} />
-                    {run.decision && <StatusBadge status={run.decision} />}
+                    {outcome ? (
+                      <Badge tone="warn">{GATE_OUTCOME_TEXT[outcome]}</Badge>
+                    ) : (
+                      run.decision && <StatusBadge status={run.decision} />
+                    )}
+                    {approvalId && (
+                      <TextLink to={`/inbox/approval/${approvalId}`}>
+                        waiting for approval
+                      </TextLink>
+                    )}
                   </span>
                 ),
               },

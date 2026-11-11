@@ -3,7 +3,9 @@ import type { Approval, ApprovalList } from "../../api/approvals";
 import {
   approvalOrigin,
   approvalTitle,
+  decisionNotice,
   describeDecision,
+  isGateApproval,
   mergeApprovalPages,
   viewFromParams,
   viewToParams,
@@ -194,6 +196,7 @@ describe("labels", () => {
 
 describe("request approvals", () => {
   const request = {
+    gate: false,
     title: "Ship api?",
     body_md: "details",
     fields: [],
@@ -238,6 +241,38 @@ describe("request approvals", () => {
       ),
     ).toBe("Timed out; the flow continued on the error port");
   });
+
+  it("treats an expired node gate as a denial", () => {
+    const gate = req({
+      status: "expired",
+      request: { ...request, gate: true, on_timeout: null },
+      expires_at: "2026-11-05T11:00:00Z",
+    });
+    expect(isGateApproval(gate)).toBe(true);
+    expect(isGateApproval(req())).toBe(false);
+    expect(describeDecision(gate)).toBe(
+      "Timed out; the node was denied and did not run",
+    );
+  });
+
+  it("says what a decided gate did to its node", () => {
+    const gate = (status: "approved" | "denied") =>
+      req({
+        status,
+        decided_by: "owner",
+        request: { ...request, gate: true, on_timeout: null },
+      });
+    expect(describeDecision(gate("denied"))).toBe(
+      "Denied by owner; the node did not run",
+    );
+    expect(decisionNotice(gate("approved"))).toBe(
+      "Approved. The node will run.",
+    );
+    expect(decisionNotice(gate("denied"))).toBe(
+      "Denied. The node did not run.",
+    );
+    expect(decisionNotice(req({ status: "denied" }))).toBe("Denied.");
+  });
 });
 
 describe("approvalOrigin", () => {
@@ -263,6 +298,7 @@ describe("approvalOrigin", () => {
           type: "request",
           ...unowned,
           request: {
+            gate: false,
             title: "t",
             body_md: "",
             fields: [],

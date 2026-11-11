@@ -10,6 +10,7 @@ export type NodeVisual =
   | "skipped"
   | "running"
   | "awaiting"
+  | "denied"
   | "queued"
   | "killed"
   | "interrupted";
@@ -33,6 +34,7 @@ export const VISUAL_TONE: Record<NodeVisual, Tone> = {
   skipped: "muted",
   running: "run",
   awaiting: "warn",
+  denied: "warn",
   queued: "info",
   killed: "bad",
   interrupted: "warn",
@@ -44,7 +46,8 @@ export const VISUAL_LABEL: Record<NodeVisual, string> = {
   error: "error",
   skipped: "skipped",
   running: "running",
-  awaiting: "awaiting approval",
+  awaiting: "waiting for approval",
+  denied: "denied",
   queued: "queued",
   killed: "killed",
   interrupted: "interrupted",
@@ -52,20 +55,45 @@ export const VISUAL_LABEL: Record<NodeVisual, string> = {
 
 /** Higher wins when one node has several node_runs (fan-out). */
 const SEVERITY: Record<NodeVisual, number> = {
-  error: 8,
-  killed: 7,
-  interrupted: 6,
-  awaiting: 5,
-  running: 4,
-  queued: 3,
+  error: 9,
+  killed: 8,
+  interrupted: 7,
+  awaiting: 6,
+  running: 5,
+  queued: 4,
+  denied: 3,
   emitted: 2,
   dropped: 1,
   skipped: 0,
 };
 
+/** How an approval gate ended a node run that did not run its node. */
+export type GateOutcome = "denied" | "timeout";
+
+export const GATE_OUTCOME_TEXT: Record<GateOutcome, string> = {
+  denied: "denied",
+  timeout: "timed out, treated as denied",
+};
+
+/**
+ * Set for a node run that finished on port `denied` with error `denied` or
+ * `approval_timeout`: it is done, not failed, but its node did not run.
+ */
+export function gateOutcome(nr: {
+  status: string;
+  error?: string | null;
+  ports?: readonly string[];
+}): GateOutcome | null {
+  if (nr.status !== "done" || !nr.ports?.includes("denied")) return null;
+  if (nr.error === "denied") return "denied";
+  if (nr.error === "approval_timeout") return "timeout";
+  return null;
+}
+
 export function nodeVisual(
   status: string,
   decision?: string | null,
+  outcome?: { error?: string | null; ports?: readonly string[] },
 ): NodeVisual {
   switch (status) {
     case "running":
@@ -86,6 +114,7 @@ export function nodeVisual(
     default:
       break;
   }
+  if (gateOutcome({ status, ...outcome }) !== null) return "denied";
   switch (decision) {
     case "dropped":
       return "dropped";

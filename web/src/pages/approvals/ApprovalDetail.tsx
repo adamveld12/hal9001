@@ -21,7 +21,12 @@ import { Countdown } from "./Countdown";
 import { timeLeft, useNow } from "./timeLeft";
 import { diffsFromToolContent, extractCommand, extractDiffs } from "./diff";
 import { DiffView } from "./DiffView";
-import { approvalTitle, describeDecision, isOperatorApproval } from "./queue";
+import {
+  approvalTitle,
+  describeDecision,
+  isGateApproval,
+  isOperatorApproval,
+} from "./queue";
 import { EditFields } from "./EditFields";
 import { initialDrafts } from "./edits";
 
@@ -236,6 +241,7 @@ export function ApprovalDetail({
   }, [pastDeadline, onStale]);
 
   const isTool = a.type === "tool_call";
+  const isGate = isGateApproval(a);
   return (
     <article className="mx-auto max-w-3xl space-y-4 p-4">
       <Link to={backTo} className="text-xs text-accent underline md:hidden">
@@ -244,7 +250,7 @@ export function ApprovalDetail({
       <header className="space-y-2">
         <h2 className="m-0 text-base font-semibold">{approvalTitle(a)}</h2>
         <div className="flex flex-wrap items-center gap-1.5">
-          <TypeBadge type={a.type} />
+          <TypeBadge type={a.type} gate={isGate} />
           <StatusBadge status={a.status} />
           <Time ts={a.created_at} />
           {pending && a.expires_at && (
@@ -286,7 +292,13 @@ export function ApprovalDetail({
       {pending ? (
         <Panel title="Decide">
           <div className="space-y-3">
-            {a.request && a.request.editable.length > 0 && (
+            {isGate && (
+              <p className="m-0 text-xs text-muted">
+                Approving runs the node. Denying sends its input down the{" "}
+                <code className="font-mono">denied</code> port instead.
+              </p>
+            )}
+            {!isGate && a.request && a.request.editable.length > 0 && (
               <div className="space-y-1">
                 <p className="m-0 text-xs text-muted">
                   You can edit these before approving. Denying ignores edits.
