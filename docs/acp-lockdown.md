@@ -194,7 +194,7 @@ and a `CODEX_HOME` that hal9001 generates. Some settings only work in one place:
 **1. Command and env**
 
 ```yaml
-command: [mise, exec, "npm:@agentclientprotocol/codex-acp@2.5.0", --, env, "HOME={{data}}/runtimes/codex-lockdown-fakehome", codex-acp]
+# hal9001 resolves the command: env HOME=<empty dir> <node> <codex-acp bin script> (managed adapter, codex-acp 2.5.0)
 env:
   CODEX_HOME: "{{data}}/runtimes/codex-lockdown-home"   # hal9001 writes config.toml + lockdown-catalog.json, links auth.json
   DISABLE_MCP_CONFIG_FILTERING: "true"                   # required, see below
@@ -202,8 +202,9 @@ env:
 ```
 
 `HOME` points to an empty directory so that `~/.agents/skills` and other home-based sources are hidden. It is set with
-`env` after `--` instead of in the runtime `env` map, because the map also reaches `mise exec`, which finds its installs
-through `HOME` [inference, not run]. This form works (run `codex-verify/V4`).
+`env` in front of the adapter command instead of in the runtime `env` map, so only the adapter sees it and not the
+command's launcher. This form works (run `codex-verify/V4`). hal9001 builds it as `env HOME=<fake> <node> <script>` for the
+managed adapter and inserts `env HOME=...` before a `codex-acp` element of a user-set command.
 
 `DISABLE_MCP_CONFIG_FILTERING=true` is required: by default the adapter skips an ACP server whose name already exists in
 the Codex config, and Codex then runs the config entry (the placeholder command) instead of hal9001's server (run
@@ -374,7 +375,7 @@ nothing outside hal, so they need no approval at either layer.
 ```yaml
 runtimes:
   claude:
-    command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]
+    kind: claude                         # command resolved by hal9001 (managed claude-agent-acp 0.100.0)
     modes: {ask: default, full: default}
     elicitation: false
     session_meta:                        # sent on session/new and session/load
@@ -385,7 +386,7 @@ runtimes:
           settingSources: []
           allowedTools: ["mcp__hal"]     # drop this line to approve at the ACP layer (default mode then prompts per call)
   codex:
-    command: [mise, exec, "npm:@agentclientprotocol/codex-acp@2.5.0", --, env, "HOME={{data}}/runtimes/codex-lockdown-fakehome", codex-acp]
+    kind: codex                          # command resolved by hal9001 (managed codex-acp 2.5.0, empty HOME)
     modes: {ask: read-only, full: read-only}
     elicitation: false
     env:
@@ -435,20 +436,20 @@ None of this is implemented yet; the engine today only creates the isolated home
 
 ```sh
 mise exec -- go build -o /tmp/acp-probe ./cmd/acp-probe
-export PATH=$HOME/.local/share/mise/installs/node/24.22.1/bin:$PATH        # or run the adapters through mise exec
+npm install --prefix $H/adapters @agentclientprotocol/claude-agent-acp@0.100.0 @agentclientprotocol/codex-acp@2.5.0 --no-audit --no-fund
 sed 's/__RT__/claude/' standard-prompt.txt > run.txt                         # the prompt in Test method
 
 # Claude (hard evidence: the init message in the wire log)
 acp-probe --mcp-echo --mode default --model haiku --policy reject-all --log wire.jsonl --prompt-file run.txt \
   --session-meta '{"claudeCode":{"emitRawSDKMessages":[{"type":"system","subtype":"init"}],"options":{"tools":[],"strictMcpConfig":true,"settingSources":[],"allowedTools":["mcp__probe_echo"]}}}' \
-  -- mise exec npm:@agentclientprotocol/claude-agent-acp@0.100.0 -- claude-agent-acp
+  -- node $H/adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 jq -c 'select(.dir=="<-" and .msg.method=="_claude/sdkMessage") | .msg.params.message | select(.subtype=="init") | {tools,mcp_servers}' wire.jsonl
 
 # Codex (H = an empty scratch dir; config.toml names the server probe_echo)
 mkdir -p $H/home $H/fakehome && ln -s ~/.codex/auth.json $H/home/auth.json     # then write config.toml and the catalog as above
 CODEX_HOME=$H/home DISABLE_MCP_CONFIG_FILTERING=true CODEX_CONFIG="$(jq -c . codex-config.json)" \
 acp-probe --mcp-echo --mode read-only --model gpt-6-luna --config reasoning_effort=low --policy reject-all --prompt-file run.txt \
-  -- mise exec npm:@agentclientprotocol/codex-acp@2.5.0 -- env HOME=$H/fakehome codex-acp
+  -- env HOME=$H/fakehome codex-acp   # the codex-acp bin from $H/adapters/node_modules/.bin on PATH
 
 # omp (write omp-lockdown.yml as above)
 mkdir -p $H/omp-home && ln -s ~/.omp/agent/agent.db $H/omp-home/agent.db

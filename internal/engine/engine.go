@@ -26,6 +26,8 @@ type Options struct {
 	// BasePATH is the PATH nodes and agents start with (the login-shell PATH
 	// captured at install time); empty means the daemon's own PATH.
 	BasePATH string
+	// ExactPATH: look for agent CLIs and Node.js on BasePATH only, without the well-known tool directories.
+	ExactPATH bool
 	// Notifier delivers macOS notifications; nil disables them.
 	Notifier core.Notifier
 	Log      *slog.Logger
@@ -142,7 +144,7 @@ func New(opt Options) (*Engine, error) {
 	if e.runtimes == nil {
 		e.ownRuntimes = true
 		e.runtimes = runtimes.New(runtimes.Options{
-			Data: data, Path: opt.BasePATH, Log: log,
+			Data: data, Path: opt.BasePATH, ExactPath: opt.ExactPATH, Log: log,
 			EnvFile: func() map[string]string { return e.snapshot().env },
 		})
 	}

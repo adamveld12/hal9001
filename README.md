@@ -68,11 +68,11 @@ Release and auto-update setup: [docs/releases.md](docs/releases.md).
 ## Prerequisites
 
 macOS, [mise](https://mise.jdx.dev/), and the tools below. Everything pinned in [`mise.toml`](mise.toml) (Go, Node,
-pnpm, golangci-lint, lefthook, gitleaks, and the `claude-agent-acp` and `codex-acp` adapters) is installed by
+pnpm, golangci-lint, lefthook, gitleaks) is installed by
 `mise install`.
 
 ```sh
-mise install        # pinned toolchain and ACP adapters
+mise install        # pinned toolchain
 mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --frozen-lockfile)
 ```
 
@@ -84,9 +84,9 @@ mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --
 | `linear-assigned` | `LINEAR_API_KEY` | Linear Settings > Account > Security & access. Read-only is enough. |
 | `imap-mail` | `python3`, `IMAP_USER`, `IMAP_PASSWORD` | The default email sensor. Set the values in the sensor's Environment section. For Gmail: enable IMAP in Gmail settings and create an app password (Google account > Security > 2-Step Verification > App passwords). A Workspace admin can disable IMAP or app passwords; the poll then fails with `AUTHENTICATIONFAILED`. Other IMAP servers: also set `IMAP_HOST` (see [docs/flows.md](docs/flows.md#sensors)). Read-only: nothing is marked read. |
 | `gmail-unread` | [`gog`](https://github.com/steipete/gogcli) | Alternative to `imap-mail`; needs Google OAuth, which a Workspace admin can block. Install it, then `gog auth add you@example.com`. Set `GOG_ACCOUNT` in `env` when `gog` has several accounts. |
-| Claude agents | Claude Code login | Runtime `claude`, adapter `claude-agent-acp` (mise-pinned). |
-| Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`, adapter `codex-acp` (mise-pinned). |
-| omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs `omp acp`. Not in `mise.toml` (a Homebrew install). |
+| Claude agents | Claude Code login | Runtime `claude`. Needs the `claude` CLI on PATH and Node.js 22+; install the adapter once (Settings > Runtimes or `hal9001 runtimes install claude`). |
+| Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`. Needs the `codex` CLI on PATH and Node.js 22+; install the adapter once (`hal9001 runtimes install codex`). |
+| omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs the CLI's built-in `omp acp`; no adapter to install. |
 | Notifications | `terminal-notifier` (optional) | Falls back to `osascript` when missing. |
 | Remote access | Tailscale (optional) | See [docs/auth.md](docs/auth.md#tailscale). |
 
@@ -108,7 +108,7 @@ printf %s "$LINEAR_API_KEY" | bin/hal9001 env set LINEAR_API_KEY --stdin
 printf %s "$LINEAR_API_KEY" | bin/hal9001 sensors env set linear-assigned LINEAR_API_KEY --stdin
 ```
 
-The ACP runtimes need extra care (isolated agent homes, adapter paths): see [docs/runtimes.md](docs/runtimes.md).
+The ACP runtimes need extra care (isolated agent homes, adapter detection and install): see [docs/runtimes.md](docs/runtimes.md).
 
 ## Quick start
 
@@ -235,7 +235,7 @@ usage: hal9001 <command> [flags]
   queue       list the run queue; remove runs from it
   update      show, check and install app updates
   killswitch  pause and resume the daemon
-  runtimes    list and probe ACP runtimes
+  runtimes    list, probe, detect and install ACP runtimes
   settings    show settings
   env         list, set and unset env variables
 
@@ -313,6 +313,10 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `killswitch pause` | `--kill` (also terminate running nodes), `--reason text` |
 | `runtimes list` | |
 | `runtimes probe <name>` | Start the runtime and report what it advertises. |
+| `runtimes status` | Detection per runtime: CLI, sign-in, Node.js, resolved command and warnings; `--json` for the raw response. |
+| `runtimes detect` | Re-run detection now. |
+| `runtimes install <name>` | Install the pinned ACP adapter (claude, codex) under `data/adapters/`. Needs Node.js 22+ and npm on PATH. |
+| `runtimes uninstall <name>` | Remove the installed adapter. |
 | `settings get` | `config.yaml` as JSON, secrets redacted. |
 | `env list` | Variable names only. |
 | `env set <KEY> [value]` | Without a value, or with `--stdin`, the value is read from stdin. |
@@ -410,7 +414,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/flows.md](docs/flows.md) | Writing sensors, flows and prompts: the node contract, routing, templates, agent nodes, dry-run, replay, test-node. |
 | [docs/auth.md](docs/auth.md) | Auth stacks, modules, Tailscale setup, threat notes. |
 | [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
-| [docs/runtimes.md](docs/runtimes.md) | Configuring and probing ACP runtimes. |
+| [docs/runtimes.md](docs/runtimes.md) | Configuring, detecting, installing and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
 | [docs/assist.md](docs/assist.md) | The chat assistant: Ask AI (global drawer, page context, `navigate_ui`), AI-assisted authoring (draft, permission policy, secret model, lifecycle), the read-only tools that inspect runs, and the GitHub issue link. |
 | [docs/api.md](docs/api.md) | REST API guide: auth, pagination, long-polling, SSE, errors, curl walkthrough. |

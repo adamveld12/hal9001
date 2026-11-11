@@ -12,6 +12,7 @@ func newEngine(p engineParams) (*engine.Engine, error) {
 		Store:     p.Store,
 		Home:      p.Home,
 		BasePATH:  p.BasePATH,
+		ExactPATH: p.ExactPATH,
 		Notifier:  p.Notifier,
 		Log:       p.Log,
 		UIBaseURL: p.UIBaseURL,

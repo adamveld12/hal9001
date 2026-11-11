@@ -271,20 +271,13 @@ Harness behavior the gate requires:
 
 ## Recommended pins
 
-`mise.toml` (not edited by this slice). Verified with
-`mise exec npm:@agentclientprotocol/claude-agent-acp@0.100.0 npm:@agentclientprotocol/codex-acp@2.5.0 -- <cmd>`, which
-installed both under mise's install directory; `claude-agent-acp --version` printed `0.100.0` and `codex-acp --version`
-printed `@agentclientprotocol/codex-acp 2.5.0`.
+Pinned versions: `@agentclientprotocol/claude-agent-acp` 0.100.0 and `@agentclientprotocol/codex-acp` 2.5.0. They were verified
+when installed with npm; `claude-agent-acp --version` printed `0.100.0` and `codex-acp --version`
+printed `@agentclientprotocol/codex-acp 2.5.0`. hal9001 installs these pins on request (see [runtimes.md](runtimes.md)).
 
-```toml
-[tools]
-"npm:@agentclientprotocol/claude-agent-acp" = "0.100.0"
-"npm:@agentclientprotocol/codex-acp" = "2.5.0"
-```
-
-Both adapters are `#!/usr/bin/env node` scripts, so run them under `mise exec` (or with mise's node on `PATH`). The
-first `mise` install took about 33 s; `pnpm dlx` took about 19 s on a cold cache, which is why §7.3 installs them rather
-than running them on demand. omp 18.16.0 is a Homebrew install and is not in `mise.toml`.
+Both adapters are `#!/usr/bin/env node` scripts, so hal9001 runs them as `<absolute node> <script>`. The
+first install took about 33 s; `pnpm dlx` took about 19 s on a cold cache, which is why §7.3 installs them rather
+than running them on demand. omp 18.16.0 is a Homebrew install; its `omp acp` is built in.
 
 ## Probe usage
 

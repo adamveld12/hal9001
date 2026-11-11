@@ -28,16 +28,15 @@ HAL9001_LIVE=1 mise exec -- go test ./e2e/live -run 'TestLiveGitHub|TestLiveCred
 | `HAL9001_LIVE_EVIDENCE=<dir>` | Write each scenario's API responses (flow run, agent runs, permission requests, approvals, inbox) as JSON files. |
 | `HAL9001_LIVE_DEBUG=1` | Daemon logs at debug level on stderr. |
 
-Prerequisites: `mise install` in the repo (installs the pinned adapters), a logged-in `claude`, `codex` and `omp`
+Prerequisites: the ACP adapters installed (`hal9001 runtimes install claude` and `codex`; Node.js 22+ and npm), a logged-in `claude`, `codex` and `omp`
 (`~/.codex/auth.json`, `~/.omp/agent/agent.db`), `gh auth status` OK with notification and PR read access. No Slack,
 Linear or Gmail credentials are needed (those checks expect failure).
 
 How the harness mimics production:
 
 - The PATH handed to nodes and agents is captured from a login shell that starts with launchd's minimal PATH
-  (`/usr/bin:/bin:/usr/sbin:/sbin`), not from the mise-managed PATH of the test process, and the process runs from `/`.
-- `config.yaml` is the shipped one, except that the two npm adapter commands are replaced by their absolute install paths
-  (`mise where npm:@agentclientprotocol/<adapter>` + `/node_modules/.bin/<adapter>`), see [Adapter resolution](#adapter-resolution).
+  (`/usr/bin:/bin:/usr/sbin:/sbin`), not from the PATH of the test process, and the process runs from `/`.
+- `config.yaml` is the shipped one; hal9001 resolves the runtime commands itself, see [Adapter resolution](#adapter-resolution).
 - Starter sensors other than the ones under test are replaced by silent ones; the seeded demo flow is disabled.
 - Agent cwd is a per-scenario temp directory (`cwd: {mode: dir, ...}`); the checks look for the file there.
 
@@ -105,8 +104,8 @@ or Gmail credentials exist here (`gog` is not installed).
 Builds the binary and runs it from a bare environment (`PATH=/usr/bin:/bin:/usr/sbin:/sbin`). The plist has
 `RunAtLoad` and `KeepAlive`, `ProgramArguments: [<binary>, serve, --home, ~/.hal9001]`, and `HAL9001_LAUNCHD=1` in its environment, which
 makes `hal9001 serve` log to `~/Library/Logs/hal9001/` and capture the login-shell `PATH` itself. The test then captures that PATH from the
-same bare environment: it starts with the mise tool dirs and `~/.local/share/mise/shims`, followed by
-`/opt/homebrew/bin` and the system dirs. With that PATH, from a non-repo directory, `gh`, `jq`, `git`, `node` and `mise` resolve
+same bare environment: it starts with the tool dirs of your login shell (for example mise, if you use it), followed by
+`/opt/homebrew/bin` and the system dirs. With that PATH, from a non-repo directory, `gh`, `jq`, `git` and `node` resolve
 and run. Run it by hand: `hal9001 service install --dry-run`.
 
 ## 4. AI-assisted sensor authoring (`TestLiveAssistClaudeAuthorsASensor`)
@@ -127,21 +126,13 @@ re-run after the move to draft tools.
 
 ## Adapter resolution
 
-The adapters `claude-agent-acp` and `codex-acp` are pinned only in the repo's `mise.toml`. A mise shim picks its version from
-the config of the working directory, so from outside the repo (where the daemon and every agent run) the shim fails:
-
-```
-mise ERROR No version is set for shim: claude-agent-acp
-```
-
-With `command: [claude-agent-acp]` and the login-shell PATH (which contains the shims dir), the runtime probe and every
-agent run failed until the adapter was made resolvable; the probe error and the agent run error both end with
-`stderr: No version is set for shim: claude-agent-acp`. The shipped `config.yaml` now uses
-`command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]` (and the same for
-codex-acp). That form was verified for the claude probe and its full scenario set and for the codex probe, and all three
-`runtimes probe` calls passed against a daemon started from `/tmp` with only the login-shell PATH. The test process's own
-PATH hides this class of problem because Go's `exec` resolves the command against the daemon's PATH; that is why the live
-harness sets the process PATH from the login shell.
+The daemon and every agent run outside the repo, so the commands must resolve without repo-local tool configuration.
+hal9001 resolves them itself ([runtimes.md](runtimes.md#detection-and-installing-adapters)): an adapter it installed under
+`<home>/data/adapters/`, run as `<absolute node> <script>`, and omp's built-in `omp acp`. A shim whose version comes from the
+working directory (for example a mise shim outside its repo) fails with an error such as `No version is set for shim`,
+and the probe and agent run errors end with that stderr. Detection treats such a broken shim as not found. The test
+process's own PATH can hide this class of problem because Go's `exec` resolves the command against the daemon's PATH; that is
+why the live harness sets the process PATH from the login shell.
 
 Also checked: a runtime whose command does not exist fails the run in milliseconds with
 `spawn_failed: exec: "no-such-acp-agent": executable file not found in $PATH` (`TestLiveMissingRuntimeCommand`).
