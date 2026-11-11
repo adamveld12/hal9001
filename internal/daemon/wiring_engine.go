@@ -34,6 +34,7 @@ func newAPI(p apiParams) http.Handler {
 		Workspace:  p.Workspace,
 		Reload:     p.Reload,
 		BasePATH:   p.BasePATH,
+		Runtimes:   p.Runtimes,
 		Version:    p.Version,
 		UI:         p.UI,
 		Log:        p.Log,

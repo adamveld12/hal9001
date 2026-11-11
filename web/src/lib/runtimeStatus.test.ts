@@ -206,12 +206,18 @@ describe("reduceProgress", () => {
         name: "claude",
         phase: "installing",
         line: `l${i}`,
+        error: null,
       });
     expect(s.claude).toMatchObject({
       phase: "installing",
       lines: ["l3", "l4", "l5", "l6", "l7"],
     });
-    s = reduceProgress(s, { name: "claude", phase: "failed", error: "boom" });
+    s = reduceProgress(s, {
+      name: "claude",
+      phase: "failed",
+      line: null,
+      error: "boom",
+    });
     expect(s.claude).toMatchObject({
       phase: "failed",
       error: "boom",
@@ -220,6 +226,7 @@ describe("reduceProgress", () => {
       name: "claude",
       phase: "installing",
       line: "again",
+      error: null,
     });
     expect(s.claude.lines).toEqual(["again"]);
   });

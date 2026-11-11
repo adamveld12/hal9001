@@ -115,6 +115,12 @@ func Run(ctx context.Context, opts Options) error {
 	if len(created) > 0 {
 		log.Info("seeded home directory", "home", home, "files", len(created))
 	}
+	if migrated, err := spec.MigrateRuntimeCommands(home); err != nil {
+		log.Warn("could not migrate runtime commands in config.yaml", "err", err)
+	} else if len(migrated) > 0 {
+		log.Info("config.yaml: runtimes now use detected agents instead of mise commands; original saved as "+spec.FileConfigBackup,
+			"runtimes", migrated, "next", "install the adapters with `hal9001 runtimes install <name>`")
+	}
 	ws := spec.Load(home)
 	if spec.HasErrors(ws.Config.Diagnostics) {
 		return configError(ws)
@@ -224,7 +230,7 @@ func Run(ctx context.Context, opts Options) error {
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
 		Operator: operator, Port: port, Executable: opts.Executable,
-		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH,
+		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH, Runtimes: eng.Runtimes(),
 		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update,
 	})
 	// The API server announces on-disk edits to SSE clients and owns the

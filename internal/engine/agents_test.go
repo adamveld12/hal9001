@@ -567,3 +567,27 @@ nodes:
 		})
 	}
 }
+
+// A runtime without a command whose agent is not installed fails the node with the reason and the fix, not with an
+// empty-command error.
+func TestAgentNodeOfAnUninstalledRuntimeFailsWithTheFix(t *testing.T) {
+	h := newHarness(t)
+	h.idleSensor()
+	h.promptNote("review")
+	h.runtimes["claude"] = "  claude:\n    kind: claude\n"
+	h.flow("f", `id: f
+enabled: true
+subscribe: [src]
+nodes:
+  - {id: triage, type: agent, runtime: claude, mode: readonly, prompt: review}
+`)
+	h.start()
+	runID := h.injectRun(`{"id":"1"}`)
+	h.waitRun(runID, store.FlowRunFailed)
+	n := h.node(runID, "triage")
+	for _, want := range []string{`runtime "claude" is not available`, "hal9001 runtimes install claude"} {
+		if !strings.Contains(n.Reason, want) {
+			t.Errorf("node reason %q lacks %q", n.Reason, want)
+		}
+	}
+}

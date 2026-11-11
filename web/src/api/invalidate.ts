@@ -62,7 +62,6 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "notification.created": [],
   "update.status": ["update"],
   "update.install": [],
-  // Install progress also flips `adapter.installing`/`installed`; the log lines come from the event itself (useAdapterProgress).
   "runtime.adapter": ["runtimes"],
 };
 

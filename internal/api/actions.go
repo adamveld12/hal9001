@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"sort"
 	"time"
 
 	"hal9001/internal/core"
@@ -720,49 +719,6 @@ type probeModeView struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
-}
-
-type runtimeView struct {
-	Name      string            `json:"name"`
-	Command   []string          `json:"command"`
-	Modes     map[string]string `json:"modes"`
-	EnvKeys   []string          `json:"env_keys"`
-	LastProbe *probeResultView  `json:"last_probe"`
-}
-
-func (s *Server) listRuntimes(w http.ResponseWriter, _ *http.Request) {
-	cfg := s.opts.Workspace().Config.Value
-	names := make([]string, 0)
-	if cfg != nil {
-		for name := range cfg.Runtimes {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	out := struct {
-		Items []runtimeView `json:"items"`
-	}{Items: []runtimeView{}}
-	s.probeMu.Lock()
-	defer s.probeMu.Unlock()
-	for _, name := range names {
-		rt := cfg.Runtimes[name]
-		v := runtimeView{Name: name, Command: nonNil(rt.Command), Modes: map[string]string{}, EnvKeys: []string{}}
-		if rt.Modes.Ask != "" {
-			v.Modes["ask"] = rt.Modes.Ask
-		}
-		if rt.Modes.Full != "" {
-			v.Modes["full"] = rt.Modes.Full
-		}
-		for k := range rt.Env {
-			v.EnvKeys = append(v.EnvKeys, k)
-		}
-		sort.Strings(v.EnvKeys)
-		if p, ok := s.probes[name]; ok {
-			v.LastProbe = &p
-		}
-		out.Items = append(out.Items, v)
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) probeRuntime(w http.ResponseWriter, r *http.Request) {

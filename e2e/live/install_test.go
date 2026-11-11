@@ -53,10 +53,7 @@ func TestLiveServiceInstallDryRunPATH(t *testing.T) {
 	}
 	// launchd starts the daemon in a directory that is never inside a repo, so use an empty temp dir as its stand-in.
 	workdir := t.TempDir()
-	if !strings.Contains(path, "mise/shims") {
-		t.Errorf("PATH has no mise shims dir: %s", path)
-	}
-	for _, tool := range []string{"gh", "jq", "git", "node", "mise"} {
+	for _, tool := range []string{"gh", "jq", "git", "node", "npm"} {
 		c := exec.Command("sh", "-c", "command -v "+tool+" && "+tool+" --version")
 		c.Env = []string{"HOME=" + home, "PATH=" + path}
 		c.Dir = workdir

@@ -156,6 +156,16 @@ type Config struct {
 	Auth          Auth               `yaml:"auth,omitempty" json:"auth"`
 }
 
+// RuntimeKinds are the runtime families hal9001 knows how to detect, install and lock down.
+var RuntimeKinds = []string{RuntimeKindClaude, RuntimeKindCodex, RuntimeKindOmp}
+
+// The runtime kinds.
+const (
+	RuntimeKindClaude = "claude"
+	RuntimeKindCodex  = "codex"
+	RuntimeKindOmp    = "omp"
+)
+
 // DataPlaceholder in a runtime's command, env values and spawn args/env is
 // replaced by the engine with <home>/data (the directory for runtime state such
 // as the isolated agent homes). Write it quoted in YAML: "{{data}}/runtimes/x".
@@ -167,8 +177,10 @@ const DataPlaceholder = "{{data}}"
 type Runtime struct {
 	// Kind names the runtime family (claude, codex, omp) so hal can lock it down to hal's MCP tools
 	// (docs/acp-lockdown.md). Empty: detected from the command; an unknown runtime runs without lockdown.
-	Kind    string            `yaml:"kind,omitempty" json:"kind,omitempty"`
-	Command []string          `yaml:"command" json:"command"`
+	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
+	// Command is the argv of the ACP agent. Optional when Kind is set: hal9001 then uses the omp CLI's own `omp acp`
+	// or the ACP adapter it installed (internal/runtimes).
+	Command []string          `yaml:"command,omitempty" json:"command"`
 	Modes   RuntimeModes      `yaml:"modes,omitempty" json:"modes"`
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 	// Ask applies to readonly and approve nodes, Full to auto nodes (and to the

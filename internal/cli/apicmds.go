@@ -121,7 +121,7 @@ func (a *app) tree() *command {
 		group("queue", "list the run queue; remove runs from it", queueCmds()...),
 		updateGroup(),
 		group("killswitch", "pause and resume the daemon", killswitchCmds()...),
-		group("runtimes", "list and probe ACP runtimes", runtimeCmds()...),
+		group("runtimes", "detect, install, list and probe ACP runtimes", runtimeCmds()...),
 		group("settings", "show settings", cmd("get", "show config.yaml as JSON (secrets redacted)", apiGet("/api/settings"))),
 		group("prompts", "list, show and rename prompts", promptCmds()...),
 		group("env", "list, set and unset env variables", envCmds("")...),
@@ -983,12 +983,12 @@ func killswitchCmds() []*command {
 }
 
 func runtimeCmds() []*command {
-	return []*command{
-		cmd("list", "list runtimes", apiGet("/api/runtimes", "name", "command", "last_probe.ok")),
+	return append(runtimeStatusCmds(),
+		cmd("list", "list runtimes", apiGet("/api/runtimes", "name", "command", "detection.status", "last_probe.ok")),
 		cmd("probe", "start a runtime and report what it advertises", &leaf{usage: "<name>", minArgs: 1, maxArgs: 1, run: func(ctx context.Context, c *call) error {
 			return c.doEmit(ctx, http.MethodPost, "/api/runtimes/"+esc(c.args[0])+"/probe", nil, nil)
 		}}),
-	}
+	)
 }
 
 // envCmds are the env list/set/unset commands. scope "" is the global env;

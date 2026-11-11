@@ -10,6 +10,7 @@ import (
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
 	"hal9001/internal/notify"
+	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
@@ -56,6 +57,7 @@ type apiParams struct {
 	Workspace  func() *spec.Workspace
 	Reload     func()
 	BasePATH   string
+	Runtimes   *runtimes.Manager
 	Version    string
 	UI         http.Handler
 	Log        *slog.Logger

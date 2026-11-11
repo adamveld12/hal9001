@@ -68,6 +68,13 @@ type LockdownOptions struct {
 	Server string
 	// MCPCallTimeout bounds one MCP call that blocks (e.g. on a human approval). Default 24h.
 	MCPCallTimeout time.Duration
+	// ManagedAdapter marks Command as the adapter hal9001 installed and resolved itself, `<node> <script>` with
+	// absolute paths: the Codex empty HOME then wraps the whole command instead of being inserted before a
+	// `codex-acp` element, which such a command does not have.
+	ManagedAdapter bool
+	// AdapterVersion is the version of the adapter behind Command; a new version regenerates the Codex model
+	// catalog even when the command line is the same.
+	AdapterVersion string
 }
 
 // ApplyLockdown returns cfg configured so the agent has no built-in tools and can only call the MCP tools hal injects
@@ -162,14 +169,19 @@ func lockCodex(cfg RuntimeConfig, opt LockdownOptions) (RuntimeConfig, error) {
 	fake := filepath.Join(opt.Dir, "codex-fakehome")
 	cfg.Env["DISABLE_MCP_CONFIG_FILTERING"] = "true"
 	cfg.Env["CODEX_CONFIG"] = codexConfig
-	// An empty HOME hides ~/.agents/skills and other home-based sources. It is set after the mise wrapper (if any),
-	// which finds its installs through HOME.
-	for i, a := range cfg.Command {
-		if filepath.Base(a) == "codex-acp" || strings.HasPrefix(filepath.Base(a), "codex-acp@") {
-			cmd := append([]string(nil), cfg.Command[:i]...)
-			cmd = append(cmd, "env", "HOME="+fake)
-			cfg.Command = append(cmd, cfg.Command[i:]...)
-			break
+	// An empty HOME hides ~/.agents/skills and other home-based sources. The managed adapter runs as an absolute
+	// `<node> <script>`, so the whole command gets it. In a command the user wrote it is set right before the
+	// codex-acp element, after any wrapper (such as `mise exec`) that finds its installs through HOME.
+	if opt.ManagedAdapter {
+		cfg.Command = append([]string{"env", "HOME=" + fake}, cfg.Command...)
+	} else {
+		for i, a := range cfg.Command {
+			if filepath.Base(a) == "codex-acp" || strings.HasPrefix(filepath.Base(a), "codex-acp@") {
+				cmd := append([]string(nil), cfg.Command[:i]...)
+				cmd = append(cmd, "env", "HOME="+fake)
+				cfg.Command = append(cmd, cfg.Command[i:]...)
+				break
+			}
 		}
 	}
 	for _, d := range []string{home, fake} {
@@ -183,15 +195,15 @@ func lockCodex(cfg RuntimeConfig, opt LockdownOptions) (RuntimeConfig, error) {
 	if err := writeIfChanged(filepath.Join(home, "config.toml"), []byte(toml)); err != nil {
 		return cfg, err
 	}
-	return cfg, ensureCatalog(cfg, home, catalog)
+	return cfg, ensureCatalog(cfg, opt.AdapterVersion, home, catalog)
 }
 
 // ensureCatalog writes the bundled model catalog with the tool fields switched off. It is regenerated when the
-// codex-acp command changes (a new adapter version brings a new bundled catalog).
-func ensureCatalog(cfg RuntimeConfig, home, catalog string) error {
+// codex-acp command or the adapter version changes (a new adapter version brings a new bundled catalog).
+func ensureCatalog(cfg RuntimeConfig, adapterVersion, home, catalog string) error {
 	catalogMu.Lock()
 	defer catalogMu.Unlock()
-	sum := sha256.Sum256([]byte(strings.Join(cfg.Command, "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join(cfg.Command, "\x00") + "\x00" + adapterVersion))
 	stamp := hex.EncodeToString(sum[:])
 	stampFile := catalog + ".stamp"
 	if b, err := os.ReadFile(stampFile); err == nil && string(b) == stamp { //nolint:gosec // generated file under hal9001's data directory

@@ -18,6 +18,7 @@ import (
 	"hal9001/internal/apispec"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
@@ -164,6 +165,9 @@ type envOptions struct {
 	port       int
 	executable string
 	update     func(e *env) update.Options
+	// runtimes detects and installs agents; the default sees an empty PATH, so no test depends on the CLIs of the
+	// machine it runs on.
+	runtimes func(e *env) *runtimes.Manager
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -194,8 +198,15 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 	if eo.update != nil {
 		e.upd = update.New(eo.update(e))
 	}
+	var rm *runtimes.Manager
+	if eo.runtimes != nil {
+		rm = eo.runtimes(e)
+	} else {
+		rm = runtimes.New(runtimes.Options{Data: filepath.Join(e.home, "data"), Path: t.TempDir(), ExactPath: true})
+	}
+	t.Cleanup(rm.Close)
 	e.srv = New(Options{
-		Store: st, Home: e.home, Engine: e.eng, Auth: e.mgr,
+		Store: st, Home: e.home, Engine: e.eng, Auth: e.mgr, Runtimes: rm,
 		Workspace: func() *spec.Workspace { return e.ws.Load() },
 		Reload: func() {
 			e.reloads.Add(1)

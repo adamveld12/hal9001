@@ -113,7 +113,7 @@ export function useRuntimeOptions() {
 export function useDetectRuntimes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => unwrap(api.POST("/api/runtimes/detect", { body: {} })),
+    mutationFn: () => unwrap(api.POST("/api/runtimes/detect")),
     onSuccess: (list) => {
       qc.setQueryData(qk("runtimes"), list);
       return qc.invalidateQueries({ queryKey: qk("runtimes") });
@@ -129,7 +129,6 @@ export function useInstallAdapter() {
       unwrap(
         api.POST("/api/runtimes/{name}/adapter", {
           params: { path: { name } },
-          body: {},
         }),
       ),
     onSettled: () => qc.invalidateQueries({ queryKey: qk("runtimes") }),
