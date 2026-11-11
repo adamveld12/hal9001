@@ -242,7 +242,9 @@ function RuntimeCard({
   const auth = authSummary(d.auth);
   const node = nodeSummary(d.node);
   const action = adapterAction(d, progress);
-  const warnings = orderWarnings(d.warnings);
+  const warnings = orderWarnings(d.warnings).filter(
+    (w) => !(w.code === "adapter_missing" && action.kind === "installing"),
+  );
   const command = d.command ?? r.command;
   const modes = [
     r.modes.ask && `ask: ${r.modes.ask}`,
@@ -255,7 +257,7 @@ function RuntimeCard({
     >
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-xs">
         <span className="font-mono text-sm font-semibold">{r.name}</span>
-        {r.kind && <Badge>{r.kind}</Badge>}
+        {r.kind && r.kind !== r.name && <Badge>{r.kind}</Badge>}
         <Badge tone={statusTone(d.status)}>{statusLabel(d.status)}</Badge>
         <Button
           className="ml-auto"
@@ -267,7 +269,7 @@ function RuntimeCard({
         </Button>
       </header>
       <div className="space-y-3 p-3 text-xs">
-        <dl className="m-0 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1">
+        <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1">
           <Row label="CLI">
             {d.cli.found ? (
               <>
@@ -284,9 +286,11 @@ function RuntimeCard({
             <Status tone={auth.tone}>{auth.text}</Status>
           </Row>
           <Row label="Adapter">{adapterSummary(d.adapter)}</Row>
-          <Row label="Node">
-            <Status tone={node.tone}>{node.text}</Status>
-          </Row>
+          {(d.adapter.source === "managed" || d.adapter.installable) && (
+            <Row label="Node">
+              <Status tone={node.tone}>{node.text}</Status>
+            </Row>
+          )}
           {modes.length > 0 && (
             <Row label="Modes">
               <span className="text-muted">{modes.join(", ")}</span>
@@ -302,7 +306,7 @@ function RuntimeCard({
         </dl>
 
         {warnings.length > 0 && (
-          <ul className="m-0 list-none space-y-2 p-0">
+          <ul className="list-none space-y-2 p-0">
             {warnings.map((w) => (
               <li
                 key={w.code}
