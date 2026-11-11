@@ -116,3 +116,78 @@ func TestLockdownLeavesUnknownRuntimesAlone(t *testing.T) {
 		t.Errorf("out = %+v", out)
 	}
 }
+
+// fakeCodexNode writes an executable that prints a model catalog whatever its arguments, standing in for
+// `node <adapter script>`, and counts its runs in dir/runs.
+func fakeCodexNode(t *testing.T, dir string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "node")
+	script := "#!/bin/sh\necho x >> '" + filepath.Join(dir, "runs") + "'\necho '{\"models\":[{\"slug\":\"m\",\"shell_type\":\"shell_command\"}]}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	return bin
+}
+
+func TestLockdownCodexHomeWrapperPerCommandForm(t *testing.T) {
+	dir := t.TempDir()
+	node := fakeCodexNode(t, dir)
+	script := "/adapters/codex-acp/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
+
+	// The adapter hal9001 installed: the whole absolute command runs with the empty HOME.
+	managed := agent.ApplyLockdown(agent.RuntimeConfig{Command: []string{node, script}}, "codex",
+		agent.LockdownOptions{Dir: dir, ManagedAdapter: true, AdapterVersion: "2.5.0"})
+	if managed.Lockdown.Err != "" {
+		t.Fatal(managed.Lockdown.Err)
+	}
+	if len(managed.Command) != 4 || managed.Command[0] != "env" || !strings.HasPrefix(managed.Command[1], "HOME=") || managed.Command[2] != node || managed.Command[3] != script {
+		t.Errorf("managed command = %v, want env HOME=<fake> <node> <script>", managed.Command)
+	}
+
+	// A command the user wrote keeps the old placement: after a wrapper, right before the codex-acp element.
+	wrapped := agent.ApplyLockdown(agent.RuntimeConfig{Command: []string{node, "exec", "tool", "--", "codex-acp"}}, "codex", agent.LockdownOptions{Dir: dir})
+	want := []string{node, "exec", "tool", "--", "env", "HOME=" + filepath.Join(dir, "codex-fakehome"), "codex-acp"}
+	if !slices.Equal(wrapped.Command, want) {
+		t.Errorf("wrapped command = %v, want %v", wrapped.Command, want)
+	}
+
+	// A user command without a codex-acp element is left as written (no HOME is invented for a wrapper that needs it).
+	plain := agent.ApplyLockdown(agent.RuntimeConfig{Command: []string{node, "serve"}}, "codex", agent.LockdownOptions{Dir: dir})
+	if !slices.Equal(plain.Command, []string{node, "serve"}) {
+		t.Errorf("plain command = %v", plain.Command)
+	}
+}
+
+func TestLockdownCodexCatalogIsRegeneratedForANewAdapterVersion(t *testing.T) {
+	dir := t.TempDir()
+	node := fakeCodexNode(t, dir)
+	run := func(version string) {
+		out := agent.ApplyLockdown(agent.RuntimeConfig{Command: []string{node, "script.js"}}, "codex",
+			agent.LockdownOptions{Dir: dir, ManagedAdapter: true, AdapterVersion: version})
+		if out.Lockdown.Err != "" {
+			t.Fatal(out.Lockdown.Err)
+		}
+	}
+	runs := func() int {
+		b, _ := os.ReadFile(filepath.Join(dir, "runs"))
+		return strings.Count(string(b), "x")
+	}
+	run("2.5.0")
+	run("2.5.0")
+	if runs() != 1 {
+		t.Errorf("catalog generated %d times for the same command and version, want 1", runs())
+	}
+	run("2.6.0")
+	if runs() != 2 {
+		t.Errorf("catalog generated %d times after an adapter upgrade, want 2", runs())
+	}
+}
+
+func TestRuntimeWithoutACommandFailsRunsWithItsReason(t *testing.T) {
+	e := newEnv(t, fakeagent.Script{Turns: []fakeagent.Turn{{Steps: []fakeagent.Step{msg("x")}}}})
+	req := e.req(agent.ModeReadonly, "")
+	req.Config = agent.RuntimeConfig{Unavailable: `runtime "claude" is not available: the adapter is not installed`}
+	if _, err := e.exec.Run(t.Context(), req); err == nil || !strings.Contains(err.Error(), "adapter is not installed") {
+		t.Errorf("Run = %v, want the unavailable reason", err)
+	}
+}

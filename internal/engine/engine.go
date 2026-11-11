@@ -12,6 +12,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/core"
+	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
@@ -37,6 +38,9 @@ type Options struct {
 	MCPURL string
 	// Executable is the hal9001 binary agents spawn as `hal9001 mcp`; default: this process's executable.
 	Executable string
+	// Runtimes finds the agents of runtimes that have no command of their own; default: a manager over Home/data
+	// and BasePATH.
+	Runtimes *runtimes.Manager
 }
 
 // Engine executes sensors, flows and agent runs. It implements core.Engine.
@@ -83,9 +87,11 @@ type Engine struct {
 	waitMu  sync.Mutex
 	waiters map[string]chan agent.ToolDecision // tool_call approval id -> decision
 
-	broker   *storeBroker
-	observer observerSlot
-	tools    *tools.Hub
+	runtimes    *runtimes.Manager
+	ownRuntimes bool // Stop closes the manager the engine created itself
+	broker      *storeBroker
+	observer    observerSlot
+	tools       *tools.Hub
 
 	assistTests sync.Map // flow run id -> *assistTest, for the runs of TestFlow
 	simEmits    sync.Map // flow run id -> map[node id]core.SimulatedEmit: agent nodes of test runs that emit instead of running
@@ -132,6 +138,14 @@ func New(opt Options) (*Engine, error) {
 	e.dbCtx = context.WithoutCancel(e.ctx)
 	e.broker = &storeBroker{e: e}
 	e.snap = newSnapshot(&spec.Workspace{Home: home})
+	e.runtimes = opt.Runtimes
+	if e.runtimes == nil {
+		e.ownRuntimes = true
+		e.runtimes = runtimes.New(runtimes.Options{
+			Data: data, Path: opt.BasePATH, Log: log,
+			EnvFile: func() map[string]string { return e.snapshot().env },
+		})
+	}
 	if e.tools, err = e.newToolHub(); err != nil {
 		return nil, fmt.Errorf("engine: tool hub: %w", err)
 	}
@@ -139,6 +153,9 @@ func New(opt Options) (*Engine, error) {
 }
 
 var _ core.Engine = (*Engine)(nil)
+
+// Runtimes returns the manager that detects and installs the agents of runtimes.
+func (e *Engine) Runtimes() *runtimes.Manager { return e.runtimes }
 
 // Start reconciles state left by a previous process (running work becomes
 // interrupted, per-tool approvals expire), then starts the dispatcher, the
@@ -198,6 +215,9 @@ func (e *Engine) Stop(ctx context.Context) error {
 	e.stopLoops()
 	e.cancelActive(agent.ErrInterrupted)
 	e.cancel(agent.ErrInterrupted)
+	if e.ownRuntimes {
+		e.runtimes.Close()
+	}
 	done := make(chan struct{})
 	go func() { e.wg.Wait(); close(done) }()
 	select {

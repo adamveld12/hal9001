@@ -27,6 +27,9 @@ func (e *Engine) ProbeRuntime(ctx context.Context, name string) (core.ProbeResul
 	if !ok {
 		return core.ProbeResult{}, fmt.Errorf("%w: runtime %q", store.ErrNotFound, name)
 	}
+	if cfg.Unavailable != "" {
+		return core.ProbeResult{Error: cfg.Unavailable}, nil
+	}
 	dir, err := ensureDir(filepath.Join(e.data, "state", "_probe"))
 	if err != nil {
 		return core.ProbeResult{}, err

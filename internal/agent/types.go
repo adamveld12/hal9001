@@ -157,6 +157,9 @@ type RuntimeConfig struct {
 	SessionMeta map[string]any `json:"session_meta,omitempty"`
 	// Lockdown is set by ApplyLockdown: what the run must check before it starts.
 	Lockdown Lockdown `json:"lockdown"`
+	// Unavailable, when set, is why the runtime has no command to start (the agent or its adapter is not installed)
+	// and how to fix it; Command is empty and runs fail with this message.
+	Unavailable string `json:"unavailable,omitempty"`
 }
 
 // Lockdown is the part of a runtime lockdown (docs/acp-lockdown.md) that is enforced when a run starts.
