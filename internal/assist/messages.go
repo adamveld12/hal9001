@@ -14,8 +14,9 @@ import (
 const textFlushDelay = 120 * time.Millisecond
 
 // maxToolText bounds each text block of a stored tool call; diffs and command output can be large and the
-// full transcript stays on the agent run.
-const maxToolText = 16 << 10
+// full transcript stays on the agent run. It is above the largest github_issue_link result (a link of at most 8 KB
+// plus the full body), which the chat parses.
+const maxToolText = 24 << 10
 
 // sessionRecorder wraps the engine's recorder for the agent runs of one session: it persists everything
 // as usual (agent_runs, agent_events, permission_requests, raw traffic) and feeds the conversation.
