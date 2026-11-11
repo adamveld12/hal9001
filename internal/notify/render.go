@@ -1,9 +1,7 @@
 package notify
 
 import (
-	"encoding/json"
 	"regexp"
-	"slices"
 	"strings"
 
 	"hal9001/internal/store"
@@ -13,7 +11,6 @@ import (
 const (
 	maxBody     = 200
 	maxSubtitle = 120
-	maxArgs     = 60
 	bodyLines   = 2
 	dryRunTag   = "[dry run] "
 )
@@ -25,34 +22,25 @@ func Note(flowID string, it *store.InboxItem, url string) store.Notification {
 	})
 }
 
-// Proposal renders the notification of an agent's proposal awaiting approval.
-func Proposal(flowID, approvalID, proposal string, dryRun bool, url string) store.Notification {
-	return build(store.NotifyProposal, flowID, "Approval: "+firstLine(proposal), proposal, string(store.PriorityNormal), dryRun, url, func(n *store.Notification) {
-		n.ApprovalID, n.ApprovalType = approvalID, store.NotifyProposal
-	})
+// ApprovalNote is what the notification of an approval is built from.
+type ApprovalNote struct {
+	FlowID, ApprovalID string
+	Type               store.ApprovalType
+	Title, Description string
+	Priority           store.Priority
+	DryRun, Editable   bool
 }
 
-// ToolCall renders the notification of a tool call awaiting approval. tool is the tool's title (or kind) and
-// rawInput its JSON arguments, shown shortened.
-func ToolCall(flowID, approvalID, tool string, rawInput json.RawMessage, dryRun bool, url string) store.Notification {
-	subtitle := "Tool call: " + strings.TrimSpace(tool)
-	if args := shortArgs(rawInput); args != "" {
-		subtitle += " " + args
-	}
-	return build(store.NotifyToolCall, flowID, subtitle, "", string(store.PriorityHigh), dryRun, url, func(n *store.Notification) {
-		n.ApprovalID, n.ApprovalType = approvalID, store.NotifyToolCall
-	})
-}
-
-// Request renders the notification of an approval node's request. req.Title is the rendered title.
-func Request(flowID, approvalID string, req store.RequestApproval, url string) store.Notification {
-	prio := string(req.Priority)
+// Approval renders the notification of an approval awaiting a decision: the title is the subtitle, the description
+// the body. An empty priority is normal. The kind is the approval's type.
+func Approval(a ApprovalNote, url string) store.Notification {
+	prio := string(a.Priority)
 	if prio == "" {
 		prio = string(store.PriorityNormal)
 	}
-	body := strings.TrimSpace(strings.TrimPrefix(req.BodyMD, DryRunNotice))
-	return build(store.NotifyRequest, flowID, "Request: "+req.Title, body, prio, req.DryRun, url, func(n *store.Notification) {
-		n.ApprovalID, n.ApprovalType, n.Editable = approvalID, store.NotifyRequest, len(req.Editable) > 0
+	kind := string(a.Type)
+	return build(kind, a.FlowID, a.Title, a.Description, prio, a.DryRun, url, func(n *store.Notification) {
+		n.ApprovalID, n.ApprovalType, n.Editable = a.ApprovalID, kind, a.Editable
 	})
 }
 
@@ -73,7 +61,7 @@ func FromMCP(n store.Notification, client, thread string) store.Notification {
 	return n
 }
 
-// DryRunNotice is the first line of the body of a dry run's request approval; the renderer drops it from the body.
+// DryRunNotice is the first line of the body of a dry run's request approval.
 const DryRunNotice = "This is a dry run: approving or denying only exercises the flow's branches."
 
 func build(kind, flowID, subtitle, bodyMD, priority string, dryRun bool, url string, set func(*store.Notification)) store.Notification {
@@ -135,41 +123,6 @@ func stripMarkdown(line string) string {
 	line = reTag.ReplaceAllString(line, "")
 	line = reEmphasis.ReplaceAllString(line, "")
 	return strings.TrimSpace(line)
-}
-
-// shortArgs renders a tool call's arguments on one line: a JSON object as key=value pairs, anything else as is.
-func shortArgs(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil || len(obj) == 0 {
-		return truncate(oneLine(string(raw)), maxArgs)
-	}
-	keys := make([]string, 0, len(obj))
-	for k := range obj {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		v := obj[k]
-		s, ok := v.(string)
-		if !ok {
-			b, _ := json.Marshal(v)
-			s = string(b)
-		}
-		parts = append(parts, k+"="+oneLine(s))
-	}
-	return truncate(strings.Join(parts, " "), maxArgs)
-}
-
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return stripMarkdown(s)
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

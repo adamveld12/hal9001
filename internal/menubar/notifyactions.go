@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ActionHandler carries out the user's responses to notifications through the daemon's REST API.
@@ -47,18 +48,18 @@ func (h ActionHandler) run(ctx context.Context, a NotificationAction) (string, e
 			return "archive it", err
 		}
 		return "archive it", h.Client.PatchInbox(ctx, id, InboxPatch{Archived: &t})
-	case ActApprove, ActApproveComment:
+	case ActApprove:
 		id, err := need(info, InfoApprovalID, "approval")
 		if err != nil {
 			return "approve", err
 		}
-		return "approve", h.Client.Approve(ctx, id, commentOf(a, ActApproveComment))
-	case ActDeny, ActDenyComment:
+		return "approve", h.Client.Approve(ctx, id, "")
+	case ActDeny, ActDenySteer:
 		id, err := need(info, InfoApprovalID, "approval")
 		if err != nil {
 			return "deny", err
 		}
-		return "deny", h.Client.Deny(ctx, id, commentOf(a, ActDenyComment))
+		return "deny", h.Client.Deny(ctx, id, steeringOf(a))
 	}
 	return "handle the action", fmt.Errorf("unknown action %q", a.Action)
 }
@@ -70,10 +71,10 @@ func need(info map[string]string, key, what string) (string, error) {
 	return "", fmt.Errorf("the notification carries no %s", what)
 }
 
-// commentOf is the typed text of a comment button; plain buttons send none.
-func commentOf(a NotificationAction, textAction string) string {
-	if a.Action == textAction {
-		return a.Text
+// steeringOf is the typed text of Deny…; the plain Deny button sends none.
+func steeringOf(a NotificationAction) string {
+	if a.Action == ActDenySteer {
+		return strings.TrimSpace(a.Text)
 	}
 	return ""
 }
