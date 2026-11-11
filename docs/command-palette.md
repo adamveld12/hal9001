@@ -7,6 +7,9 @@ Press <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>P</kbd> anywhere in the web UI to open
 
 Type to filter (fuzzy: `gtp` finds "Go to Prompts"), <kbd>↑</kbd>/<kbd>↓</kbd> to move, <kbd>Enter</kbd> to run. Recently used commands come first. Each command shows its keyboard shortcut, or the reason it is unavailable.
 
+![Palette, filtering](images/palette/palette-filter-light.png#gh-light-mode-only)
+![Palette, filtering](images/palette/palette-filter-dark.png#gh-dark-mode-only)
+
 ## Commands
 
 | Group | Commands |
@@ -18,6 +21,9 @@ Type to filter (fuzzy: `gtp` finds "Go to Prompts"), <kbd>↑</kbd>/<kbd>↓</kb
 | Flows, Sensors, Tools, Prompts, Conversations | Jump to an item by name (shown once you type; at most 6 per group) |
 
 Commands marked `…` take text: type the command, a colon, then the text. `ask ai: why did my last run fail` opens the drawer and sends the text as a message. `new sensor with ai: poll my rss feed` starts a sensor draft with it as the first message. On the Chat page, Ask AI sends in the open chat (or a new one).
+
+![Palette, create, chat and actions groups with unavailable commands greyed out](images/palette/palette-actions-light.png#gh-light-mode-only)
+![Palette, create, chat and actions groups with unavailable commands greyed out](images/palette/palette-actions-dark.png#gh-dark-mode-only)
 
 Dangerous commands always ask first and say what they affect: **Stop all running flows** ("Stops 3 running flows") engages the kill switch and kills running work; **Pause all sensors** names how many sensors it pauses. Commands that cannot run now stay listed, greyed out, with the reason ("No flows are running", "The kill switch is already engaged").
 
