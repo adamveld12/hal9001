@@ -3599,6 +3599,244 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         default: {$ref: '#/components/responses/Error'}
+  /api/auth/overview:
+    get:
+      operationId: getAuthOverview
+      tags: [auth]
+      summary: How you sign in
+      description: |
+        One row per way in with its status: `localhost` (On this Mac: `localhost-trust`), `tailscale` (From your tailnet:
+        `tailscale-identity`), `passkeys` (`webauthn`) and `password`. `state` is `on`, `off` or `attention` (the method is
+        in the stacks but needs a step: sharing is off, no passkey is registered, no password is set; `detail` says which).
+        `current` says how this request was admitted, which the guardrails of the write endpoints compare against.
+        Never returns the password hash.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Overview.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthOverview'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/methods:
+    patch:
+      operationId: updateAuthMethods
+      tags: [auth]
+      summary: Switch sign-in methods on or off
+      description: |
+        Turns `tailscale` (`tailscale-identity`), `passkeys` (`webauthn`) and `password` on or off by editing `auth.stacks`
+        in `config.yaml` (comments are kept). On adds `{module, control: sufficient}` to every stack a service uses that lacks
+        it; off removes the module from every stack. Turning `password` off also deletes the stored hash (it lives in the
+        entry's options); turning it on needs a password to be set first (409 `invalid-state`: set one with
+        `PUT /api/auth/password`, which adds the entry itself). `localhost` is not switchable: this Mac can never lock
+        itself out. The edit is validated like a config load.
+
+        Guardrails (server-enforced). Switching a method off ends the sessions that were established with it. When that
+        would disable the method this request was admitted by (`current.method`), or leave a remote request with no remote
+        method (`tailscale`, `passkeys`, `password`), the server answers 409 `confirmation-required` (`reasons`,
+        `ends_session`) and changes nothing until the request is repeated with `confirm: true`. The change is logged as an
+        auth event (`auth_methods_change`).
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthMethodsRequest'}
+      responses:
+        '200':
+          description: Changed (or already so). The overview after the change.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthChangeResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/password:
+    put:
+      operationId: setAuthPassword
+      tags: [auth]
+      summary: Set or change the password
+      description: |
+        Stores an argon2id hash (the `hash` option of every `password` entry in `auth.stacks`; the entry is added to the
+        stacks the services use when there is none, which turns password sign-in on). The password is never stored in
+        clear text and neither it nor the hash is ever returned (settings views show `«redacted»`). `password` must be at
+        least 12 characters (422 otherwise). Changing an existing password needs `current_password` (422 on a wrong one).
+        A change ends every other session that was established with the password (`ended_sessions`, `notice`); the
+        caller's own session stays. Wrong `current_password` attempts are rate limited per client address like password
+        logins (429 `rate-limited` with `Retry-After`). Logged as `auth_password_set` / `auth_password_change`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthPasswordSetRequest'}
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthChangeResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: removeAuthPassword
+      tags: [auth]
+      summary: Remove the password
+      description: |
+        Needs `current_password` (422 on a wrong one, rate limited like `PUT`). Deletes the hash and removes the `password`
+        entries from the stacks (password sign-in is then off), and ends every session established with the password.
+        When the caller's own session is one of them, or the caller is remote and the password is its last remote method,
+        the server answers 409 `confirmation-required` until `confirm: true` is sent. Logged as `auth_password_remove`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthPasswordRemoveRequest'}
+      responses:
+        '200':
+          description: Removed. Idempotent when no password is set (and `current_password` is then not checked).
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthChangeResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/allowed-logins:
+    put:
+      operationId: setAllowedLogins
+      tags: [auth]
+      summary: Who can sign in over the tailnet
+      description: |
+        Replaces `allowed_logins` in `config.yaml` (comments are kept): the Tailscale logins `tailscale-identity` accepts.
+        An empty list means the login that owns this Mac only. Each login must look like `name@domain` (no spaces, commas
+        or control characters, at most 254 bytes); duplicates (case-insensitive) are dropped; 422 lists every bad entry.
+        When the request was admitted by `tailscale-identity` and the new list no longer admits the caller's own login,
+        the server answers 409 `confirmation-required` until `confirm: true` is sent. Logged as `auth_logins_change`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthAllowedLoginsRequest'}
+      responses:
+        '200':
+          description: Changed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthChangeResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/stacks:
+    get:
+      operationId: getAuthStacks
+      tags: [auth]
+      summary: The auth stacks and service mapping
+      description: |
+        `auth.stacks` and `auth.services` of the effective config (defaults filled in), for the advanced editor. Secrets
+        in module options (the password hash) are `«redacted»`. `hash` is the hash of `config.yaml` to send back as
+        `expected_hash`.
+      x-hal-service: admin
+      responses:
+        '200':
+          description: Stacks.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthStacks'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setAuthStacks
+      tags: [auth]
+      summary: Replace the auth stacks and service mapping
+      description: |
+        Writes `auth.stacks` and `auth.services` to `config.yaml`, keeping comments and entries that did not change. A
+        `«redacted»` option value keeps the stored one. The result must pass the validator that loads the config (unknown
+        modules, controls, services or stacks; 422 with diagnostics) and the server's own rules:
+
+        - A local request (peer, Host and headers that `localhost-trust` accepts) cannot remove or disable
+          `localhost-trust`: the new stacks must still admit a plain local request for every service, otherwise 422
+          with the diagnostic `localhost_trust_required` and nothing is written.
+        - 409 `confirmation-required` (`reasons`, `ends_session`) until `confirm: true` when the change removes the method
+          this request was admitted by, or leaves a remote request with no remote method in the `admin` stack, or removes
+          `localhost-trust` on a remote request.
+
+        Sessions established with a method that no longer appears in the `admin` stack's methods are ended. 409 `conflict`
+        when `expected_hash` is stale. Logged as `auth_stacks_change`.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthStacksRequest'}
+      responses:
+        '200':
+          description: Written.
+          headers:
+            Set-Cookie: {$ref: '#/components/headers/SetSessionCookie'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthChangeResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/stacks/preview:
+    post:
+      operationId: previewAuthStacks
+      tags: [auth]
+      summary: Preview a stacks change
+      description: |
+        Runs everything `PUT /api/auth/stacks` would check and writes nothing. Always 200 for a well-formed body:
+        `valid` and `diagnostics` carry validation and lock-out findings, `confirm_required` / `reasons` /
+        `ends_session` the guardrail outcome, and `before` / `after` the `auth:` section of `config.yaml` as YAML
+        (secrets redacted) for the UI to diff.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthStacksPreviewRequest'}
+      responses:
+        '200':
+          description: Preview.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthStacksPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
   /api/tailscale:
     get:
       operationId: getTailscaleStatus
@@ -3997,6 +4235,13 @@ components:
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/ValidationProblem'}
+    TooManyRequests:
+      description: Too many failed attempts from this client address; wait `retry_after` seconds (`Retry-After` header).
+      headers:
+        Retry-After: {schema: {type: integer, minimum: 1}}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/TooManyRequestsProblem'}
     Paused:
       description: The kill switch is engaged and this operation would start work.
       content:
@@ -4101,7 +4346,7 @@ components:
         unauthenticated 401, authentication-failed 401, forbidden 403, host-not-allowed 403,
         origin-not-allowed 403, not-found 404, conflict/already-exists/invalid-state 409, login-expired 410,
         payload-too-large 413, unsupported-media-type 415, validation-failed 422, paused 423, internal 500,
-        unavailable 503.
+        unavailable 503; confirmation-required 409 (an auth change that needs `confirm: true`), rate-limited 429.
       enum:
         - 'urn:hal9001:problem:bad-request'
         - 'urn:hal9001:problem:unauthenticated'
@@ -4120,6 +4365,8 @@ components:
         - 'urn:hal9001:problem:paused'
         - 'urn:hal9001:problem:internal'
         - 'urn:hal9001:problem:unavailable'
+        - 'urn:hal9001:problem:confirmation-required'
+        - 'urn:hal9001:problem:rate-limited'
     Problem:
       type: object
       required: [type, title, status]
@@ -4190,16 +4437,27 @@ components:
         - type: object
           properties:
             type:
-              description: '`conflict`: `expected_hash` does not match the file. `already-exists`: create of an existing id. `invalid-state`: the resource is not in a state that allows the operation.'
+              description: '`conflict`: `expected_hash` does not match the file. `already-exists`: create of an existing id. `invalid-state`: the resource is not in a state that allows the operation. `confirmation-required`: an auth change that would end this session or leave it without a way in; repeat it with `confirm: true` (see `reasons`).'
               enum:
                 - 'urn:hal9001:problem:conflict'
                 - 'urn:hal9001:problem:already-exists'
                 - 'urn:hal9001:problem:invalid-state'
+                - 'urn:hal9001:problem:confirmation-required'
             status: {enum: [409]}
             expected_hash: {type: string, description: The hash the client sent.}
             current_hash: {$ref: '#/components/schemas/NullableHash'}
             current_state: {type: string, description: 'For `invalid-state`: the state that blocks the operation, such as `approved` or `running`.'}
             release_url: {type: string, description: 'For an install refused by `POST /api/update/install`: where to download the build by hand.'}
+            reasons: {type: array, items: {type: string}, description: 'For `confirmation-required`: what the change does to this session, one sentence each.'}
+            ends_session: {type: boolean, description: 'For `confirmation-required`: confirming ends the caller''s own session.'}
+    TooManyRequestsProblem:
+      allOf:
+        - {$ref: '#/components/schemas/Problem'}
+        - type: object
+          properties:
+            type: {enum: ['urn:hal9001:problem:rate-limited']}
+            status: {enum: [429]}
+            retry_after: {type: integer, minimum: 1, description: Seconds until the client may try again (also the `Retry-After` header).}
     LoginExpiredProblem:
       allOf:
         - {$ref: '#/components/schemas/Problem'}
@@ -6654,7 +6912,7 @@ components:
         ts: {$ref: '#/components/schemas/Timestamp'}
         action:
           type: string
-          description: '`request`, `whoami`, `login_begin`, `login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register`, `webauthn_delete`.'
+          description: '`request`, `whoami`, `login_begin`, `login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register`, `webauthn_delete`, `auth_methods_change`, `auth_password_set`, `auth_password_change`, `auth_password_remove`, `auth_logins_change`, `auth_stacks_change`. The auth_* actions are admin changes of the sign-in configuration (`reason` says what changed; a rejected current password logs outcome `fail`).'
         service: {$ref: '#/components/schemas/AuthService'}
         endpoint: {type: string, examples: ['GET /api/flows']}
         modules: {type: array, items: {$ref: '#/components/schemas/ModuleTrace'}}
@@ -6669,6 +6927,134 @@ components:
       required: [events]
       properties:
         events: {type: array, items: {$ref: '#/components/schemas/AuthEvent'}}
+    AuthMethodId: {type: string, enum: [localhost, tailscale, passkeys, password], description: 'Ways in: `localhost` = module `localhost-trust`, `tailscale` = `tailscale-identity`, `passkeys` = `webauthn`, `password` = `password`.'}
+    AuthMethodState: {type: string, enum: [on, off, attention]}
+    AuthMethod:
+      type: object
+      required: [id, module, name, state, enabled, toggleable, custom, detail]
+      properties:
+        id: {$ref: '#/components/schemas/AuthMethodId'}
+        module: {type: string, examples: [tailscale-identity]}
+        name: {type: string, description: 'Label for the UI: On this Mac, From your tailnet, Passkeys, Password.', examples: [From your tailnet]}
+        state: {$ref: '#/components/schemas/AuthMethodState'}
+        enabled: {type: boolean, description: 'The module is in the stack of at least one service.'}
+        toggleable: {type: boolean, description: 'False for `localhost`.'}
+        custom: {type: boolean, description: 'The stacks do not have the plain shape (the module is in some of the stacks the services use but not all, or with a control other than `sufficient`); switching it rewrites every stack as described at `PATCH /api/auth/methods`. The Advanced editor shows the details.'}
+        detail: {type: string, description: 'One line for the row: why it is on, off, or needs attention.'}
+    AuthCurrent:
+      type: object
+      required: [method, modules, remote, source, principal, session_id]
+      description: How this request was admitted (to the `admin` service).
+      properties:
+        method: {oneOf: [{$ref: '#/components/schemas/AuthMethodId'}, {type: 'null'}], description: 'The method of the first module that admitted it; null when unknown.'}
+        modules: {type: array, items: {type: string}}
+        remote: {type: boolean, description: 'The request does not pass the `localhost-trust` conditions (it came over the tailnet or a proxy).'}
+        source: {type: string, enum: [session, stack]}
+        principal: {type: string}
+        session_id: {type: [string, 'null']}
+    PasswordStatus:
+      type: object
+      required: [set, enabled, last_used_at]
+      properties:
+        set: {type: boolean, description: 'A password hash is stored.'}
+        enabled: {type: boolean, description: 'The `password` module is in the stacks.'}
+        last_used_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}], description: 'Last successful password sign-in found in the auth events; null if none.'}
+    AuthOverview:
+      type: object
+      required: [methods, current, password, passkey_count, allowed_logins]
+      properties:
+        methods: {type: array, items: {$ref: '#/components/schemas/AuthMethod'}, description: 'In the order localhost, tailscale, passkeys, password.'}
+        current: {$ref: '#/components/schemas/AuthCurrent'}
+        password: {$ref: '#/components/schemas/PasswordStatus'}
+        passkey_count: {type: integer, minimum: 0}
+        allowed_logins: {type: array, items: {type: string}, description: '`allowed_logins` as configured; empty means the Mac''s owner only.'}
+    AuthChangeResult:
+      type: object
+      required: [overview, ended_sessions, notice]
+      properties:
+        overview: {$ref: '#/components/schemas/AuthOverview'}
+        ended_sessions: {type: integer, minimum: 0, description: 'Sessions the change ended (the caller''s own included, when confirmed).'}
+        notice: {type: [string, 'null'], description: 'Human sentence about what the change ended, for the UI.'}
+    AuthMethodsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        tailscale: {type: boolean}
+        passkeys: {type: boolean}
+        password: {type: boolean}
+        confirm: {type: boolean, description: 'Acknowledge a `confirmation-required` answer.'}
+    AuthPasswordSetRequest:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password: {type: string, minLength: 12, maxLength: 1024, writeOnly: true}
+        current_password: {type: string, writeOnly: true, description: 'Required when a password is already set.'}
+    AuthPasswordRemoveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        current_password: {type: string, writeOnly: true}
+        confirm: {type: boolean}
+    AuthAllowedLoginsRequest:
+      type: object
+      additionalProperties: false
+      required: [logins]
+      properties:
+        logins: {type: array, maxItems: 100, items: {type: string, maxLength: 254, examples: [alice@example.com]}}
+        confirm: {type: boolean}
+    AuthStackMap:
+      type: object
+      description: Named ordered module stacks.
+      additionalProperties:
+        type: array
+        items: {$ref: '#/components/schemas/AuthModuleEntry'}
+    AuthServiceMap:
+      type: object
+      additionalProperties: false
+      required: [ui, api, approve, admin]
+      description: Which stack guards each service.
+      properties:
+        ui: {type: string}
+        api: {type: string}
+        approve: {type: string}
+        admin: {type: string}
+    AuthStacks:
+      type: object
+      required: [stacks, services, hash]
+      properties:
+        stacks: {$ref: '#/components/schemas/AuthStackMap'}
+        services: {$ref: '#/components/schemas/AuthServiceMap'}
+        hash: {$ref: '#/components/schemas/Hash'}
+    AuthStacksRequest:
+      type: object
+      additionalProperties: false
+      required: [stacks, services]
+      properties:
+        stacks: {$ref: '#/components/schemas/AuthStackMap'}
+        services: {$ref: '#/components/schemas/AuthServiceMap'}
+        expected_hash: {$ref: '#/components/schemas/Hash'}
+        confirm: {type: boolean}
+    AuthStacksPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [stacks, services]
+      properties:
+        stacks: {$ref: '#/components/schemas/AuthStackMap'}
+        services: {$ref: '#/components/schemas/AuthServiceMap'}
+    AuthStacksPreview:
+      type: object
+      required: [valid, diagnostics, changed, confirm_required, reasons, ends_session, before, after]
+      properties:
+        valid: {type: boolean, description: 'No error diagnostics: the change could be written (after confirmation, when required).'}
+        diagnostics: {type: array, items: {$ref: '#/components/schemas/Diagnostic'}, description: 'Validator findings, and `localhost_trust_required` when a local request would lose `localhost-trust`.'}
+        changed: {type: boolean}
+        confirm_required: {type: boolean}
+        reasons: {type: array, items: {type: string}}
+        ends_session: {type: boolean}
+        before: {type: string, description: 'The `auth:` section as YAML, secrets redacted.'}
+        after: {type: string}
     Passkey:
       type: object
       required: [id, rp_id, sign_count, label, created_at]

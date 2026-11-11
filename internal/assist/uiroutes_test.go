@@ -99,7 +99,7 @@ func TestRouteCatalogMatchesTheWebApp(t *testing.T) {
 	if len(app) < 10 {
 		t.Fatalf("found only %d routes in App.tsx: %v (did its route syntax change?)", len(app), app)
 	}
-	redirectOnly := map[string]bool{"/settings": true, "/approvals/:id": true}
+	redirectOnly := map[string]bool{"/settings": true, "/settings/tailscale": true, "/approvals/:id": true}
 	catalog := map[string]bool{}
 	for _, r := range uiRoutes {
 		catalog[r.Pattern] = true

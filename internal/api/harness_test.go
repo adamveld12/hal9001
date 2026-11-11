@@ -171,6 +171,8 @@ type envOptions struct {
 	runtimes func(e *env) *runtimes.Manager
 	// tailscale is the Tailscale manager; without one the /api/tailscale operations answer 503.
 	tailscale func(e *env) *tailscale.Manager
+	// authTailscale is the Tailscale client of the auth manager (whois, status); nil is the real CLI, which no test uses.
+	authTailscale tailscale.Client
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -193,7 +195,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 	if eo.auth != nil {
 		cfg = *eo.auth
 	}
-	e.mgr, err = auth.New(auth.Options{Config: cfg, Store: auth.NewMemoryStore()})
+	e.mgr, err = auth.New(auth.Options{Config: cfg, Store: auth.NewMemoryStore(), Tailscale: eo.authTailscale})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,6 +33,8 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
     "sandbox-env",
     "queue",
     "tailscale",
+    "auth-overview",
+    "auth-stacks",
   ],
   "sensor_run.created": ["sensors", "sensor", "sensor-runs"],
   "sensor_run.updated": ["sensors", "sensor", "sensor-runs"],
@@ -82,7 +84,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   ],
   "inbox.created": ["inbox", "inbox-item"],
   "inbox.updated": ["inbox", "inbox-item"],
-  "auth_event.created": ["auth-events", "auth-sessions"],
+  "auth_event.created": ["auth-events", "auth-sessions", "auth-overview"],
   // The open session is updated in place from the event (pages/assist/useAssistLive.ts); only the lists refetch.
   "assist.updated": ["assist-sessions", "conversations", "conversation"],
   "assist.message": [],

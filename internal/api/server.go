@@ -5,8 +5,9 @@
 // handler table and mounts it on a net/http ServeMux with the auth service the
 // operation declares (x-hal-service) unless it is x-hal-public. A contract
 // operation without a handler panics at construction, so the contract and the
-// server cannot drift apart. The /api/auth/* operations are mounted by
-// auth.Manager.Routes.
+// server cannot drift apart. The login, session and passkey operations under
+// /api/auth/ are mounted by auth.Manager.Routes; the sign-in settings operations
+// there (auth_admin.go) are in the handler table like the rest.
 //
 // Reads come straight from *store.Store. Sensors, flows, prompts, env and
 // settings are files under the home directory, read and written through
@@ -100,7 +101,7 @@ type Server struct {
 	closeOnce    sync.Once
 
 	// routes are the "METHOD pattern" strings registered from the contract
-	// (excluding /api/auth/*, which auth.Manager mounts).
+	// (excluding the login, session and passkey operations under /api/auth/, which auth.Manager mounts).
 	routes []string
 
 	// mcpHandler is the Streamable HTTP transport of the operator MCP server (POST /mcp).
@@ -110,6 +111,9 @@ type Server struct {
 
 	probeMu sync.Mutex
 	probes  map[string]probeResultView
+
+	// authEditLock serializes the edits of the auth section of config.yaml (/api/auth/methods and friends).
+	authEditLock sync.Mutex
 
 	// rt detects and installs runtime agents; ownRT: the server created it and closes it.
 	rt            *runtimes.Manager
@@ -182,17 +186,18 @@ func (s *Server) Close() {
 	})
 }
 
-// mountContract registers every non-auth operation of the contract.
+// mountContract registers every operation of the contract that has a handler in the table: all of them but the
+// login, session and passkey operations under /api/auth/, which auth.Manager.Routes mounts.
 func (s *Server) mountContract() {
 	table := s.handlers()
 	doc := apispec.MustLoad()
 	seen := map[string]bool{}
 	for path, item := range doc.Paths.Map() {
-		if strings.HasPrefix(path, "/api/auth/") {
-			continue
-		}
 		for method, op := range item.Operations() {
 			h, ok := table[op.OperationID]
+			if !ok && strings.HasPrefix(path, "/api/auth/") {
+				continue // login, sessions, passkeys: auth.Manager.Routes
+			}
 			if !ok {
 				panic("api: contract operation " + op.OperationID + " (" + method + " " + path + ") has no handler")
 			}
@@ -382,6 +387,15 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"probeRuntime":            s.probeRuntime,
 		"installRuntimeAdapter":   s.installRuntimeAdapter,
 		"uninstallRuntimeAdapter": s.uninstallRuntimeAdapter,
+
+		"getAuthOverview":    s.getAuthOverview,
+		"updateAuthMethods":  s.updateAuthMethods,
+		"setAuthPassword":    s.setAuthPassword,
+		"removeAuthPassword": s.removeAuthPassword,
+		"setAllowedLogins":   s.setAllowedLogins,
+		"getAuthStacks":      s.getAuthStacks,
+		"setAuthStacks":      s.setAuthStacks,
+		"previewAuthStacks":  s.previewAuthStacks,
 
 		"getSettings":    s.getSettings,
 		"updateSettings": s.updateSettings,

@@ -27,14 +27,14 @@ Each operation declares its service in `x-hal-service`:
 | `ui` | The login, logout, and whoami calls. The UI shell and its assets are public (they hold no data and contain the login page); every `/api/` route is guarded. |
 | `api` | Reads, the event stream, the compute-only POSTs (`/api/flows/validate`, `/api/sensors/validate`, `/api/prompts/render`, `/api/transform/preview`, `/api/transform/compile`), and `POST /mcp`, the MCP transport ([mcp.md](mcp.md); its tools call the endpoints above with the caller's credentials). |
 | `approve` | `POST /api/approvals/{id}/approve` and `/deny`. |
-| `admin` | Everything that writes files, runs code, or changes state: flows, sensors, prompts, env, settings, kill switch, queue removal and clearing, event injection, replay, test-node, runtime probes, inbox flags, session and passkey management. Auth reads that expose security data (sessions, auth events, passkeys, Tailscale status) are also `admin`. |
+| `admin` | Everything that writes files, runs code, or changes state: flows, sensors, prompts, env, settings, kill switch, queue removal and clearing, event injection, replay, test-node, runtime probes, inbox flags, session and passkey management, sign-in settings (`/api/auth/overview`, `methods`, `password`, `allowed-logins`, `stacks`; [auth.md](auth.md#changing-sign-in-from-the-ui-or-api)). Auth reads that expose security data (sessions, auth events, passkeys, Tailscale status) are also `admin`. |
 
 The `config.yaml` stack for the service decides who gets in (REQUIREMENTS §10.4). With the default config a local `curl` passes through `localhost-trust` and needs no credentials. When the stack does not admit you:
 
 1. The API answers `401 unauthenticated`. The problem body has `service` and `methods`, the interactive modules of that service's stack (for example `["webauthn", "password"]`).
 2. `POST /api/auth/{service}/begin` with `{"method": "password", "password": "..."}`. A module that needs more input answers `200 {"status": "challenge", "login_id": ..., "step": {...}}`; reply with `POST /api/auth/{service}/continue` `{"login_id": ..., "response": ...}`.
 3. Success is `200 {"status": "success", "services": [...], "session": {...}}` and sets the `hal9001_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS). Send it back on later requests (`curl -c jar -b jar`). One session covers every service its stack evaluation granted; there is no step-up.
-4. A failed login is `401 authentication-failed`. A session that does not grant the service gets `403 forbidden`.
+4. A failed login is `401 authentication-failed`. Failed password attempts (and wrong `current_password` values at `/api/auth/password`) are counted per client address: after 5 within 15 minutes further attempts get `429 rate-limited` with `Retry-After`. A session that does not grant the service gets `403 forbidden`.
 
 `GET /api/auth/whoami` always answers 200; `authenticated: false` means show a login. Passkey registration (`/api/auth/webauthn/register/*`) is allowed for any caller the `admin` service admits (a session, or the stack itself such as `localhost-trust`); begin and finish must come from the same caller.
 

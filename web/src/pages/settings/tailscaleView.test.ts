@@ -5,7 +5,6 @@ import {
   allowedHostEntry,
   allowedHostView,
   conflictTitle,
-  loginsView,
   parsePort,
   funnelOffCommand,
   parseServeFailure,
@@ -296,20 +295,6 @@ describe("allowedHostView", () => {
       }),
     );
     expect(v).toMatchObject({ entry: null, tone: "muted" });
-  });
-});
-
-describe("loginsView", () => {
-  it("lists the logins and explains the owner default", () => {
-    const v = loginsView(status());
-    expect(v.logins).toEqual(["ada@example.com"]);
-    expect(v.note).toMatch(/empty, only this Mac's owner \(ada@example.com\)/);
-  });
-
-  it("says when nobody can sign in", () => {
-    const v = loginsView(status({ allowed_logins: [], owner_login: null }));
-    expect(v.logins).toEqual([]);
-    expect(v.note).toMatch(/owner is unknown/);
   });
 });
 

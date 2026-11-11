@@ -44,6 +44,8 @@ export const QUERY_ROOTS = [
   "auth-sessions",
   "auth-events",
   "passkeys",
+  "auth-overview",
+  "auth-stacks",
   "tailscale",
   "mcp-info",
   "flow-samples",

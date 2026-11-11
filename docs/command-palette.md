@@ -42,7 +42,7 @@ Dangerous commands always ask first and say what they affect: **Stop all running
 | --- | --- |
 | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>P</kbd> | Command palette |
 | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd> | Ask AI drawer (toggle) |
-| `g` then `i a s f p h t r , c e m o b u n` | Go to Inbox, Approvals, Sensors, Flows, Prompts, Chat, Timeline, Agent runs, General, Context, Environment, Runtimes, Tools, Sandboxes, Auth, Tailscale. (`g c` is Context; MCP also declares `c` and is reached from the palette.) |
+| `g` then `i a s f p h t r , c e m o b u` | Go to Inbox, Approvals, Sensors, Flows, Prompts, Chat, Timeline, Agent runs, General, Context, Environment, Runtimes, Tools, Sandboxes, Auth. (`g c` is Context; MCP also declares `c` and is reached from the palette.) |
 | `[` | Toggle the sidebar |
 | `j`/`k` and action keys | Inbox and approvals |
 | <kbd>⌘</kbd>+<kbd>S</kbd>, <kbd>⌘</kbd>+<kbd>Z</kbd> / <kbd>⇧⌘Z</kbd> | Save, undo and redo in the flow editor |

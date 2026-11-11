@@ -470,9 +470,11 @@ auth:
 
 Every authentication decision is written to `auth_events` (service, endpoint, each module's result, final outcome, principal, remote addr, host) and visible in the UI and API.
 
+The Auth page (Settings > Auth, "How you sign in to hal") shows one row per way in (On this Mac, From your tailnet, Passkeys, Password) and edits it through `/api/auth/overview`, `/api/auth/methods`, `/api/auth/password`, `/api/auth/allowed-logins` and `/api/auth/stacks` (+ `/preview`); all need the `admin` service and are logged as auth events (`auth_methods_change`, `auth_password_set`, `auth_password_change`, `auth_password_remove`, `auth_logins_change`, `auth_stacks_change`). Guardrails are enforced by the server: a request from this Mac cannot remove or disable `localhost-trust` (`422 localhost_trust_required`); a change that disables the method the request or session used, leaves a remote request with no remote method, or removes `localhost-trust` on a remote request needs `confirm: true` (`409 confirmation-required` with `reasons` and `ends_session`), and sessions of removed methods end. Passwords are at least 12 characters, stored as an argon2id hash in the `hash` option of the `password` entries (never returned, redacted in settings); setting one adds the entry when none exists; failed attempts are limited to 5 per 15 minutes per peer address, shared with password logins (`429` with `Retry-After`). `hal9001 auth set-password` follows the same rules. The advanced stacks editor validates like a config load and previews a diff before writing.
+
 ### 10.5 Tailscale
 
-The daemon stays loopback-only; Tailscale does the exposure, and hal9001 sets it up on request (Settings > Tailscale, `hal9001 tailscale serve`, `POST /api/tailscale/serve`; admin service):
+The daemon stays loopback-only; Tailscale does the exposure, and hal9001 sets it up on request (Settings > Auth, `hal9001 tailscale serve`, `POST /api/tailscale/serve`; admin service):
 
 ```
 tailscale serve --bg --yes --https=443 http://127.0.0.1:9001

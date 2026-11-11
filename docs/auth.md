@@ -127,15 +127,18 @@ printf %s "$PW" | bin/hal9001 auth set-password --stdin   # reads the first line
 
 This writes the argon2id hash (`$argon2id$v=19$m=65536,t=3,p=4$...`) as the `hash` option of **every** `password` entry
 in the auth stacks of `config.yaml`, keeping comments and layout (if there is no `auth` section the default stack is
-added). The command fails if no stack has a `password` entry; add one first. It uses the same optimistic-write check as
-the API, so it refuses to overwrite a concurrent edit. The server uses the hash of the first `password` entry that has
-one (services in the order `ui`, `api`, `approve`, `admin`).
+added). When no stack a service uses has a `password` entry, the command adds `{module: password, control: sufficient}`
+to each of them, which turns password sign-in on. The password must be at least 12 characters, as in the API; a shorter
+one is refused and nothing is written. It uses the same optimistic-write check as the API, so it refuses to overwrite a
+concurrent edit. The server uses the hash of the first `password` entry that has one (services in the order `ui`, `api`,
+`approve`, `admin`).
 
 ```yaml
 - {module: password, control: sufficient, options: {hash: "$argon2id$v=19$m=65536,t=3,p=4$..."}}
 ```
 
-Treat `config.yaml` as sensitive after this; `GET /api/settings` and `hal9001 settings get` redact it.
+Treat `config.yaml` as sensitive after this; `GET /api/settings`, `GET /api/auth/stacks` and `hal9001 settings get`
+redact the hash.
 
 ### webauthn
 
@@ -146,6 +149,110 @@ Treat `config.yaml` as sensitive after this; `GET /api/settings` and `hal9001 se
   the same caller (session, or stack principal).
 - User verification is required. Credentials can be listed and removed with `/api/auth/webauthn/credentials`.
 - Passkeys on `localhost` only matter when `localhost-trust` is not in the stack.
+
+## The Auth page
+
+**Settings > Auth** ("How you sign in to hal") is the one place to see and change how hal admits you. The old
+separate Tailscale settings page is gone; `/settings/tailscale` redirects to `/settings/auth#tailscale`. The page has these
+cards:
+
+| Card | What it shows and does |
+|---|---|
+| Overview | One row per way in: **On this Mac** (`localhost-trust`), **From your tailnet** (`tailscale-identity`), **Passkeys** (`webauthn`) and **Password** (`password`). Each is on, off or needs attention (for example sharing is off, no passkey is registered, or no password is set), with a switch. On this Mac has no switch. |
+| Tailscale | Sharing status, warnings with the command that fixes each, **Share on your tailnet** (and stop sharing), the URL, the funnel refusal, `allowed_hosts`, and the editable **Who can sign in** list (`allowed_logins`). |
+| Password | Set, change or remove the password; when it was last used; only the argon2id hash is stored. |
+| Passkeys | Register and remove passkeys. |
+| Sessions | List and end sessions. |
+| Sign-in events | Recent authentication decisions ([Auth events](#auth-events)). |
+| Advanced | Collapsed. The auth stacks and the service mapping as an editor, with validation and a diff before saving. |
+
+![The Overview card](images/auth/overview-light.png#gh-light-mode-only)
+![The Overview card](images/auth/overview-dark.png#gh-dark-mode-only)
+
+![The Tailscale card: sharing and Who can sign in](images/auth/tailscale-light.png#gh-light-mode-only)
+![The Tailscale card: sharing and Who can sign in](images/auth/tailscale-dark.png#gh-dark-mode-only)
+
+Password card, before a password is set, and after (set and change form):
+
+![The Password card, no password set](images/auth/password-notset-light.png#gh-light-mode-only)
+![The Password card, no password set](images/auth/password-notset-dark.png#gh-dark-mode-only)
+
+![The Password card, set, with the change form](images/auth/password-set-light.png#gh-light-mode-only)
+![The Password card, set, with the change form](images/auth/password-set-dark.png#gh-dark-mode-only)
+
+The Advanced card shows the diff of the `auth:` section before it writes anything:
+
+![The stacks editor with a diff](images/auth/advanced-light.png#gh-light-mode-only)
+![The stacks editor with a diff](images/auth/advanced-dark.png#gh-dark-mode-only)
+
+## Changing sign-in from the UI or API
+
+The page uses these endpoints. All need the `admin` service, and every change is logged as an auth event with the
+action shown.
+
+| Endpoint | Purpose | Auth event action |
+|---|---|---|
+| `GET /api/auth/overview` | One row per way in (`localhost`, `tailscale`, `passkeys`, `password`) with `state` `on`, `off` or `attention`, plus `current`: how this request was admitted. Never returns the hash. | none |
+| `PATCH /api/auth/methods` | Turn `tailscale`, `passkeys` or `password` on or off. | `auth_methods_change` |
+| `PUT /api/auth/password` | Set or change the password. | `auth_password_set`, `auth_password_change` |
+| `DELETE /api/auth/password` | Remove the password. | `auth_password_remove` |
+| `PUT /api/auth/allowed-logins` | Replace `allowed_logins`. | `auth_logins_change` |
+| `GET /api/auth/stacks` | The stacks and service mapping (hash redacted), and the config `hash` to send back as `expected_hash`. | none |
+| `POST /api/auth/stacks/preview` | Validate a stacks change and return the `before` and `after` YAML, writing nothing. | none |
+| `PUT /api/auth/stacks` | Write the stacks and service mapping. | `auth_stacks_change` |
+
+Switching a method on adds `{module, control: sufficient}` to every stack a service uses that lacks it; off removes the
+module from every stack. Edits keep the comments of `config.yaml`. The method `localhost` cannot be switched.
+
+### Guardrails
+
+The server enforces these; the UI only shows them.
+
+- A request from this Mac (what `localhost-trust` accepts) cannot remove or disable `localhost-trust`: the new stacks
+  must still admit a plain local request for every service, otherwise `422` with the diagnostic
+  `localhost_trust_required`, and nothing is written.
+- A change needs `confirm: true` when it disables the method this request or session was admitted by, leaves a remote
+  request with no remote method (`tailscale`, `passkeys`, `password`), or removes `localhost-trust` on a remote
+  request. Without it the server answers `409 confirmation-required` with `reasons` and `ends_session`, and changes
+  nothing. Repeat the request with `confirm: true` to go ahead. The UI shows this as a confirm dialog.
+- A change ends the sessions that were established with a method it removes. Turning a method off ends its sessions;
+  `PUT /api/auth/stacks` ends sessions whose method no longer appears in the `admin` stack. When the caller's own session
+  ends, the response clears the cookie.
+
+![The confirm dialog](images/auth/confirm-light.png#gh-light-mode-only)
+![The confirm dialog](images/auth/confirm-dark.png#gh-dark-mode-only)
+
+### Password
+
+- At least 12 characters (`422` otherwise). Stored as an argon2id PHC string in the `hash` option of the `password`
+  entries in the stacks. The password and the hash are never returned, and settings views show `«redacted»`.
+- **Set** stores the hash and, when no stack a service uses has a `password` entry, adds one (which turns password
+  sign-in on). **Change** needs `current_password` (`422` when wrong) and ends every other session established with the
+  password; the caller's own session stays. **Remove** needs `current_password`, deletes the hash and the `password`
+  entries (password sign-in is then off) and ends every password session. It needs `confirm: true` when it would end the
+  caller's own session or is the last remote method of a remote caller. Removing when no password is set does nothing.
+- Turning `password` on with `PATCH /api/auth/methods` needs a password to be set first (`409 invalid-state`); turning it
+  off deletes the hash.
+- Wrong `current_password` values and failed password logins share one limit per peer address: after 5 failures within
+  15 minutes, further attempts get `429 rate-limited` with `Retry-After`. A success clears the count. Behind `tailscale
+  serve` every tailnet client reaches hal9001 from the same loopback address, so they share one counter.
+
+### Who can sign in
+
+`PUT /api/auth/allowed-logins` replaces `allowed_logins`. An empty list means the login that owns this Mac only. Each
+entry must look like `name@domain` (no spaces, commas or control characters, at most 254 bytes). Duplicates
+(case-insensitive) are dropped. `422` lists every bad entry. When the request was admitted by `tailscale-identity` and
+the new list no longer admits the caller's own login, it needs `confirm: true`.
+
+### Stacks editor
+
+`GET /api/auth/stacks` returns the effective `auth.stacks` and `auth.services` (defaults filled in). `PUT` writes them
+and must pass the same validation as a config load (unknown modules, controls, services or stacks give `422` with
+diagnostics) plus the guardrails above. Comments and unchanged entries stay. A `«redacted»` option value keeps the stored
+one, so the hash survives an edit. `409 conflict` means `expected_hash` is stale: the file changed, reload.
+`POST /api/auth/stacks/preview` runs every check and writes nothing; it returns `valid`, `diagnostics`,
+`confirm_required`, `reasons`, `ends_session`, and the `before` and `after` YAML of the `auth:` section (secrets
+redacted), which the UI diffs.
 
 ## Logging in from scripts
 
@@ -183,7 +290,7 @@ funnel`, which publishes to the internet: sharing is for devices on your own tai
 
 1. Install Tailscale on this Mac and sign in. Your tailnet needs MagicDNS and HTTPS certificates turned on (under DNS in
    the [admin console](https://login.tailscale.com/admin/dns)).
-2. In the web UI open **Settings > Tailscale** and press **Share hal on your tailnet**, or run:
+2. In the web UI open **Settings > Auth** (the Tailscale card) and press **Share on your tailnet**, or run:
 
    ```sh
    bin/hal9001 tailscale serve              # --port 8443 for another HTTPS port, --replace to take over a busy one
@@ -204,29 +311,25 @@ funnel`, which publishes to the internet: sharing is for devices on your own tai
    and whether it points at hal9001, whether funnel is on (it should not be), whether the name is in `allowed_hosts`,
    the logins `tailscale-identity` accepts, and a warning with the fix (a command to copy, or a link) for each problem.
 
-![Settings > Tailscale, ready to share](images/tailscale/ready-light.png)
-
 What the button does, exactly:
 
 | Step | Command or edit |
 |---|---|
 | Share | `tailscale serve --bg --yes --https=<port> http://127.0.0.1:<hal9001 port>` (default port 443). Nothing is run when the port already points at hal9001. |
-| Funnel on the port | `tailscale funnel` exposes the HTTPS port to the public internet: hal9001 refuses (`409 invalid-state`, also with `--replace` and also when the port already points at hal9001), runs nothing and does not touch `allowed_hosts` or `tailscale.serve`. Settings > Tailscale shows the error and disables the button; run `tailscale funnel --https=<port> off` (or pick another port). At start the same rule applies: a funnel port is not re-served and is reported as the `funnel_on_port` warning. |
+| Funnel on the port | `tailscale funnel` exposes the HTTPS port to the public internet: hal9001 refuses (`409 invalid-state`, also with `--replace` and also when the port already points at hal9001), runs nothing and does not touch `allowed_hosts` or `tailscale.serve`. The Tailscale card shows the error and disables the button; run `tailscale funnel --https=<port> off` (or pick another port). At start the same rule applies: a funnel port is not re-served and is reported as the `funnel_on_port` warning. |
 | Port busy | The HTTPS port already serves something else: hal9001 refuses (`409`; the UI asks, the CLI wants `--replace`) and never overwrites it silently. |
 | `allowed_hosts` | Adds `<name>` (or `<name>:<port>` when the port is not 443, matching the `Host` header a browser sends) unless it is already there. Comments and your own entries stay; there are no duplicates. |
 | Stop sharing | `tailscale serve --https=<port> off`, only when the mapping on that port points at hal9001, and `tailscale.serve: false`. The `allowed_hosts` entry is removed only if hal9001 added it (recorded in `<home>/data/tailscale.json`); entries you wrote stay. |
 
-![Sharing on the tailnet](images/tailscale/sharing-light.png)
-
 At start, while `tailscale.serve` is `true`, hal9001 checks the mapping and puts it back if Tailscale lost it (for
 example after `tailscale serve reset` or a Tailscale reinstall). It waits for tailscaled when it is still starting, never
-replaces a mapping to something else, and shows a failure as a warning in Settings > Tailscale and in the log. If this
+replaces a mapping to something else, and shows a failure as a warning in the Tailscale card and in the log. If this
 Mac's tailnet name changed, the new name is added to `allowed_hosts`; the old entry stays and shows as a notice, for you
 to remove from `config.yaml`.
 
 Who may sign in over the tailnet is unchanged: `tailscale-identity` (below) accepts the logins in `allowed_logins`, or
-the login that owns this Mac when the list is empty. Settings > Tailscale shows who that is and links to the auth
-settings. Sharing does not change the auth stacks; remove `tailscale-identity` and tailnet devices need a passkey or the
+the login that owns this Mac when the list is empty. The Tailscale card shows who that is and lets you edit the list
+(**Who can sign in**). Sharing does not change the auth stacks; remove `tailscale-identity` and tailnet devices need a passkey or the
 password instead.
 
 Manual setups (a hostname hal9001 does not manage, a reverse proxy of your own): run your own `tailscale serve`, and add
@@ -288,8 +391,10 @@ With `tailscale-identity` removed from the stack, tailnet devices must use a pas
 
 Every authentication decision is stored with the service, endpoint, each module's result (module, control, result,
 reason), the outcome, principal, remote address, host and session id. Actions are `request`, `whoami`, `login_begin`,
-`login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register` and `webauthn_delete`. Read them
-in the UI (Settings) or `GET /api/auth/events` (service `admin`), and live on the event stream as `auth_event.created`.
+`login_continue`, `logout`, `session_revoke`, `session_revoke_all`, `webauthn_register`, `webauthn_delete`,
+`auth_methods_change`, `auth_password_set`, `auth_password_change`, `auth_password_remove`, `auth_logins_change` and
+`auth_stacks_change`. Read them in Settings > Auth (Sign-in events) or `GET /api/auth/events` (service `admin`), and
+live on the event stream as `auth_event.created`.
 
 ```sh
 curl -sS http://localhost:9001/api/auth/events | jq '.events[] | {ts, service, outcome, principal, modules}'

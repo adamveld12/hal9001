@@ -88,7 +88,7 @@ mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --
 | Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`. Needs the `codex` CLI on PATH and Node.js 22+; install the adapter once (`hal9001 runtimes install codex`). |
 | omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs the CLI's built-in `omp acp`; no adapter to install. |
 | Notifications | `terminal-notifier` (optional) | Falls back to `osascript` when missing. |
-| Remote access | Tailscale (optional) | Settings > Tailscale > Share hal on your tailnet, or `hal9001 tailscale serve`; see [docs/auth.md](docs/auth.md#tailscale). |
+| Remote access | Tailscale (optional) | Settings > Auth > Tailscale > Share on your tailnet, or `hal9001 tailscale serve`; see [docs/auth.md](docs/auth.md#tailscale). Settings > Auth ("How you sign in to hal") also switches sign-in methods and sets the password: [docs/auth.md](docs/auth.md#the-auth-page). |
 
 Credentials go in `~/.hal9001/env` (`KEY=VALUE` per line, injected into every sensor and command node, never shown by
 the UI or API, and redacted from stored output). A sensor can also have its own values (for example `LINEAR_API_KEY`
@@ -202,7 +202,7 @@ Files are hot-reloaded. A save from the UI or API that is based on a stale copy 
 | `update_auto_install` | `false` | Install an available app update by itself once no flow is running. Off: the update is offered (web UI, menubar) and installed on request. |
 | `session_ttl` | `7d` | Sliding lifetime of a login session. |
 | `allowed_hosts` | `[]` | Extra `Host` values the server accepts. Sharing on your tailnet adds this Mac's Tailscale name itself. |
-| `tailscale` | `{serve: false, https_port: 443}` | Written by Settings > Tailscale and `hal9001 tailscale serve`: while `serve` is true, hal9001 keeps the `tailscale serve` mapping in place at start. |
+| `tailscale` | `{serve: false, https_port: 443}` | Written by Settings > Auth (Tailscale card) and `hal9001 tailscale serve`: while `serve` is true, hal9001 keeps the `tailscale serve` mapping in place at start. |
 | `allowed_logins` | `[]` | Logins accepted by `tailscale-identity`; empty means the login that owns this Mac. |
 | `runtimes` | see [docs/runtimes.md](docs/runtimes.md) | ACP agent commands. |
 | `auth` | see [docs/auth.md](docs/auth.md) | PAM-style stacks per service. |
@@ -259,7 +259,7 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `open [path]` | `--home` | Open the UI (or a UI path) in the browser. |
 | `validate` | `--home`, `--json` | Lint sensors, flows, prompts and config. |
 | `version` | `--home` | Print the version. |
-| `auth set-password` | `--home`, `--stdin` | Set the password for the `password` auth module (prompts without echo; `--stdin` reads the first line of stdin). |
+| `auth set-password` | `--home`, `--stdin` | Set the password for the `password` auth module (prompts without echo; `--stdin` reads the first line of stdin). At least 12 characters; adds a `password` entry when no stack has one. |
 
 **API commands** (flags `--url`, `--session-cookie`, `--table` on all of them):
 
@@ -416,7 +416,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 |---|---|
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Full specification and acceptance scenarios. |
 | [docs/flows.md](docs/flows.md) | Writing sensors, flows and prompts: the node contract, routing, templates, agent nodes, dry-run, replay, test-node. |
-| [docs/auth.md](docs/auth.md) | Auth stacks, modules, sharing on your tailnet (Tailscale), threat notes. |
+| [docs/auth.md](docs/auth.md) | The Auth page, changing sign-in from the UI or API (guardrails), auth stacks, modules, sharing on your tailnet (Tailscale), threat notes. |
 | [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring, detecting, installing and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
