@@ -110,7 +110,7 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch | null {
     j = from[i]?.[j] ?? -1;
   }
   const joined = q.join("");
-  const full = lower.join("");
+  const full = lower.join("").replace(/\s+/g, "");
   if (full === joined) score += EXACT;
   else if (full.startsWith(joined)) score += PREFIX;
   score -= (n - m) * 0.05;

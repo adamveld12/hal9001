@@ -39,6 +39,15 @@ describe("fuzzyMatch", () => {
     );
   });
 
+  it("ranks an exact match above a longer title that starts with it, spaces ignored", () => {
+    expect(score("new sensor", "New sensor")).toBeGreaterThan(
+      score("new sensor", "New sensor with AI…") ?? 0,
+    );
+    expect(score("new sensor", "New sensor with AI…")).toBeGreaterThan(
+      score("new sensor", "Go to Settings: Sensors, newest") ?? -Infinity,
+    );
+  });
+
   it("matches everything for an empty query", () => {
     expect(fuzzyMatch("", "anything")).toEqual({ score: 0, indices: [] });
   });

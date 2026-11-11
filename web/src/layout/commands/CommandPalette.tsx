@@ -206,6 +206,8 @@ export function CommandPalette() {
           aria-autocomplete="list"
           autoComplete="off"
           spellCheck={false}
+          // The palette's own border shows where the cursor is; the global focus ring would box the input inside it.
+          style={{ outline: "none" }}
           value={query}
           placeholder="Type a command or search flows, sensors, chats…"
           className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
@@ -220,7 +222,7 @@ export function CommandPalette() {
         id={`${id}-list`}
         role="listbox"
         aria-label="Commands"
-        className="max-h-[50vh] overflow-y-auto p-1.5"
+        className="max-h-[60vh] overflow-y-auto p-1.5"
       >
         {result.sections.length === 0 && (
           <div className="px-3 py-6 text-center text-xs text-muted">

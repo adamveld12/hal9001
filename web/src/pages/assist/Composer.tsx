@@ -40,13 +40,12 @@ export function Composer({
     setAppliedPrefill(prefill.n);
     setText(prefill.text);
   }
-  // A prefill that asks to be sent waits here until the composer can send.
-  const autoSend = useRef(false);
   useEffect(() => {
     if (!prefill) return;
     ref.current?.focus();
-    autoSend.current = prefill.send === true;
-    onPrefillApplied();
+    // A prefill that asks to be sent stays until it is (see below), so a
+    // composer that remounts first still sends it.
+    if (prefill.send !== true) onPrefillApplied();
   }, [prefill, onPrefillApplied]);
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -88,9 +87,17 @@ export function Composer({
   };
 
   useEffect(() => {
-    if (!autoSend.current || disabled || sending) return;
-    autoSend.current = false;
-    void submit();
+    if (
+      prefill?.send !== true ||
+      prefill.n !== appliedPrefill ||
+      disabled ||
+      sending
+    ) {
+      return;
+    }
+    onPrefillApplied();
+    // Not inline: submit sets state, which an effect should not do synchronously.
+    queueMicrotask(() => void submit());
   });
 
   const hints = slashHints(text);
