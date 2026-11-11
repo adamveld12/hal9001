@@ -23,9 +23,15 @@ type Options struct {
 	AllowedHosts func() []string
 }
 
+// FunnelHeader is added by tailscaled to every request that arrives through `tailscale funnel` (the public
+// internet). hal9001 only shares on the tailnet, so such requests are always refused.
+const FunnelHeader = "Tailscale-Funnel-Request"
+
 // Middleware returns the baseline middleware. Checks run in this order and the
 // first failure short-circuits with a problem+json response:
 //
+//  0. A request that came through `tailscale funnel` (FunnelHeader present,
+//     any value) is refused with 403 before anything else, whatever its Host.
 //  1. Host must be localhost:<port>, 127.0.0.1:<port> or an allowed host.
 //  2. An Origin header, when present, must be an allowed origin: http for the
 //     loopback hosts, https for other allowed hosts.
@@ -43,6 +49,15 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if len(r.Header.Values(FunnelHeader)) > 0 {
+				WriteProblem(w, Problem{
+					Type:   TypeForbidden,
+					Title:  "Funnel requests refused",
+					Status: http.StatusForbidden,
+					Detail: "this request came through tailscale funnel (the public internet); hal9001 only serves devices on your tailnet",
+				})
+				return
+			}
 			hosts := allowedHosts(builtin, opts.AllowedHosts)
 			host := strings.ToLower(r.Host)
 			if !hosts[host] {

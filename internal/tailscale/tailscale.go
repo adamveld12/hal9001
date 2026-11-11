@@ -129,6 +129,18 @@ func (c ServeConfig) Funnel() bool {
 	return false
 }
 
+// FunnelOnPort reports whether funnel exposes the HTTPS port httpsPort to the internet (AllowFunnel is keyed by
+// "<host>:<port>").
+func (c ServeConfig) FunnelOnPort(httpsPort int) bool {
+	suffix := ":" + strconv.Itoa(httpsPort)
+	for key, on := range c.AllowFunnel {
+		if on && strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Mapping is what `tailscale serve` has on one HTTPS port.
 type Mapping struct {
 	// Active: the port has a mapping, to anything.
@@ -137,12 +149,14 @@ type Mapping struct {
 	PointsAtHal bool
 	// Other describes what the port serves when it is not the daemon; "" otherwise.
 	Other string
+	// Funnel: funnel exposes the port to the public internet.
+	Funnel bool
 }
 
 // MappingFor returns the mapping on the HTTPS port httpsPort and whether it proxies to the daemon on halPort.
 func (c ServeConfig) MappingFor(httpsPort, halPort int) Mapping {
 	suffix := ":" + strconv.Itoa(httpsPort)
-	var m Mapping
+	m := Mapping{Funnel: c.FunnelOnPort(httpsPort)}
 	for key, web := range c.Web {
 		if !strings.HasSuffix(key, suffix) {
 			continue

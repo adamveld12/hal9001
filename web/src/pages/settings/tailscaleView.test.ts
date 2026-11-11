@@ -7,6 +7,7 @@ import {
   conflictTitle,
   loginsView,
   parsePort,
+  funnelOffCommand,
   parseServeFailure,
   parseWarnings,
   serveCommand,
@@ -37,6 +38,7 @@ function status(over: Partial<TailscaleStatus> = {}): TailscaleStatus {
       points_at_hal: false,
       conflict: null,
       funnel: false,
+      funnel_on_port: false,
     },
     url: `https://${DNS}/`,
     allowed_host: { entry: DNS, present: false, added_by_hal: false },
@@ -167,6 +169,45 @@ describe("shareControl", () => {
     expect(
       shareControl(status({ dns_name: null })).shareDisabledReason,
     ).toMatch(/MagicDNS/);
+  });
+});
+
+describe("funnel on the HTTPS port", () => {
+  const funnelOn = status({
+    serve: {
+      ...status().serve,
+      active: true,
+      points_at_hal: true,
+      funnel: true,
+      funnel_on_port: true,
+    },
+  });
+
+  it("disables Share for the configured port with the reason", () => {
+    expect(shareControl(funnelOn).shareDisabledReason).toMatch(
+      /HTTPS port 443 is exposed to the public internet with tailscale funnel/,
+    );
+    expect(funnelOffCommand(443)).toBe("tailscale funnel --https=443 off");
+  });
+
+  it("leaves another typed port to the server, which checks funnel for it", () => {
+    expect(shareControl(funnelOn, 8443).shareDisabledReason).toBeNull();
+  });
+
+  it("is an error, and a 409 invalid-state with funnel_on_port is its own failure", () => {
+    expect(warningTone("funnel_on_port")).toBe("bad");
+    expect(
+      parseServeFailure(
+        apiError(409, "invalid-state", {
+          funnel_on_port: true,
+          https_port: 443,
+        }),
+      ),
+    ).toEqual({
+      kind: "funnel",
+      message: "detail of invalid-state",
+      httpsPort: 443,
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"hal9001/internal/httpsec"
 	"hal9001/internal/spec"
 	"hal9001/internal/tailscale"
 	"hal9001/internal/tailscale/tailscaletest"
@@ -186,5 +187,89 @@ func TestDisableTailscaleServeThroughTheRouter(t *testing.T) {
 	}
 	if cfg := e.config(); cfg.Tailscale.Serve || len(cfg.AllowedHosts) != 0 {
 		t.Errorf("config = %v %+v", cfg.AllowedHosts, cfg.Tailscale)
+	}
+}
+
+// Sharing is tailnet-only: a funnel port is refused whatever it serves and with or without replace, and nothing is
+// run or written (allowed_hosts and tailscale.serve stay as they were).
+func TestEnableTailscaleServeRefusesAFunnelPort(t *testing.T) {
+	cases := []struct {
+		name    string
+		mapping string
+		body    any
+	}{
+		{"funnel to hal", "http://127.0.0.1:9001", nil},
+		{"funnel to hal, replace", "http://127.0.0.1:9001", map[string]any{"replace": true}},
+		{"funnel to something else", "http://127.0.0.1:3000", nil},
+		{"funnel to something else, replace", "http://127.0.0.1:3000", map[string]any{"replace": true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newTailscaleEnv(t)
+			e.stub.Serve(443, c.mapping)
+			e.stub.Write("funnel", "")
+			before := e.config()
+
+			r := e.do(http.MethodPost, "/api/tailscale/serve", c.body).want(409)
+			detail, _ := r.json()["detail"].(string)
+			if r.problem() != "invalid-state" || !strings.Contains(detail, "HTTPS port 443 is exposed to the public internet with tailscale funnel") ||
+				!strings.Contains(detail, "`tailscale funnel --https=443 off`") || r.json()["https_port"] != float64(443) {
+				t.Errorf("problem = %s", r.Body)
+			}
+			if got := e.stub.Mutations(); len(got) != 0 || e.stub.Served(443) != c.mapping {
+				t.Errorf("serve was run: %q, mapping %q", got, e.stub.Served(443))
+			}
+			after := e.config()
+			if !slices.Equal(after.AllowedHosts, before.AllowedHosts) || len(after.AllowedHosts) != 0 || after.Tailscale != before.Tailscale || after.Tailscale.Serve {
+				t.Errorf("config changed: %v %+v", after.AllowedHosts, after.Tailscale)
+			}
+			if e.reloads.Load() != 0 {
+				t.Error("a refused enable reloaded the config")
+			}
+
+			var st struct {
+				Serve struct {
+					FunnelOnPort bool `json:"funnel_on_port"`
+				} `json:"serve"`
+				Warnings []struct {
+					Code    string  `json:"code"`
+					Command *string `json:"command"`
+				} `json:"warnings"`
+			}
+			e.do(http.MethodGet, "/api/tailscale", nil).want(200).decode(&st)
+			var found bool
+			for _, w := range st.Warnings {
+				if w.Code == "funnel_on_port" && w.Command != nil && *w.Command == "tailscale funnel --https=443 off" {
+					found = true
+				}
+			}
+			if !st.Serve.FunnelOnPort || !found {
+				t.Errorf("status = %+v", st)
+			}
+		})
+	}
+}
+
+// A request that came through funnel is refused by the baseline in front of the router, even for an allowed host,
+// and never reaches the API.
+func TestFunnelRequestsAreRefusedBeforeTheAPI(t *testing.T) {
+	e := newTailscaleEnv(t)
+	e.do(http.MethodPost, "/api/tailscale/serve", nil).want(200)
+	h := httpsec.Middleware(httpsec.Options{AllowedHosts: func() []string { return e.config().AllowedHosts }})(e.srv)
+
+	for _, host := range []string{tailscaletest.DefaultDNS, "localhost:9001"} {
+		req := request(http.MethodGet, "/api/tailscale", nil)
+		req.Host = host
+		req.Header.Set("Tailscale-Funnel-Request", "?1")
+		if r := serve(t, h, req); r.Status != 403 || r.problem() != "forbidden" {
+			t.Errorf("funnel request to %s: %d %s", host, r.Status, r.Body)
+		}
+	}
+	// Without the header the request gets past the baseline and reaches auth, which does not admit it either: the
+	// loopback peer and the allowed host are not enough for localhost-trust.
+	req := request(http.MethodGet, "/api/tailscale", nil)
+	req.Host = tailscaletest.DefaultDNS
+	if r := serve(t, h, req); r.Status != 401 || r.problem() != "unauthenticated" {
+		t.Errorf("proxied request without the funnel header: %d %s", r.Status, r.Body)
 	}
 }

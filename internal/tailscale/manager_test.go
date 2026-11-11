@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -534,5 +535,106 @@ func TestCLIErrors(t *testing.T) {
 	// stderr noise (the client/server version warning) must not end up in the JSON.
 	if st, err := cli.Status(context.Background()); err != nil || st.Hostname() != tailscaletest.DefaultDNS {
 		t.Errorf("Status = %+v, %v", st, err)
+	}
+}
+
+// Sharing is for the tailnet only: a port that funnel exposes to the internet is never served and its host name is
+// never allowed, whatever the port serves and with or without replace.
+func TestEnableRefusesAFunnelPortAndChangesNothing(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(e *env)
+		req   tailscale.EnableRequest
+		// funnel is the stub's funnel ports ("" is 443).
+		funnel string
+	}{
+		{"already points at hal", func(e *env) { e.stub.Serve(443, "http://127.0.0.1:9001") }, tailscale.EnableRequest{}, ""},
+		{"already points at hal, replace", func(e *env) { e.stub.Serve(443, "http://127.0.0.1:9001") }, tailscale.EnableRequest{Replace: true}, ""},
+		{"serves something else, replace", func(e *env) { e.stub.Serve(443, "http://127.0.0.1:3000") }, tailscale.EnableRequest{Replace: true}, ""},
+		{"serves something else", func(e *env) { e.stub.Serve(443, "http://127.0.0.1:3000") }, tailscale.EnableRequest{}, ""},
+		{"another port", func(e *env) { e.stub.Serve(8443, "http://127.0.0.1:9001") }, tailscale.EnableRequest{HTTPSPort: 8443}, "8443"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			c.setup(e)
+			e.stub.Write("funnel", c.funnel)
+			before, mapping := e.config(), e.stub.Served(443)
+			_, err := e.m.Enable(context.Background(), c.req)
+			var fe *tailscale.FunnelError
+			if !errors.As(err, &fe) {
+				t.Fatalf("Enable error = %v, want a FunnelError", err)
+			}
+			if !strings.Contains(err.Error(), "tailscale funnel --https="+strconv.Itoa(fe.HTTPSPort)+" off") {
+				t.Errorf("error does not say how to turn funnel off: %v", err)
+			}
+			if e.config() != before || e.cfg().Tailscale.Serve || slices.Contains(e.cfg().AllowedHosts, tailscaletest.DefaultDNS) {
+				t.Errorf("config.yaml changed:\n%s", e.config())
+			}
+			if len(e.stub.Mutations()) != 0 || e.stub.Served(443) != mapping {
+				t.Errorf("serve was run: %q, mapping %q", e.stub.Mutations(), e.stub.Served(443))
+			}
+			if e.statusState() != "" {
+				t.Errorf("state recorded: %s", e.statusState())
+			}
+			if r := e.m.Status(context.Background(), true); fe.HTTPSPort == 443 && (!r.Serve.FunnelOnPort || !slices.Contains(e.warnings(r), tailscale.WarnFunnelOnPort)) {
+				t.Errorf("report: funnel_on_port %v, warnings %v", r.Serve.FunnelOnPort, e.warnings(r))
+			}
+		})
+	}
+}
+
+// Funnel on another port does not stop sharing on this one.
+func TestEnableIgnoresFunnelOnAnotherPort(t *testing.T) {
+	e := newEnv(t)
+	e.stub.Write("funnel", "8443")
+	r := e.enable(tailscale.EnableRequest{})
+	if r.Serve.FunnelOnPort || !r.Serve.PointsAtHal || !slices.Contains(e.warnings(r), tailscale.WarnFunnelEnabled) || slices.Contains(e.warnings(r), tailscale.WarnFunnelOnPort) {
+		t.Errorf("serve %+v, warnings %v", r.Serve, e.warnings(r))
+	}
+}
+
+func TestReconcileNeverServesOrAllowsAFunnelPort(t *testing.T) {
+	for _, mapping := range []string{"http://127.0.0.1:9001", "http://127.0.0.1:3000"} {
+		t.Run("mapping "+mapping, func(t *testing.T) {
+			e := newEnv(t)
+			e.writeConfig(e.config() + "\ntailscale: {serve: true}\n")
+			e.stub.Serve(443, mapping)
+			e.stub.Write("funnel", "")
+			before := e.config()
+			e.m.Reconcile(context.Background())
+			if e.config() != before {
+				t.Errorf("config.yaml changed:\n%s", e.config())
+			}
+			if len(e.stub.Mutations()) != 0 || e.stub.Served(443) != mapping {
+				t.Errorf("serve was run: %q, mapping %q", e.stub.Mutations(), e.stub.Served(443))
+			}
+			codes := e.warnings(e.m.Status(context.Background(), true))
+			if !slices.Contains(codes, tailscale.WarnReapplyFailed) || !slices.Contains(codes, tailscale.WarnFunnelOnPort) {
+				t.Errorf("warnings = %v, want reapply_failed and funnel_on_port", codes)
+			}
+		})
+	}
+}
+
+// Funnel is read per HTTPS port from AllowFunnel ("<host>:<port>").
+func TestServeConfigFunnelIsPerPort(t *testing.T) {
+	raw, err := os.ReadFile("testdata/serve_status_funnel.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := tailscale.ParseServeConfig(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := c.MappingFor(443, halPort); !m.Funnel || !m.PointsAtHal {
+		t.Errorf("port 443 = %+v, want funnel and points at hal", m)
+	}
+	if m := c.MappingFor(8443, halPort); m.Funnel || m.Active || c.FunnelOnPort(44) {
+		t.Errorf("port 8443 = %+v: funnel on 443 must not match 8443 or 44", m)
+	}
+	c.AllowFunnel["alices-macbook.tail1234.ts.net:443"] = false
+	if c.FunnelOnPort(443) || c.Funnel() {
+		t.Error("a false AllowFunnel entry is not funnel")
 	}
 }

@@ -12,6 +12,9 @@ Applied to every request before auth:
   (DNS-rebinding protection).
 - An `Origin` header, when present, must be an allowed origin (`http` for the loopback hosts, `https` for other allowed
   hosts); otherwise `403 origin-not-allowed`. No CORS headers are ever sent.
+- A request carrying `Tailscale-Funnel-Request` (tailscaled adds it to requests that arrive through `tailscale
+  funnel`, from the public internet) is refused with `403 forbidden` on every path, before the Host check and before
+  auth. The `localhost-trust` module also ignores any request with a `Tailscale-*` header.
 - Mutating requests (POST, PUT, PATCH, DELETE) must be `Content-Type: application/json`; otherwise `415`. A cross-site
   form cannot send that without a preflight, which the server never grants.
 - `POST /mcp` (the remote MCP endpoint, [mcp.md](mcp.md)) is stricter: the TCP peer, `Host` and `Origin` must be loopback
@@ -208,6 +211,7 @@ What the button does, exactly:
 | Step | Command or edit |
 |---|---|
 | Share | `tailscale serve --bg --yes --https=<port> http://127.0.0.1:<hal9001 port>` (default port 443). Nothing is run when the port already points at hal9001. |
+| Funnel on the port | `tailscale funnel` exposes the HTTPS port to the public internet: hal9001 refuses (`409 invalid-state`, also with `--replace` and also when the port already points at hal9001), runs nothing and does not touch `allowed_hosts` or `tailscale.serve`. Settings > Tailscale shows the error and disables the button; run `tailscale funnel --https=<port> off` (or pick another port). At start the same rule applies: a funnel port is not re-served and is reported as the `funnel_on_port` warning. |
 | Port busy | The HTTPS port already serves something else: hal9001 refuses (`409`; the UI asks, the CLI wants `--replace`) and never overwrites it silently. |
 | `allowed_hosts` | Adds `<name>` (or `<name>:<port>` when the port is not 443, matching the `Host` header a browser sends) unless it is already there. Comments and your own entries stay; there are no duplicates. |
 | Stop sharing | `tailscale serve --https=<port> off`, only when the mapping on that port points at hal9001, and `tailscale.serve: false`. The `allowed_hosts` entry is removed only if hal9001 added it (recorded in `<home>/data/tailscale.json`); entries you wrote stay. |
@@ -272,7 +276,11 @@ With `tailscale-identity` removed from the stack, tailnet devices must use a pas
 - **Websites cannot reach it.** The Host check defeats DNS rebinding; the Origin check and the JSON-only rule defeat
   cross-site requests.
 - **Never expose it by other means.** There is no setting to bind another address. Do not proxy it to the internet; do
-  not use `tailscale funnel` (`hal9001 tailscale status` flags it).
+  not use `tailscale funnel`. hal9001 does not share on an HTTPS port that funnel exposes (it would make the host name
+  reachable from the internet), and it refuses every request that carries `Tailscale-Funnel-Request`, so a funnel that
+  points at hal9001 gets `403` from the daemon. `hal9001 tailscale status` flags both (`funnel_enabled`,
+  `funnel_on_port`). Funnel requests carry no tailnet identity, so `tailscale-identity` could not admit them either,
+  and `localhost-trust` ignores any request with a `Tailscale-*` header or a non-localhost Host.
 - **Secrets.** The secret values of the `env` file are never returned by the API, and are redacted from stored output. A value the user marked plain (`# hal:plain`) is returned and not redacted. The password
   hash lives in `config.yaml`, which is why config files are redacted in `settings get`.
 

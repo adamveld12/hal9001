@@ -17,6 +17,7 @@ const (
 	WarnHTTPSDisabled     = "https_disabled"
 	WarnMagicDNSDisabled  = "magicdns_disabled"
 	WarnFunnelEnabled     = "funnel_enabled"
+	WarnFunnelOnPort      = "funnel_on_port"
 	WarnPortConflict      = "port_conflict"
 	WarnServeMissing      = "serve_missing"
 	WarnHostMissing       = "host_missing"
@@ -54,6 +55,8 @@ type ServeInfo struct {
 	PointsAtHal bool    `json:"points_at_hal"`
 	Conflict    *string `json:"conflict"`
 	Funnel      bool    `json:"funnel"`
+	// FunnelOnPort: funnel exposes the HTTPS port to the public internet, so hal9001 refuses to share on it.
+	FunnelOnPort bool `json:"funnel_on_port"`
 }
 
 // AllowedHostInfo says whether the URL's host is in `allowed_hosts`.

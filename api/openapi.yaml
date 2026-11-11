@@ -3446,7 +3446,10 @@ paths:
 
         409 `already-exists` (`target`, `https_port`): the HTTPS port already serves something else; send `replace: true`
         to overwrite it. 409 `invalid-state`: Tailscale is not ready (CLI missing, signed out, stopped, HTTPS
-        certificates disabled); the `warnings` extension lists the fixes. 503 `unavailable`: the command failed
+        certificates disabled); the `warnings` extension lists the fixes. 409 `invalid-state` with `funnel_on_port:
+        true` (and `https_port`): `tailscale funnel` exposes the HTTPS port to the public internet, which hal9001 never
+        does; nothing is run or written, with or without `replace` and even when the mapping already points at
+        hal9001. Turn funnel off (`tailscale funnel --https=<port> off`) or pick another port. 503 `unavailable`: the command failed
         (`detail` has its output).
       x-hal-service: admin
       requestBody:
@@ -3737,8 +3740,9 @@ components:
           schema: {$ref: '#/components/schemas/UnauthorizedProblem'}
     Forbidden:
       description: |
-        The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`) or the session does not grant the
-        service (`forbidden`).
+        The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`), the request came through
+        `tailscale funnel` (a `Tailscale-Funnel-Request` header: always `forbidden`, on every path), or the session does
+        not grant the service (`forbidden`).
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/ForbiddenProblem'}
@@ -6432,7 +6436,7 @@ components:
         code:
           type: string
           description: Stable identifier of the problem.
-          enum: [cli_not_found, daemon_unreachable, logged_out, stopped, needs_machine_auth, https_disabled, magicdns_disabled, funnel_enabled, port_conflict, serve_missing, host_missing, host_renamed, reapply_failed]
+          enum: [cli_not_found, daemon_unreachable, logged_out, stopped, needs_machine_auth, https_disabled, magicdns_disabled, funnel_enabled, funnel_on_port, port_conflict, serve_missing, host_missing, host_renamed, reapply_failed]
         message: {type: string}
         command: {type: [string, 'null'], description: 'A command that fixes it, to copy into a terminal.'}
         url: {type: [string, 'null'], description: A page that fixes it (for example the admin console).}
@@ -6445,7 +6449,7 @@ components:
         version: {type: [string, 'null']}
     TailscaleServe:
       type: object
-      required: [enabled, https_port, target, active, points_at_hal, conflict, funnel]
+      required: [enabled, https_port, target, active, points_at_hal, conflict, funnel, funnel_on_port]
       properties:
         enabled: {type: boolean, description: '`tailscale.serve` in `config.yaml`: hal9001 keeps the mapping in place.'}
         https_port: {type: integer, description: The tailnet HTTPS port hal9001 uses or would use.}
@@ -6454,6 +6458,7 @@ components:
         points_at_hal: {type: boolean, description: The mapping of the port proxies to the daemon.}
         conflict: {type: [string, 'null'], description: 'What the port serves when it is not hal9001 (a proxy target or a description), else null.'}
         funnel: {type: boolean, description: Anything of this Mac is exposed to the internet through funnel. hal9001 never does this.}
+        funnel_on_port: {type: boolean, description: 'Funnel exposes the HTTPS port (`https_port`) to the public internet. hal9001 refuses to share on it (`POST /api/tailscale/serve` is a 409) until funnel is turned off there.'}
     TailscaleAllowedHost:
       type: object
       required: [entry, present, added_by_hal]

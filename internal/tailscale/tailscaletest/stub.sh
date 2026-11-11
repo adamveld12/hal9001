@@ -4,7 +4,8 @@
 #   status.json        output of `tailscale status --json`
 #   dnsname            this machine's MagicDNS name (used to build `serve status --json`)
 #   serve-<port>       a mapping on that HTTPS port; the file holds the proxy target
-#   funnel             when present, `serve status --json` reports funnel on
+#   funnel             when present, `serve status --json` reports funnel (AllowFunnel) on the HTTPS ports listed in
+#                      the file, space separated (empty: 443)
 #   down               when present every command fails as if tailscaled were not running
 #   serve-fail         when present `tailscale serve ...` (not status) prints its content and fails
 #   version            output of `tailscale version` (default 1.80.2)
@@ -40,7 +41,12 @@ case "$1" in
         web="$web${web:+,}\"$dns:$p\":{\"Handlers\":{\"/\":{\"Proxy\":\"$t\"}}}"
       done
       fun=""
-      if [ -f "$d/funnel" ]; then fun=",\"AllowFunnel\":{\"$dns:443\":true}"; fi
+      if [ -f "$d/funnel" ]; then
+        ports=$(cat "$d/funnel"); [ -n "$ports" ] || ports=443
+        ents=""
+        for p in $ports; do ents="$ents${ents:+,}\"$dns:$p\":true"; done
+        fun=",\"AllowFunnel\":{$ents}"
+      fi
       if [ -z "$tcp" ]; then echo '{}'; else printf '{"TCP":{%s},"Web":{%s}%s}\n' "$tcp" "$web" "$fun"; fi
       exit 0
     fi

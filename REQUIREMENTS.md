@@ -399,6 +399,7 @@ The backend is a JSON REST API; the web UI and the CLI are both clients of it an
 
 - Listens on `127.0.0.1:9001` only. The bind address is not configurable; remote access goes through Tailscale (§10.5).
 - DNS-rebinding protection: reject requests whose `Host` is not `localhost:9001`, `127.0.0.1:9001`, or an entry in `allowed_hosts` (used for the Tailscale hostname).
+- No funnel: reject (403) every request carrying `Tailscale-Funnel-Request`, which tailscaled adds to requests that arrive through `tailscale funnel` (the public internet), before the Host check and before auth. Sharing is tailnet-only (§10.5).
 - CSRF protection: reject any request whose `Origin` header is present and not an allowed origin; mutating requests must be `Content-Type: application/json` (cross-site forms can't send that without a CORS preflight, which the server never grants). Session cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` on HTTPS.
 
 ### 10.4 Auth: pluggable, PAM-style
@@ -476,7 +477,7 @@ The daemon stays loopback-only; Tailscale does the exposure, and hal9001 sets it
 tailscale serve --bg --yes --https=443 http://127.0.0.1:9001
 ```
 
-- This publishes `https://<mac>.<tailnet>.ts.net` to devices on your tailnet only, with a valid TLS certificate. Never use `tailscale funnel`, which publishes to the internet.
+- This publishes `https://<mac>.<tailnet>.ts.net` to devices on your tailnet only, with a valid TLS certificate. Never use `tailscale funnel`, which publishes to the internet. If funnel is on for the selected HTTPS port (`AllowFunnel`), hal9001 refuses to share on it (`409 invalid-state`, also with `replace` and also when the mapping already points at the daemon), changes neither `allowed_hosts` nor `tailscale.serve`, and the start-up re-apply does the same (warning `funnel_on_port`). The baseline (§10.3) refuses any request carrying `Tailscale-Funnel-Request` with `403`, before auth.
 - What hal9001 needs for it:
   1. `allowed_hosts: [<mac>.<tailnet>.ts.net]` (`<name>:<port>` for an HTTPS port other than 443) so the Host check accepts it. hal9001 adds it when it enables sharing, keeping comments and your own entries, and removes it again when sharing is turned off only if it added it (`<home>/data/tailscale.json`). A manual setup adds it by hand.
   2. `localhost-trust` must not treat these requests as local. tailscaled proxies from loopback, so the peer address alone would pass; the Host and proxy-header conditions in §10.4 are what exclude them. Tailnet requests therefore fall through to `tailscale-identity`, then `webauthn` or `password`.

@@ -75,3 +75,22 @@ func TestTailscaleServeIsReappliedAtStart(t *testing.T) {
 		t.Errorf("serve invocations = %q", got)
 	}
 }
+
+// The CLI prints the refusal when funnel exposes the port, and nothing changes.
+func TestTailscaleServeCLIRefusesAFunnelPort(t *testing.T) {
+	d, stub := tailscaleDaemon(t, "allowed_hosts: [other.example.com]\n")
+	d.Start()
+	stub.Serve(443, "http://127.0.0.1:"+strconv.Itoa(d.Port()))
+	stub.Write("funnel", "")
+	before := d.Read("config.yaml")
+
+	for _, args := range [][]string{{"tailscale", "serve"}, {"tailscale", "serve", "--replace"}} {
+		_, errOut, code := d.CLI("", args...)
+		if code == 0 || !strings.Contains(errOut, "HTTPS port 443 is exposed to the public internet with tailscale funnel") || !strings.Contains(errOut, "tailscale funnel --https=443 off") {
+			t.Errorf("%v: exit %d, stderr %q", args, code, errOut)
+		}
+	}
+	if len(stub.Mutations()) != 0 || d.Read("config.yaml") != before {
+		t.Errorf("a refused serve changed something: %q\n%s", stub.Mutations(), d.Read("config.yaml"))
+	}
+}

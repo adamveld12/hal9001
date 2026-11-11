@@ -248,7 +248,7 @@ func (m *Manager) report(s *snapshot, cfg spec.Config, st state) Report {
 		} else {
 			r.Serve.Funnel = s.serve.Funnel()
 			mp := s.serve.MappingFor(port, m.opt.Port)
-			r.Serve.Active, r.Serve.PointsAtHal, r.Serve.Conflict = mp.Active, mp.PointsAtHal, ptr(mp.Other)
+			r.Serve.Active, r.Serve.PointsAtHal, r.Serve.Conflict, r.Serve.FunnelOnPort = mp.Active, mp.PointsAtHal, ptr(mp.Other), mp.Funnel
 		}
 		if name := stt.Hostname(); name != "" {
 			entry := HostEntry(name, port)
@@ -266,6 +266,9 @@ func (m *Manager) serveWarnings(r Report, s *snapshot, cfg spec.Config, st state
 	var ws []Warning
 	if r.Serve.Funnel {
 		ws = append(ws, warn(WarnFunnelEnabled, "Something on this Mac is exposed to the public internet through `tailscale funnel`. hal9001 never uses funnel; check what is exposed.", "tailscale funnel status", ""))
+	}
+	if r.Serve.FunnelOnPort {
+		ws = append(ws, warn(WarnFunnelOnPort, (&FunnelError{HTTPSPort: r.Serve.HTTPSPort}).Error(), funnelOffCommand(r.Serve.HTTPSPort), ""))
 	}
 	if s.cliFound && s.stErr == nil && s.serveErr == nil && cfg.Tailscale.Serve {
 		switch {
@@ -326,6 +329,18 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("HTTPS port %d on the tailnet already serves %s", e.HTTPSPort, e.Target)
 }
 
+// FunnelError means funnel exposes the HTTPS port to the public internet. hal9001 only shares on the tailnet, so it
+// neither serves on such a port nor allows its host name, even when the mapping already points at the daemon.
+type FunnelError struct{ HTTPSPort int }
+
+func (e *FunnelError) Error() string {
+	return fmt.Sprintf("HTTPS port %d is exposed to the public internet with tailscale funnel; hal9001 only shares on your tailnet. Turn funnel off (`%s`) or pick another port.", e.HTTPSPort, funnelOffCommand(e.HTTPSPort))
+}
+
+func funnelOffCommand(httpsPort int) string {
+	return fmt.Sprintf("tailscale funnel --https=%d off", httpsPort)
+}
+
 // EnableRequest is the input of Enable.
 type EnableRequest struct {
 	// HTTPSPort is the tailnet HTTPS port; 0 means the configured one (default 443).
@@ -356,6 +371,9 @@ func (m *Manager) Enable(ctx context.Context, req EnableRequest) (Report, error)
 		return Report{}, snap.serveErr
 	}
 	mp := snap.serve.MappingFor(port, m.opt.Port)
+	if mp.Funnel {
+		return Report{}, &FunnelError{HTTPSPort: port}
+	}
 	if mp.Active && !mp.PointsAtHal && !req.Replace {
 		return Report{}, &ConflictError{HTTPSPort: port, Target: mp.Other}
 	}
@@ -521,6 +539,9 @@ func (m *Manager) reconcileOnce(ctx context.Context) error {
 		return snap.serveErr
 	}
 	mp := snap.serve.MappingFor(port, m.opt.Port)
+	if mp.Funnel {
+		return &FunnelError{HTTPSPort: port}
+	}
 	if mp.Active && !mp.PointsAtHal {
 		return &ConflictError{HTTPSPort: port, Target: mp.Other}
 	}

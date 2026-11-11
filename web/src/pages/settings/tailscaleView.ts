@@ -30,6 +30,16 @@ export function stopCommand(port: number): string {
   return `tailscale serve --https=${port} off`;
 }
 
+/** Turns funnel off on an HTTPS port, which hal9001 requires before it shares on it. */
+export function funnelOffCommand(port: number): string {
+  return `tailscale funnel --https=${port} off`;
+}
+
+/** Why hal will not share on a port that funnel exposes to the public internet. */
+export function funnelMessage(port: number): string {
+  return `HTTPS port ${port} is exposed to the public internet with tailscale funnel; hal only shares on your tailnet. Turn funnel off or pick another port.`;
+}
+
 /** `https://<name>/`, or `https://<name>:<port>/` for a port other than 443. */
 export function shareUrl(dnsName: string, port: number): string {
   return port === DEFAULT_HTTPS_PORT
@@ -51,17 +61,23 @@ export interface ShareControl {
   canStop: boolean;
 }
 
-/** Whether sharing can start or stop, from the status alone. */
-export function shareControl(s: TailscaleStatus): ShareControl {
+/**
+ * Whether sharing can start or stop, from the status alone. `port` is the HTTPS port typed in the form (default:
+ * the configured one); the status knows funnel only for the configured port, and the server checks any other.
+ */
+export function shareControl(
+  s: TailscaleStatus,
+  port: number = s.serve.https_port,
+): ShareControl {
   const shared = s.serve.points_at_hal;
   return {
     shared,
-    shareDisabledReason: shareDisabledReason(s),
+    shareDisabledReason: shareDisabledReason(s, port),
     canStop: shared || s.serve.enabled,
   };
 }
 
-function shareDisabledReason(s: TailscaleStatus): string | null {
+function shareDisabledReason(s: TailscaleStatus, port: number): string | null {
   if (!s.cli.found) {
     return "The tailscale command-line tool is not installed.";
   }
@@ -76,6 +92,9 @@ function shareDisabledReason(s: TailscaleStatus): string | null {
   }
   if (s.dns_name === null) {
     return "This Mac has no MagicDNS name yet.";
+  }
+  if (s.serve.funnel_on_port && port === s.serve.https_port) {
+    return funnelMessage(port);
   }
   return null;
 }
@@ -216,6 +235,7 @@ export function loginsView(s: TailscaleStatus): LoginsView {
 
 const BAD_WARNINGS: Partial<Record<TailscaleWarning["code"], true>> = {
   funnel_enabled: true,
+  funnel_on_port: true,
   port_conflict: true,
   reapply_failed: true,
 };
@@ -247,6 +267,8 @@ export type ServeFailure =
   | { kind: "conflict"; target: string; httpsPort: number | null }
   /** 409 `invalid-state`: Tailscale is not ready; `warnings` lists the fixes. */
   | { kind: "not-ready"; message: string; warnings: TailscaleWarning[] }
+  /** 409 `invalid-state` with `funnel_on_port`: funnel exposes the HTTPS port to the internet. */
+  | { kind: "funnel"; message: string; httpsPort: number | null }
   /** 503 `unavailable` or anything else: `message` has the command output. */
   | { kind: "failed"; message: string };
 
@@ -264,6 +286,14 @@ export function parseServeFailure(e: unknown): ServeFailure {
     };
   }
   if (e.status === 409 && e.kind === "invalid-state") {
+    if (extra.funnel_on_port === true) {
+      return {
+        kind: "funnel",
+        message: e.message,
+        httpsPort:
+          typeof extra.https_port === "number" ? extra.https_port : null,
+      };
+    }
     return {
       kind: "not-ready",
       message: e.message,

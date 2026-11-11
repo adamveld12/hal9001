@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,20 @@ func TestRequiredFailureFollowedBySufficientSuccessStillFails(t *testing.T) {
 	}
 	if ev.Principal != "" {
 		t.Errorf("failed decision carries principal %q", ev.Principal)
+	}
+}
+
+// A request that tailscaled proxied for the public internet (tailscale funnel) is never local, even when the peer is
+// loopback and the Host header says localhost. The router refuses it earlier (httpsec); this is the second line.
+func TestLocalhostTrustIgnoresFunnelRequests(t *testing.T) {
+	for _, host := range []string{"localhost:9001", "127.0.0.1:9001", tsHost} {
+		req := &auth.AuthRequest{
+			Host: host, Peer: netip.MustParseAddr("127.0.0.1"),
+			Header: http.Header{"Tailscale-Funnel-Request": {"?1"}},
+		}
+		if res := (auth.LocalhostTrust{}).Authenticate(context.Background(), req); res.Kind != auth.KindIgnore {
+			t.Errorf("Host %s: localhost-trust result = %s, want ignore", host, res.Kind)
+		}
 	}
 }
 

@@ -2659,7 +2659,10 @@ export interface paths {
      *
      *     409 `already-exists` (`target`, `https_port`): the HTTPS port already serves something else; send `replace: true`
      *     to overwrite it. 409 `invalid-state`: Tailscale is not ready (CLI missing, signed out, stopped, HTTPS
-     *     certificates disabled); the `warnings` extension lists the fixes. 503 `unavailable`: the command failed
+     *     certificates disabled); the `warnings` extension lists the fixes. 409 `invalid-state` with `funnel_on_port:
+     *     true` (and `https_port`): `tailscale funnel` exposes the HTTPS port to the public internet, which hal9001 never
+     *     does; nothing is run or written, with or without `replace` and even when the mapping already points at
+     *     hal9001. Turn funnel off (`tailscale funnel --https=<port> off`) or pick another port. 503 `unavailable`: the command failed
      *     (`detail` has its output).
      */
     post: operations["enableTailscaleServe"];
@@ -5421,6 +5424,7 @@ export interface components {
         | "https_disabled"
         | "magicdns_disabled"
         | "funnel_enabled"
+        | "funnel_on_port"
         | "port_conflict"
         | "serve_missing"
         | "host_missing"
@@ -5453,6 +5457,8 @@ export interface components {
       conflict: string | null;
       /** @description Anything of this Mac is exposed to the internet through funnel. hal9001 never does this. */
       funnel: boolean;
+      /** @description Funnel exposes the HTTPS port (`https_port`) to the public internet. hal9001 refuses to share on it (`POST /api/tailscale/serve` is a 409) until funnel is turned off there. */
+      funnel_on_port: boolean;
     };
     TailscaleAllowedHost: {
       /** @description The `allowed_hosts` entry that matches the URL (`<name>` or `<name>:<port>`); null without a MagicDNS name. */
@@ -6419,8 +6425,9 @@ export interface components {
       };
     };
     /**
-     * @description The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`) or the session does not grant the
-     *     service (`forbidden`).
+     * @description The baseline rejected the request (`host-not-allowed`, `origin-not-allowed`), the request came through
+     *     `tailscale funnel` (a `Tailscale-Funnel-Request` header: always `forbidden`, on every path), or the session does
+     *     not grant the service (`forbidden`).
      */
     Forbidden: {
       headers: {

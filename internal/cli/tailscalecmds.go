@@ -24,13 +24,14 @@ type tailscaleStatus struct {
 	Tailnet      *string `json:"tailnet"`
 	HTTPSEnabled bool    `json:"https_enabled"`
 	Serve        struct {
-		Enabled     bool    `json:"enabled"`
-		HTTPSPort   int     `json:"https_port"`
-		Target      string  `json:"target"`
-		Active      bool    `json:"active"`
-		PointsAtHal bool    `json:"points_at_hal"`
-		Conflict    *string `json:"conflict"`
-		Funnel      bool    `json:"funnel"`
+		Enabled      bool    `json:"enabled"`
+		HTTPSPort    int     `json:"https_port"`
+		Target       string  `json:"target"`
+		Active       bool    `json:"active"`
+		PointsAtHal  bool    `json:"points_at_hal"`
+		Conflict     *string `json:"conflict"`
+		Funnel       bool    `json:"funnel"`
+		FunnelOnPort bool    `json:"funnel_on_port"`
 	} `json:"serve"`
 	URL         *string `json:"url"`
 	AllowedHost struct {
@@ -163,7 +164,9 @@ func writeTailscaleStatus(w io.Writer, st tailscaleStatus) {
 		p("allowed host", host)
 	}
 	p("allowed logins", strings.Join(st.AllowedLogins, ", "))
-	if st.Serve.Funnel {
+	if st.Serve.FunnelOnPort {
+		p("funnel", fmt.Sprintf("ON for https port %d: exposed to the internet; hal9001 will not share on it (run: tailscale funnel --https=%d off)", st.Serve.HTTPSPort, st.Serve.HTTPSPort))
+	} else if st.Serve.Funnel {
 		p("funnel", "ON: something is exposed to the internet")
 	}
 	if st.Error != nil {

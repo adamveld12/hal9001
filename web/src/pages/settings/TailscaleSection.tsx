@@ -30,6 +30,8 @@ import {
   allowedHostEntry,
   allowedHostView,
   conflictTitle,
+  funnelMessage,
+  funnelOffCommand,
   loginsView,
   parsePort,
   parseServeFailure,
@@ -85,10 +87,10 @@ function TailscaleDetails({ status }: { status: TailscaleStatus }) {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [failure, setFailure] = useState<ServeFailure | null>(null);
 
-  const control = shareControl(status);
   const portField = portText ?? String(status.serve.https_port);
   const parsed = parsePort(portField);
   const port = parsed.ok ? parsed.port : status.serve.https_port;
+  const control = shareControl(status, port);
   const busy = enable.isPending || disable.isPending;
 
   const startEnable = (replace: boolean) => {
@@ -227,14 +229,19 @@ function TailscaleDetails({ status }: { status: TailscaleStatus }) {
               </Button>
             )}
           </div>
-          {!control.shared && control.shareDisabledReason && (
-            <p
-              className="m-0 text-warn"
-              data-testid="tailscale-share-disabled-reason"
-            >
-              {control.shareDisabledReason}
-            </p>
+          {status.serve.funnel_on_port && (
+            <FunnelBlock port={status.serve.https_port} />
           )}
+          {!control.shared &&
+            control.shareDisabledReason &&
+            !status.serve.funnel_on_port && (
+              <p
+                className="m-0 text-warn"
+                data-testid="tailscale-share-disabled-reason"
+              >
+                {control.shareDisabledReason}
+              </p>
+            )}
           {status.serve.enabled && !status.serve.points_at_hal && (
             <p className="m-0 text-warn" data-testid="tailscale-serve-missing">
               hal is set to keep sharing, but the mapping on port{" "}
@@ -467,8 +474,44 @@ function DisableBody({ status }: { status: TailscaleStatus }) {
   );
 }
 
+/** Funnel exposes the HTTPS port to the public internet: an error, with the command that fixes it. */
+function FunnelBlock({ port }: { port: number }) {
+  return (
+    <div
+      role="alert"
+      className="space-y-2 rounded-md border border-bad/40 bg-bad/5 p-3"
+      data-testid="tailscale-funnel-error"
+    >
+      <div className="font-medium text-bad">
+        Funnel is on for HTTPS port {port}
+      </div>
+      <p className="m-0" data-testid="tailscale-share-disabled-reason">
+        {funnelMessage(port)}
+      </p>
+      <CodeBlock text={funnelOffCommand(port)} />
+    </div>
+  );
+}
+
 function FailureBlock({ failure }: { failure: ServeFailure }) {
   if (failure.kind === "conflict") return null;
+  if (failure.kind === "funnel") {
+    return (
+      <div
+        role="alert"
+        className="space-y-2 rounded-md border border-bad/40 bg-bad/5 p-3"
+        data-testid="tailscale-error"
+      >
+        <div className="font-medium text-bad">
+          Funnel is on for this HTTPS port
+        </div>
+        <p className="m-0">{failure.message}</p>
+        {failure.httpsPort !== null && (
+          <CodeBlock text={funnelOffCommand(failure.httpsPort)} />
+        )}
+      </div>
+    );
+  }
   return (
     <div
       role="alert"

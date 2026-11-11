@@ -9,6 +9,7 @@ import {
   Panel,
 } from "../../components/ui";
 import { stackViews } from "./authView";
+import { funnelMessage, funnelOffCommand } from "./tailscaleView";
 
 const CONTROL_TONE = {
   required: "warn",
@@ -145,6 +146,15 @@ export function TailscalePanel() {
               {s.allowed_logins.length > 0 ? s.allowed_logins.join(", ") : "–"}
             </dd>
           </dl>
+          {s.serve.funnel_on_port && (
+            <p role="alert" className="m-0 text-xs text-bad">
+              {funnelMessage(s.serve.https_port)} Run{" "}
+              <code className="font-mono">
+                {funnelOffCommand(s.serve.https_port)}
+              </code>
+              .
+            </p>
+          )}
           {s.serve.funnel && (
             <p role="alert" className="m-0 text-xs text-bad">
               Funnel is on: something is exposed to the internet. Turn it off

@@ -81,11 +81,14 @@ func (s *Server) tailscaleConfigChanged() {
 // tailscaleError maps a manager error to the contract's problems.
 func (s *Server) tailscaleError(w http.ResponseWriter, r *http.Request, err error) {
 	var conflict *tailscale.ConflictError
+	var funnel *tailscale.FunnelError
 	var notReady *tailscale.NotReadyError
 	var cmd *tailscale.CommandError
 	switch {
 	case errors.As(err, &conflict):
 		conflictProblem(w, typeAlreadyExists, err.Error(), map[string]any{"target": conflict.Target, "https_port": conflict.HTTPSPort})
+	case errors.As(err, &funnel):
+		conflictProblem(w, typeInvalidState, err.Error(), map[string]any{"https_port": funnel.HTTPSPort, "funnel_on_port": true})
 	case errors.As(err, &notReady):
 		conflictProblem(w, typeInvalidState, err.Error(), map[string]any{"warnings": notReady.Warnings})
 	case errors.Is(err, tailscale.ErrUnavailable):

@@ -565,7 +565,7 @@ func tailscaleBody() map[string]any {
 		"cli": map[string]any{"found": true, "path": "/opt/homebrew/bin/tailscale", "version": "1.80.2"}, "backend_state": "Running",
 		"logged_in": true, "dns_name": "hal-mac.example-tailnet.ts.net", "tailnet": "example-tailnet.ts.net", "owner_login": "a@example.com",
 		"https_enabled": true, "magic_dns_enabled": true,
-		"serve": map[string]any{"enabled": true, "https_port": 443, "target": "http://127.0.0.1:9001", "active": true, "points_at_hal": true, "conflict": nil, "funnel": false},
+		"serve": map[string]any{"enabled": true, "https_port": 443, "target": "http://127.0.0.1:9001", "active": true, "points_at_hal": true, "conflict": nil, "funnel": false, "funnel_on_port": false},
 		"url":   "https://hal-mac.example-tailnet.ts.net/", "allowed_host": map[string]any{"entry": "hal-mac.example-tailnet.ts.net", "present": true, "added_by_hal": true},
 		"allowed_logins": []string{"a@example.com"}, "warnings": []any{}, "error": nil, "checked_at": "2026-11-11T10:00:00Z",
 	}
