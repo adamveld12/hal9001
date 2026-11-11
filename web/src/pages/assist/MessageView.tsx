@@ -15,6 +15,8 @@ import { ToolContentView } from "../runs/TranscriptView";
 import { extractCommand, extractDiffs } from "../approvals/diff";
 import { DiffView } from "../approvals/DiffView";
 import { noFocusOnClick } from "../../lib/focus";
+import { IssueLinkCard } from "./IssueLinkCard";
+import { parseIssueLink } from "./issueLink";
 
 const KIND_ICON: Record<string, IconName> = {
   read: "note",
@@ -148,6 +150,7 @@ function ToolRow({
   runtime: string;
 }) {
   const needsApproval = message.approval_id !== null;
+  const issue = parseIssueLink(call);
   return (
     <div className="space-y-1.5">
       {/* A call waiting for a decision opens, so the user reads what they are asked to allow. */}
@@ -175,6 +178,7 @@ function ToolRow({
           <ToolDetails call={call} />
         </div>
       </details>
+      {issue && <IssueLinkCard link={issue} />}
       {needsApproval && (
         <ApprovalPrompt
           approvalId={message.approval_id as string}
