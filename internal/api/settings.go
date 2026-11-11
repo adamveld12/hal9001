@@ -51,7 +51,7 @@ func redactConfig(c spec.Config) spec.Config {
 	c = c.Clone()
 	runtimes := make(map[string]spec.Runtime, len(c.Runtimes))
 	for name, rt := range c.Runtimes {
-		rt.Command = slices.Clone(rt.Command)
+		rt.Command = nonNil(slices.Clone(rt.Command))
 		rt.Env = redactEnv(rt.Env)
 		rt.Ask.Args = slices.Clone(rt.Ask.Args)
 		rt.Ask.Env = redactEnv(rt.Ask.Env)

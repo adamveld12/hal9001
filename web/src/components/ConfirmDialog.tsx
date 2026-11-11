@@ -9,6 +9,7 @@ export function ConfirmDialog({
   confirmLabel,
   busy,
   confirmDisabled,
+  confirmVariant = "danger",
   onConfirm,
   onCancel,
 }: {
@@ -19,6 +20,8 @@ export function ConfirmDialog({
   busy?: boolean;
   /** Disables only the confirm button (Cancel stays available). */
   confirmDisabled?: boolean;
+  /** Style of the confirm button; destructive by default. */
+  confirmVariant?: "danger" | "primary";
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -48,7 +51,7 @@ export function ConfirmDialog({
           Cancel
         </Button>
         <Button
-          variant="danger"
+          variant={confirmVariant}
           onClick={onConfirm}
           disabled={busy || confirmDisabled}
         >

@@ -27,16 +27,25 @@ allowed_hosts: []
 # owns this Mac.
 allowed_logins: []
 
-# ACP agent runtimes (docs/runtimes.md, docs/acp-lockdown.md). A runtime is a
-# command speaking ACP over stdio; the adapters run through `mise exec` with
-# pinned versions (the same pins as the hal9001 repo's mise.toml): bare
-# `claude-agent-acp` / `codex-acp` shims only resolve inside the repo, and agents
-# run in their own cwd under launchd.
+# ACP agent runtimes (docs/runtimes.md, docs/acp-lockdown.md). A runtime is an
+# agent speaking ACP over stdio. For `kind: claude | codex | omp` with no
+# `command`, hal9001 finds the agent itself:
+#   - it looks for the claude, codex and omp CLIs on your PATH and checks that you
+#     are signed in (`claude login`, `codex login`; for omp configure a provider
+#     with `omp login <provider>`). Settings > Runtimes and `hal9001 runtimes status`
+#     show what is missing and how to fix it.
+#   - omp runs its built-in `omp acp`. Claude and Codex need an ACP adapter
+#     (claude-agent-acp, codex-acp) that requires Node.js 22+; install it with the
+#     "Install adapter" button in Settings > Runtimes or `hal9001 runtimes install
+#     <name>`. hal9001 installs a pinned version with npm into <home>/data/adapters;
+#     nothing is downloaded at run time.
+# Set `command` (argv) to run any ACP agent yourself; hal9001 then uses it as
+# written. `kind` still applies the lockdown below.
 #
 # Agents run LOCKED DOWN: no shell, file, web or sub-agent tools of their own; they
 # act only through the MCP tools hal9001 injects (its `hal` server: gh, now, run
 # context, sandbox and custom tools, assist draft tools). For a runtime hal9001
-# recognizes (`kind: claude | codex | omp`, detected from the command) it adds the
+# recognizes (`kind: claude | codex | omp`, or detected from the command) it adds the
 # lockdown itself: session options for Claude, spawn flags, an overlay file and env
 # for omp, a generated CODEX_HOME and env for Codex, plus MCP call timeouts long
 # enough for a human approval. Anything you set under `modes`, `ask`, `full`,
@@ -48,12 +57,9 @@ allowed_logins: []
 # engine creates the isolated CODEX_HOME / PI_CODING_AGENT_DIR directories and
 # symlinks the existing login into them.
 runtimes:
-  claude:
-    command: [mise, exec, "npm:@agentclientprotocol/claude-agent-acp@0.100.0", --, claude-agent-acp]
-  codex:
-    command: [mise, exec, "npm:@agentclientprotocol/codex-acp@2.5.0", --, codex-acp]
-  omp:
-    command: [omp, acp]
+  claude: {kind: claude}
+  codex: {kind: codex}
+  omp: {kind: omp}
 
 # Auth: PAM-style stacks per service (see REQUIREMENTS section 10.4).
 # localhost-trust lets local requests in; tailscale-identity signs in tailnet

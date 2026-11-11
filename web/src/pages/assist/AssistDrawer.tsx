@@ -10,11 +10,12 @@ import {
   type AssistTargetKind,
 } from "../../api/assist";
 import { ApiError } from "../../api/client";
-import { useRuntimes } from "../../api/settings";
+import { useRuntimeOptions, useRuntimes } from "../../api/settings";
 import { Icon } from "../../components/icons";
 import { Button, LoadingState, Select, TextInput } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import { noFocusOnClick } from "../../lib/focus";
+import { runtimeOptions } from "../../lib/runtimeStatus";
 import { ConfirmButton } from "../files/ConfirmButton";
 import { Composer } from "./Composer";
 import { useAssist } from "./context";
@@ -200,15 +201,13 @@ function RuntimeControls({
   onRuntime?: (r: string) => void;
   onModel?: (m: string) => void;
 }) {
-  const runtimes = useRuntimes();
-  const names = runtimes.data?.map((r) => r.name) ?? [];
-  const options =
-    runtime !== "" && !names.includes(runtime) ? [runtime, ...names] : names;
+  const runtimes = useRuntimeOptions();
+  const options = runtimeOptions(runtimes.data ?? [], runtime);
   return (
     <div className="flex gap-2">
       <Select
         aria-label="Runtime"
-        className="w-36"
+        className="w-48"
         value={runtime}
         disabled={locked || options.length === 0}
         title={
@@ -219,9 +218,9 @@ function RuntimeControls({
         onChange={(e) => onRuntime?.(e.target.value)}
       >
         {options.length === 0 && <option value="">no runtimes</option>}
-        {options.map((n) => (
-          <option key={n} value={n}>
-            {n}
+        {options.map((o) => (
+          <option key={o.name} value={o.name}>
+            {o.label}
           </option>
         ))}
       </Select>

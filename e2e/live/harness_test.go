@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,12 +65,11 @@ type stackOpts struct {
 // `hal9001 serve` captures from the login shell under launchd.
 func startStack(t *testing.T, o stackOpts) *stack {
 	t.Helper()
-	adapters := adapterPaths(t) // resolved in the repo, where mise.toml pins them
 	if o.binDir == "" {
 		o.binDir = buildCLI(t) // before the chdir below: the build runs from the repo
 	}
-	// launchd starts the daemon in /, outside any repo: mise shims resolve
-	// tool versions from the working directory, so do the same here.
+	// launchd starts the daemon in /, outside any repo: tool shims (node from mise or asdf) resolve
+	// versions from the working directory, so do the same here.
 	t.Chdir("/")
 	home := t.TempDir()
 	if keep := os.Getenv("HAL9001_LIVE_KEEP_HOME"); keep != "" { // for debugging: the home outlives the test
@@ -101,7 +99,6 @@ func startStack(t *testing.T, o stackOpts) *stack {
 	if b, err := os.ReadFile(demo); err == nil {
 		writeFile(t, demo, strings.Replace(string(b), "enabled: true", "enabled: false", 1))
 	}
-	patchRuntimeCommands(t, home, adapters)
 	if o.configPatch != nil {
 		cfg := filepath.Join(home, "config.yaml")
 		b, err := os.ReadFile(cfg)
@@ -166,7 +163,55 @@ func startStack(t *testing.T, o stackOpts) *stack {
 			t.Error("daemon did not shut down")
 		}
 	})
-	return &stack{t: t, home: home, base: "http://" + addr.String(), http: &http.Client{Timeout: 5 * time.Minute}}
+	st := &stack{t: t, home: home, base: "http://" + addr.String(), http: &http.Client{Timeout: 5 * time.Minute}}
+	st.installAdapters()
+	return st
+}
+
+// installAdapters installs the pinned ACP adapters of the starter runtimes claude and codex into the test home
+// with npm (the same action as `hal9001 runtimes install`), and waits for them. The starter config has no command
+// for these runtimes, so they need nothing else.
+func (s *stack) installAdapters() {
+	s.t.Helper()
+	for _, name := range []string{"claude", "codex"} {
+		s.must(http.StatusAccepted, http.MethodPost, "/api/runtimes/"+name+"/adapter", nil, nil)
+	}
+	deadline := time.Now().Add(10 * time.Minute)
+	for time.Now().Before(deadline) {
+		var list struct {
+			Items []struct {
+				Name      string `json:"name"`
+				Detection struct {
+					Adapter struct {
+						Installed  bool `json:"installed"`
+						Installing bool `json:"installing"`
+					} `json:"adapter"`
+					Warnings []struct {
+						Code, Message string
+					} `json:"warnings"`
+				} `json:"detection"`
+			} `json:"items"`
+		}
+		s.must(http.StatusOK, http.MethodGet, "/api/runtimes", nil, &list)
+		pending := false
+		for _, it := range list.Items {
+			if it.Name != "claude" && it.Name != "codex" {
+				continue
+			}
+			ad := it.Detection.Adapter
+			switch {
+			case ad.Installing:
+				pending = true
+			case !ad.Installed:
+				s.t.Fatalf("adapter of %s did not install: %+v (needs Node.js 22+ and npm on the PATH)", it.Name, it.Detection.Warnings)
+			}
+		}
+		if !pending {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	s.t.Fatal("adapters did not install within 10 minutes")
 }
 
 func writeFile(t *testing.T, path, data string) {
@@ -456,50 +501,4 @@ func evidence(t *testing.T, name string, v any) {
 	if err := os.WriteFile(filepath.Join(dir, name+".json"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// adapterPaths resolves the pinned npm ACP adapters to their installed
-// scripts. The mise shims for them only work inside the repo (the pins live in
-// its mise.toml), but agents run in their own cwd, so the live config names the
-// scripts by absolute path. The scripts start with `#!/usr/bin/env node`; node
-// comes from the login-shell PATH.
-func adapterPaths(t *testing.T) map[string]string {
-	t.Helper()
-	out := map[string]string{}
-	for cmd, tool := range map[string]string{
-		"claude-agent-acp": "npm:@agentclientprotocol/claude-agent-acp",
-		"codex-acp":        "npm:@agentclientprotocol/codex-acp",
-	} {
-		c := exec.Command("mise", "where", tool)
-		c.Dir = "../.." // repository root
-		b, err := c.Output()
-		if err != nil {
-			t.Fatalf("mise where %s: %v (run `mise install` in the repo)", tool, err)
-		}
-		p := filepath.Join(strings.TrimSpace(string(b)), "node_modules", ".bin", cmd)
-		if _, err := os.Stat(p); err != nil {
-			t.Fatalf("adapter %s: %v", cmd, err)
-		}
-		out[cmd] = p
-	}
-	return out
-}
-
-// patchRuntimeCommands replaces bare adapter command names in the seeded
-// config.yaml with absolute paths (a config that already pins them through
-// `mise exec` is left as it is).
-func patchRuntimeCommands(t *testing.T, home string, paths map[string]string) {
-	t.Helper()
-	cfg := filepath.Join(home, "config.yaml")
-	b, err := os.ReadFile(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
-	for cmd, p := range paths {
-		// The shipped config runs the adapters through `mise exec <tool>@<version> -- <adapter>`, which
-		// needs no patching; only a bare adapter command is replaced by its absolute path.
-		s = strings.Replace(s, "command: ["+cmd+"]", "command: ["+p+"]", 1)
-	}
-	writeFile(t, cfg, s)
 }

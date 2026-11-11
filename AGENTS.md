@@ -42,7 +42,7 @@ This is a fun side project; iteration speed beats rigor.
 
 ## Browser verification
 
-- Use the sandbox, never the daemon on port 9001: `mise run sandbox` (seeded temp home, a `fake` runtime from `--script`, a free port; prints the URL and home path, Ctrl-C stops it and deletes the home unless `--keep`).
+- Use the sandbox, never the daemon on port 9001: `mise run sandbox` (seeded temp home, a `fake` runtime from `--script`, a free port; prints the URL and home path, Ctrl-C stops it and deletes the home unless `--keep`). `--path <stubdir>:/usr/bin:/bin` makes that the only PATH the daemon uses to find the `claude`/`codex`/`omp` CLIs, `node` and `npm`, so runtime detection (Settings → Runtimes) can be tried with stub executables instead of the machine's real CLIs.
 - Prefer `tab.text()`, `waitForSelector` and DOM assertions. Take screenshots only of the viewport, only as final evidence; never full-page captures (they stall).
 - A virtual WebAuthn authenticator needs a headed tab.
 

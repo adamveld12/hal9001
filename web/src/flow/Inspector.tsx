@@ -14,6 +14,7 @@ import {
 } from "../components/ui";
 import { langForCommand } from "../lib/codeLang";
 import { cx } from "../lib/cx";
+import { runtimeOptions, type RuntimeOption } from "../lib/runtimeStatus";
 import {
   AGENT_MODES,
   APPROVE_STYLES,
@@ -62,7 +63,7 @@ export interface InspectorProps {
   node: FlowNode;
   diagnostics: Diagnostic[];
   prompts: string[];
-  runtimes: string[];
+  runtimes: RuntimeOption[];
   /** Whether another node already uses this id. */
   idTaken: (id: string) => boolean;
   /** Id of the flow being edited (samples are looked up per flow and node). */
@@ -727,7 +728,7 @@ function AgentForm({
   node: AgentNode;
   diags: Diagnostic[];
   prompts: string[];
-  runtimes: string[];
+  runtimes: RuntimeOption[];
   onChange: (p: (n: AgentNode) => AgentNode) => void;
   onRenamePort: (from: string, to: string) => void;
   onRemovePort: (port: string) => void;
@@ -736,24 +737,28 @@ function AgentForm({
     node.prompt && !prompts.includes(node.prompt)
       ? [node.prompt, ...prompts]
       : prompts;
-  const runtimeList = `runtimes-${node.id}`;
+  const runtimeChoices = runtimeOptions(runtimes, node.runtime);
   return (
     <>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Runtime" error={msgs(diags, "runtime")}>
-          <TextInput
-            list={runtimeList}
+          <Select
+            aria-label="Runtime"
             value={node.runtime}
             invalid={msgs(diags, "runtime").length > 0}
             onChange={(e) =>
               onChange((n) => ({ ...n, runtime: e.target.value }))
             }
-          />
-          <datalist id={runtimeList}>
-            {runtimes.map((r) => (
-              <option key={r} value={r} />
+          >
+            {node.runtime === "" && (
+              <option value="">(choose a runtime)</option>
+            )}
+            {runtimeChoices.map((r) => (
+              <option key={r.name} value={r.name}>
+                {r.label}
+              </option>
             ))}
-          </datalist>
+          </Select>
         </Field>
         <Field label="Model" error={msgs(diags, "model")}>
           <TextInput

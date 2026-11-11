@@ -11,6 +11,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/runner"
+	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/tools"
 )
@@ -181,7 +182,20 @@ func (e *Engine) runtimeConfig(snap *snapshot, name string) (agent.RuntimeConfig
 	if len(rt.Full.Args) == 0 {
 		cfg.Full.Args = nil
 	}
-	cfg = agent.ApplyLockdown(cfg, rt.Kind, agent.LockdownOptions{Dir: filepath.Join(e.data, "runtimes"), Server: tools.ServerName})
+	opt := agent.LockdownOptions{Dir: filepath.Join(e.data, "runtimes"), Server: tools.ServerName}
+	if len(rt.Command) == 0 {
+		// No command of its own: the installed adapter or the CLI's own ACP mode (internal/runtimes).
+		res := e.runtimes.Resolve(e.dbCtx, name, rt)
+		if res.Err != nil {
+			cfg.Unavailable = res.Err.Error()
+			e.log.Warn("engine: runtime unavailable", "runtime", name, "err", res.Err)
+			return cfg, true
+		}
+		cfg.Command = res.Command
+		opt.ManagedAdapter = res.Source == runtimes.SourceManaged
+		opt.AdapterVersion = res.AdapterVersion
+	}
+	cfg = agent.ApplyLockdown(cfg, rt.Kind, opt)
 	if cfg.Lockdown.Err != "" {
 		e.log.Error("engine: runtime lockdown", "runtime", name, "err", cfg.Lockdown.Err)
 	}

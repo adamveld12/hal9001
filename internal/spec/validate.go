@@ -210,12 +210,12 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 			c.errorf(CodeInvalidID, p, "runtime name %q is invalid: use letters, digits, - and _", name)
 		}
 		switch {
-		case len(rt.Command) == 0:
-			c.errorf(CodeRequired, p+".command", "runtime %q needs a command (argv)", name)
-		case rt.Command[0] == "":
+		case len(rt.Command) == 0 && !slices.Contains(RuntimeKinds, rt.Kind):
+			c.errorf(CodeRequired, p+".command", "runtime %q needs a command (argv), or a kind (%s) so hal9001 finds the agent itself", name, strings.Join(RuntimeKinds, " | "))
+		case len(rt.Command) > 0 && rt.Command[0] == "":
 			c.errorf(CodeInvalidValue, p+".command[0]", "runtime %q: command[0] (the program) must not be empty", name)
 		}
-		c.enum(p+".kind", rt.Kind, []string{"claude", "codex", "omp"}, false)
+		c.enum(p+".kind", rt.Kind, RuntimeKinds, false)
 		validateEnvNames(c, p+".env", rt.Env)
 		validateEnvNames(c, p+".ask.env", rt.Ask.Env)
 		validateEnvNames(c, p+".full.env", rt.Full.Env)

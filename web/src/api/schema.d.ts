@@ -2135,12 +2135,71 @@ export interface paths {
     };
     /**
      * Configured ACP runtimes
-     * @description The `runtimes` map of `config.yaml`, with the most recent probe result of each, if any.
+     * @description The `runtimes` map of `config.yaml`, with the most recent probe result of each, if any, and what hal9001
+     *     detected: the agent CLI, whether you are signed in, the adapter, Node.js, the command it starts and the
+     *     warnings with their fixes (`detection`). Detection results are cached for a few minutes; `POST
+     *     /api/runtimes/detect` checks again.
      */
     get: operations["listRuntimes"];
     put?: never;
     post?: never;
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/runtimes/detect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Detect runtimes again
+     * @description Forgets every cached lookup and detection and checks all runtimes again (CLI versions, login state, adapters,
+     *     Node.js). Runs the agents' own read-only status commands, hence `admin`. Returns the same body as
+     *     `GET /api/runtimes`.
+     */
+    post: operations["detectRuntimes"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/runtimes/{name}/adapter": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RuntimeName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Install the ACP adapter of a runtime
+     * @description Starts `npm install --prefix <home>/data/adapters/<adapter> @agentclientprotocol/<adapter>@<pinned version>` for
+     *     a `claude` or `codex` runtime without a `command`, and returns at once. The adapter is then run as
+     *     `<node> <script>`; nothing is fetched when an agent starts. Progress arrives on the stream as `runtime.adapter`
+     *     events (`installing` with output lines, then `done` or `failed`); the result is in `detection.adapter` and, for a
+     *     failure, the `adapter_install_failed` warning. Installing again replaces the install with the pinned version.
+     *     Runs npm, hence `admin`.
+     *     409 `invalid-state`: the runtime has no adapter hal9001 installs (omp, or it has a `command`) or an install is
+     *     already running. 422: Node.js 22+ or npm was not found (`code` extension: `node_missing`, `node_old`).
+     */
+    post: operations["installRuntimeAdapter"];
+    /**
+     * Remove the installed ACP adapter of a runtime
+     * @description Deletes the adapter folder under `<home>/data/adapters`. Runtimes of the same kind share it. 409
+     *     `invalid-state` when the runtime has no managed adapter or an install is running.
+     */
+    delete: operations["uninstallRuntimeAdapter"];
     options?: never;
     head?: never;
     patch?: never;
@@ -3455,8 +3514,10 @@ export interface components {
       output?: "note" | "none";
       body: string;
     };
+    /** @description A runtime needs a `command` or a `kind`. */
     RuntimeConfig: {
-      command: string[];
+      /** @description The agent argv. Optional with a `kind`: hal9001 then uses the installed ACP adapter or, for omp, `omp acp` (see `GET /api/runtimes`). */
+      command?: string[];
       /** @description Names of the agent's session modes for restrictive and permissive runs. */
       modes?: {
         ask?: string;
@@ -4292,6 +4353,12 @@ export interface components {
     };
     Runtime: {
       name: components["schemas"]["Slug"];
+      /**
+       * @description The configured `kind`, else the family the command names; null for another agent.
+       * @enum {string|null}
+       */
+      kind: "claude" | "codex" | "omp" | null;
+      /** @description The `command` set in `config.yaml`; empty when hal9001 finds the agent itself (see `detection.command`). */
       command: string[];
       modes: {
         ask?: string;
@@ -4301,6 +4368,77 @@ export interface components {
       env_keys?: string[];
       /** @description Result of the last probe since the daemon started. */
       last_probe: components["schemas"]["ProbeResult"] | null;
+      detection: components["schemas"]["RuntimeDetection"];
+    };
+    /**
+     * @description What hal9001 found for a runtime. `status`: `ready` (a command to start and you are signed in), `warning` (a
+     *     command to start, but the login is missing or unknown, or another warning applies) or `unavailable` (no
+     *     command can be started). A runtime that is not `unavailable` runs; a node of an `unavailable` runtime fails
+     *     with the first warning's message.
+     */
+    RuntimeDetection: {
+      /** @enum {string} */
+      status: "ready" | "warning" | "unavailable";
+      /** @description The agent's own command line tool (`claude`, `codex`, `omp`). A candidate that cannot run `--version` counts as not found. */
+      cli: {
+        name: string;
+        found: boolean;
+        path: string | null;
+        version: string | null;
+      };
+      auth: {
+        /**
+         * @description From `claude auth status`, `codex login status`, or (omp) whether `omp models` lists a provider with credentials; `unknown` when the check could not run.
+         * @enum {string}
+         */
+        status: "ok" | "missing" | "unknown";
+        /** @description What to run to sign in, for example `claude login`. */
+        command: string | null;
+      };
+      /** @description What speaks ACP for the runtime. */
+      adapter: {
+        /**
+         * @description `custom`: the `command` of `config.yaml`; `managed`: the adapter hal9001 installed; `builtin`: the CLI itself (`omp acp`); `none`: nothing usable yet.
+         * @enum {string}
+         */
+        source: "builtin" | "managed" | "custom" | "none";
+        installed: boolean;
+        version: string | null;
+        /** @description The version hal9001 installs (the one the lockdown was tested with); null when the runtime has no managed adapter. */
+        pinned_version: string | null;
+        /** @description The adapter script, or the executable of the `builtin` and `custom` sources. */
+        path: string | null;
+        /** @description hal9001 can install the adapter (`POST /api/runtimes/{name}/adapter`). */
+        installable: boolean;
+        installing: boolean;
+      };
+      node: {
+        found: boolean;
+        version: string | null;
+        /** @description Version 22 or newer; the adapters need it. */
+        ok: boolean;
+      };
+      /** @description The argv hal9001 starts for the runtime; null when `status` is `unavailable`. */
+      command: string[] | null;
+      warnings: components["schemas"]["RuntimeWarning"][];
+      checked_at: components["schemas"]["Timestamp"];
+    };
+    RuntimeWarning: {
+      /** @enum {string} */
+      code:
+        | "cli_missing"
+        | "auth_missing"
+        | "auth_unknown"
+        | "node_missing"
+        | "node_old"
+        | "adapter_missing"
+        | "providers_missing"
+        | "adapter_install_failed";
+      message: string;
+      /** @description A command that fixes it. */
+      command: string | null;
+      /** @description A page that explains the fix. */
+      url: string | null;
     };
     RuntimeList: {
       items: components["schemas"]["Runtime"][];
@@ -5603,7 +5741,8 @@ export interface components {
       | "assist.navigate"
       | "assist.start_draft"
       | "update.status"
-      | "update.install";
+      | "update.install"
+      | "runtime.adapter";
     /**
      * @description Fields shared by every message. `id` equals the SSE `id:` field and increases monotonically within one daemon
      *     run. Records in `data` have text previews truncated to 4 KiB; fetch the resource for full content.
@@ -5648,7 +5787,8 @@ export interface components {
       | components["schemas"]["AssistNavigateEvent"]
       | components["schemas"]["AssistStartDraftEvent"]
       | components["schemas"]["UpdateStatusEvent"]
-      | components["schemas"]["UpdateInstallEvent"];
+      | components["schemas"]["UpdateInstallEvent"]
+      | components["schemas"]["RuntimeAdapterEvent"];
     StreamReady: {
       server_time: components["schemas"]["Timestamp"];
       version: string;
@@ -6062,6 +6202,30 @@ export interface components {
        * @enum {string}
        */
       type: "update.status";
+    };
+    /**
+     * @description Progress of an adapter install started with `POST /api/runtimes/{name}/adapter`. `data` is
+     *     `RuntimeAdapterProgress`. Clients refetch `GET /api/runtimes` on every event.
+     */
+    RuntimeAdapterEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "runtime.adapter";
+      data?: components["schemas"]["RuntimeAdapterProgress"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "runtime.adapter";
+    };
+    RuntimeAdapterProgress: {
+      name: components["schemas"]["Slug"];
+      /** @enum {string} */
+      phase: "installing" | "done" | "failed";
+      /** @description A line of npm's output (`installing`). */
+      line: string | null;
+      /** @description Why the install failed (`failed`). */
+      error: string | null;
     };
     /**
      * @description Order to install the available update: download `manifest.url`, verify it against the manifest's size, sha256 and
@@ -9411,6 +9575,87 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  detectRuntimes: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description All runtimes, ordered by name, freshly detected. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RuntimeList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  installRuntimeAdapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RuntimeName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The install started; `detection.adapter.installing` is true. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Runtime"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  uninstallRuntimeAdapter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RuntimeName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The runtime after the removal. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Runtime"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
       default: components["responses"]["Error"];
     };
   };

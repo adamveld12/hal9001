@@ -1,6 +1,13 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, unwrapVoid, type Schemas } from "./client";
+import {
+  reduceProgress,
+  runtimeOption,
+  type ProgressByRuntime,
+} from "../lib/runtimeStatus";
 import { qk } from "./keys";
+import { useStreamEvents } from "./streamHooks";
 
 export type Settings = Schemas["Settings"];
 export type Config = Schemas["Config"];
@@ -91,4 +98,63 @@ export function useProbeRuntime() {
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk("runtimes") }),
   });
+}
+
+/** Runtime picker options (flow editor): name plus the status hint shown next to it. */
+export function useRuntimeOptions() {
+  return useQuery({
+    queryKey: qk("runtimes"),
+    queryFn: fetchRuntimes,
+    select: (d) => d.items.map(runtimeOption),
+  });
+}
+
+/** Re-runs detection (CLI, sign-in, Node, adapter) for every runtime. */
+export function useDetectRuntimes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.POST("/api/runtimes/detect")),
+    onSuccess: (list) => {
+      qc.setQueryData(qk("runtimes"), list);
+      return qc.invalidateQueries({ queryKey: qk("runtimes") });
+    },
+  });
+}
+
+/** Starts the install (202). Progress arrives as `runtime.adapter` stream events. */
+export function useInstallAdapter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      unwrap(
+        api.POST("/api/runtimes/{name}/adapter", {
+          params: { path: { name } },
+        }),
+      ),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk("runtimes") }),
+  });
+}
+
+export function useRemoveAdapter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      unwrap(
+        api.DELETE("/api/runtimes/{name}/adapter", {
+          params: { path: { name } },
+        }),
+      ),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk("runtimes") }),
+  });
+}
+
+/** Live install log per runtime from `runtime.adapter` stream events. */
+export function useAdapterProgress(): ProgressByRuntime {
+  const [progress, setProgress] = useState<ProgressByRuntime>({});
+  useStreamEvents(["runtime.adapter"], (e) => {
+    if (e.type !== "runtime.adapter" || !e.data) return;
+    const progress = e.data;
+    setProgress((s) => reduceProgress(s, progress));
+  });
+  return progress;
 }

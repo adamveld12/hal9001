@@ -95,6 +95,9 @@ func (e *Executor) validate(req *RunRequest) error {
 	default:
 		return fmt.Errorf("unknown agent mode %q", req.Mode)
 	}
+	if req.Config.Unavailable != "" {
+		return errors.New(req.Config.Unavailable)
+	}
 	if len(req.Config.Command) == 0 {
 		return errors.New("runtime command is empty")
 	}

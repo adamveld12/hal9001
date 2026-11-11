@@ -24,6 +24,9 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	if !ok {
 		return failure(errConfig, fmt.Sprintf("runtime %q is not configured", node.Runtime))
 	}
+	if rt.Unavailable != "" {
+		return failure(errConfig, rt.Unavailable)
+	}
 	mode, style := agent.Mode(node.Mode), agent.ApproveStyle(node.Approve)
 	if ne.fr.DryRun {
 		// Dry-run: agents are forced read-only and can never act (§8).

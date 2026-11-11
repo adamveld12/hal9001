@@ -55,6 +55,9 @@ type Options struct {
 	// BasePATH is the PATH handed to node processes; default: this process's PATH
 	// (under launchd, `hal9001 serve` captures the login-shell PATH and passes it here).
 	BasePATH string
+	// ExactPATH makes BasePATH the only PATH hal9001 looks for the agent CLIs and Node.js on: the well-known tool
+	// directories (~/.local/bin, /opt/homebrew/bin, ...) are not added. For tests and the sandbox.
+	ExactPATH bool
 	// UIURL is the origin notification deep links point at. Empty: $HAL9001_UI_URL,
 	// else http://localhost:<port> (the daemon's own port, 9001 by default).
 	UIURL string
@@ -115,6 +118,12 @@ func Run(ctx context.Context, opts Options) error {
 	if len(created) > 0 {
 		log.Info("seeded home directory", "home", home, "files", len(created))
 	}
+	if migrated, err := spec.MigrateRuntimeCommands(home); err != nil {
+		log.Warn("could not migrate runtime commands in config.yaml", "err", err)
+	} else if len(migrated) > 0 {
+		log.Info("config.yaml: runtimes now use detected agents instead of mise commands; original saved as "+spec.FileConfigBackup,
+			"runtimes", migrated, "next", "install the adapters with `hal9001 runtimes install <name>`")
+	}
 	ws := spec.Load(home)
 	if spec.HasErrors(ws.Config.Diagnostics) {
 		return configError(ws)
@@ -144,7 +153,7 @@ func Run(ctx context.Context, opts Options) error {
 		Terminal: notify.New(notify.WithLogger(log), notify.WithIcon(writeNotifyIcon(home, log))),
 	})
 	eng, err := newEngine(engineParams{
-		Store: st, Home: home, BasePATH: basePATH, Log: log,
+		Store: st, Home: home, BasePATH: basePATH, ExactPATH: opts.ExactPATH, Log: log,
 		Notifier:  notifier,
 		UIBaseURL: uiBaseURL(opts.UIURL, os.Getenv(EnvUIURL), port),
 		Clock:     opts.Clock,
@@ -224,7 +233,7 @@ func Run(ctx context.Context, opts Options) error {
 	apiHandler := newAPI(apiParams{
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
 		Operator: operator, Port: port, Executable: opts.Executable,
-		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH,
+		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH, Runtimes: eng.Runtimes(),
 		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update,
 	})
 	// The API server announces on-disk edits to SSE clients and owns the

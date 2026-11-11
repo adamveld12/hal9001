@@ -110,6 +110,8 @@ func (lp *liveProc) alive() bool {
 // NewSession validates req and returns a Session. No process is started yet.
 func (e *Executor) NewSession(req SessionRequest) (*Session, error) {
 	switch {
+	case req.Config.Unavailable != "":
+		return nil, errors.New(req.Config.Unavailable)
 	case len(req.Config.Command) == 0:
 		return nil, errors.New("runtime command is empty")
 	case e.Recorder == nil:

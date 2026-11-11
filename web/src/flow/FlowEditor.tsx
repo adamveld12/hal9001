@@ -10,6 +10,7 @@ import {
 import { Icon } from "../components/icons";
 import { Badge, Button, Kbd, TextInput, Toggle } from "../components/ui";
 import { cx } from "../lib/cx";
+import type { RuntimeOption } from "../lib/runtimeStatus";
 import {
   canConnect,
   editorReducer,
@@ -36,7 +37,7 @@ export interface FlowEditorProps {
   flow: Flow;
   sensors: string[];
   prompts: string[];
-  runtimes: string[];
+  runtimes: RuntimeOption[];
   /** Diagnostics from the server's last validate/save. */
   serverDiagnostics?: Diagnostic[];
   saving?: boolean;
