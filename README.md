@@ -301,6 +301,7 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `agent-runs events <id>` | `--after-seq N`, `--limit N`, `--kind K` |
 | `agent-runs sandbox-log <id>` | `--after-id N`, `--limit N`, `--tail`, `--raw` (sandbox provisioning, commands and output) |
 | `node-runs sandbox-log <id>` | same |
+| `conversations sandbox-log <id>` | same (the sandbox log of a chat, by assist session id) |
 | `approvals list` | `--status` (`pending`, `approved`, `denied`, `expired`), `--type` (`proposal`, `tool_call`, `request`), `--flow-run`, `--agent-run`, `--limit`, `--cursor` |
 | `approvals get <id>` | |
 | `approvals approve <id>` | `--comment text` (passed to the agent) |

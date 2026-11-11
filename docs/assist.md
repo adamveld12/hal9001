@@ -233,7 +233,8 @@ rendered prompt, a script, command output) cut in the middle with a marker; if i
 a note to narrow the query. The transcript and the sandbox log default to 50 and 100 entries per call (at most 200) and
 page with `after_seq` and `after_id`; `tail: true` returns the newest sandbox log entries. `flow_run_get` has no `wait`:
 a chat turn never blocks on a run. The agent is told to follow the order flow run, node runs, node run, agent run,
-transcript, sandbox log.
+transcript, sandbox log. The sandbox of a chat continued from an agent run is logged on the chat
+(`GET /api/conversations/{id}/sandbox-log`), not in `agent_run_sandbox_log` or `node_run_sandbox_log`.
 
 The tools reach the API in-process, with the run token as the only credential and without the auth stack: the session
 belongs to a signed-in user, and only `GET` operations of the `api` service are mounted for it (anything else is refused
@@ -273,7 +274,7 @@ the link, **Copy body** copies everything, and the card says the link is cut. Th
 
 Every session kind (sensor, flow, tool) also gets the app's configuration under `reference/`, rebuilt every turn, with no secrets
 (never env values, runtime commands, kubeconfig paths, hosts or keys): `runtimes.txt`, `sandboxes.md` (each backend id as used in
-`sandbox:`, enabled or not, lifecycle, images, approval policy), `tools.md` (custom tools with params, approval and
+`sandbox:`, enabled or not, lifecycle, images, approval policy, keep_alive), `tools.md` (custom tools with params, approval and
 `runs_in_sandbox`, plus the built-in tool names), `settings.md` (concurrency, approval timeout, notification priority, retention) and
 `docs/agent-nodes.md` (agent and approval node fields). The per-turn preamble repeats a summary (enabled and disabled sandboxes with
 images, runtime names, custom tool ids), and the instructions tell the agent to use only ids listed there and to tell the user where to

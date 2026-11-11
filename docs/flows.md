@@ -557,7 +557,7 @@ notification.
   mcp_servers:
     - {name: docs, type: http, url: "https://example.com/mcp", headers: {Authorization: "Bearer ..."}}
     - {name: local, command: my-mcp, args: [--stdio], env: {TOKEN: abc}}
-  sandbox: my-sandbox      # optional: sandbox backend id; adds fs/shell tools run there
+  sandbox: my-sandbox      # optional: sandbox backend id; adds fs/shell tools run there (kept for its keep_alive after the run ends)
   image: ubuntu:24.04      # optional sandbox options
   repo: "~/code/app"
   ref: main
