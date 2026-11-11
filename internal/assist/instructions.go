@@ -161,7 +161,7 @@ func forkPreamble(f core.ForkNode) string {
 	b.WriteString("A call to one of them does not run anything by itself. It asks the user for approval, and an approval starts a new flow run from this node's output. " +
 		"Call one only when the user explicitly asks you to send or emit the result to the flow; never on your own. " +
 		"Tell the user once, in one sentence, that you can do this when they want it, and do not repeat it. " +
-		"Outside those approvals none of your tools acts anywhere but in this chat.\n")
+		"Without such an approval nothing you do starts or changes a flow run.\n")
 	return b.String()
 }
 
