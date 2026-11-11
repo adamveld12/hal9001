@@ -476,8 +476,11 @@ func TestScenario14aPausedStopsSensorsAndQueuesRuns(t *testing.T) {
 		return strings.Count(string(b), "x")
 	}
 	d.Eventually("the sensor's first scheduled poll", func() bool { return polls() >= 1 })
-	d.Tick(time.Second)
-	d.Eventually("the sensor to poll on schedule", func() bool { return polls() >= 2 })
+	// The scheduler sets its next timer after a poll ends; a tick sent before that is lost, so tick until it polls.
+	d.Eventually("the sensor to poll on schedule", func() bool {
+		d.Tick(time.Second)
+		return polls() >= 2
+	})
 
 	var ks KillSwitch
 	d.Post("/api/killswitch/pause", map[string]any{"reason": "e2e pause"}).Want(200).JSON(&ks)
