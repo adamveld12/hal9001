@@ -34,13 +34,41 @@ This is a fun side project; iteration speed beats rigor.
 4. Don't run `-race`, `-count=N` loops, stress runs, `mise run check`, full e2e or browser verification passes unless asked.
 5. A hook failure in a test you didn't touch: rerun once; if it fails again, mention it in your report and move on.
 
+## Worktrees only (agents)
+
+- Work in `../hal9001-wt-<name>`; create it with `mise run wt <name>`, `cd` there first, and use absolute paths under it for every edit. Never edit the main checkout.
+- Before each commit, `git -C <main checkout> status --short` must be empty.
+
+## Never without explicit user permission
+
+- Commands that change real external systems: `tailscale` (except `version`, `status --json`, `serve status --json`), `gh release`, `launchctl`, `sfltool`, a real `npm install -g`.
+- Deletes that use globs. Only delete paths you created.
+- Anything that disables hooks: `core.hooksPath`, `--no-verify`, `LEFTHOOK=0`.
+
+## Signed commits and pushing
+
+- Commits are signed. Never set `commit.gpgsign=false`. If signing fails (for example 1Password: "failed to fill whole buffer"), wait a few seconds and retry the same commit, up to 3 times, then stop and report the exact error.
+- Push with `mise run push` (uses `gh` credentials; see `scripts/push.sh`). `mise run checks` runs every pre-commit check over the whole tree without writing files.
+
+## Final report
+
+- The last message of a task contains the complete report. Never write "see my previous message".
+
+## Known flaky tests
+
+Until fixed: `TestScenario14aPausedStopsSensorsAndQueuesRuns`, `TestScenario15RestartInterruptsRunsKeepsProposals`, and `internal/transform` and `internal/runner` tests under load. `mise run push` retries once only if the log has failure records and every one is on this list (a passing mention does not count; any other failure blocks the retry). Don't debug unrelated flakes.
+
 ## Parallel work
 
 - Each parallel agent works in its own git worktree on its own branch and commits there. Never commit to another agent's worktree or to `main` directly; the coordinator merges.
 - Stay inside your slice's files. If you need a change to a shared contract (`internal/spec`, store interfaces, `api/openapi.yaml`), message the coordinator instead of editing it.
 - `schema.d.ts` is generated and has a keep-ours merge rule (`.gitattributes`; the driver is set by `mise run setup`). After merging, run `mise exec -- pnpm --dir web gen:api` and commit the result.
 
+- Parallel and stacked PRs (contract first, migration numbering, squash-merge procedure, briefing template): skill `hal-parallel-prs` (`.agents/skills/hal-parallel-prs/SKILL.md`).
+
 ## Browser verification
+
+- Screenshots for UI PRs: skill `hal-pr-screenshots` (`.agents/skills/hal-pr-screenshots/SKILL.md`).
 
 - Use the sandbox, never the daemon on port 9001: `mise run sandbox` (seeded temp home, a `fake` runtime from `--script`, a free port; prints the URL and home path, Ctrl-C stops it and deletes the home unless `--keep`). `--path <stubdir>:/usr/bin:/bin` makes that the only PATH the daemon uses to find the `claude`/`codex`/`omp` CLIs, `node` and `npm`, so runtime detection (Settings → Runtimes) can be tried with stub executables instead of the machine's real CLIs.
 - Prefer `tab.text()`, `waitForSelector` and DOM assertions. Take screenshots only of the viewport, only as final evidence; never full-page captures (they stall).
