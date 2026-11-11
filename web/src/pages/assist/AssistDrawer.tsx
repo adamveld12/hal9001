@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import {
   useAssistSession,
@@ -24,6 +24,7 @@ import { FlowSavePanel } from "./FlowSavePanel";
 import { FlowTestPanel } from "./FlowTestPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { SensorDraftCards } from "./SensorDraftCards";
+import { ConversationTailApprovals } from "../approvals/ConversationApprovals";
 import { MessageView } from "./MessageView";
 import { traceLinks } from "./messages";
 import { clampDrawerWidth, isBusy, parseStoredWidth } from "./sessions";
@@ -356,12 +357,12 @@ function StartView() {
  * test cards).
  */
 function MessageList({
+  sessionId,
   messages,
-  runtime,
   tail,
 }: {
+  sessionId: string;
   messages: readonly AssistMessage[];
-  runtime: string;
   tail: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -401,6 +402,15 @@ function MessageList({
   useEffect(updatePill, [pendingId]);
 
   const traces = traceLinks(messages);
+  const linkedIds = useMemo(
+    () =>
+      new Set(
+        messages.flatMap((m) =>
+          m.approval_id !== null ? [m.approval_id] : [],
+        ),
+      ),
+    [messages],
+  );
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
@@ -424,13 +434,13 @@ function MessageList({
               key={m.id}
               data-pending-approval={m.id === pendingId ? "" : undefined}
             >
-              <MessageView
-                message={m}
-                runtime={runtime}
-                traceRunId={traces.get(m.id)}
-              />
+              <MessageView message={m} traceRunId={traces.get(m.id)} />
             </div>
           ))}
+          <ConversationTailApprovals
+            conversationId={sessionId}
+            linkedIds={linkedIds}
+          />
           {tail}
         </div>
       </div>
@@ -615,8 +625,8 @@ function SessionView({ id }: { id: string }) {
         </div>
       )}
       <MessageList
+        sessionId={id}
         messages={s.messages}
-        runtime={s.runtime}
         tail={
           closed || kind === "general" ? null : kind === "flow" ? (
             <>

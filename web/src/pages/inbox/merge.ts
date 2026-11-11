@@ -41,14 +41,13 @@ export function selectionFromPath(pathname: string): Selection | null {
 export function approvalMatches(a: Approval, f: InboxFilters): boolean {
   if (f.kind === "notes") return false;
   if (f.archived || f.starred) return false;
-  // Only request approvals can belong to a dry run.
-  const dry = a.type === "request" && a.request?.dry_run === true;
+  const dry = a.details.dry_run;
   if (f.dryRun === "only" && !dry) return false;
   if (f.dryRun === "hide" && dry) return false;
   const q = f.q.trim().toLowerCase();
   if (q) {
     const hay =
-      `${approvalTitle(a)} ${a.proposal_md ?? ""} ${a.request?.body_md ?? ""}`.toLowerCase();
+      `${approvalTitle(a)} ${a.description} ${a.proposal_md ?? ""} ${a.details.body_md}`.toLowerCase();
     if (!hay.includes(q)) return false;
   }
   return true;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Approval, ApprovalList } from "../../api/approvals";
+import { approval } from "./fixtures";
 import {
   approvalOrigin,
   approvalTitle,
@@ -12,32 +13,6 @@ import {
   viewToQuery,
   DEFAULT_VIEW,
 } from "./queue";
-
-function approval(over: Partial<Approval> & { id: string }): Approval {
-  return {
-    agent_run_id: "ar",
-    node_run_id: "nr",
-    flow_run_id: "fr",
-    flow_id: "flow",
-    node_id: "node",
-    assist_session_id: null,
-    event_id: null,
-    runtime: "claude",
-    type: "proposal",
-    permission_request_id: null,
-    permission_request: null,
-    proposal_md: "# Plan",
-    request: null,
-    status: "pending",
-    comment: null,
-    cancel_run: null,
-    decided_by: null,
-    decided_at: null,
-    created_at: "2026-11-05T10:00:00Z",
-    expires_at: null,
-    ...over,
-  };
-}
 
 const page = (...items: Approval[]): ApprovalList => ({
   items,
@@ -143,32 +118,13 @@ describe("view <-> URL <-> query", () => {
 });
 
 describe("labels", () => {
-  it("titles a proposal by its first real line and a tool call by its tool title", () => {
-    expect(
-      approvalTitle(
-        approval({ id: "x", proposal_md: "\n## **Fix** the `build`\nmore" }),
-      ),
-    ).toBe("Fix the build");
-    expect(approvalTitle(approval({ id: "x", proposal_md: null }))).toBe(
-      "Proposal",
+  it("titles a row with the approval's own title", () => {
+    expect(approvalTitle(approval({ id: "x", title: "Run go test" }))).toBe(
+      "Run go test",
     );
-    expect(
-      approvalTitle(approval({ id: "x", proposal_md: "a".repeat(200) })),
-    ).toHaveLength(100);
-    expect(
-      approvalTitle(
-        approval({
-          id: "x",
-          type: "tool_call",
-          permission_request: {
-            title: "Run go test",
-          } as Approval["permission_request"],
-        }),
-      ),
-    ).toBe("Run go test");
   });
 
-  it("describes decisions, including a cancelled run", () => {
+  it("describes decisions, including steering and a stopped run", () => {
     const base = { id: "x", decided_by: "owner" };
     expect(describeDecision(approval({ ...base, status: "approved" }))).toBe(
       "Approved by owner",
@@ -177,7 +133,7 @@ describe("labels", () => {
       describeDecision(
         approval({ ...base, status: "approved", type: "tool_call" }),
       ),
-    ).toBe("Allowed by owner");
+    ).toBe("Approved by owner");
     expect(
       describeDecision(
         approval({
@@ -187,40 +143,42 @@ describe("labels", () => {
           cancel_run: true,
         }),
       ),
-    ).toBe("Denied by owner, run cancelled");
+    ).toBe("Denied by owner, run stopped");
+    expect(
+      describeDecision(
+        approval({ ...base, status: "denied", comment: "use make" }),
+      ),
+    ).toBe("Denied by owner (steering sent)");
     expect(describeDecision(approval({ id: "x", status: "expired" }))).toBe(
       "Timed out without a decision",
     );
   });
+
+  it("confirms a steered denial", () => {
+    expect(decisionNotice(approval({ id: "x", status: "denied" }))).toBe(
+      "Denied.",
+    );
+    expect(
+      decisionNotice(
+        approval({ id: "x", status: "denied", comment: "use make" }),
+      ),
+    ).toBe("Denied. Your steering was sent.");
+    expect(
+      decisionNotice(approval({ id: "x", status: "denied", cancel_run: true })),
+    ).toBe("Denied. The run was stopped.");
+  });
 });
 
 describe("request approvals", () => {
-  const request = {
-    gate: false,
-    title: "Ship api?",
-    body_md: "details",
-    fields: [],
-    editable: [],
-    priority: "high" as const,
-    dry_run: false,
-    on_timeout: "denied" as const,
-  };
   const req = (over: Partial<Approval> = {}) =>
     approval({
       id: "r",
       type: "request",
       agent_run_id: null,
       proposal_md: null,
-      request,
+      on_timeout: "denied",
       ...over,
     });
-
-  it("titles a row with the request title, marking dry runs", () => {
-    expect(approvalTitle(req())).toBe("Ship api?");
-    expect(approvalTitle(req({ request: { ...request, dry_run: true } }))).toBe(
-      "[dry run] Ship api?",
-    );
-  });
 
   it("accepts request as a type filter", () => {
     const v = viewFromParams(new URLSearchParams("type=request"));
@@ -233,19 +191,15 @@ describe("request approvals", () => {
       "Timed out; the flow continued on port denied",
     );
     expect(
-      describeDecision(
-        req({
-          status: "expired",
-          request: { ...request, on_timeout: "error" },
-        }),
-      ),
+      describeDecision(req({ status: "expired", on_timeout: "error" })),
     ).toBe("Timed out; the flow continued on the error port");
   });
 
   it("treats an expired node gate as a denial", () => {
     const gate = req({
       status: "expired",
-      request: { ...request, gate: true, on_timeout: null },
+      gate: true,
+      on_timeout: null,
       expires_at: "2026-11-05T11:00:00Z",
     });
     expect(isGateApproval(gate)).toBe(true);
@@ -257,11 +211,7 @@ describe("request approvals", () => {
 
   it("says what a decided gate did to its node", () => {
     const gate = (status: "approved" | "denied") =>
-      req({
-        status,
-        decided_by: "owner",
-        request: { ...request, gate: true, on_timeout: null },
-      });
+      req({ status, decided_by: "owner", gate: true, on_timeout: null });
     expect(describeDecision(gate("denied"))).toBe(
       "Denied by owner; the node did not run",
     );
@@ -271,46 +221,31 @@ describe("request approvals", () => {
     expect(decisionNotice(gate("denied"))).toBe(
       "Denied. The node did not run.",
     );
-    expect(decisionNotice(req({ status: "denied" }))).toBe("Denied.");
+  });
+
+  it("tells an MCP client's timeout apart by origin, not by empty ids", () => {
+    const mcp = req({
+      status: "expired",
+      origin: { kind: "mcp", label: "MCP: claude-code", client: "claude-code" },
+    });
+    expect(describeDecision(mcp)).toBe("Timed out; the MCP client was told");
   });
 });
 
 describe("approvalOrigin", () => {
-  it("names the flow and node, the MCP client, or the sensor assist", () => {
-    expect(approvalOrigin(approval({ id: "a" }))).toBe("flow / node");
-    const unowned = {
-      flow_id: null,
-      node_id: null,
-      node_run_id: null,
-      flow_run_id: null,
-      agent_run_id: null,
-    };
-    expect(
-      approvalOrigin(approval({ id: "b", type: "request", ...unowned })),
-    ).toBe("MCP client");
-    expect(
-      approvalOrigin(approval({ id: "c", type: "tool_call", ...unowned })),
-    ).toBe("sensor assist");
+  it("reads the explicit origin", () => {
+    expect(approvalOrigin(approval({ id: "a" }))).toBe("Flow · flow / node");
     expect(
       approvalOrigin(
         approval({
-          id: "d",
-          type: "request",
-          ...unowned,
-          request: {
-            gate: false,
-            title: "t",
-            body_md: "",
-            fields: [],
-            editable: [],
-            priority: "normal",
-            dry_run: false,
-            on_timeout: "denied",
-            source: "mcp",
-            client: "claude-code 2.1",
+          id: "b",
+          origin: {
+            kind: "mcp",
+            label: "MCP: claude-code",
+            client: "claude-code",
           },
         }),
       ),
-    ).toBe("MCP: claude-code 2.1");
+    ).toBe("MCP: claude-code");
   });
 });

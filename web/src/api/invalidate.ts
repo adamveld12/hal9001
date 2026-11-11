@@ -49,8 +49,21 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "sandbox_log.appended": ["sandbox-log"],
   "permission_request.created": ["permission-requests"],
   "permission_request.updated": ["permission-requests"],
-  "approval.created": ["approvals", "approval"],
-  "approval.updated": ["approvals", "approval"],
+  // The conversation an approval belongs to shows it inline (chat page, agent run), so its queries refetch too.
+  "approval.created": [
+    "approvals",
+    "approval",
+    "assist-sessions",
+    "assist-session",
+    "agent-run",
+  ],
+  "approval.updated": [
+    "approvals",
+    "approval",
+    "assist-sessions",
+    "assist-session",
+    "agent-run",
+  ],
   "inbox.created": ["inbox", "inbox-item"],
   "inbox.updated": ["inbox", "inbox-item"],
   "auth_event.created": ["auth-events", "auth-sessions"],

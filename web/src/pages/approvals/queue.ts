@@ -5,6 +5,7 @@ import type {
   ApprovalStatus,
   ApprovalType,
 } from "../../api/approvals";
+import { originText } from "./card";
 
 export type ApprovalsTab = "pending" | "history";
 
@@ -99,44 +100,27 @@ export function mergeApprovalPages(
   return out.sort(tab === "pending" ? comparePending : compareHistory);
 }
 
-/** One-line label for a row: the tool call title, or the first line of the proposal. */
+/** One-line label for a row. */
 export function approvalTitle(a: Approval): string {
-  if (a.type === "request") {
-    const title = a.request?.title || "Approval";
-    return a.request?.dry_run ? `[dry run] ${title}` : title;
-  }
-  if (a.type === "tool_call") {
-    return a.permission_request?.title || "Tool call";
-  }
-  for (const raw of (a.proposal_md ?? "").split("\n")) {
-    const line = raw
-      .replace(/^[\s>#*\-+\d.]+/, "")
-      .replaceAll(/[*_`]/g, "")
-      .trim();
-    if (line) return line.length > 100 ? `${line.slice(0, 99)}…` : line;
-  }
-  return "Proposal";
+  return a.title;
 }
 
-/**
- * An operator approval: an external MCP client's call to a tool with side
- * effects. It is a `request` with no flow or node (`docs/mcp.md`).
- */
+/** An external MCP client's approval (`docs/mcp.md`). */
 export function isOperatorApproval(a: Approval): boolean {
-  return a.type === "request" && a.flow_id === null && a.node_run_id === null;
+  return a.origin.kind === "mcp";
 }
 
 /** The approval a node with `requires_approval` raised before running: approving runs the node. */
 export function isGateApproval(a: Approval): boolean {
-  return a.type === "request" && a.request?.gate === true;
+  return a.gate;
 }
 
 /** Where an approval comes from, for the muted label in list rows. */
 export function approvalOrigin(a: Approval): string {
-  if (a.flow_id !== null) return `${a.flow_id} / ${a.node_id ?? ""}`;
-  if (!isOperatorApproval(a)) return "sensor assist";
-  return a.request?.client ? `MCP: ${a.request.client}` : "MCP client";
+  return originText(a.origin);
 }
+
+const STEERED = "steering sent";
 
 /** What was decided and how, for the decision panel and history rows. */
 export function describeDecision(a: Approval): string {
@@ -148,27 +132,26 @@ export function describeDecision(a: Approval): string {
       // A gate has no on_timeout: expiry counts as a denial.
       if (isGateApproval(a))
         return "Timed out; the node was denied and did not run";
-      return a.type === "request" && a.request?.on_timeout
-        ? `Timed out; the flow continued on ${a.request.on_timeout === "error" ? "the error port" : `port ${a.request.on_timeout}`}`
+      return a.type === "request" && a.on_timeout
+        ? `Timed out; the flow continued on ${a.on_timeout === "error" ? "the error port" : `port ${a.on_timeout}`}`
         : "Timed out without a decision";
     case "approved":
-      return a.type === "tool_call"
-        ? `Allowed by ${a.decided_by ?? "unknown"}`
-        : `Approved by ${a.decided_by ?? "unknown"}`;
+      return `Approved by ${a.decided_by ?? "unknown"}`;
     case "denied":
-      return `Denied by ${a.decided_by ?? "unknown"}${a.cancel_run ? ", run cancelled" : ""}${isGateApproval(a) ? "; the node did not run" : ""}`;
+      return `Denied by ${a.decided_by ?? "unknown"}${a.comment ? ` (${STEERED})` : ""}${a.cancel_run ? ", run stopped" : ""}${isGateApproval(a) ? "; the node did not run" : ""}`;
   }
 }
 
 /** Confirmation shown after a decision was recorded. */
 export function decisionNotice(a: Approval): string {
   if (a.status === "approved") {
-    if (isGateApproval(a)) return "Approved. The node will run.";
-    if (a.type === "request") return "Approved.";
-    return a.type === "tool_call" ? "Tool call allowed." : "Proposal approved.";
+    return isGateApproval(a) ? "Approved. The node will run." : "Approved.";
   }
-  if (a.cancel_run) return "Denied. The run was cancelled.";
-  if (isGateApproval(a)) return "Denied. The node did not run.";
-  if (a.type === "request") return "Denied.";
-  return a.type === "tool_call" ? "Tool call denied." : "Proposal denied.";
+  if (a.cancel_run) return "Denied. The run was stopped.";
+  if (isGateApproval(a)) {
+    return a.comment
+      ? "Denied with steering. The node did not run."
+      : "Denied. The node did not run.";
+  }
+  return a.comment ? "Denied. Your steering was sent." : "Denied.";
 }

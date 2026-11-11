@@ -1,20 +1,14 @@
 import { Link } from "react-router";
 import type { AssistMessage } from "../../api/assist";
-import {
-  isAlreadyDecided,
-  useApproval,
-  useDecideApproval,
-} from "../../api/approvals";
 import { Icon, type IconName } from "../../components/icons";
 import { JsonView } from "../../components/JsonView";
 import { Markdown } from "../../components/Markdown";
-import { Badge, Button, StatusBadge } from "../../components/ui";
-import { errorMessage } from "../../api/client";
+import { Badge } from "../../components/ui";
 import { toolContent, toolTone } from "../runs/transcript";
 import { ToolContentView } from "../runs/TranscriptView";
+import { MessageApproval } from "../approvals/ConversationApprovals";
 import { extractCommand, extractDiffs } from "../approvals/diff";
 import { DiffView } from "../approvals/DiffView";
-import { noFocusOnClick } from "../../lib/focus";
 import { IssueLinkCard } from "./IssueLinkCard";
 import { parseIssueLink } from "./issueLink";
 
@@ -62,92 +56,12 @@ function ToolDetails({ call }: { call: ToolCall }) {
   );
 }
 
-function ApprovalPrompt({
-  approvalId,
-  runtime,
-}: {
-  approvalId: string;
-  runtime: string;
-}) {
-  const approval = useApproval(approvalId);
-  const decide = useDecideApproval();
-  const a = approval.data;
-  if (!a) {
-    return approval.isError ? (
-      <div role="alert" className="text-xs text-bad">
-        {errorMessage(approval.error)}
-      </div>
-    ) : null;
-  }
-  if (a.status !== "pending") {
-    return (
-      <div className="flex items-center gap-2 text-xs">
-        <StatusBadge status={a.status} />
-        {a.cancel_run && <span className="text-muted">turn stopped</span>}
-        {a.comment && <span className="text-muted">{a.comment}</span>}
-      </div>
-    );
-  }
-  const busy = decide.isPending;
-  return (
-    <div
-      role="group"
-      aria-label="Approval needed"
-      className="space-y-2 rounded-md border border-warn/40 bg-warn/5 p-2 text-xs"
-    >
-      <div className="font-medium text-warn">Approval needed</div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="primary"
-          disabled={busy}
-          {...noFocusOnClick}
-          onClick={() => decide.mutate({ id: a.id, action: "approve" })}
-        >
-          Allow
-        </Button>
-        <Button
-          disabled={busy}
-          {...noFocusOnClick}
-          title={
-            runtime === "codex"
-              ? "Codex cannot continue after a denial: the turn ends here."
-              : "The agent is told no and can try something else."
-          }
-          onClick={() => decide.mutate({ id: a.id, action: "deny" })}
-        >
-          Deny
-        </Button>
-        <Button
-          variant="danger"
-          disabled={busy}
-          {...noFocusOnClick}
-          title="Deny and end this turn."
-          onClick={() =>
-            decide.mutate({ id: a.id, action: "deny", cancelRun: true })
-          }
-        >
-          Deny + stop
-        </Button>
-      </div>
-      {decide.isError && (
-        <div role="alert" className="text-bad">
-          {isAlreadyDecided(decide.error)
-            ? "Already decided elsewhere."
-            : errorMessage(decide.error)}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ToolRow({
   message,
   call,
-  runtime,
 }: {
   message: AssistMessage;
   call: ToolCall;
-  runtime: string;
 }) {
   const needsApproval = message.approval_id !== null;
   const issue = parseIssueLink(call);
@@ -180,10 +94,7 @@ function ToolRow({
       </details>
       {issue && <IssueLinkCard link={issue} />}
       {needsApproval && (
-        <ApprovalPrompt
-          approvalId={message.approval_id as string}
-          runtime={runtime}
-        />
+        <MessageApproval approvalId={message.approval_id as string} />
       )}
     </div>
   );
@@ -192,11 +103,9 @@ function ToolRow({
 /** One conversation entry. `traceRunId` adds the "View trace" link under the last message of a turn. */
 export function MessageView({
   message,
-  runtime,
   traceRunId,
 }: {
   message: AssistMessage;
-  runtime: string;
   traceRunId: string | undefined;
 }) {
   let body;
@@ -212,7 +121,7 @@ export function MessageView({
       break;
     case "tool":
       body = message.tool_call ? (
-        <ToolRow message={message} call={message.tool_call} runtime={runtime} />
+        <ToolRow message={message} call={message.tool_call} />
       ) : null;
       break;
     case "system":
