@@ -25,6 +25,9 @@ type runtimeEngine interface {
 	// Start runs store.MarkInterrupted and starts schedulers, queues and
 	// retention. It is called after the first Apply.
 	Start(ctx context.Context) error
+	// Interrupt cancels running work as interrupted without waiting. It is
+	// called before in-flight HTTP calls are cancelled (see Stop).
+	Interrupt()
 	// Stop shuts the engine down gracefully.
 	Stop(ctx context.Context) error
 }

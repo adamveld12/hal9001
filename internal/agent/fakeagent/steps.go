@@ -241,7 +241,12 @@ func (t *turnState) exec(st Step) (bool, error) {
 		}
 		go func() { _ = cmd.Wait() }()
 		if st.PidFile != "" {
-			if err := os.WriteFile(t.abs(st.PidFile), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+			// Written by rename: a test that polls for the file must never see it created but still empty.
+			pidFile := t.abs(st.PidFile)
+			if err := os.WriteFile(pidFile+".tmp", []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+				return false, err
+			}
+			if err := os.Rename(pidFile+".tmp", pidFile); err != nil {
 				return false, err
 			}
 		}

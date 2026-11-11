@@ -213,17 +213,29 @@ func processGone(pid int) bool {
 
 func TestTimeoutKillsGrandchildren(t *testing.T) {
 	skipIfMissing(t, "bash")
-	res := mustRun(t, Spec{
-		Lang:        LangBash,
-		Script:      "sleep 30 &\necho $!\nwait",
-		Timeout:     300 * time.Millisecond,
-		GracePeriod: time.Second,
-	})
+	// A loaded machine can take longer to start bash than the timeout allows; the script then never starts its
+	// grandchild and there is nothing to check. Try again with a longer timeout until it got that far.
+	var res Result
+	var timeout time.Duration
+	for timeout = 300 * time.Millisecond; timeout <= 20*time.Second; timeout *= 4 {
+		res = mustRun(t, Spec{
+			Lang:        LangBash,
+			Script:      "sleep 30 &\necho $!\nwait",
+			Timeout:     timeout,
+			GracePeriod: time.Second,
+		})
+		if strings.TrimSpace(string(res.Stdout)) != "" {
+			break
+		}
+	}
+	if strings.TrimSpace(string(res.Stdout)) == "" {
+		t.Fatalf("the script did not start its grandchild within %s", timeout/4)
+	}
 	if !res.TimedOut || !res.Killed {
 		t.Fatalf("TimedOut=%v Killed=%v", res.TimedOut, res.Killed)
 	}
-	if res.Duration > 5*time.Second {
-		t.Errorf("took %s", res.Duration)
+	if res.Duration > timeout+5*time.Second {
+		t.Errorf("took %s for a %s timeout", res.Duration, timeout)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(res.Stdout)))
 	if err != nil {
@@ -238,27 +250,73 @@ func TestTimeoutKillsGrandchildren(t *testing.T) {
 	}
 }
 
+// runCancelledWhenReady runs the bash script, which must write the pid of the process it started to the file "pid" in
+// its working directory (atomically, with mv) once it is set up, and cancels the run when that file appears. Waiting
+// for the script, not for a delay, keeps the test independent of how long bash takes to start. It returns the result,
+// the pid, and when the cancellation was issued.
+func runCancelledWhenReady(t *testing.T, spec Spec) (res Result, pid int, cancelledAt time.Time) {
+	t.Helper()
+	spec.Lang = LangBash
+	spec.Cwd = t.TempDir()
+	pidFile := filepath.Join(spec.Cwd, "pid")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cancelled := make(chan time.Time, 1)
+	go func() {
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+			if _, err := os.Stat(pidFile); err == nil {
+				cancelled <- time.Now()
+				cancel()
+				return
+			}
+		}
+	}()
+	res, err := Run(ctx, spec)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	select {
+	case cancelledAt = <-cancelled:
+	default:
+		t.Fatalf("the script ended before it reported ready: %+v", res)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err = strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatalf("pid file %q: %v", b, err)
+	}
+	return res, pid, cancelledAt
+}
+
 func TestTermIgnoredEscalatesToKillAfterGrace(t *testing.T) {
 	skipIfMissing(t, "bash")
-	const grace = 400 * time.Millisecond
-	res := mustRun(t, Spec{
-		Lang: LangBash,
-		// Ignore SIGTERM in the script and in its child; only SIGKILL can end them.
-		Script:      "trap '' TERM\n(trap '' TERM; exec sleep 30) &\necho $!\nwhile true; do sleep 0.05; done",
-		Timeout:     200 * time.Millisecond,
+	const grace = 300 * time.Millisecond
+	// The script and its child ignore SIGTERM; only SIGKILL can end them. The run is cancelled once they are set up.
+	res, pid, cancelledAt := runCancelledWhenReady(t, Spec{
+		Script:      "trap '' TERM\n(trap '' TERM; exec sleep 30) &\necho $! > pid.tmp && mv pid.tmp pid\nwhile true; do sleep 0.05; done",
 		GracePeriod: grace,
 	})
-	if !res.TimedOut {
-		t.Fatal("expected timeout")
-	}
-	if res.Duration < 200*time.Millisecond+grace {
-		t.Errorf("killed after %s, before the grace period elapsed", res.Duration)
+	ended := time.Since(cancelledAt)
+	if !res.Killed || res.TimedOut {
+		t.Errorf("Killed=%v TimedOut=%v; a cancelled run is Killed without TimedOut", res.Killed, res.TimedOut)
 	}
 	if res.Signal != "killed" {
-		t.Errorf("signal = %q, want killed", res.Signal)
+		t.Errorf("signal = %q, want killed (SIGTERM was ignored)", res.Signal)
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(res.Stdout)))
-	if pid == 0 || !processGone(pid) {
+	if ended < grace {
+		t.Errorf("ended %s after the cancellation, before the %s grace period elapsed", ended, grace)
+	}
+	if !processGone(pid) {
 		t.Errorf("grandchild %d survived", pid)
 	}
 }
@@ -278,20 +336,15 @@ func TestTermHonoredEndsBeforeGrace(t *testing.T) {
 
 func TestContextCancelKillsGroup(t *testing.T) {
 	skipIfMissing(t, "bash")
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(200*time.Millisecond, cancel)
-	res, err := Run(ctx, Spec{
-		Lang: LangBash, Script: "sleep 30 &\necho $!\nwait", Cwd: t.TempDir(),
-		Timeout: time.Minute, GracePeriod: time.Second,
+	res, pid, _ := runCancelledWhenReady(t, Spec{
+		Script:      "sleep 30 &\necho $! > pid.tmp && mv pid.tmp pid\nwait",
+		Timeout:     time.Minute,
+		GracePeriod: time.Second,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if !res.Killed || res.TimedOut {
 		t.Errorf("Killed=%v TimedOut=%v; cancel must be Killed without TimedOut", res.Killed, res.TimedOut)
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(res.Stdout)))
-	if pid == 0 || !processGone(pid) {
+	if !processGone(pid) {
 		t.Errorf("grandchild %d survived cancel", pid)
 	}
 	if got := res.Outcome(nil); got.Error != "killed" {

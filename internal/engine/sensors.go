@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"hal9001/internal/agent"
@@ -248,11 +249,11 @@ func (e *Engine) startPoll(sensorID string, origin store.SensorOrigin, opts core
 	}
 	e.polling[sensorID] = true
 	e.pollMu.Unlock()
-	release := func() {
+	release := sync.OnceFunc(func() {
 		e.pollMu.Lock()
 		delete(e.polling, sensorID)
 		e.pollMu.Unlock()
-	}
+	})
 
 	run := &store.SensorRun{SensorID: sensorID, Origin: origin, Status: store.SensorRunning}
 	if err := e.st.CreateSensorRun(e.dbCtx, run); err != nil {
@@ -267,6 +268,9 @@ func (e *Engine) startPoll(sensorID string, origin store.SensorOrigin, opts core
 		untrack := e.track("poll:"+run.ID, cancel)
 		defer untrack()
 		final := e.doPoll(pctx, run, sensor, snap, plan)
+		// Free the sensor before reporting: whoever receives the result may poll again at once (the scheduler
+		// re-arms and the next tick fires, an API client posts another poll) and must not find this poll running.
+		release()
 		done <- plan.result(final)
 	})
 	if !started {
