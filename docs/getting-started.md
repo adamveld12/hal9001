@@ -58,7 +58,7 @@ run `hal9001 update install`; `hal9001 update` shows the state. Without the app 
 
 ## Agents: all access goes through hal9001
 
-Details: [design/agent-access.md](design/agent-access.md), [runtimes.md](runtimes.md).
+Details: [design/agent-access.md](design/agent-access.md), [runtimes.md](runtimes.md). hal9001 detects the `claude`, `codex` and `omp` CLIs and your sign-in (Settings > Runtimes); for Claude and Codex click **Install adapter** once (needs Node.js 22+ and npm).
 
 - Lockdown: built-in file/shell/web tools off on claude, codex and omp; every action is a hal9001 tool call decided
   by policy or by you in the Inbox, recorded in the trace.
