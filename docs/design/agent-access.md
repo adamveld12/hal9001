@@ -94,6 +94,8 @@ can continue in it ("Continue in chat" on the agent run page). It is a duration 
 default `1m` when the field is absent, and any value from `0` up is accepted: `0` removes the sandbox as soon as the run
 ends (the behaviour before this setting existed). Negative or unparsable values are validation errors.
 
+![Settings > Sandboxes > Local with the Keep alive field](../images/chat/sandbox-keep-alive-light.png) ([dark](../images/chat/sandbox-keep-alive-dark.png))
+
 It applies to every sandboxed agent run, whatever its outcome:
 - When the run ends, hal keeps the sandbox for `keep_alive` and then tears it down as before (`Close(success)`: a failed
   per_run workspace is still kept for debugging until retention). The run's sandbox log gets the entry
