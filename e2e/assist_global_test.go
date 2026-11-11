@@ -29,8 +29,14 @@ type assistUIStream struct {
 
 func (d *Daemon) openAssistUIStream(sessionID string) *assistUIStream {
 	d.t.Helper()
+	return d.openAssistStream(sessionID, "assist.navigate,assist.start_draft")
+}
+
+// openAssistStream follows the events of the comma-separated types for one assist session.
+func (d *Daemon) openAssistStream(sessionID, types string) *assistUIStream {
+	d.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	q := url.Values{"types": {"assist.navigate,assist.start_draft"}, "assist_session_id": {sessionID}}
+	q := url.Values{"types": {types}, "assist_session_id": {sessionID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL()+"/api/stream?"+q.Encode(), nil)
 	if err != nil {
 		cancel()
