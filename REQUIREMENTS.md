@@ -470,19 +470,21 @@ Every authentication decision is written to `auth_events` (service, endpoint, ea
 
 ### 10.5 Tailscale
 
-The daemon stays loopback-only; Tailscale does the exposure:
+The daemon stays loopback-only; Tailscale does the exposure, and hal9001 sets it up on request (Settings > Tailscale, `hal9001 tailscale serve`, `POST /api/tailscale/serve`; admin service):
 
 ```
-tailscale serve --bg --https=443 http://127.0.0.1:9001
+tailscale serve --bg --yes --https=443 http://127.0.0.1:9001
 ```
 
 - This publishes `https://<mac>.<tailnet>.ts.net` to devices on your tailnet only, with a valid TLS certificate. Never use `tailscale funnel`, which publishes to the internet.
 - What hal9001 needs for it:
-  1. `allowed_hosts: [<mac>.<tailnet>.ts.net]` so the Host check accepts it.
+  1. `allowed_hosts: [<mac>.<tailnet>.ts.net]` (`<name>:<port>` for an HTTPS port other than 443) so the Host check accepts it. hal9001 adds it when it enables sharing, keeping comments and your own entries, and removes it again when sharing is turned off only if it added it (`<home>/data/tailscale.json`). A manual setup adds it by hand.
   2. `localhost-trust` must not treat these requests as local. tailscaled proxies from loopback, so the peer address alone would pass; the Host and proxy-header conditions in §10.4 are what exclude them. Tailnet requests therefore fall through to `tailscale-identity`, then `webauthn` or `password`.
   3. A passkey registered for the ts.net hostname (WebAuthn works there because it's HTTPS).
   4. `tailscale-identity` (§10.4) signs you in from tailnet devices with no passkey or password, as long as your login is in `allowed_logins`. Passkey/password stay as fallbacks further down the stack.
-- `hal9001 tailscale status` reports whether the CLI is reachable, this Mac's tailnet hostname and owner login, whether serve is configured for the port, and whether the hostname is in `allowed_hosts`. hal9001 never runs `tailscale serve` itself.
+- Enabling runs `tailscale serve` only after detection (`GET /api/tailscale`): the CLI is found (PATH, Homebrew, the Tailscale app), you are signed in, MagicDNS and HTTPS certificates are on. If the HTTPS port already serves something other than the daemon it refuses (`409`) unless the request says `replace`. It never uses `tailscale funnel`. Disabling runs `tailscale serve --https=<port> off` only for a mapping that points at the daemon.
+- `config.yaml` keeps `tailscale: {serve: true|false, https_port: 443}`. While `serve` is true the daemon re-applies a missing mapping at start (waiting for tailscaled; a failure is logged and shown as a warning; a mapping to something else is never replaced) and adds the current MagicDNS name to `allowed_hosts` if it changed; the old entry stays, with a notice.
+- `hal9001 tailscale status` reports the CLI and version, sign-in, this Mac's name and tailnet, whether HTTPS certificates are on, the serve mapping on the port, whether funnel is on, whether the hostname is in `allowed_hosts`, the logins `tailscale-identity` accepts, and warnings with fixes. `hal9001 tailscale serve [--port N] [--replace]` and `unserve` do what the UI button does.
 - Threat note: tailscale serve sets the identity headers itself and is expected to overwrite client-supplied ones (to be confirmed in scenario 24). A local process can still forge headers on loopback, but it would have to name a real tailnet IP owned by an allowed login, and local processes already pass `localhost-trust` in the default stack, so this module adds no access for them. If you remove `localhost-trust` to lock down local processes, also remove `tailscale-identity` or accept this.
 
 ## 11. Web UI
@@ -530,7 +532,7 @@ Header (all pages): kill-switch toggle, running/queued counts, pending-approval 
 20. Every scenario above except 1, 6's notification, and 19 is also covered by an automated Go test that drives only the REST API (with `fake-acp-agent` for agent scenarios), and each can be reproduced by hand with `curl` or the CLI.
 21. Auth stacks: with the default config, local curl succeeds via `localhost-trust`. With `localhost-trust` removed from the stack, curl gets 401; password login yields a session cookie that works; a `requisite` failure stops evaluation (visible in `auth_events`); a `required` failure followed by a `sufficient` success still fails.
 22. A request carrying `X-Forwarded-For` or `Tailscale-User-Login`, or with a non-localhost Host, is not accepted by `localhost-trust`.
-23. Tailscale: after `tailscale serve --bg --https=443 http://127.0.0.1:9001` and adding the hostname to `allowed_hosts`, the UI loads from a phone on the tailnet and signs in via `tailscale-identity` without a prompt; with `tailscale-identity` removed from the stack it demands passkey or password, and a passkey registered for the ts.net hostname works.
+23. Tailscale: after pressing "Share hal on your tailnet" (which runs `tailscale serve --bg --yes --https=443 http://127.0.0.1:9001` and adds the hostname to `allowed_hosts`; automated against a stub `tailscale`, live check by hand), the UI loads from a phone on the tailnet and signs in via `tailscale-identity` without a prompt; with `tailscale-identity` removed from the stack it demands passkey or password, and a passkey registered for the ts.net hostname works.
 24. `tailscale-identity` (automated, with a fake whois): header login matching whois and in `allowed_logins` → success; header login not matching whois → fail; login not in `allowed_logins` → fail; tagged device → fail; localhost Host or missing header → ignore; `tailscale` CLI missing → ignore with reason. Live check: a client-supplied `Tailscale-User-Login` sent through serve is overwritten.
 25. App self-update (automated with a fake feed; the manual run is in `docs/macos-app.md`): a feed build newer than the app's build is offered (`GET /api/update`: `available`), the same or an older build never is; switching `update_channel` re-checks the other feed; `POST /api/update/install` while flows run is `pending` and orders the install when none runs, with `force` it orders at once; with `update_auto_install` on, an available update is ordered once no flow runs (once per build); without the app connected as installer the request is a `409` that points at the download; only the installer connection receives the order, and the daemon never replaces the bundle itself.
 
@@ -557,7 +559,7 @@ Phase 1 (parallel):
 |---|---|
 | Engine | sensor scheduler, dedup, command runner (langs, env, timeouts, process groups, redaction), DAG executor, queues/concurrency, kill switch, replay, test runs, dry-run, retention |
 | Agents | Go ACP client on `acp-go-sdk`, session lifecycle (§7.3), permission policy engine + `allow` rules, proposal and per-tool approval, `session/load` resume with fallback, worktrees, transcript storage, note parsing; a CLI-exec fallback adapter only for runtimes that fail the gate |
-| Server | REST handlers per OpenAPI, problem+json errors, `?wait` long-poll, SSE hub, Host/Origin/content-type baseline, notifications, launchd install, CLI as API client, config hot-reload, YAML write with conflict detection, `tailscale status` |
+| Server | REST handlers per OpenAPI, problem+json errors, `?wait` long-poll, SSE hub, Host/Origin/content-type baseline, notifications, launchd install, CLI as API client, config hot-reload, YAML write with conflict detection, Tailscale detection and sharing (`/api/tailscale`) |
 | Auth | PAM stack evaluator, sessions, `localhost-trust`, `tailscale-identity`, `password` (argon2id), `webauthn` (per-RP-ID credentials), `/api/auth/*` begin/continue/logout/revoke, `auth_events` |
 | Fake agent | `cmd/fake-acp-agent` scripted ACP agent (updates, tool calls, permission requests, `loadSession`, delays, crashes) for engine/agent tests |
 | Web | all pages in §11 against the API contract with fixtures, then against the live server |

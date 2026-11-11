@@ -1,7 +1,7 @@
 # Authentication
 
-hal9001 listens on `127.0.0.1:9001` only; the address is fixed. Remote access goes through Tailscale (see
-[Tailscale](#tailscale)). On top of that fixed network baseline, who may do what is decided by PAM-style stacks in
+hal9001 listens on `127.0.0.1:9001` only; the address is fixed. Remote access goes through Tailscale, which hal9001 can
+set up itself (see [Tailscale](#tailscale)). On top of that fixed network baseline, who may do what is decided by PAM-style stacks in
 `config.yaml`.
 
 ## Network baseline (not configurable)
@@ -169,39 +169,68 @@ passkey assertion, `logout`). A session lasts `session_ttl` (default 7d, sliding
 | `POST /api/auth/logout` | End the current session. |
 | `GET /api/auth/sessions`, `DELETE /api/auth/sessions`, `DELETE /api/auth/sessions/{id}` | List, revoke all, revoke one. |
 | `GET /api/auth/events` | Authentication decisions. |
-| `GET /api/auth/tailscale` | The same report as `hal9001 tailscale status`. |
 
-The last three need the `admin` service.
+Both need the `admin` service. The Tailscale endpoints (`GET /api/tailscale`, `POST /api/tailscale/refresh`,
+`POST` and `DELETE /api/tailscale/serve`) are in [`api/openapi.yaml`](../api/openapi.yaml) and need `admin`.
 
 ## Tailscale
 
-The daemon stays loopback-only; Tailscale does the exposure. Never use `tailscale funnel`, which publishes to the
-internet. hal9001 never runs `tailscale serve` itself.
+The daemon stays loopback-only; Tailscale does the exposure, and hal9001 sets it up for you. It never uses `tailscale
+funnel`, which publishes to the internet: sharing is for devices on your own tailnet.
 
-1. Install Tailscale on this Mac and log in.
-2. Publish the loopback port to your tailnet with a valid TLS certificate:
+1. Install Tailscale on this Mac and sign in. Your tailnet needs MagicDNS and HTTPS certificates turned on (under DNS in
+   the [admin console](https://login.tailscale.com/admin/dns)).
+2. In the web UI open **Settings > Tailscale** and press **Share hal on your tailnet**, or run:
 
    ```sh
-   tailscale serve --bg --https=443 http://127.0.0.1:9001
+   bin/hal9001 tailscale serve              # --port 8443 for another HTTPS port, --replace to take over a busy one
    ```
 
-   The Mac is now reachable at `https://<mac>.<tailnet>.ts.net` from devices on your tailnet only.
-3. Let the server accept that hostname in `config.yaml`:
-
-   ```yaml
-   allowed_hosts: [my-mac.my-tailnet.ts.net]
-   # allowed_logins: [you@example.com]   # optional; see below
-   ```
-
-4. Check the setup:
+   hal9001 runs `tailscale serve --bg --yes --https=443 http://127.0.0.1:9001` (the `--bg` mapping survives restarts of
+   Tailscale and of hal9001), adds this Mac's MagicDNS name to `allowed_hosts` in `config.yaml`, and sets
+   `tailscale: {serve: true, https_port: 443}`. The Mac is then reachable at `https://<mac>.<tailnet>.ts.net` from
+   devices on your tailnet only.
+3. Check it any time:
 
    ```sh
    bin/hal9001 tailscale status --table
    ```
 
-   It reports whether the `tailscale` CLI and daemon are reachable, this Mac's tailnet hostname and owner login, whether
-   serve proxies to port 9001, whether `funnel` is enabled (it should not be), whether the hostname is in
-   `allowed_hosts`, and the effective `allowed_logins`.
+   It reports the `tailscale` CLI (found on `PATH`, in Homebrew's directories or in the Tailscale app) and its version,
+   whether you are signed in, this Mac's name and tailnet, whether HTTPS certificates are on, what the HTTPS port serves
+   and whether it points at hal9001, whether funnel is on (it should not be), whether the name is in `allowed_hosts`,
+   the logins `tailscale-identity` accepts, and a warning with the fix (a command to copy, or a link) for each problem.
+
+![Settings > Tailscale, ready to share](images/tailscale/ready-light.png)
+
+What the button does, exactly:
+
+| Step | Command or edit |
+|---|---|
+| Share | `tailscale serve --bg --yes --https=<port> http://127.0.0.1:<hal9001 port>` (default port 443). Nothing is run when the port already points at hal9001. |
+| Port busy | The HTTPS port already serves something else: hal9001 refuses (`409`; the UI asks, the CLI wants `--replace`) and never overwrites it silently. |
+| `allowed_hosts` | Adds `<name>` (or `<name>:<port>` when the port is not 443, matching the `Host` header a browser sends) unless it is already there. Comments and your own entries stay; there are no duplicates. |
+| Stop sharing | `tailscale serve --https=<port> off`, only when the mapping on that port points at hal9001, and `tailscale.serve: false`. The `allowed_hosts` entry is removed only if hal9001 added it (recorded in `<home>/data/tailscale.json`); entries you wrote stay. |
+
+![Sharing on the tailnet](images/tailscale/sharing-light.png)
+
+At start, while `tailscale.serve` is `true`, hal9001 checks the mapping and puts it back if Tailscale lost it (for
+example after `tailscale serve reset` or a Tailscale reinstall). It waits for tailscaled when it is still starting, never
+replaces a mapping to something else, and shows a failure as a warning in Settings > Tailscale and in the log. If this
+Mac's tailnet name changed, the new name is added to `allowed_hosts`; the old entry stays and shows as a notice, for you
+to remove from `config.yaml`.
+
+Who may sign in over the tailnet is unchanged: `tailscale-identity` (below) accepts the logins in `allowed_logins`, or
+the login that owns this Mac when the list is empty. Settings > Tailscale shows who that is and links to the auth
+settings. Sharing does not change the auth stacks; remove `tailscale-identity` and tailnet devices need a passkey or the
+password instead.
+
+Manual setups (a hostname hal9001 does not manage, a reverse proxy of your own): run your own `tailscale serve`, and add
+the name by hand to `allowed_hosts` and, if needed, `allowed_logins`:
+
+```yaml
+allowed_hosts: [my-mac.my-tailnet.ts.net]
+```
 
 `localhost-trust` does not treat these requests as local. tailscaled proxies from loopback, so the peer address alone
 would pass; the Host and proxy-header conditions exclude them. Tailnet requests therefore fall through to

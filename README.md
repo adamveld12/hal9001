@@ -88,7 +88,7 @@ mise run setup      # git hooks (lefthook) and web dependencies (pnpm install --
 | Codex agents | Codex login (`~/.codex/auth.json`) | Runtime `codex`. Needs the `codex` CLI on PATH and Node.js 22+; install the adapter once (`hal9001 runtimes install codex`). |
 | omp agents | `omp` with `~/.omp` credentials | Runtime `omp` runs the CLI's built-in `omp acp`; no adapter to install. |
 | Notifications | `terminal-notifier` (optional) | Falls back to `osascript` when missing. |
-| Remote access | Tailscale (optional) | See [docs/auth.md](docs/auth.md#tailscale). |
+| Remote access | Tailscale (optional) | Settings > Tailscale > Share hal on your tailnet, or `hal9001 tailscale serve`; see [docs/auth.md](docs/auth.md#tailscale). |
 
 Credentials go in `~/.hal9001/env` (`KEY=VALUE` per line, injected into every sensor and command node, never shown by
 the UI or API, and redacted from stored output). A sensor can also have its own values (for example `LINEAR_API_KEY`
@@ -201,7 +201,8 @@ Files are hot-reloaded. A save from the UI or API that is based on a stale copy 
 | `update_channel` | `stable` | Release channel the [macOS app updates itself](docs/macos-app.md#updates) from: `stable` or `beta`. |
 | `update_auto_install` | `false` | Install an available app update by itself once no flow is running. Off: the update is offered (web UI, menubar) and installed on request. |
 | `session_ttl` | `7d` | Sliding lifetime of a login session. |
-| `allowed_hosts` | `[]` | Extra `Host` values the server accepts (your Tailscale hostname). |
+| `allowed_hosts` | `[]` | Extra `Host` values the server accepts. Sharing on your tailnet adds this Mac's Tailscale name itself. |
+| `tailscale` | `{serve: false, https_port: 443}` | Written by Settings > Tailscale and `hal9001 tailscale serve`: while `serve` is true, hal9001 keeps the `tailscale serve` mapping in place at start. |
 | `allowed_logins` | `[]` | Logins accepted by `tailscale-identity`; empty means the login that owns this Mac. |
 | `runtimes` | see [docs/runtimes.md](docs/runtimes.md) | ACP agent commands. |
 | `auth` | see [docs/auth.md](docs/auth.md) | PAM-style stacks per service. |
@@ -268,7 +269,9 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `queue list` | Runs waiting for a slot, in claim order, with what each waits for (`flow_slot`, `agent_slot`, `command_slot`, `kill_switch`). |
 | `queue remove <run-id>` | Remove one run from the queue: it ends `cancelled` and stays in history. 409 when the run already runs a node. |
 | `queue clear` | Remove every queued run. `--flow <id>` limits it to one flow, `--yes` skips the confirmation asked on a terminal. |
-| `tailscale status` | Tailscale CLI reachability, this Mac's tailnet hostname and owner, whether serve is configured, whether the hostname is in `allowed_hosts`. |
+| `tailscale status` | What hal9001 found about Tailscale: CLI, sign-in, this Mac's tailnet name, HTTPS certificates, the serve mapping, `allowed_hosts`, warnings with fixes (`--table` for a readable summary). |
+| `tailscale serve` | Share hal9001 on your tailnet (`tailscale serve --bg --yes --https=<port> http://127.0.0.1:9001`) and add this Mac's name to `allowed_hosts`. `--port N` picks the HTTPS port (default 443), `--replace` overwrites what the port serves now. Tailnet only; never funnel. |
+| `tailscale unserve` | Stop sharing: remove hal9001's mapping and the `allowed_hosts` entry hal9001 added. |
 | `sensors list` / `sensors get <id>` | |
 | `sensors poll <id>` | Run now: poll the sensor at once (rejected while the kill switch is engaged; works on a paused or manual-only sensor, and never baselines). `--rerun-seen` also replays items already seen into each target flow, `--flow <id>` (repeatable) limits new events and re-runs to those flows, `--wait`/`--timeout 10m` wait for the created flow runs and print their final status as `flow_runs`. Prints the sensor run with `new_events`, `rerun_events`, `flow_run_ids`. |
 | `sensors reset <id>` | Forget the sensor's dedup keys and `HAL_LAST_SUCCESS_AT` so its next run treats every item as new (history is kept; works on a paused sensor; 409 while it polls). `--run` runs it right after (`--flow <id>` limits that run), `--yes` skips the confirmation asked on a terminal. |
@@ -412,7 +415,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 |---|---|
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Full specification and acceptance scenarios. |
 | [docs/flows.md](docs/flows.md) | Writing sensors, flows and prompts: the node contract, routing, templates, agent nodes, dry-run, replay, test-node. |
-| [docs/auth.md](docs/auth.md) | Auth stacks, modules, Tailscale setup, threat notes. |
+| [docs/auth.md](docs/auth.md) | Auth stacks, modules, sharing on your tailnet (Tailscale), threat notes. |
 | [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring, detecting, installing and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
