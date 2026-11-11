@@ -84,7 +84,7 @@ func (r *runRecorder) RunUpdated(rec agent.RunRecord) {
 		a.StartedAt = &started
 	}
 	a.EndedAt = rec.EndedAt
-	if rec.FinalMessage != "" || rec.Note != nil || rec.NoteParseError != "" || rec.ResumeFallbackReason != "" {
+	if rec.FinalMessage != "" || rec.Note != nil || rec.Output != nil || rec.NoteParseError != "" || rec.ResumeFallbackReason != "" {
 		a.Result = store.Inline(string(r.resultJSON(rec)))
 	}
 	if rec.Status != agent.StatusRunning {
@@ -117,8 +117,8 @@ func failureText(rec agent.RunRecord) string {
 }
 
 // resultJSON is the agent_runs.result document:
-// {"final_message": string|null, "note": Note|null, "parse_error": bool,
-// "resume_fallback": string|null}. resume_fallback says why a proposal resume
+// {"final_message": string|null, "note": Note|null, "output": object|null, "parse_error": bool,
+// "resume_fallback": string|null}. output is the valid submit_output submission. resume_fallback says why a proposal resume
 // used a new session instead of session/load.
 func (r *runRecorder) resultJSON(rec agent.RunRecord) []byte {
 	var final any
@@ -133,9 +133,9 @@ func (r *runRecorder) resultJSON(rec agent.RunRecord) []byte {
 	if rec.ResumeFallbackReason != "" {
 		fallback = rec.ResumeFallbackReason
 	}
-	b, err := json.Marshal(map[string]any{"final_message": final, "note": note, "parse_error": rec.NoteParseError != "", "resume_fallback": fallback})
+	b, err := json.Marshal(map[string]any{"final_message": final, "note": note, "output": outputValue(rec.Output), "parse_error": rec.NoteParseError != "", "resume_fallback": fallback})
 	if err != nil {
-		return []byte(`{"final_message":null,"note":null,"parse_error":false,"resume_fallback":null}`)
+		return []byte(`{"final_message":null,"note":null,"output":null,"parse_error":false,"resume_fallback":null}`)
 	}
 	return r.redactor().Bytes(b)
 }

@@ -3066,7 +3066,12 @@ export interface components {
      * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
      *     `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
      *     Exactly one of `prompt` (a library prompt name) or `instructions` (inline prompt template) is required.
-     *     `output` (`note` default, or `none`) applies to inline `instructions` only.
+     *     `output` (`note` default, `none`, or `tool`) and `output_schema` apply to inline `instructions` only.
+     *     With `note` the agent ends its final message with the inbox note JSON; hal also gives it the `submit_output` tool
+     *     (note schema) and uses a valid call instead of parsing the text. With `tool` the agent must return its result by
+     *     calling `submit_output`, whose input schema is `output_schema` (default: the inbox note schema); the validated
+     *     arguments reach downstream nodes as `agent.output`. A run that ends without a valid call after one reminder
+     *     fails with class `no_output` (error port).
      */
     AgentNode: {
       id: components["schemas"]["Slug"];
@@ -3081,7 +3086,11 @@ export interface components {
       prompt?: components["schemas"]["Slug"];
       instructions?: string;
       /** @enum {string} */
-      output?: "note" | "none";
+      output?: "note" | "none" | "tool";
+      /** @description JSON Schema (draft 2020-12 unless `$schema` says otherwise) of the `submit_output` arguments; the top level must have `type: object`. Only with `output: tool`; omitted means the inbox note schema. Only local `$ref`s ("#/$defs/x") are allowed. */
+      output_schema?: {
+        [key: string]: unknown;
+      };
       extra_prompt?: string;
       model?: string;
       cwd?: components["schemas"]["Cwd"];
@@ -4477,7 +4486,7 @@ export interface components {
       decision: components["schemas"]["NodeRunDecision"] | null;
       /** @description `_reason` from the output, a skip reason such as `dry_run`, or an error summary. */
       reason: string | null;
-      /** @description Error class: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`, `interrupted`, `approval_timeout`, `denied`. */
+      /** @description Error class: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`, `interrupted`, `approval_timeout`, `denied`, and for agent nodes also `no_output`, `spawn_failed`, `agent_exit`, `agent_error`, `mode_unavailable`, `model_rejected`, `policy_rejected`, `empty_proposal`. */
       error: string | null;
       /** @description Distinct ports the node emitted on. Empty when dropped. */
       ports: string[];
@@ -4545,6 +4554,8 @@ export interface components {
       final_message: string | null;
       /** @description Parsed structured note when the prompt's `output` is `note` and parsing succeeded. */
       result: components["schemas"]["StructuredNote"] | null;
+      /** @description The arguments of the valid `submit_output` call (validated against the node's `output_schema`, or the note schema); null when the run made none. */
+      output: components["schemas"]["JsonValue"];
       /** @description The prompt expects a note but the final message did not parse. */
       parse_error: boolean;
       error: string | null;

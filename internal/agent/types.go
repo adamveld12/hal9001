@@ -83,6 +83,8 @@ const (
 	ReasonModelRejected   = "model_rejected"
 	ReasonStopReason      = "stop_reason"
 	ReasonEmptyProposal   = "empty_proposal"
+	// ReasonNoOutput: the run required a submit_output call and ended without a valid one, even after a reminder.
+	ReasonNoOutput = "no_output"
 	// ReasonPolicyEndedTurn: the policy rejected a tool call and the agent
 	// ended its turn instead of continuing (e.g. codex).
 	ReasonPolicyEndedTurn = "policy_rejected"
@@ -235,9 +237,31 @@ type RunRequest struct {
 	Env []string
 	// ExpectNote parses the final message as a structured note (§7.4).
 	ExpectNote bool
+	// Output, when set, ties the run to hal's submit_output tool (see OutputHook).
+	Output *OutputHook
 	// ToolsReady, when set, is called after the session is set up and before the first prompt of a process, to wait
 	// until the agent can see the MCP tools hal injected (some runtimes do not wait for their MCP servers).
 	ToolsReady func(ctx context.Context)
+}
+
+// OutputHook connects a run to the submit_output tool of its hal tool session. The executor does not know the tool: it
+// asks the hook whether the agent submitted a valid result.
+type OutputHook struct {
+	// Value returns the latest valid submission (a JSON object), or nil when there is none.
+	Value func() json.RawMessage
+	// LastError returns why the latest call was refused ("" when none was).
+	LastError func() string
+	// Required: a turn that ends without a valid submission is followed by one reminder (FollowUp) in the same
+	// session, and a run still without one fails with ReasonNoOutput. Without Required a missing submission is not an
+	// error here (the caller falls back to parsing the final message).
+	Required bool
+	// FollowUp is the reminder prompt (Required only).
+	FollowUp string
+	// ResumeNote is appended to the "Approved. Execute the plan." prompt of an approved proposal, so the agent knows
+	// the result is returned through the tool (Required only).
+	ResumeNote string
+	// AsNote turns a valid submission into the run's Note (its schema is the note schema).
+	AsNote bool
 }
 
 func (r *RunRequest) style() ApproveStyle {
@@ -305,6 +329,8 @@ type RunRecord struct {
 	// priority normal and the parse_error flag).
 	Note           *Note
 	NoteParseError string
+	// Output is the valid submit_output submission (JSON object), nil when the run made none.
+	Output json.RawMessage
 	// Proposal and ApprovalID are set for a propose-phase run that produced
 	// a proposal (Status awaiting_approval).
 	Proposal   string

@@ -147,6 +147,9 @@ func (e *Executor) Resume(ctx context.Context, rr ResumeRequest) (RunRecord, err
 	if c := strings.TrimSpace(rr.Comment); c != "" {
 		approved += "\n\n" + c
 	}
+	if h := req.Output; h != nil && h.Required && h.ResumeNote != "" {
+		approved += "\n\n" + h.ResumeNote
+	}
 	fallback := rr.Prompt + "\n\n---\nYour earlier proposal for this task:\n\n" + rr.Proposal + "\n---\n\n" + approved
 	return e.execute(ctx, plan{
 		req:            req,

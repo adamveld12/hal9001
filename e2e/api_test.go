@@ -137,6 +137,7 @@ type AgentRun struct {
 	StopReason     string          `json:"stop_reason"`
 	FinalMessage   string          `json:"final_message"`
 	Result         json.RawMessage `json:"result"`
+	Output         json.RawMessage `json:"output"`
 	ParseError     bool            `json:"parse_error"`
 	Error          string          `json:"error"`
 	AgentInfo      *struct {

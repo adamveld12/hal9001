@@ -98,6 +98,9 @@ type RunSpec struct {
 	// dry-run agent node, the planning phase of a proposal).
 	ReadOnly bool
 
+	// Output, when set, adds the submit_output tool to the session (agent nodes with an output tool or note).
+	Output *OutputSink
+
 	// Node fields for providers (sandbox, custom tools): see internal/spec.Node.
 	Sandbox string
 	Image   string
@@ -229,6 +232,11 @@ func (h *Hub) Open(ctx context.Context, spec RunSpec) (*Session, error) {
 		spec.ApprovalTimeout = DefaultApprovalTimeout
 	}
 	s := &Session{h: h, spec: spec, reg: h.base.Clone(), ready: make(chan struct{})}
+	if spec.Output != nil {
+		if err := s.reg.Register(spec.Output.tool()); err != nil {
+			return nil, err
+		}
+	}
 	h.mu.Lock()
 	providers := append([]Provider(nil), h.providers...)
 	h.mu.Unlock()

@@ -17,6 +17,8 @@ type PreambleData struct {
 	Now  time.Time
 	// Tools are the session's tools (Session.Tools).
 	Tools []ToolInfo
+	// Output, when set, is the run's submit_output sink: the preamble tells the agent how the result is returned.
+	Output *OutputSink
 	// SystemPrompt is the user's app-wide system prompt (Config.SystemPrompt); empty adds nothing.
 	SystemPrompt string
 }
@@ -68,6 +70,13 @@ func Preamble(d PreambleData) string {
 		b.WriteString("hal tools (MCP server \"hal\"):\n")
 		for _, t := range d.Tools {
 			fmt.Fprintf(&b, "- %s: %s\n", t.Name, firstSentence(t.Description))
+		}
+	}
+	if d.Output != nil {
+		if d.Output.Required() {
+			b.WriteString("result: return your final result by calling submit_output once, with arguments matching its input schema; text in your final message is not used as the result.\n")
+		} else {
+			b.WriteString("result: call submit_output once with your final result (preferred); ending your final message with the JSON object is still accepted.\n")
 		}
 	}
 	b.WriteString("</hal_context>\n\n")

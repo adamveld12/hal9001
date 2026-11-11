@@ -283,6 +283,33 @@ func TestUnparseableNoteFallsBackToRawMessage(t *testing.T) {
 	}
 }
 
+// Regression: readonly mode used to parse the final message as a note whatever the output, so an agent with output
+// none (inline or from its prompt file) produced an "Unstructured agent result" item. Only output: note makes a note.
+func TestReadonlyAgentWithoutNoteOutputMakesNoInboxItem(t *testing.T) {
+	for name, node := range map[string]string{
+		"inline none":      "{id: a, type: agent, runtime: fake, mode: readonly, instructions: Look., output: none}",
+		"prompt file none": "{id: a, type: agent, runtime: fake, mode: readonly, prompt: p}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.idleSensor()
+			h.prompt("Look at {{.input.id}}")
+			h.runtime("fake", script{Turns: []turn{{Steps: []step{say("just free text")}}}})
+			h.flow("f", "id: f\nenabled: true\nsubscribe: [src]\nnodes:\n  - "+node+"\n")
+			h.start()
+			runID := h.injectRun(`{"id":"1"}`)
+			h.waitRun(runID, store.FlowRunSucceeded)
+			if items := h.inboxItems(); len(items) != 0 {
+				t.Fatalf("inbox: %+v", items)
+			}
+			run := h.agentRuns(h.node(runID, "a").ID)[0]
+			if !strings.Contains(h.text(run.Result), `"parse_error":false`) {
+				t.Errorf("result: %s", h.text(run.Result))
+			}
+		})
+	}
+}
+
 // Scenario 9 (agent part): in a dry-run flow an auto-mode agent is forced to
 // read-only and can not change anything; its note is tagged dry-run.
 func TestScenario9DryRunForcesAgentReadonly(t *testing.T) {

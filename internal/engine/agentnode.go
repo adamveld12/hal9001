@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"hal9001/internal/agent"
+	"hal9001/internal/outschema"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -56,13 +57,18 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		wtKey = nr.ID
 	}
 
-	expectNote := node.Mode == spec.ModeReadonly
-	if node.Instructions != "" {
-		if node.Output != spec.OutputNone {
-			expectNote = true
-		}
-	} else if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
-		expectNote = true
+	out, err := e.agentOutputOf(ne)
+	if err != nil {
+		return failure(errConfig, err.Error())
+	}
+	// Only output: note parses the final message as a note, whatever the mode. Readonly agents with output none or
+	// tool produce no note of their own.
+	expectNote := out.mode == spec.OutputNote
+	// The planning phase of an approve+proposal run only writes the plan; the result is returned in the execute phase.
+	planning := mode == agent.ModeApprove && style != agent.ApprovePerTool && prev == nil
+	var sink *tools.OutputSink
+	if out.schema != nil && !planning {
+		sink = tools.NewOutputSink(out.schema, out.mode == spec.OutputTool)
 	}
 	runID := e.st.NewID()
 	phase := agent.PhasePropose
@@ -73,6 +79,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		Kind: tools.KindFlow, RunID: runID, Info: func() tools.RunInfo { return e.agentRunInfo(ne, runID) },
 		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
 		ReadOnly:        agent.PolicyFor(mode, style, phase) == agent.PolicyReadonly,
+		Output:          sink,
 		Sandbox:         node.Sandbox, Image: node.Image, Repo: node.Repo, Ref: node.Ref, Tools: toolIDs(node.Tools), ToolApprove: toolApprovals(node.Tools),
 	})
 	if err != nil {
@@ -81,7 +88,7 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	runOK := false
 	defer func() { ht.sess.CloseWith(runOK) }() // a failed run keeps its sandbox workspace for debugging
 	if prev == nil {
-		prompt = tools.Preamble(tools.PreambleData{Info: e.agentRunInfo(ne, runID), Now: e.clock.Now(), Tools: ht.sess.Tools(), SystemPrompt: ne.snap.cfg.SystemPrompt}) + prompt
+		prompt = tools.Preamble(tools.PreambleData{Info: e.agentRunInfo(ne, runID), Now: e.clock.Now(), Tools: ht.sess.Tools(), Output: sink, SystemPrompt: ne.snap.cfg.SystemPrompt}) + prompt
 	}
 	req := agent.RunRequest{
 		RunID:           runID,
@@ -98,6 +105,12 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		ApprovalTimeout: ne.snap.cfg.ApprovalTimeoutFor(node),
 		ExpectNote:      expectNote,
 		ToolsReady:      tools.ToolsReady(ht.sess),
+	}
+	if sink != nil {
+		req.Output = &agent.OutputHook{
+			Value: sink.Value, LastError: sink.LastError, Required: sink.Required(), AsNote: out.asNote,
+			FollowUp: sink.FollowUpPrompt(), ResumeNote: sink.ResumeNote(),
+		}
 	}
 	if node.Allow != nil {
 		req.Allow.Tools = node.Allow.Tools
@@ -132,6 +145,41 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		}
 	}
 	return e.agentOutcome(ne, res, expectNote)
+}
+
+// agentOutput is how an agent node returns its result.
+type agentOutput struct {
+	mode string // spec.OutputNote, OutputNone or OutputTool
+	// schema is the schema of the submit_output tool; nil with output none.
+	schema *outschema.Schema
+	// asNote: a valid submission is the inbox note (the schema is the note schema).
+	asNote bool
+}
+
+// agentOutputOf resolves the node's output mode: the inline `output` (default note) or the prompt file's.
+func (e *Engine) agentOutputOf(ne *nodeEnv) (agentOutput, error) {
+	node := ne.node
+	mode := spec.OutputNone
+	switch {
+	case node.Instructions != "":
+		mode = firstNonEmpty(node.Output, spec.OutputNote)
+	default:
+		if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
+			mode = spec.OutputNote
+		}
+	}
+	switch {
+	case mode == spec.OutputNone:
+		return agentOutput{mode: mode}, nil
+	case mode == spec.OutputTool && len(node.OutputSchema) > 0:
+		s, err := outschema.Compile(node.OutputSchema)
+		if err != nil {
+			return agentOutput{}, fmt.Errorf("output_schema: %w", err)
+		}
+		return agentOutput{mode: mode, schema: s}, nil
+	default:
+		return agentOutput{mode: mode, schema: outschema.Note(), asNote: true}, nil
+	}
 }
 
 // parkedProposal finds the propose-phase run of a node that is being resumed,
@@ -306,12 +354,20 @@ func firstNonEmpty(ss ...string) string {
 
 // agentPayload is what an agent node emits downstream: its input and a summary
 // of the run, so a following node can use both ({{.input.input.x}} and
-// {{.input.agent.final_message}}, {{.input.agent.note.title}}, ...).
+// {{.input.agent.final_message}}, {{.input.agent.note.title}}, {{.input.agent.output.<field>}} ...).
 func (e *Engine) agentPayload(ne *nodeEnv, res agent.RunRecord) json.RawMessage {
 	return e.agentSummary(ne, map[string]any{
 		"run_id": res.ID, "status": string(res.Status), "final_message": res.FinalMessage, "note": res.Note,
-		"proposal": "", "comment": "",
+		"output": outputValue(res.Output), "proposal": "", "comment": "",
 	})
+}
+
+// outputValue is the submit_output result as a payload value: null when the run made no valid call.
+func outputValue(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return raw
 }
 
 func (e *Engine) agentSummary(ne *nodeEnv, summary map[string]any) json.RawMessage {
@@ -364,7 +420,7 @@ func (e *Engine) noteToInbox(ne *nodeEnv, res agent.RunRecord, expectNote bool) 
 // deniedPayload is the payload of a denied proposal: the node's input with the proposal and comment.
 func (e *Engine) deniedPayload(ne *nodeEnv, run *store.AgentRun, ap *store.Approval) json.RawMessage {
 	return e.agentSummary(ne, map[string]any{
-		"run_id": run.ID, "status": "denied", "final_message": "", "note": nil,
+		"run_id": run.ID, "status": "denied", "final_message": "", "note": nil, "output": nil,
 		"proposal": e.readContent(ap.Proposal), "comment": ap.Comment,
 	})
 }

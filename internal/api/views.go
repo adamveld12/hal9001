@@ -520,6 +520,7 @@ type agentRunView struct {
 	StopReason      *string         `json:"stop_reason"`
 	FinalMessage    *string         `json:"final_message"`
 	Result          *noteView       `json:"result"`
+	Output          json.RawMessage `json:"output"`
 	ParseError      bool            `json:"parse_error"`
 	Error           *string         `json:"error"`
 	RawBlob         *string         `json:"raw_blob"`
@@ -538,40 +539,43 @@ func rawOrNull(raw json.RawMessage) json.RawMessage {
 }
 
 // parseAgentResult reads store.AgentRun.Result. The engine stores a JSON
-// object {"final_message", "note", "parse_error", "resume_fallback"}; a bare
-// structured note and plain text are accepted too.
-func parseAgentResult(text string) (final *string, note *noteView, parseErr bool, resumeFallback *string) {
+// object {"final_message", "note", "output", "parse_error", "resume_fallback"}; a bare
+// structured note and plain text are accepted too. output is the validated
+// submit_output arguments (null when the run made no valid call).
+func parseAgentResult(text string) (final *string, note *noteView, output json.RawMessage, parseErr bool, resumeFallback *string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, nil, false, nil
+		return nil, nil, nil, false, nil
 	}
 	var obj map[string]json.RawMessage
 	if json.Unmarshal([]byte(text), &obj) != nil {
-		return &text, nil, false, nil
+		return &text, nil, nil, false, nil
 	}
 	_, hasFinal := obj["final_message"]
 	_, hasNote := obj["note"]
 	_, hasParse := obj["parse_error"]
 	_, hasFallback := obj["resume_fallback"]
+	_, hasOutput := obj["output"]
 	switch {
-	case hasFinal || hasNote || hasParse || hasFallback:
+	case hasFinal || hasNote || hasParse || hasFallback || hasOutput:
 		var env struct {
-			FinalMessage   *string   `json:"final_message"`
-			Note           *noteView `json:"note"`
-			ParseError     bool      `json:"parse_error"`
-			ResumeFallback *string   `json:"resume_fallback"`
+			FinalMessage   *string         `json:"final_message"`
+			Note           *noteView       `json:"note"`
+			Output         json.RawMessage `json:"output"`
+			ParseError     bool            `json:"parse_error"`
+			ResumeFallback *string         `json:"resume_fallback"`
 		}
 		if json.Unmarshal([]byte(text), &env) != nil {
-			return &text, nil, false, nil
+			return &text, nil, nil, false, nil
 		}
-		return env.FinalMessage, env.Note, env.ParseError, env.ResumeFallback
+		return env.FinalMessage, env.Note, env.Output, env.ParseError, env.ResumeFallback
 	case obj["title"] != nil && obj["summary_md"] != nil:
 		var n noteView
 		if json.Unmarshal([]byte(text), &n) == nil {
-			return nil, &n, false, nil
+			return nil, &n, nil, false, nil
 		}
 	}
-	return &text, nil, false, nil
+	return &text, nil, nil, false, nil
 }
 
 func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView, error) {
@@ -580,7 +584,7 @@ func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView,
 		return agentRunView{}, err
 	}
 	prompt := rv.s.contentString(ar.Prompt)
-	final, note, parseErr, resumeFallback := parseAgentResult(rv.s.contentString(ar.Result))
+	final, note, output, parseErr, resumeFallback := parseAgentResult(rv.s.contentString(ar.Result))
 	if preview {
 		prompt = cutUTF8(prompt, previewLimit)
 		if final != nil {
@@ -598,7 +602,7 @@ func (rv *resolver) agentRunView(ar store.AgentRun, preview bool) (agentRunView,
 		AgentInfo: rawOrNull(ar.AgentInfo), Capabilities: rawOrNull(ar.Capabilities), Mode: string(ar.Mode),
 		Policy: string(ar.Policy), Phase: string(ar.Phase), SessionID: nonEmpty(ar.SessionID), Cwd: nonEmpty(ar.Cwd),
 		RenderedPromp: prompt, Argv: argv, Status: string(ar.Status), StopReason: nonEmpty(ar.StopReason),
-		FinalMessage: final, Result: note, ParseError: parseErr, ResumeFall: resumeFallback, Error: nonEmpty(ar.Error), RawSize: ar.RawJSONRPC.Size,
+		FinalMessage: final, Result: note, Output: rawOrNull(output), ParseError: parseErr, ResumeFall: resumeFallback, Error: nonEmpty(ar.Error), RawSize: ar.RawJSONRPC.Size,
 		CreatedAt: utc(ar.CreatedAt), StartedAt: utcPtr(ar.StartedAt), EndedAt: utcPtr(ar.EndedAt),
 	}
 	if ar.ApproveStyle != "" {

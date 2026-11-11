@@ -105,7 +105,7 @@ func agentRun(status string) map[string]any {
 		"runtime": "claude", "agent_info": nil, "capabilities": map[string]any{}, "mode": "readonly", "approve_style": nil,
 		"policy": "readonly", "phase": "execute", "session_id": nil, "resumed_via": nil, "resume_fallback": nil,
 		"cwd": nil, "rendered_prompt": "Review it", "argv": []string{"claude-agent-acp"}, "status": status,
-		"stop_reason": nil, "final_message": nil, "result": nil, "parse_error": false, "error": nil, "raw_blob": nil,
+		"stop_reason": nil, "final_message": nil, "result": nil, "output": nil, "parse_error": false, "error": nil, "raw_blob": nil,
 		"raw_size": 0, "created_at": ts, "started_at": ts, "ended_at": nil,
 	}
 }

@@ -34,6 +34,12 @@ func ParseNote(final string) (Note, error) {
 	if !ok {
 		return Note{}, errors.New("no JSON object found in the final message")
 	}
+	return NoteFromJSON(obj)
+}
+
+// NoteFromJSON decodes a note object and applies the checks and defaults of ParseNote. It is also the path of a note
+// submitted through the submit_output tool, which hal already validated against the note schema.
+func NoteFromJSON(obj []byte) (Note, error) {
 	var n Note
 	dec := json.NewDecoder(bytes.NewReader(obj))
 	if err := dec.Decode(&n); err != nil {
