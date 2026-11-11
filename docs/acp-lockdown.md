@@ -367,6 +367,8 @@ control (run 34, isolated home, yolo, allow-all): 7 tool calls (read x2, bash ec
 
 One config for both policies: with no built-in tool left, `ask` and `full` differ only in how hal9001's own MCP tools are
 approved, and hal9001's MCP server decides that. Replace `hal` with the server name hal9001 sends in `session/new`.
+The `submit_output` tool of agent nodes with `output: note` or `tool` ([flows.md](flows.md#structured-output)) is one of that
+server's tools, so the same `mcp__hal` rule covers it; it changes nothing, so it needs no approval at either layer.
 
 ```yaml
 runtimes:

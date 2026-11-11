@@ -228,6 +228,8 @@ You are reviewing {{.input.subject.url}}.
 
 Agent node selects a prompt from the library (dropdown in UI) plus optional `extra_prompt`. The rendered prompt is stored on the AgentRun.
 
+An agent node with inline `instructions` can instead set `output: tool` and an `output_schema` (JSON Schema): hal's per-run MCP server then exposes `submit_output`, the arguments are validated against the schema (a mismatch is a tool error with path and reason), and the validated result reaches downstream nodes as `agent.output`. A turn that ends without a valid call gets one follow-up prompt; a second miss fails the node with class `no_output` on its `error` port. With `output: note` the same tool (note schema) is offered and preferred, and the final message is still parsed when it is not called. Details in docs/flows.md ("Structured output").
+
 ### 7.2 Modes
 
 All agents are driven over ACP (§7.3). The harness is the ACP client, so every permission request from the agent comes to the harness and is decided by policy or by me, and recorded.
@@ -256,7 +258,7 @@ stateDiagram-v2
 | `auto` | Agent in its most permissive session mode; the harness allows every permission request (still recorded). | Port `out`; inbox item only if prompt `output: note`. |
 | `approve` + `proposal` (default) | Phase 1 runs under the read-only policy, with a prompt suffix: "investigate, then propose a concrete plan; do not change anything". The agent process exits after the proposal, which becomes an Approval plus a notification. Approve resumes the **same session** (`session/load`) under the auto policy, with "Approved. Execute the plan." plus my comment. Deny is recorded and routes to port `denied`. | Port `out` after phase 2. |
 | `approve` + `per_tool` | One session under a gated policy: read-class tool calls are allowed automatically; every other permission request becomes an Approval showing the tool, its kind, and its input or diff. Allow continues the call. Deny rejects that call and the agent continues. Deny + cancel ends the run (`denied`). The agent process stays alive while it waits; after `approval_timeout` (default 1h) the request is rejected and the run fails with `approval_timeout`. | Port `out`. |
-| `readonly` | Read-only policy; produces a structured note. | Inbox item + macOS notification; port `out`. |
+| `readonly` | Read-only policy. With `output: note` (the default) it produces a structured note; `output: none` and `tool` make none. | Inbox item + macOS notification (note output); port `out`. |
 
 FlowRuns waiting on an approval have status `awaiting_approval`; downstream nodes run after the agent finishes. Proposal approvals never expire and survive daemon restarts. Per-tool approvals die with the agent process: a daemon restart marks them `expired` and the run `interrupted`.
 

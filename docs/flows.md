@@ -73,7 +73,8 @@ then everything in the `env` file, then:
 stderr, scripts and argv.
 
 Error classes recorded on a failed node run: `timeout`, `exit_nonzero`, `undeclared_port`, `invalid_output`, `killed`,
-`interrupted`, `template`, `config`, `start_failed`. Defaults: command timeout 60s, agent timeout 30m.
+`interrupted`, `template`, `config`, `start_failed`, and for agent nodes `no_output` (see [Structured output](#structured-output))
+and the classes listed under [What an agent node emits](#what-an-agent-node-emits). Defaults: command timeout 60s, agent timeout 30m.
 
 ### Examples
 
@@ -496,7 +497,8 @@ dry run: approving or denying only exercises the flow's branches."; the notifica
   prompt: pr-review        # a library prompt (prompts/pr-review.md) ...
   # instructions: |        # ... or, instead of prompt, the prompt written inline (same template data)
   #   Review {{.input.url}}.
-  # output: note           # inline only: note (default) | none
+  # output: note           # inline only: note (default) | none | tool (see "Structured output")
+  # output_schema: {...}    # only with output: tool; a JSON Schema (as YAML), default: the note schema below
   extra_prompt: "Focus on tests. Title: {{.input.title}}"
   model: sonnet            # optional; set through the agent's `model` config option
   cwd: {mode: worktree, repo: "~/code/{{.input.repository.name}}", ref: "origin/main"}
@@ -515,7 +517,8 @@ dry run: approving or denying only exercises the flow's branches."; the notifica
 ```
 
 Every agent session also gets hal's own MCP server (`hal`): `gh_api`, `pr_view`, `pr_diff`, `pr_list`, `issue_view`,
-`search`, `now`, `run_context`, `node_input`, `event`. Reads run without a prompt; a call that writes (for example a
+`search`, `now`, `run_context`, `node_input`, `event`, and `submit_output` for nodes with `output: note` or `tool`
+(see [Structured output](#structured-output)). Reads run without a prompt; a call that writes (for example a
 `gh_api` POST) becomes a tool-call Approval and the agent waits up to `approval_timeout`. The first prompt of the run starts
 with a context block (ids, time, trigger, node input, available tools). See `docs/design/agent-access.md`.
 
@@ -526,8 +529,8 @@ decides each call inside its server. The modes differ in what a write may do.
 
 | Mode | Behavior | Output |
 |---|---|---|
-| `readonly` | Calls that would change something (for example a `gh_api` POST) fail without asking. Produces a structured note. | Inbox item and notification; port `out`. |
-| `auto` | Calls that need approval still ask: hal's approval rules are not bypassed by the mode. | Port `out`; an inbox item only if the prompt has `output: note`. |
+| `readonly` | Calls that would change something (for example a `gh_api` POST) fail without asking. | Port `out`; an inbox item and notification with `output: note` (the default for inline instructions). Output `none` and `tool` never make an item from the final message. |
+| `auto` | Calls that need approval still ask: hal's approval rules are not bypassed by the mode. | Port `out`; an inbox item only with `output: note`. |
 | `approve` + `proposal` | Phase 1 is read-only with a suffix asking for a plan; the agent process then exits and the plan becomes an Approval plus a notification. Approving resumes the **same session** (`session/load`; falls back to a new session with the plan in the prompt) with "Approved. Execute the plan." plus your comment. Denying routes to port `denied`. | Port `out` after phase 2. |
 | `approve` + `per_tool` | One session; every call that needs approval becomes a tool-call Approval showing the tool and its arguments. Allow runs the call; deny returns a tool error and the agent continues. After `approval_timeout` the call fails with a tool error. | Port `out`. |
 
@@ -578,12 +581,14 @@ You are reviewing {{.input.url}}.
 
 Give each agent node exactly one of `prompt` (a library prompt) or `instructions` (inline text on the node); both or
 neither is a validation error. Inline `instructions` is rendered exactly like a prompt file body, and its `output`
-(`note` by default, or `none`) replaces the prompt file's front matter `output`. Use a prompt file when several nodes share
+(`note` by default, `none`, or `tool`) replaces the prompt file's front matter `output` (which is `note` or `none`; `tool`
+and `output_schema` are inline only). Use a prompt file when several nodes share
 the text; the flow editor's "Save as reusable prompt" turns inline instructions into one. `extra_prompt` works with either.
 
 The prompt body is a template over the data model above. The node's `extra_prompt` (also a template) is appended. The
-rendered prompt is stored on the agent run. With `output: note`, or in `readonly` mode, the agent ends its final message
-with one JSON object, which becomes the inbox item:
+rendered prompt is stored on the agent run. With `output: note` the agent ends its final message with one JSON object, or
+calls `submit_output` with it (preferred, see below); either way it becomes the inbox item. The readonly mode alone does
+not make a note: a readonly node with `output: none` or `tool` produces none.
 
 ```json
 {
@@ -598,12 +603,78 @@ with one JSON object, which becomes the inbox item:
 If parsing fails, an item is still created with the raw final message, priority `normal`, and a `parse_error` flag.
 Starter prompts are in `content/prompts/` (`pr-review`, `triage-slack`, `linear-triage`, `email-secretary`).
 
+### Structured output
+
+`output` says how an agent node returns its result:
+
+| `output` | What the agent does | What hal does |
+|---|---|---|
+| `none` | Free text. | Exposes nothing new. `.agent.output` is `null`. |
+| `note` (inline default; prompt files with `output: note`) | Ends its final message with the note JSON, or calls `submit_output` (the note schema; preferred). | A valid `submit_output` call is the inbox item, with no text parsing. Without a valid call the final message is parsed exactly as before (no reminder is sent; failures give the `parse_error` item). |
+| `tool` (inline only) | Must call `submit_output` once with the result. Text in its final message is not used. | Validates every call against `output_schema` (default: the note schema). The validated arguments are `.agent.output`. A run without a valid call fails with `no_output`. |
+
+`submit_output` exists only in the tool session of that one run (hal's per-run MCP server, token-scoped), never for another
+run or node and never with `output: none`. Its input schema is the node's `output_schema`, and its description tells the
+agent to call it once with the final result. It needs no approval and works in `readonly` and dry runs: it changes nothing.
+
+```yaml
+- id: review
+  type: agent
+  runtime: claude
+  mode: readonly
+  instructions: |
+    Review {{.input.url}} and decide whether it can merge.
+  output: tool
+  output_schema:
+    type: object
+    required: [priority, verdict, body]
+    properties:
+      priority: {enum: [urgent, high, normal, low]}
+      linear_urls: {type: array, items: {type: string}}
+      verdict: {type: string}
+      body: {type: string}
+- id: format
+  type: command
+  lang: jq
+  script: |
+    {title: "[\(.agent.output.priority)] \(.agent.output.verdict)",
+     links: [.agent.output.linear_urls[]? | {label: "Linear", url: .}],
+     body: .agent.output.body}
+- id: note
+  type: inbox
+  title: "{{.input.title}}"
+  summary_md: "{{.input.body}}"
+```
+
+Rules:
+
+- `output_schema` is a JSON Schema written as YAML (JSON also works). The top level must have `type: object`. It is
+  validated when the flow is saved (draft 2020-12 unless `$schema` says another draft): an invalid schema, a missing
+  `type: object`, or a `$ref` that is not local (`#/$defs/name`; no URLs or files) is a validation error at
+  `nodes[i].output_schema`. It is only valid with `output: tool`.
+- A call that does not match returns a tool error listing each mismatch as `<path>: <reason>` (for example
+  `/priority: value must be one of 'urgent', 'high', 'normal', 'low'` or `(root): missing properties 'verdict'`), so the
+  agent fixes it and calls again. **The last valid call counts**: a later valid call replaces an earlier one, and a later
+  invalid call does not discard an earlier valid result.
+- If the agent ends its turn without a valid call (`output: tool` only), hal sends **one** follow-up prompt in the same
+  session ("You must call submit_output with ...", including the schema). If that turn also ends without a valid call,
+  the node fails with the class `no_output` and routes to its `error` port; the reason names the last refused call.
+- Without `output_schema` the note schema is used and the validated call becomes the inbox item (as with `note`), and
+  `.agent.output` and `.agent.note` both hold it. With a custom schema no inbox item is made from the call: add an
+  `inbox` (or `approval`) node, as above.
+- In an approve+proposal node the planning phase has no `submit_output`; the execute phase does, and its approved prompt
+  tells the agent to use it.
+- Dry runs: the call works as in any run; an inbox item made from it is tagged `dry-run`.
+
 ### What an agent node emits
 
 Downstream nodes receive `{"input": <the agent node's input>, "agent": {"run_id", "status", "final_message", "note",
-"proposal", "comment"}}`, for example `{{.input.agent.note.title}}` or `{{.input.input.url}}`. The same shape goes out on
-`denied`. Agent failures go to the `error` port (classes include `timeout`, `approval_timeout`, `spawn_failed`,
-`agent_exit`, `agent_error`, `mode_unavailable`, `model_rejected`, `policy_rejected`, `empty_proposal`).
+"output", "proposal", "comment"}}`, for example `{{.input.agent.note.title}}`, `{{.input.agent.output.priority}}` or
+`{{.input.input.url}}` (in a jq command node the payload is the input: `.agent.output.priority`). `final_message` is the
+agent's final text, `note` the parsed or submitted note (`null` when the node makes none), and `output` the validated
+`submit_output` arguments (`null` without a call). The same shape goes out on `denied`. Agent failures go to the `error`
+port (classes include `timeout`, `approval_timeout`, `spawn_failed`, `agent_exit`, `agent_error`, `mode_unavailable`,
+`model_rejected`, `policy_rejected`, `empty_proposal`, `no_output`).
 
 ## Dry-run, replay and test-node
 
