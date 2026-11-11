@@ -197,6 +197,21 @@ func TestFlowValidationErrors(t *testing.T) {
 			code: CodeUndeclaredPort, path: "edges[0].port", node: "a", msg: `no port "denied"`,
 		},
 		{
+			name: "denied port needs requires_approval",
+			yaml: flowWith(cmd("a")+cmd("b"), "  - {from: a, to: b, port: denied}\n"),
+			code: CodeUndeclaredPort, path: "edges[0].port", node: "a", msg: `no port "denied"`,
+		},
+		{
+			name: "approval node cannot also require approval",
+			yaml: flowWith("  - {id: a, type: approval, title: ok, requires_approval: true}\n", "  []\n"),
+			code: CodeFieldNotAllowed, path: "nodes[0].requires_approval", node: "a", msg: `field "requires_approval" is not valid on approval nodes`,
+		},
+		{
+			name: "approval_timeout needs requires_approval",
+			yaml: flowWith("  - {id: a, type: inbox, title: t, approval_timeout: 1h}\n", "  []\n"),
+			code: CodeFieldNotAllowed, path: "nodes[0].approval_timeout", node: "a", msg: "approval_timeout is only valid with requires_approval",
+		},
+		{
 			name: "duplicate node id",
 			yaml: flowWith(cmd("a")+cmd("a"), ""),
 			code: CodeDuplicateID, path: "nodes[1].id", node: "a", msg: "first used by nodes[0]",
@@ -495,5 +510,29 @@ func TestFlowIDFromFileName(t *testing.T) {
 	}
 	if out, _ := MarshalFlow(*f); strings.Contains(string(out), "\nid:") || strings.HasPrefix(string(out), "id:") {
 		t.Errorf("marshal wrote an id line:\n%s", out)
+	}
+}
+
+func TestRequiresApprovalAddsDeniedPort(t *testing.T) {
+	f, ds := ParseFlow("t", []byte(flowWith(
+		"  - {id: gated, type: command, lang: jq, script: '.', ports: [big], requires_approval: true, approval_timeout: 30m}\n"+
+			"  - {id: review, type: agent, runtime: claude, mode: approve, prompt: pr-review, requires_approval: true}\n"+
+			"  - {id: plain, type: transform, steps: [{type: filter, conditions: [{field: x, op: exists}]}], requires_approval: true}\n"+
+			cmd("denied-end")+cmd("big-end")+cmd("ok-end"),
+		"  - {from: gated, port: denied, to: denied-end}\n  - {from: gated, port: big, to: big-end}\n"+
+			"  - {from: review, port: denied, to: ok-end}\n  - {from: plain, port: denied, to: ok-end}\n")))
+	if f == nil {
+		t.Fatalf("parse failed: %v", ds)
+	}
+	for _, d := range ValidateFlow(f, testRefs()) {
+		if d.Severity == SeverityError {
+			t.Errorf("unexpected error: %+v", d)
+		}
+	}
+	if got := strings.Join(f.NodeByID("gated").OutPorts(), ","); got != "big,denied,error" {
+		t.Errorf("gated ports = %q, want big,denied,error", got)
+	}
+	if got := strings.Join(f.NodeByID("review").OutPorts(), ","); got != "out,denied,error" {
+		t.Errorf("approve agent with requires_approval must list denied once, got %q", got)
 	}
 }

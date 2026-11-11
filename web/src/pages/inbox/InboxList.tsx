@@ -7,7 +7,11 @@ import { Badge } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import { Countdown } from "../approvals/Countdown";
 import { TypeBadge } from "../approvals/ApprovalList";
-import { approvalOrigin, approvalTitle } from "../approvals/queue";
+import {
+  approvalOrigin,
+  approvalTitle,
+  isGateApproval,
+} from "../approvals/queue";
 import type { InboxRow } from "./merge";
 import {
   groupByPriority,
@@ -138,7 +142,7 @@ function ApprovalRow({
         </div>
         <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
           <Badge tone="warn">needs action</Badge>
-          <TypeBadge type={a.type} />
+          <TypeBadge type={a.type} gate={isGateApproval(a)} />
           <span className="truncate">{approvalOrigin(a)}</span>
         </div>
       </Link>

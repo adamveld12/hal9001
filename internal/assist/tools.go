@@ -76,7 +76,7 @@ func (s *session) draftTools() []tools.Tool {
 				"from_sensor":       map[string]any{"type": "string", "description": "Flow sessions: the id of a draft sensor whose output item is the flow test's input."},
 				"item":              map[string]any{"type": "integer", "minimum": 0, "description": "With from_sensor: which output item to use (default 0)."},
 				"args":              map[string]any{"type": "object", "description": "Tool sessions: the arguments of the test call (a JSON object, defaults are filled in)."},
-				"simulate_approval": map[string]any{"type": "string", "enum": []string{"approved", "denied"}, "description": "Flow sessions: the decision request-approval nodes take in the test (default approved); the test never waits for a person."},
+				"simulate_approval": map[string]any{"type": "string", "enum": []string{"approved", "denied"}, "description": "Flow sessions: the decision request-approval nodes and requires_approval gates take in the test (default approved); the test never waits for a person."},
 			}),
 			Approval: s.testApproval,
 			Run:      s.runDraftTest,

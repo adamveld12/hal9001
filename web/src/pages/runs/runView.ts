@@ -57,6 +57,18 @@ export function runDuration(
   return durationBetween(nr.started_at, nr.ended_at, now);
 }
 
+/**
+ * Id of the approval a node run is parked on: the engine records it as the
+ * reason `awaiting approval <id>`. Null for any other run.
+ */
+export function awaitedApprovalId(
+  nr: Pick<NodeRun, "status" | "reason">,
+): string | null {
+  if (nr.status !== "awaiting_approval" || nr.reason === null) return null;
+  const m = /^awaiting approval (\S+)$/.exec(nr.reason);
+  return m ? m[1] : null;
+}
+
 export interface Snapshot {
   /** CodeMirror language key input for `langForCommand`. */
   lang: string;

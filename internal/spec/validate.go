@@ -319,10 +319,10 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 }
 
 var nodeFieldsAllowed = map[string][]string{
-	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
-	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
-	NodeTransform: {"steps", "timeout"},
+	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect", "requires_approval", "approval_timeout"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "requires_approval", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
+	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links", "requires_approval", "approval_timeout"},
+	NodeTransform: {"steps", "timeout", "requires_approval", "approval_timeout"},
 	NodeApproval:  {"title", "body", "fields", "editable", "priority", "timeout", "on_timeout"},
 }
 
@@ -340,7 +340,7 @@ func (n *Node) setFields() []string {
 		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"editable", len(n.Editable) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
-		{"side_effect", n.SideEffect}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
+		{"side_effect", n.SideEffect}, {"requires_approval", n.RequiresApproval}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
 		{"sandbox", n.Sandbox != ""}, {"image", n.Image != ""}, {"repo", n.Repo != ""}, {"ref", n.Ref != ""}, {"tools", len(n.Tools) > 0},
 	} {
 		if f.set {
@@ -420,6 +420,12 @@ func validateNode(c *collector, p string, n *Node, refs *Refs) {
 		}
 	}
 	c.positiveDuration(p+".timeout", n.Timeout, "timeout")
+	if n.Type != NodeAgent && n.ApprovalTimeout != 0 && !n.RequiresApproval {
+		c.errorf(CodeFieldNotAllowed, p+".approval_timeout", "approval_timeout is only valid with requires_approval")
+	}
+	if n.Type != NodeApproval {
+		c.positiveDuration(p+".approval_timeout", n.ApprovalTimeout, "approval_timeout")
+	}
 	switch n.Type {
 	case NodeCommand:
 		c.runSpec(p+".", n.Lang, n.Script, n.Command)
@@ -541,7 +547,6 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 	}
 	c.template(p+".extra_prompt", n.ExtraPrompt)
 	c.cwd(p+".cwd", n.Cwd, false)
-	c.positiveDuration(p+".approval_timeout", n.ApprovalTimeout, "approval_timeout")
 	if n.Allow != nil {
 		c.regexps(p+".allow.tools", n.Allow.Tools)
 	}

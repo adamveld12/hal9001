@@ -3927,6 +3927,21 @@ components:
       properties:
         label: {type: string}
         url: {type: string}
+    RequiresApproval:
+      type: boolean
+      default: false
+      description: |
+        Any node but `approval`. When the node is reached (its input is ready, before it runs) hal raises an approval of
+        type `request` (`request.gate` true; title `<flow>: run <node id>?`, with the node's resolved configuration and its
+        input) and parks the node as `awaiting_approval` (no concurrency slot; it survives daemon restarts). Approving runs
+        the node as usual. Denying, or `approval_timeout` passing, skips the node and emits the input on the extra port
+        `denied`: `{"input": <node input>, "approval": {decision: denied|timeout, comment, decided_by, decided_at, approval_id}}`.
+        With no edge on `denied` the branch stops and the node run is recorded as done on port `denied` (error `denied`
+        or `approval_timeout`), not failed. A dry run still asks, tagged `dry_run`. Test runs (`test-node`, the assist flow
+        test) do not wait: they take the decision from `simulate_approval`.
+    GateApprovalTimeout:
+      allOf: [{$ref: '#/components/schemas/Duration'}]
+      description: 'How long the `requires_approval` approval waits before it expires and counts as denied (decision `timeout`). Only valid with `requires_approval`; without it the approval waits until decided.'
     AgentAllow:
       type: object
       description: Tools of the node's `mcp_servers` the agent may call (hal's own tools are always allowed). Entries are regular expressions over the tool title or name. Agents have no shell or file tools.
@@ -3961,6 +3976,8 @@ components:
         cwd: {$ref: '#/components/schemas/Cwd'}
         timeout: {$ref: '#/components/schemas/Duration'}
         side_effect: {type: boolean, description: 'Skipped in dry-run, recorded as decision `skipped` with reason `dry_run`.'}
+        requires_approval: {$ref: '#/components/schemas/RequiresApproval'}
+        approval_timeout: {$ref: '#/components/schemas/GateApprovalTimeout'}
         ui: {$ref: '#/components/schemas/NodeUI'}
     McpToolList:
       type: object
@@ -4037,7 +4054,9 @@ components:
     AgentNode:
       type: object
       description: |
-        Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`.
+        Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve` or `requires_approval` is set.
+        A `denied` payload says which approval refused it: a proposal denial carries `agent` (with the `proposal` and `comment`),
+        a `requires_approval` denial carries `approval` and the agent did not start.
         `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
         Exactly one of `prompt` (a library prompt name) or `instructions` (inline prompt template) is required.
         `output` (`note` default, or `none`) applies to inline `instructions` only.
@@ -4056,7 +4075,8 @@ components:
         model: {type: string}
         cwd: {$ref: '#/components/schemas/Cwd'}
         timeout: {$ref: '#/components/schemas/Duration'}
-        approval_timeout: {$ref: '#/components/schemas/Duration'}
+        approval_timeout: {$ref: '#/components/schemas/Duration', description: 'How long the agent''s own approvals (per-tool calls, proposals) wait, falling back to the config value; with `requires_approval` it also bounds the gate''s wait, which has no timeout when this is unset.'}
+        requires_approval: {$ref: '#/components/schemas/RequiresApproval'}
         allow: {$ref: '#/components/schemas/AgentAllow'}
         mcp_servers: {type: array, items: {$ref: '#/components/schemas/McpServer'}}
         sandbox: {type: string, description: 'Sandbox backend id; adds fs and shell tools executed there. Validated where sandboxes are defined.'}
@@ -4078,6 +4098,8 @@ components:
         summary_md: {type: string}
         suggested_reply: {type: string}
         links: {type: array, items: {$ref: '#/components/schemas/NoteLink'}}
+        requires_approval: {$ref: '#/components/schemas/RequiresApproval'}
+        approval_timeout: {$ref: '#/components/schemas/GateApprovalTimeout'}
         ui: {$ref: '#/components/schemas/NodeUI'}
     ApprovalNode:
       type: object
@@ -4089,7 +4111,8 @@ components:
         routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
         comment, decided_by, decided_at, edited, edits?}}`. With `editable`, the approver may change those input paths when
         approving; the payload's `input` carries the edited values and `approval.edits` is `{path: {before, after}}`.
-        In a dry run the approval is still created, tagged `dry_run`, and says so.
+        In a dry run the approval is still created, tagged `dry_run`, and says so. (Every other node type can ask for
+        approval before it runs with `requires_approval`; this node cannot.)
         Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
       additionalProperties: false
       required: [id, type, title]
@@ -4197,6 +4220,8 @@ components:
         type: {type: string, enum: [transform]}
         steps: {type: array, items: {$ref: '#/components/schemas/TransformStep'}}
         timeout: {$ref: '#/components/schemas/Duration'}
+        requires_approval: {$ref: '#/components/schemas/RequiresApproval'}
+        approval_timeout: {$ref: '#/components/schemas/GateApprovalTimeout'}
         ui: {$ref: '#/components/schemas/NodeUI'}
     TransformPreviewRequest:
       type: object
@@ -4950,7 +4975,7 @@ components:
         node: {$ref: '#/components/schemas/Node'}
         input: {$ref: '#/components/schemas/TestNodeInput'}
         dry_run: {type: boolean, default: false, description: 'Run with dry-run semantics (`HAL_DRY_RUN=1`, agents forced readonly, `side_effect` skipped).'}
-        simulate_approval: {type: string, enum: [approved, denied], default: approved, description: 'For an `approval` node: the decision to take instead of waiting for one.'}
+        simulate_approval: {type: string, enum: [approved, denied], default: approved, description: 'For an `approval` node or a node with `requires_approval`: the decision to take instead of waiting for one.'}
     TestNodeResult:
       type: object
       required: [flow_run, node_run]
@@ -5784,9 +5809,10 @@ components:
         expires_at: {$ref: '#/components/schemas/NullableTimestamp'}
     ApprovalRequestContent:
       type: object
-      description: What an `approval` node asked, rendered when the node ran.
-      required: [title, body_md, fields, editable, priority, dry_run, on_timeout]
+      description: What an `approval` node (or the `requires_approval` gate of another node) asked, rendered when the node was reached.
+      required: [title, body_md, fields, editable, priority, dry_run, on_timeout, gate]
       properties:
+        gate: {type: boolean, description: 'The approval a node with `requires_approval` raised before running: approving runs the node, denying emits its input on port `denied`.'}
         title: {type: string}
         body_md: {type: string, description: 'Markdown. In a dry run the first line says so.'}
         fields: {type: array, items: {type: object, required: [key, value], properties: {key: {type: string}, value: {type: string}}}}
@@ -6393,7 +6419,7 @@ components:
         event_id: {$ref: '#/components/schemas/Ulid'}
         input: {$ref: '#/components/schemas/JsonValue'}
         args: {type: [object, 'null'], additionalProperties: true, description: Tool sessions only.}
-        simulate_approval: {type: string, enum: [approved, denied], default: approved, description: 'Flow sessions: the decision `approval` nodes take in the test; the test never waits for a person.'}
+        simulate_approval: {type: string, enum: [approved, denied], default: approved, description: 'Flow sessions: the decision `approval` nodes and `requires_approval` gates take in the test; the test never waits for a person.'}
     AssistSample:
       type: object
       required: [index, sensor_id, payload]

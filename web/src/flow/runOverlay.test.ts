@@ -62,6 +62,28 @@ describe("buildRunOverlay", () => {
     expect(o.nodes["never"]).toBeUndefined();
   });
 
+  it("shows a denied or timed-out gate as denied, with its reason", () => {
+    const o = buildRunOverlay(flow, [
+      run({
+        node_id: "split",
+        ports: ["denied"],
+        error: "denied",
+        reason: "denied: too risky",
+      }),
+      run({
+        node_id: "note",
+        ports: ["denied"],
+        error: "approval_timeout",
+        reason: "approval timed out, treated as denied",
+      }),
+    ]);
+    expect(o.nodes["split"]).toEqual({
+      visual: "denied",
+      detail: "denied: too risky",
+    });
+    expect(o.nodes["note"].visual).toBe("denied");
+  });
+
   it("is empty for a run without node runs", () => {
     const o = buildRunOverlay(flow, []);
     expect(o.nodes).toEqual({});

@@ -3,9 +3,17 @@ import type { Approval } from "../../api/approvals";
 import { Time } from "../../components/Time";
 import { Badge, StatusBadge } from "../../components/ui";
 import { Countdown } from "./Countdown";
-import { approvalOrigin, approvalTitle } from "./queue";
+import { approvalOrigin, approvalTitle, isGateApproval } from "./queue";
 
-export function TypeBadge({ type }: { type: Approval["type"] }) {
+/** `gate` marks a request that asks whether a node may run (`requires_approval`). */
+export function TypeBadge({
+  type,
+  gate = false,
+}: {
+  type: Approval["type"];
+  gate?: boolean;
+}) {
+  if (gate) return <Badge tone="warn">node gate</Badge>;
   return (
     <Badge tone={type === "tool_call" ? "run" : "info"}>
       {type === "tool_call"
@@ -35,7 +43,7 @@ function Row({ approval: a }: { approval: Approval }) {
         )}
       </div>
       <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
-        <TypeBadge type={a.type} />
+        <TypeBadge type={a.type} gate={isGateApproval(a)} />
         {a.request?.dry_run && <Badge tone="warn">dry run</Badge>}
         {!pending && <StatusBadge status={a.status} />}
         {a.type === "tool_call" && a.permission_request && (
