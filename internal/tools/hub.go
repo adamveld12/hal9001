@@ -285,6 +285,9 @@ func (h *Hub) Lookup(token string) (*Session, bool) {
 // Token is the capability token to hand to `hal9001 mcp --token`.
 func (s *Session) Token() string { return s.token }
 
+// Kind is the session's kind: KindFlow or KindAssist.
+func (s *Session) Kind() string { return s.spec.Kind }
+
 // Tools lists the session's tools.
 func (s *Session) Tools() []ToolInfo { return s.reg.List() }
 
