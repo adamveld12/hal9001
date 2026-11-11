@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"hal9001/internal/agent/fakeagent"
 )
@@ -13,7 +14,7 @@ func sandboxDaemon(t *testing.T, approval, lifecycle string, steps []step) (*Dae
 	t.Helper()
 	d := newDaemon(t)
 	root := filepath.Join(t.TempDir(), "sbx")
-	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: "+lifecycle+"\napproval: "+approval+"\n")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: "+lifecycle+"\napproval: "+approval+"\nkeep_alive: 0s\n")
 	d.IdleSensor("src")
 	d.Prompt("p", "none", "go {{.input.id}}")
 	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: append(steps, say("finished"))}}})
@@ -126,7 +127,7 @@ func TestSandboxPolicyDenyIsRecordedAsDenied(t *testing.T) {
 func TestSandboxWorkspaceSurvivesProposalPhases(t *testing.T) {
 	d := newDaemon(t)
 	root := filepath.Join(t.TempDir(), "sbx")
-	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: per_run\napproval: auto\n")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: per_run\napproval: auto\nkeep_alive: 0s\n")
 	d.IdleSensor("src")
 	d.Prompt("p", "none", "Review {{.input.id}}")
 	d.Runtime("fake", script{LoadSession: true, Turns: []turn{
@@ -187,4 +188,44 @@ func TestLocalSandboxWorksWithNoConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(d.Home, "data", "sandboxes", "local")); err != nil {
 		t.Errorf("default root was not created: %v", err)
 	}
+}
+
+// After a sandboxed run ends its sandbox stays for keep_alive (default 1m) and is then torn down; the log says both.
+func TestSandboxStaysForKeepAliveAfterTheRun(t *testing.T) {
+	d := newDaemon(t, withClock())
+	root := filepath.Join(t.TempDir(), "sbx")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: per_run\napproval: auto\n")
+	d.IdleSensor("src")
+	d.Prompt("p", "none", "go {{.input.id}}")
+	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: []step{
+		mcp("c1", "fs_write", map[string]any{"path": "report.md", "content": "kept"}),
+		say("finished"),
+	}}}})
+	d.Flow("f", approvalFlow("per_tool", "    sandbox: local\n"))
+	d.Start()
+
+	done := d.WaitRun(d.InjectRun("src", map[string]any{"id": "5"}), "succeeded")
+	run := d.AgentRuns(d.Node(done, "work").ID)[0]
+	report := func() []string { m, _ := filepath.Glob(filepath.Join(root, "runs", "*", "report.md")); return m }
+	if len(report()) != 1 {
+		t.Fatalf("the workspace was removed when the run ended: %v", report())
+	}
+	var log sandboxLog
+	d.Get("/api/agent-runs/" + run.ID + "/sandbox-log").Want(200).JSON(&log)
+	if len(log.Sessions) != 1 || log.Sessions[0].Status != "ready" || log.find("lifecycle", "Run ended; sandbox kept for 1m") == nil || log.find("lifecycle", "Teardown") != nil {
+		t.Fatalf("log right after the run: %+v %+v", log.Sessions, log.Entries)
+	}
+
+	d.Clock.Advance(59 * time.Second)
+	time.Sleep(50 * time.Millisecond)
+	if len(report()) != 1 {
+		t.Fatal("the sandbox was removed before keep_alive passed")
+	}
+	d.Clock.Advance(2 * time.Second)
+	d.Eventually("the sandbox to be removed after keep_alive", func() bool { return len(report()) == 0 })
+	d.Eventually("the teardown to be logged", func() bool {
+		var l sandboxLog
+		d.Get("/api/agent-runs/" + run.ID + "/sandbox-log").Want(200).JSON(&l)
+		return len(l.Sessions) == 1 && l.Sessions[0].Status == "closed" && l.find("lifecycle", "Teardown: run succeeded") != nil
+	})
 }

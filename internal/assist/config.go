@@ -127,7 +127,12 @@ func sandboxesText(home string) string {
 			w("- namespace: `%s`\n", s.Cfg.Namespace)
 		}
 		w("- approval: %s\n", approvalSummary(s.Cfg))
-		w("- default command timeout: %s\n\n", s.Cfg.Timeout.Std())
+		w("- default command timeout: %s\n", s.Cfg.Timeout.Std())
+		if s.Cfg.KeepAlive == 0 {
+			w("- keep_alive: `0s` (the sandbox is removed as soon as a run ends)\n\n")
+		} else {
+			w("- keep_alive: `%s` (the sandbox stays this long after a run ends, so a chat can continue in it)\n\n", s.Cfg.KeepAlive)
+		}
 	}
 	return b.String()
 }

@@ -190,14 +190,18 @@ type agentOutput struct {
 // agentOutputOf resolves how the node returns its result: through its ports, or the inline `output` (default note) or
 // the prompt file's.
 func (e *Engine) agentOutputOf(ne *nodeEnv) agentOutput {
-	node := ne.node
+	return agentOutputFor(ne.snap, ne.flow, ne.node)
+}
+
+// agentOutputFor is agentOutputOf for a node of flow, with its prompt file looked up in snap.
+func agentOutputFor(snap *snapshot, flow *spec.Flow, node *spec.Node) agentOutput {
 	if !node.Ports.IsZero() {
-		return agentOutput{mode: spec.OutputNone, ports: true, emits: ne.flow.EmitTools(node)}
+		return agentOutput{mode: spec.OutputNone, ports: true, emits: flow.EmitTools(node)}
 	}
 	if node.Instructions != "" {
 		return agentOutput{mode: firstNonEmpty(node.Output, spec.OutputNote)}
 	}
-	if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
+	if p := snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
 		return agentOutput{mode: spec.OutputNote}
 	}
 	return agentOutput{mode: spec.OutputNone}

@@ -23,6 +23,7 @@ export const KINDS = [
   "live",
   "replay",
   "test",
+  "continuation",
 ] as const satisfies readonly Schemas["FlowRunKind"][];
 
 /** Timeline filters as held in the URL. Empty string = no filter. */
@@ -31,7 +32,7 @@ export interface TimelineFilters {
   flow: string;
   status: "" | Schemas["FlowRunStatus"];
   decision: "" | Schemas["NodeRunDecision"];
-  /** Empty = the server default (live and replay; test runs hidden). */
+  /** Empty = the server default (live, replay and continuation; test runs hidden). */
   kind: "" | Schemas["FlowRunKind"];
   q: string;
 }

@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// conversationSandboxCmds are the sandbox commands of the `conversations` group. The group itself (list, get, messages,
+// fork) is built by the conversations slice's conversationCmds, which includes these.
+func conversationSandboxCmds() []*command {
+	return []*command{
+		cmd("sandbox-log", "show the sandbox log of a conversation (a chat's sandbox sessions, or an agent run's log)", sandboxLogLeaf("/api/conversations/%s/sandbox-log")),
+	}
+}
+
 func sandboxCmds() []*command {
 	return []*command{
 		cmd("list", "list the sandbox backends (local, docker, depot, kubernetes, ssh)", apiGet("/api/sandboxes", "backend", "enabled", "lifecycle", "approval", "configured", "valid")),

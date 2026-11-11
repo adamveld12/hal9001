@@ -3,6 +3,7 @@ package spec
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func codes(ds []Diagnostic) string {
@@ -28,6 +29,11 @@ func TestCheckSandboxValidation(t *testing.T) {
 		{"unknown field", SandboxLocal, "bogus: 1\n", "bogus:unknown_field"},
 		{"depot vcpus", SandboxDepot, "enabled: true\nresources: {cpus: 1}\n", "resources.cpus:invalid_value"},
 		{"depot ok", SandboxDepot, "enabled: true\narchitecture: arm64\nresources: {cpus: 4}\n", ""},
+		{"keep_alive accepts a duration", SandboxLocal, "keep_alive: 2h\n", ""},
+		{"keep_alive accepts zero", SandboxLocal, "keep_alive: 0\n", ""},
+		{"keep_alive rejects a negative duration", SandboxLocal, "keep_alive: -1m\n", "keep_alive:invalid_value"},
+		{"keep_alive rejects text", SandboxLocal, "keep_alive: soon\n", "keep_alive:yaml_type"},
+		{"keep_alive needs a unit", SandboxLocal, "keep_alive: 30\n", "keep_alive:yaml_type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ds := CheckSandbox(tc.backend, []byte(tc.yaml))
@@ -38,6 +44,39 @@ func TestCheckSandboxValidation(t *testing.T) {
 	}
 	if _, ds := CheckSandbox("nope", nil); !HasErrors(ds) {
 		t.Fatal("unknown backend accepted")
+	}
+}
+
+func TestSandboxKeepAlive(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+		want       time.Duration
+	}{
+		{"absent means the default", "approval: auto\n", time.Minute},
+		{"seconds", "keep_alive: 30s\n", 30 * time.Second},
+		{"hours", "keep_alive: 2h\n", 2 * time.Hour},
+		{"days", "keep_alive: 1d\n", 24 * time.Hour},
+		{"zero removes at once", "keep_alive: 0\n", 0},
+		{"zero with a unit", "keep_alive: 0s\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ds := CheckSandbox(SandboxLocal, []byte(tc.yaml))
+			if HasErrors(ds) {
+				t.Fatalf("diagnostics: %v", ds)
+			}
+			if got := s.KeepAlive.Std(); got != tc.want {
+				t.Fatalf("keep_alive = %v, want %v", got, tc.want)
+			}
+			// A written file reads back the same, so 0 is not turned into the default.
+			b, err := MarshalSandbox(*s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, ds := CheckSandbox(SandboxLocal, b)
+			if HasErrors(ds) || again.KeepAlive != s.KeepAlive {
+				t.Fatalf("round trip: %v %v\n%s", again.KeepAlive, ds, b)
+			}
+		})
 	}
 }
 

@@ -40,7 +40,7 @@ The `config.yaml` stack for the service decides who gets in (REQUIREMENTS §10.4
 
 ## Pagination
 
-Collections that can grow (events, flow runs, sensor runs, agent runs, approvals, inbox, flow versions) return `{"items": [...], "next_cursor": "..."|null}`, newest first. Pass `next_cursor` back as `?cursor=`; `?limit=` is 1 to 200, default 50. Cursors are opaque and valid for the data as it was when issued; new items never shift a cursor. Small bounded collections (sensors, flows, prompts, runtimes, env keys) return `{"items": [...]}` without a cursor.
+Collections that can grow (events, flow runs, sensor runs, agent runs, approvals, inbox, flow versions, conversations) return `{"items": [...], "next_cursor": "..."|null}`, newest first. Pass `next_cursor` back as `?cursor=`; `?limit=` is 1 to 200, default 50. Cursors are opaque and valid for the data as it was when issued; new items never shift a cursor. Small bounded collections (sensors, flows, prompts, runtimes, env keys) return `{"items": [...]}` without a cursor.
 
 Agent transcripts page by sequence instead: `GET /api/agent-runs/{id}/events?after_seq=N&limit=M` returns `{"items", "last_seq", "has_more"}`.
 
@@ -49,6 +49,40 @@ Files that live under the home dir (sensors, flows, prompts, settings) carry a `
 ## Long polling
 
 `GET /api/flow-runs/{id}?wait=30s` returns as soon as the run is terminal (`succeeded`, `failed`, `killed`, `interrupted`, `cancelled`) or `awaiting_approval`, or when the wait elapses (cap 5 minutes). It always answers 200 with the current state, so check `flow_run.status` rather than the HTTP status. The same `wait` parameter works on `GET /api/sensor-runs/{id}` (until not `running`), `GET /api/node-runs/{id}`, and `POST /api/flows/{id}/test-node` (default 30s; 202 when the node is still running).
+
+## Conversations
+
+`GET /api/conversations` lists assistant chats (assist sessions of every kind, closed ones included; `source: chat`) and the
+agent runs of flow nodes (`source: flow`) as one list, ordered by last activity, newest first. A chat's turns are not listed
+separately, and a propose-phase run that has an execute-phase run is part of that run's conversation. Each item has `id`,
+`source`, `kind` (a chat's target kind, or `agent`), `title`, `status`, `running`, `continuable`, `runtime`, `model`, the flow
+and run ids (`flow_id`, `flow_run_id`, `node_id`, `node_run_id`, `agent_run_id` for a flow run, `assist_session_id` for a chat),
+`forked_from` (the run a chat continues), `fork_context`, `fork_count`, `started_at`, `updated_at` (last activity), `ended_at`
+and a one-line `preview`.
+
+- Filters: `source` (`flow`, `chat`), `kind`, `flow`, `node`, `flow_run`, `runtime`, `status`, `forked_from` (an agent run id),
+  `since` (inclusive) and `until` (exclusive) on the last activity, and `q`. `q` is a case-insensitive substring (ASCII; `%` and
+  `_` are literal) over the title, ids, flow and node ids, the message text of chats and the prompt and result text of flow runs
+  (text over 64 KiB is stored outside the database and not searched).
+- `status` is normalised: a chat's `idle`, `running`, `awaiting_approval`, `failed` and `closed`, and an agent run's `succeeded`,
+  `failed`, `denied`, `killed`, `interrupted`, `timeout`, `running` and `awaiting_approval`; a `queued` agent run is `running`. `running`
+  is true for `running` and `awaiting_approval`. `continuable` is true for a flow run that ended and a chat that is not closed.
+- Paging: `limit` (1 to 200, default 50) and the opaque `cursor`. The order is total (activity descending, then id descending), so
+  conversations with equal timestamps are neither skipped nor repeated between pages.
+- `GET /api/conversations/{id}` is one conversation plus `forks` (the chats forked from it, newest activity first, at most 50). `id` is an
+  assist session id or an agent run id; the id of a propose-phase run resolves to the execute-phase run's conversation.
+- `GET /api/conversations/{id}/messages` returns `{items, truncated}`: the newest 2000 messages, oldest first, in the shape of an
+  assist message plus `kind` (`""`, `divider`, `notice`). For a flow run the events are folded into the same shape and an `id` is
+  `<agent_run_id>:<zero padded seq>` ([assist.md](assist.md#conversations-and-continuing-a-run-in-a-chat)).
+- `POST /api/conversations/{agent-run-id}/fork` (service `admin`) continues a finished agent run in a new chat (`201`, the new
+  conversation). 404 for an unknown run or a turn of a chat, 409 `invalid-state` while the run is running or awaiting an approval, 422
+  when the node's runtime is no longer configured. Send the first message with `POST /api/assist/sessions/{id}/messages`.
+
+```sh
+curl -sS "$API/conversations?source=flow&status=failed&q=timeout" | jq '.items[] | {id, title, preview}'
+curl -sS -X POST -H "$H" "$API/conversations/$AGENT_RUN/fork" | jq '{id, forked_from}'
+curl -sS "$API/conversations?forked_from=$AGENT_RUN" | jq '.items[].id'
+```
 
 ## Event stream
 

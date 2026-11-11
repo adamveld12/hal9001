@@ -20,6 +20,7 @@ type assistDouble struct {
 	cancel  func(ctx context.Context, id string) (*store.AssistSession, error)
 	closeS  func(ctx context.Context, id string) error
 	created func(ctx context.Context, sensorID string) error
+	fork    func(ctx context.Context, agentRunID string) (*store.AssistSession, error)
 }
 
 func (d *assistDouble) CreateSession(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
@@ -411,7 +412,14 @@ func TestSendingAMessageHandsThePageContextToTheService(t *testing.T) {
 
 func (d *assistDouble) FlowCreated(context.Context, string) error                   { return nil }
 func (d *assistDouble) TargetRenamed(context.Context, string, string, string) error { return nil }
-func (d *assistDouble) ToolCreated(context.Context, string) error                   { return nil }
+
+func (d *assistDouble) Fork(ctx context.Context, agentRunID string) (*store.AssistSession, error) {
+	if d.fork == nil {
+		return nil, errUnscripted
+	}
+	return d.fork(ctx, agentRunID)
+}
+func (d *assistDouble) ToolCreated(context.Context, string) error { return nil }
 
 func TestAssistTestRejectsMalformedSimulateEmit(t *testing.T) {
 	e := newEnv(t)

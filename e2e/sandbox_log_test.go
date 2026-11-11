@@ -50,7 +50,7 @@ func (l sandboxLog) find(kind, titlePart string) *sandboxLogEntry {
 func TestSandboxRunLogIsRecordedAndServed(t *testing.T) {
 	d := newDaemon(t)
 	root := filepath.Join(t.TempDir(), "sbx")
-	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: per_run\napproval: rules\napproval_rules:\n  shell:\n    - {match: '^rm ', action: deny}\n    - {match: '^echo ', action: auto}\n  fs_write:\n    - {path: '**', action: auto}\n")
+	d.Write("sandboxes/local.yaml", "enabled: true\nroot: "+root+"\nlifecycle: per_run\napproval: rules\nkeep_alive: 0s\napproval_rules:\n  shell:\n    - {match: '^rm ', action: deny}\n    - {match: '^echo ', action: auto}\n  fs_write:\n    - {path: '**', action: auto}\n")
 	d.Write("env.d/sandboxes/local.env", "LOG_SECRET=topsecretvalue\n")
 	d.IdleSensor("src")
 	d.Prompt("p", "none", "go")

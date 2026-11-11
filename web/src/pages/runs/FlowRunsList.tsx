@@ -1,3 +1,4 @@
+import { kindTone } from "../../lib/status";
 import { useFlowRunList } from "../../api/runs";
 import { useFlowOptions } from "../../api/events";
 import {
@@ -90,7 +91,7 @@ export function FlowRunsList({
             set("kind", e.target.value as FlowRunFilters["kind"])
           }
         >
-          <option value="">Live and replay</option>
+          <option value="">Live, replay and continuation</option>
           {KINDS.map((k) => (
             <option key={k} value={k}>
               {k} only
@@ -153,9 +154,7 @@ export function FlowRunsList({
                   </Td>
                   <Td>
                     <span className="inline-flex gap-1">
-                      <Badge tone={r.kind === "live" ? "muted" : "info"}>
-                        {r.kind}
-                      </Badge>
+                      <Badge tone={kindTone(r.kind)}>{r.kind}</Badge>
                       {r.dry_run && <Badge tone="info">dry run</Badge>}
                     </span>
                   </Td>

@@ -26,6 +26,8 @@ func TestReadCommandsHitTheRightEndpointsAndPrintTheResponseAsJSON(t *testing.T)
 			"GET /api/events", url.Values{"sensor_id": {"gh"}, "status": {"failed"}, "q": {"pr"}, "limit": {"5"}, "cursor": {id1}}, page(eventSummary())},
 		{"runs list", []string{"runs", "list", "--flow", "triage-github", "--kind", "replay", "--replay-of", id1},
 			"GET /api/flow-runs", url.Values{"flow_id": {"triage-github"}, "kind": {"replay"}, "replay_of": {id1}}, page(flowRun(id1, "succeeded"))},
+		{"runs list continuations", []string{"runs", "list", "--kind", "continuation", "--continuation-of", id1, "--conversation", id2},
+			"GET /api/flow-runs", url.Values{"kind": {"continuation"}, "continuation_of": {id1}, "conversation": {id2}}, page(flowRun(id3, "running"))},
 		{"runs get", []string{"runs", "get", id1}, "GET /api/flow-runs/" + id1, nil, flowRunDetail("succeeded")},
 		{"node-runs get", []string{"node-runs", "get", id3}, "GET /api/node-runs/" + id3, nil,
 			func() map[string]any { n := nodeRun("done"); n["agent_runs"] = []any{}; return n }()},
@@ -46,6 +48,9 @@ func TestReadCommandsHitTheRightEndpointsAndPrintTheResponseAsJSON(t *testing.T)
 			map[string]any{"sessions": []any{}, "entries": []any{}, "has_more": false}},
 		{"node-runs sandbox-log", []string{"node-runs", "sandbox-log", id3},
 			"GET /api/node-runs/" + id3 + "/sandbox-log", nil,
+			map[string]any{"sessions": []any{}, "entries": []any{}, "has_more": false}},
+		{"conversations sandbox-log", []string{"conversations", "sandbox-log", id3, "--tail"},
+			"GET /api/conversations/" + id3 + "/sandbox-log", url.Values{"tail": {"true"}},
 			map[string]any{"sessions": []any{}, "entries": []any{}, "has_more": false}},
 		{"approvals list", []string{"approvals", "list", "--status", "pending", "--type", "tool_call", "--conversation", id2},
 			"GET /api/approvals", url.Values{"status": {"pending"}, "type": {"tool_call"}, "conversation_id": {id2}}, page(approval("pending"))},
@@ -511,6 +516,43 @@ func TestTableOutputForListsAndObjects(t *testing.T) {
 	f.on("GET /api/flow-runs", ok(page()))
 	if res := f.run(runOpts{}, "runs", "list", "--table"); strings.TrimSpace(res.stdout) != "(none)" {
 		t.Errorf("empty list = %q", res.stdout)
+	}
+}
+
+// The table of a continuation run shows its kind and where it continues from; JSON shows the same fields as the API.
+func TestRunsShowTheContinuationLink(t *testing.T) {
+	cont := flowRun(id3, "running")
+	cont["kind"] = "continuation"
+	cont["continuation"] = map[string]any{"of_run_id": id1, "conversation_id": id2, "node_id": "work", "port": "ship", "approval_id": nil}
+
+	f := newFakeDaemon(t)
+	f.on("GET /api/flow-runs/"+id3, ok(map[string]any{"flow_run": cont, "node_runs": []any{nodeRun("done")}}))
+	res := f.run(runOpts{}, "runs", "get", id3, "--table")
+	if res.code != 0 {
+		t.Fatalf("exit %d: %s", res.code, res.stderr)
+	}
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^kind\s+continuation$`),
+		regexp.MustCompile(`(?m)^continuation.of_run_id\s+` + id1 + `$`),
+		regexp.MustCompile(`(?m)^continuation.conversation_id\s+` + id2 + `$`),
+		regexp.MustCompile(`(?m)^continuation.port\s+ship$`),
+		regexp.MustCompile(`(?m)^continuation.approval_id\s+-$`),
+		regexp.MustCompile(`(?m)^` + id3 + `\s+classify\s+command\s+done`),
+	} {
+		if !want.MatchString(res.stdout) {
+			t.Errorf("table lacks %v:\n%s", want, res.stdout)
+		}
+	}
+	if res := f.run(runOpts{}, "runs", "get", id3); !strings.Contains(res.stdout, `"of_run_id": "`+id1+`"`) {
+		t.Errorf("JSON output lacks the continuation link:\n%s", res.stdout)
+	}
+
+	f = newFakeDaemon(t)
+	f.on("GET /api/flow-runs", ok(page(cont, flowRun(id1, "succeeded"))))
+	res = f.run(runOpts{}, "runs", "list", "--table")
+	lines := strings.Split(strings.TrimSpace(res.stdout), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[0], "OF_RUN_ID") || !strings.Contains(lines[1], id1) || !regexp.MustCompile(`continuation\s+running.*`+id1).MatchString(lines[1]) || !strings.Contains(lines[2], "-") {
+		t.Errorf("list table:\n%s", res.stdout)
 	}
 }
 

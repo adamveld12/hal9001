@@ -20,10 +20,17 @@ const (
 // SandboxRunLog opens the log of the sandbox session that the agent run rs.RunID is about to start (tools.SandboxOptions.Log).
 // It records a store.SandboxSession for the node run and returns the sink the sandbox package writes to; it returns nil
 // (no log) when the session cannot be recorded. Everything written is redacted with the current env secrets.
+//
+// For a conversation's sandbox (rs.Conversation set; an assist turn has no node run of its own) the session belongs to
+// the conversation: assist_session_id and agent_run_id are the conversation id and node_run_id is the node run of the
+// original run, so the session is pruned with it.
 func (e *Engine) SandboxRunLog(_ context.Context, rs tools.RunSpec, info tools.RunInfo) sandbox.RunLog {
 	ss := &store.SandboxSession{
 		NodeRunID: info.NodeRunID, AgentRunID: rs.RunID, Backend: rs.Sandbox, Status: store.SandboxProvisioning,
 		Image: rs.Image, Repo: sandbox.CleanRepo(rs.Repo), Ref: rs.Ref, EnvNames: []string{},
+	}
+	if c := rs.Conversation; c != nil {
+		ss.NodeRunID, ss.AgentRunID, ss.AssistSessionID = c.NodeRunID, c.ConversationID, c.ConversationID
 	}
 	if ss.NodeRunID == "" {
 		return nil

@@ -34,6 +34,9 @@ import { durationBetween, shortId } from "../../lib/format";
 import { Mono, TextLink } from "./Meta";
 import { NodeRunPanel } from "./NodeRunPanel";
 import { runLabels } from "./runView";
+import { ContinuedBySection } from "./ContinueInChat";
+import { continuationBanner } from "./continue";
+import { kindTone } from "../../lib/status";
 
 const NO_RUNS: NodeRun[] = [];
 
@@ -137,6 +140,11 @@ export function RunDetailPage() {
             ["dry run", flowRun.dry_run || undefined],
             ["event", flowRun.event_id],
             ["replay of", flowRun.replay_of],
+            ["continuation of run", flowRun.continuation?.of_run_id],
+            [
+              "continuation conversation",
+              flowRun.continuation?.conversation_id,
+            ],
             ["run error", trimText(flowRun.error)],
             [
               "node runs",
@@ -187,6 +195,7 @@ export function RunDetailPage() {
     );
   };
 
+  const banner = continuationBanner(flowRun.continuation);
   const versionPath = `/flows/${flowRun.flow_id}/versions/${flowRun.flow_hash}`;
   const overviewIds = flow ? flow.nodes.map((n) => n.id) : [...byNode.keys()];
   const panelNode =
@@ -228,9 +237,7 @@ export function RunDetailPage() {
         }
       />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line px-4 py-1.5 text-xs text-muted">
-        <Badge tone={flowRun.kind === "test" ? "info" : "muted"}>
-          {flowRun.kind}
-        </Badge>
+        <Badge tone={kindTone(flowRun.kind)}>{flowRun.kind}</Badge>
         {flowRun.dry_run && <Badge tone="warn">dry run</Badge>}
         <span>
           created <Time ts={flowRun.created_at} />
@@ -256,6 +263,24 @@ export function RunDetailPage() {
           </span>
         )}
       </div>
+
+      {banner && (
+        <div
+          role="note"
+          className="border-b border-line bg-run/10 px-4 py-1.5 text-xs"
+        >
+          Continuation of run{" "}
+          <TextLink to={banner.ofRunPath}>
+            <Mono>{shortId(banner.ofRunId)}</Mono>
+          </TextLink>{" "}
+          from conversation{" "}
+          <TextLink to={banner.conversationPath}>
+            <Mono>{shortId(banner.conversationId)}</Mono>
+          </TextLink>
+          : {banner.node} emitted {banner.port}
+        </div>
+      )}
+      <ContinuedBySection flowRunId={flowRun.id} />
 
       <div className="flex min-h-0 flex-1">
         <div className="relative min-w-0 flex-1">

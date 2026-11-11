@@ -7,16 +7,12 @@ import (
 	"unicode/utf8"
 
 	"hal9001/internal/agent"
+	"hal9001/internal/conversation"
 	"hal9001/internal/store"
 )
 
 // textFlushDelay batches streamed assistant text: every flush is a store write and an SSE event.
 const textFlushDelay = 120 * time.Millisecond
-
-// maxToolText bounds each text block of a stored tool call; diffs and command output can be large and the
-// full transcript stays on the agent run. It is above the largest github_issue_link result (a link of at most 8 KB
-// plus the full body), which the chat parses.
-const maxToolText = 24 << 10
 
 // sessionRecorder wraps the engine's recorder for the agent runs of one session: it persists everything
 // as usual (agent_runs, agent_events, permission_requests, raw traffic) and feeds the conversation.
@@ -177,7 +173,7 @@ func (s *session) applyToolUpdate(t *turn, u update) {
 	if len(u.Content) > 0 && string(u.Content) != "null" {
 		var parts []json.RawMessage
 		if json.Unmarshal(u.Content, &parts) == nil {
-			c.Content = clipContent(parts)
+			c.Content = conversation.ClipContent(parts)
 		}
 	}
 	s.writeToolLocked(tm, create)
@@ -212,48 +208,6 @@ func (s *session) linkApproval(t *turn, toolCallID, approvalID string) {
 		tm.msg.ApprovalID = approvalID
 		s.writeToolLocked(tm, false)
 	}
-}
-
-// clipContent bounds the text of stored tool call content (command output, diffs).
-func clipContent(parts []json.RawMessage) []json.RawMessage {
-	out := make([]json.RawMessage, 0, len(parts))
-	for _, p := range parts {
-		var m map[string]any
-		if json.Unmarshal(p, &m) != nil {
-			out = append(out, p)
-			continue
-		}
-		changed := false
-		clip := func(v any) any {
-			if s, ok := v.(string); ok && len(s) > maxToolText {
-				changed = true
-				return cutUTF8(s, maxToolText) + "\n… (clipped; the full output is in the agent run transcript)"
-			}
-			return v
-		}
-		for k, v := range m {
-			switch k {
-			case "text", "oldText", "newText":
-				m[k] = clip(v)
-			case "content":
-				if inner, ok := v.(map[string]any); ok {
-					if txt, ok := inner["text"]; ok {
-						inner["text"] = clip(txt)
-					}
-				}
-			}
-		}
-		if !changed {
-			out = append(out, p)
-			continue
-		}
-		if b, err := json.Marshal(m); err == nil {
-			out = append(out, b)
-		} else {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // cutUTF8 returns at most n bytes of s, cut on a character boundary.

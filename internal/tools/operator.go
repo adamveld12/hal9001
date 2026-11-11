@@ -515,7 +515,7 @@ func withListProps(p map[string]any) map[string]any {
 
 var (
 	flowRunStatuses = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "killed", "interrupted", "cancelled"}
-	flowRunKinds    = []string{"live", "replay", "test"}
+	flowRunKinds    = []string{"live", "replay", "test", "continuation"}
 	nodeDecisions   = []string{"emitted", "dropped", "error", "skipped"}
 	sinceProp       = prop("string", "Only records created at or after this time (RFC 3339).")
 	untilProp       = prop("string", "Only records created before this time (RFC 3339).")
@@ -563,13 +563,15 @@ func operatorReadTools(withWait bool) []operatorTool {
 			obj(map[string]any{"id": idProp("flow")}, "id"), nil, getByID("/api/flows/")),
 		restTool("flow_runs_list", "List flow runs, newest first. Test runs are hidden unless kind is test.",
 			obj(withListProps(map[string]any{
-				"flow_id":  idProp("flow"),
-				"event_id": idProp("event"),
-				"status":   map[string]any{"type": "string", "enum": flowRunStatuses, "description": "Run status."},
-				"kind":     map[string]any{"type": "string", "enum": flowRunKinds, "description": "Run kind (default live and replay)."},
-				"since":    sinceProp,
-				"until":    untilProp,
-			})), nil, list("/api/flow-runs", []string{"flow_id", "event_id", "status", "kind", "since", "until"}, nil)),
+				"flow_id":         idProp("flow"),
+				"event_id":        idProp("event"),
+				"status":          map[string]any{"type": "string", "enum": flowRunStatuses, "description": "Run status."},
+				"kind":            map[string]any{"type": "string", "enum": flowRunKinds, "description": "Run kind (default all but test)."},
+				"continuation_of": idProp("flow run"),
+				"conversation":    idProp("conversation"),
+				"since":           sinceProp,
+				"until":           untilProp,
+			})), nil, list("/api/flow-runs", []string{"flow_id", "event_id", "status", "kind", "continuation_of", "conversation", "since", "until"}, nil)),
 		flowRunGetTool(withWait),
 
 		restTool("sensors_list", "List sensors with their last poll status.", obj(map[string]any{}), nil, get("/api/sensors")),
@@ -581,7 +583,7 @@ func operatorReadTools(withWait bool) []operatorTool {
 				"flow_id":   idProp("flow"),
 				"status":    map[string]any{"type": "string", "enum": flowRunStatuses, "description": "Keep events with a flow run of this status."},
 				"decision":  map[string]any{"type": "string", "enum": nodeDecisions, "description": "Keep events with a flow run where a node decided this."},
-				"kind":      map[string]any{"type": "string", "enum": flowRunKinds, "description": "Flow run kind (default live and replay)."},
+				"kind":      map[string]any{"type": "string", "enum": flowRunKinds, "description": "Flow run kind (default live, replay and continuation)."},
 				"q":         prop("string", "Case-insensitive substring search over the payload."),
 				"since":     sinceProp,
 				"until":     untilProp,

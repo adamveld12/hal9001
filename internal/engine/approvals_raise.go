@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"hal9001/internal/agent"
+	"hal9001/internal/conversation"
 	"hal9001/internal/notify"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
@@ -257,12 +258,15 @@ func (e *Engine) linkApproval(ctx context.Context, a *store.Approval, s Approval
 		}
 		if ar.AssistSessionID != "" {
 			a.ConversationID, a.ConversationKind = ar.AssistSessionID, store.ConvChat
-			if a.Origin == "" {
-				a.Origin = store.OriginChat
-			}
 			sess, err := e.st.GetAssistSession(ctx, ar.AssistSessionID)
 			if err != nil {
 				return "", false, fmt.Errorf("chat session of the approval: %w", err)
+			}
+			if a.Origin == "" {
+				a.Origin = store.OriginChat
+				if sess.ForkedFromAgentRunID != "" {
+					a.Origin = store.OriginContinuedChat
+				}
 			}
 			chatTitle = sess.Title
 			if a.Anchor, err = e.st.NewestAssistMessageID(ctx, ar.AssistSessionID); err != nil {
@@ -281,7 +285,9 @@ func (e *Engine) linkApproval(ctx context.Context, a *store.Approval, s Approval
 			if err != nil {
 				return "", false, err
 			}
-			a.Anchor = flowMessageID(ar.ID, seq)
+			if seq > 0 {
+				a.Anchor = conversation.MessageID(ar.ID, seq)
+			}
 		}
 	}
 	if a.Origin == "" {
@@ -310,6 +316,8 @@ func (e *Engine) linkApproval(ctx context.Context, a *store.Approval, s Approval
 			a.OriginLabel = s.OriginLabel
 		case a.Origin == store.OriginMCP:
 			a.OriginLabel = "MCP: " + cmp.Or(a.OriginClient, "client")
+		case a.Origin == store.OriginContinuedChat:
+			a.OriginLabel = "Continued chat: " + cmp.Or(chatTitle, "untitled")
 		case a.ConversationKind == store.ConvChat:
 			a.OriginLabel = "Chat: " + cmp.Or(chatTitle, "untitled")
 		case nodeID != "":
@@ -362,15 +370,6 @@ func (e *Engine) holdAtSteerCap(ctx context.Context, a *store.Approval, forced s
 // clipTitle cuts an approval title to one line of at most 200 characters.
 func clipTitle(s string) string {
 	return tools.ClipRunes(strings.Join(strings.Fields(s), " "), 200)
-}
-
-// flowMessageID is the id of a message of a flow agent run's conversation: the run's id and the sequence number of
-// the agent event, zero-padded to six digits so the ids sort in order.
-func flowMessageID(agentRunID string, seq int64) string {
-	if seq <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("%s:%06d", agentRunID, seq)
 }
 
 // toolCallIDOf is the permission request's tool call id, which links the approval to the tool message of a chat.

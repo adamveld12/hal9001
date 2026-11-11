@@ -166,6 +166,92 @@ hal9001 sensors validate [file.yaml|-]    # the sensor format check, no save
 
 `test`, `draft` and `cancel` default to the session in `HAL9001_ASSIST_SESSION`, which the daemon sets for the agent.
 
+## Conversations and continuing a run in a chat
+
+A **conversation** is either a chat (an assist session of any kind; `source: chat`, its id is the session id) or the agent
+run of a flow node (`source: flow`, its id is the id of the run's last phase). `GET /api/conversations` lists both in one
+list, newest activity first, and `GET /api/conversations/{id}/messages` returns the transcript of either in one shape
+([api.md](api.md#conversations)). The turns of a chat are agent runs too but are not conversations of their own; a
+propose-phase run with an execute phase after it belongs to the execute phase's conversation.
+
+A flow run's transcript is the run's events folded into the chat message shape (the rules of the Agent run page): the
+rendered prompt is the first `user` message, adjacent chunks of the agent's text are one `assistant` message, a tool call and its updates
+are one `tool` message with its arguments and results (and the `approval_id` that gated it), thoughts and plans are left
+out, and a proposal approval and the way the run ended are `system` messages. Chat messages carry a `kind`: empty for an
+ordinary message, `divider` for the "Continued from run X" line of a fork, `notice` for a system notice (for example that
+the sandbox was recreated).
+
+### Continue a run in a chat (fork)
+
+`POST /api/conversations/{agent-run-id}/fork` creates a chat that continues the agent run of a flow node (CLI:
+`hal9001 conversations fork <agent-run-id>`). The original run is not changed. The chat is a `general` session with the
+node's runtime and model, a divider message and `forked_from_agent_run_id` set; no agent process starts and nothing is
+sent. You type the first message with the normal `POST /api/assist/sessions/{id}/messages`. 404 for an unknown run or an
+assist turn, 409 while the run is running or waits for an approval, 422 when the node's runtime is no longer configured in
+`config.yaml`. A propose-phase run id continues the execute phase that follows it.
+
+**Tools.** The chat has the same tools as a general chat (the read tools, `github_issue_link`, `navigate_ui`,
+`start_draft`) and the node's own: its custom tools with the node's approval overrides, and, when the node names a
+sandbox, the sandbox tools (`fs_read`, `fs_write`, `fs_list`, `fs_search`, `shell`) under the sandbox's approval policy. They are
+resolved from the flow version the run executed (not the current file) whenever the agent process starts. If the run was
+pruned, the chat goes on as a plain general chat.
+
+**Sending a result back to the flow.** For each port of the node that has an outgoing edge (or `out` for a node without
+declared ports) the chat has an `emit_<port>` tool. A call starts nothing by itself: it asks you for approval, showing the
+flow, node and port, what the port leads to and the payload, and only an approval starts a new flow run from the node's
+output. The chat's instructions say to call these tools only when you explicitly ask it to send or emit the result to the
+flow, and to mention once, briefly, that it can. (The emit tools are supplied by the engine; if they cannot be created the chat
+says so in a notice and goes on without them.)
+
+**Resume or replay.** The first message restores the run's context in one of two ways, and the divider says which:
+
+- *resumed* ("Continued from run X; session resumed"): when the run recorded `loadSession` among the runtime's capabilities,
+  has a session id and its working directory still exists, the agent session starts in that directory and loads the run's own
+  ACP session (`session/load`). The first prompt is the plain message. The chat then shares the runtime's session with the run,
+  so what you say is added to that session on the runtime's side (hal's record of the run does not change).
+- *replayed* ("Continued from run X; earlier context replayed"): otherwise the chat starts a new session in its own directory,
+  and its first prompt carries a compacted transcript of the run before your message. If `session/load` was tried and failed,
+  the turn falls back to this and the divider adds the reason ("... replayed (session/load failed: ...)").
+
+`fork_context` on the conversation is `resumed` or `replayed` after the first turn, and null before it. Later turns send only
+the message. If the agent process has to be restarted and cannot load the session, hal sends the usual recap of the chat with a
+pointer to the run (`agent_run_events` reads the full transcript).
+
+**Compaction.** The replay prompt is `Compact(transcript, budget)` of `internal/conversation` (default budget 48 KiB). It is
+deterministic and uses no model: the same transcript gives the same text. The format is one block per message, separated by
+blank lines:
+
+```
+[user]
+<text>
+
+[assistant]
+<text>
+
+[tool] <title> (<kind>, <status>)
+arguments: <compact JSON>
+result: <text>
+
+[system]
+<text>
+```
+
+Every user and assistant message is kept verbatim. A tool call keeps its title and arguments; its result is cut to 2000 bytes
+(`... [truncated] (N bytes)`; a diff shows its path and new text). Over budget, it shortens in this order and stops as soon as
+the text fits: (1) the results of the tool calls in the middle are dropped, the one in the center first, while the first and the
+last three calls keep theirs (`result: [output omitted]`, and a line `[... N tool outputs omitted ...]` at the start); (2) the
+remaining results are cut to 600, then 200 bytes; (3) all results and long arguments are dropped; (4) whole tool calls are
+dropped, oldest first (`[... N tool calls omitted ...]` where the oldest was). User and assistant text is never dropped, so the
+result can exceed the budget when the messages alone do. Dividers and notices are not part of it.
+
+**Sandbox.** The sandbox of a node that kept it alive is taken over when the chat is created, so it cannot expire while you
+type the first message; when it is gone the next message creates a new one from the same image, repository and ref and a
+notice says that the run's file changes are not there (see [design/agent-access.md](design/agent-access.md)). Each notice
+becomes a `system` message with `kind: notice`.
+
+CLI: `hal9001 conversations list|get|messages|fork` (`list` takes `--source`, `--flow`, `--node`, `--runtime`, `--status`,
+`--q`, `--since`, `--until`, `--forked-from`).
+
 ## The draft directory
 
 `<home>/data/assist/<session>/` (mode 0700) holds:
@@ -205,6 +291,13 @@ the agent reads `Denied by the user: "<text>". Do not retry the same action unch
 does what you asked. `draft_test`'s approval says in its description what runs and with which credentials. The assist session's secrets never reach
 the agent: the environment holds no env-file values and `draft_test` redacts the output.
 
+### Continued chats can emit back into the flow
+
+A chat forked from a flow's agent run also has the `emit_<port>` tools (`emit_out` for a node without ports). They are
+the only tools of that chat that start work in a flow: a call waits for your approval as a `tool_call` approval and then
+starts a new flow run of kind `continuation`. The agent calls them only when you ask it to send the result to the flow.
+See [Continuing an agent run in chat and emitting back](flows.md#continuing-an-agent-run-in-chat-and-emitting-back).
+
 ### Read tools: debugging with the CLI's view
 
 The chat can read everything the `hal9001` CLI shows, so "why did my flow fail?" is answered from the run itself. Every
@@ -216,6 +309,7 @@ the approval gate, and running something stays with you (Run now).
 |---|---|
 | Flows and runs | `flows_list`, `flow_get`, `flow_runs_list` (`flow_id`, `event_id`, `status`, `kind`, `since`, `until`), `flow_run_get` (the run with its node runs), `node_run_get` (decision, error, stdin, stdout, stderr, agent runs), `queue_list` |
 | Agent runs | `agent_runs_list` (`status`, `runtime`, `flow_run_id`, `node_run_id`, `assist_session_id`), `agent_run_get` (error, rendered prompt, result, approvals), `agent_run_events` (the transcript: `after_seq`, `limit`, `kind`), `agent_run_permission_requests`, `agent_run_sandbox_log` and `node_run_sandbox_log` (`after_id`, `limit`, `tail`) |
+| Conversations | `conversations_list` (`source`, `kind`, `flow`, `node`, `flow_run`, `runtime`, `status`, `q`, `forked_from`, `since`, `until`), `conversation_get` (with the chats forked from a run), `conversation_messages` (one transcript shape for chats and flow runs) |
 | Sensors and events | `sensors_list`, `sensor_get`, `sensor_runs_list` (`id`, `status`), `sensor_run_get`, `events_list` (`sensor_id`, `flow_id`, `status`, `decision`, `kind`, `q`, `since`, `until`), `event_get` |
 | Inbox and approvals | `inbox_list`, `inbox_get`, `approvals_list`, `approval_get` |
 | Configuration | `tools_list`, `tool_get`, `prompts_list`, `prompt_get`, `runtimes_list`, `sandboxes_list`, `sandbox_get`, `settings_get`, `status` |
@@ -232,7 +326,8 @@ rendered prompt, a script, command output) cut in the middle with a marker; if i
 a note to narrow the query. The transcript and the sandbox log default to 50 and 100 entries per call (at most 200) and
 page with `after_seq` and `after_id`; `tail: true` returns the newest sandbox log entries. `flow_run_get` has no `wait`:
 a chat turn never blocks on a run. The agent is told to follow the order flow run, node runs, node run, agent run,
-transcript, sandbox log.
+transcript, sandbox log. The sandbox of a chat continued from an agent run is logged on the chat
+(`GET /api/conversations/{id}/sandbox-log`), not in `agent_run_sandbox_log` or `node_run_sandbox_log`.
 
 The tools reach the API in-process, with the run token as the only credential and without the auth stack: the session
 belongs to a signed-in user, and only `GET` operations of the `api` service are mounted for it (anything else is refused
@@ -272,7 +367,7 @@ the link, **Copy body** copies everything, and the card says the link is cut. Th
 
 Every session kind (sensor, flow, tool) also gets the app's configuration under `reference/`, rebuilt every turn, with no secrets
 (never env values, runtime commands, kubeconfig paths, hosts or keys): `runtimes.txt`, `sandboxes.md` (each backend id as used in
-`sandbox:`, enabled or not, lifecycle, images, approval policy), `tools.md` (custom tools with params, approval and
+`sandbox:`, enabled or not, lifecycle, images, approval policy, keep_alive), `tools.md` (custom tools with params, approval and
 `runs_in_sandbox`, plus the built-in tool names), `settings.md` (concurrency, approval timeout, notification priority, retention) and
 `docs/agent-nodes.md` (agent and approval node fields). The per-turn preamble repeats a summary (enabled and disabled sandboxes with
 images, runtime names, custom tool ids), and the instructions tell the agent to use only ids listed there and to tell the user where to

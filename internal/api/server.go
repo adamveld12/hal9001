@@ -368,6 +368,11 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listAssistSamples":   s.listAssistSamples,
 		"cancelAssistSession": s.cancelAssistSession,
 
+		"listConversations":        s.listConversations,
+		"getConversation":          s.getConversation,
+		"listConversationMessages": s.listConversationMessages,
+		"forkConversation":         s.forkConversation,
+
 		"getTailscaleStatus":      s.getTailscaleStatus,
 		"refreshTailscale":        s.refreshTailscale,
 		"enableTailscaleServe":    s.enableTailscaleServe,
@@ -384,10 +389,12 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"setEnvValue":    s.setEnvValue,
 		"deleteEnvValue": s.deleteEnvValue,
 
-		"getAgentRunSandboxLog":      s.getAgentRunSandboxLog,
-		"getNodeRunSandboxLog":       s.getNodeRunSandboxLog,
-		"downloadAgentRunSandboxLog": s.downloadAgentRunSandboxLog,
-		"downloadNodeRunSandboxLog":  s.downloadNodeRunSandboxLog,
+		"getAgentRunSandboxLog":          s.getAgentRunSandboxLog,
+		"getNodeRunSandboxLog":           s.getNodeRunSandboxLog,
+		"downloadAgentRunSandboxLog":     s.downloadAgentRunSandboxLog,
+		"downloadNodeRunSandboxLog":      s.downloadNodeRunSandboxLog,
+		"getConversationSandboxLog":      s.getConversationSandboxLog,
+		"downloadConversationSandboxLog": s.downloadConversationSandboxLog,
 
 		"listSandboxes":    s.listSandboxes,
 		"getSandbox":       s.getSandbox,

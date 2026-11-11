@@ -80,6 +80,8 @@ type Call struct {
 	Sandbox sandbox.Session
 	// Approval says how the call was allowed: "auto: <reason>" or "approved by user".
 	Approval string
+	// RecordID is the id of the trace record (permission request) the host made for the call; empty when none was made.
+	RecordID string
 }
 
 // Result is what a tool returns to the agent.

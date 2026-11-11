@@ -108,6 +108,78 @@ func TestSandboxLogEndpoints(t *testing.T) {
 	}
 }
 
+// A chat's sandbox sessions belong to the conversation: they are not part of the original run's logs (the agent run
+// and its node run), they are served by the conversation endpoint with the same shape and paging, and their events
+// carry the assist session id.
+func TestConversationSandboxLogIsSeparateFromTheRunsLog(t *testing.T) {
+	e := newEnv(t)
+	fr := e.flowRun("demo", "", store.KindLive, store.FlowRunSucceeded)
+	nr := e.nodeRun(fr.ID, "review", store.NodeDone, func(n *store.NodeRun) { n.NodeType = store.NodeAgent })
+	ar := e.agentRun(nr.ID, store.AgentSucceeded)
+	chat := e.assistSession("demo", "idle")
+
+	run := &store.SandboxSession{NodeRunID: nr.ID, AgentRunID: ar.ID, Backend: "local"}
+	must(t, e.st.CreateSandboxSession(ctx(), run))
+	e.sandboxEntry(run.ID, store.SandboxKindLifecycle, store.SandboxInfo, "Run ended; sandbox kept for 1m", store.SandboxLogData{})
+	// The chat's sandbox: reattached first, then recreated. node_run_id stays the original node run.
+	first := &store.SandboxSession{NodeRunID: nr.ID, AgentRunID: chat.ID, AssistSessionID: chat.ID, Backend: "local", Status: store.SandboxReady}
+	must(t, e.st.CreateSandboxSession(ctx(), first))
+	e.sandboxEntry(first.ID, store.SandboxKindLifecycle, store.SandboxInfo, "Reattached sandbox of run "+ar.ID, store.SandboxLogData{})
+	second := &store.SandboxSession{NodeRunID: nr.ID, AgentRunID: chat.ID, AssistSessionID: chat.ID, Backend: "local"}
+	must(t, e.st.CreateSandboxSession(ctx(), second))
+	e.sandboxEntry(second.ID, store.SandboxKindExec, store.SandboxInfo, "echo again", store.SandboxLogData{Command: "echo again"})
+
+	type logResp struct {
+		Sessions []map[string]any `json:"sessions"`
+		Entries  []map[string]any `json:"entries"`
+		HasMore  bool             `json:"has_more"`
+	}
+	var got logResp
+	for _, path := range []string{"/api/agent-runs/" + ar.ID + "/sandbox-log", "/api/node-runs/" + nr.ID + "/sandbox-log"} {
+		e.get(path).want(200).decode(&got)
+		if len(got.Sessions) != 1 || got.Sessions[0]["id"] != run.ID || got.Sessions[0]["assist_session_id"] != "" || len(got.Entries) != 1 {
+			t.Errorf("%s = %+v", path, got)
+		}
+	}
+	if raw := string(e.get("/api/node-runs/" + nr.ID + "/sandbox-log/raw").want(200).Body); strings.Contains(raw, "Reattached") {
+		t.Errorf("the node run's raw log has the chat's entries:\n%s", raw)
+	}
+
+	e.get("/api/conversations/" + chat.ID + "/sandbox-log").want(200).decode(&got)
+	if len(got.Sessions) != 2 || got.Sessions[0]["id"] != first.ID || got.Sessions[1]["id"] != second.ID ||
+		got.Sessions[0]["assist_session_id"] != chat.ID || got.Sessions[0]["node_run_id"] != nr.ID || len(got.Entries) != 2 {
+		t.Fatalf("conversation log = %+v", got)
+	}
+	if got.Entries[0]["title"] != "Reattached sandbox of run "+ar.ID || got.Entries[1]["command"] != "echo again" {
+		t.Errorf("entries = %+v", got.Entries)
+	}
+	e.get("/api/conversations/" + chat.ID + "/sandbox-log?limit=1").want(200).decode(&got)
+	if len(got.Entries) != 1 || !got.HasMore {
+		t.Errorf("limit page = %+v", got)
+	}
+	e.get("/api/conversations/" + chat.ID + "/sandbox-log?tail=true&limit=1").want(200).decode(&got)
+	if len(got.Entries) != 1 || !got.HasMore || got.Entries[0]["command"] != "echo again" {
+		t.Errorf("tail = %+v", got)
+	}
+	e.get("/api/conversations/" + chat.ID + "/sandbox-log?limit=0").want(400)
+	raw := e.get("/api/conversations/" + chat.ID + "/sandbox-log/raw").want(200)
+	if !strings.Contains(string(raw.Body), "Reattached sandbox of run "+ar.ID) || strings.Contains(string(raw.Body), "Run ended") ||
+		raw.Header.Get("Content-Disposition") != `attachment; filename="sandbox-log-`+chat.ID+`.txt"` {
+		t.Errorf("raw conversation log: %v\n%s", raw.Header, raw.Body)
+	}
+
+	// A chat without a sandbox has an empty log; an agent run id is a conversation of its own and serves the run's log.
+	empty := e.assistSession("other", "idle")
+	body := string(e.get("/api/conversations/" + empty.ID + "/sandbox-log").want(200).Body)
+	if !strings.Contains(body, `"sessions":[]`) || !strings.Contains(body, `"entries":[]`) {
+		t.Errorf("empty = %s", body)
+	}
+	e.get("/api/conversations/" + ar.ID + "/sandbox-log").want(200).decode(&got)
+	if len(got.Sessions) != 1 || got.Sessions[0]["id"] != run.ID {
+		t.Errorf("flow conversation = %+v", got)
+	}
+	e.get("/api/conversations/" + e.st.NewID() + "/sandbox-log").want(404)
+}
 func jsonNum(f float64) string { b, _ := json.Marshal(f); return string(b) }
 
 func TestStreamSandboxLogAppendedOmitsOutput(t *testing.T) {

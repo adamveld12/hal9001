@@ -67,7 +67,8 @@ Details: [design/agent-access.md](design/agent-access.md), [runtimes.md](runtime
 - Sandboxes (Configure → Sandboxes: Local, Docker, Depot, Kubernetes, SSH): give an agent node fs_* and shell tools
   inside the sandbox, with per-sandbox approval rules and env vars. Local is always on with no setup; Depot needs its
   token. A run's sandbox log (provisioning, every command with output and exit code, denied calls, teardown) shows
-  under "Sandbox" on the agent run and node run pages.
+  under "Sandbox" on the agent run and node run pages. After a run ends its sandbox stays for the backend's Keep alive
+  setting (default 1m, 0 removes it at once) so a chat can continue in it.
 - Custom tools (Configure → Tools): YAML bash/python/node scripts with params, approval rules and a "runs in sandbox"
   option; attach to agent nodes; test runner and Create with AI.
 - Agent node: Sandbox dropdown with status, Image, Repo and Ref fields, Tools picker, inline prompts (no prompt file

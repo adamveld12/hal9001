@@ -17,6 +17,8 @@ import { runVisual } from "../../flow/runOverlay";
 import { summarizeStep } from "../../flow/transform/steps";
 import type { TransformNode } from "../../flow/transform/types";
 import { Meta, Mono, SectionTitle, TextLink } from "./Meta";
+import { ContinueInChatButton, ForksSection } from "./ContinueInChat";
+import { SEED_LABEL, seedKind } from "./continue";
 import { SandboxLogSection } from "./SandboxLog";
 import {
   awaitedApprovalId,
@@ -73,6 +75,7 @@ function RunList({
                 {label ? indexText(label) : shortId(nr.id)}
               </span>
               <Badge tone={VISUAL_TONE[visual]}>{VISUAL_LABEL[visual]}</Badge>
+              {seedKind(nr.reason) === "reused" && <Badge>reused</Badge>}
               <span className="min-w-0 flex-1 truncate text-muted">
                 {nr.reason ?? nr.error ?? ""}
               </span>
@@ -189,6 +192,13 @@ export function NodeRunPanel({
   const parent = run ? labels.get(run.id)?.parent : null;
   const approvalId = run ? awaitedApprovalId(run) : null;
   const outcome = run ? gateOutcome(run) : null;
+  const seed = run ? seedKind(run.reason) : null;
+  const nodeAgentRuns = run
+    ? agentRuns
+        .filter((a) => a.node_run_id === run.id)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    : [];
+  const lastAgentRun = nodeAgentRuns[nodeAgentRuns.length - 1];
   return (
     <div className="space-y-4 p-3 text-xs">
       <div className="flex items-center gap-2">
@@ -227,6 +237,7 @@ export function NodeRunPanel({
                     ) : (
                       run.decision && <StatusBadge status={run.decision} />
                     )}
+                    {seed && <Badge>{SEED_LABEL[seed]}</Badge>}
                     {approvalId && (
                       <TextLink to={`/inbox/approval/${approvalId}`}>
                         waiting for approval
@@ -292,11 +303,13 @@ export function NodeRunPanel({
               },
             ]}
           />
-          <AgentRunLinks
-            runs={agentRuns
-              .filter((a) => a.node_run_id === run.id)
-              .sort((a, b) => a.created_at.localeCompare(b.created_at))}
-          />
+          <AgentRunLinks runs={nodeAgentRuns} />
+          {run.node.type === "agent" && lastAgentRun && (
+            <>
+              <ContinueInChatButton run={lastAgentRun} />
+              <ForksSection agentRunId={lastAgentRun.id} />
+            </>
+          )}
           <Snapshot run={run} />
           {run.node.type === "agent" && (
             <SandboxLogSection scope="node" id={run.id} variant="section" />

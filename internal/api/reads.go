@@ -15,7 +15,7 @@ import (
 
 var (
 	flowRunStatuses = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "killed", "interrupted", "cancelled"}
-	flowRunKinds    = []string{"live", "replay", "test"}
+	flowRunKinds    = []string{"live", "replay", "test", "continuation"}
 	nodeDecisions   = []string{"emitted", "dropped", "error", "skipped"}
 	agentStatuses   = []string{"queued", "running", "awaiting_approval", "succeeded", "failed", "denied", "killed", "interrupted", "timeout"}
 	sensorStatuses  = []string{"running", "succeeded", "failed", "timeout", "killed", "interrupted"}
@@ -207,7 +207,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	if !q.ok(w) {
 		return
 	}
-	kinds := []store.FlowRunKind{store.KindLive, store.KindReplay}
+	kinds := []store.FlowRunKind{store.KindLive, store.KindReplay, store.KindContinuation}
 	if kind != "" {
 		kinds = []store.FlowRunKind{store.FlowRunKind(kind)}
 	}
@@ -319,11 +319,15 @@ func (s *Server) listFlowRuns(w http.ResponseWriter, r *http.Request) {
 	status := q.enum("status", flowRunStatuses...)
 	kind := q.enum("kind", flowRunKinds...)
 	replayOf := q.ulid("replay_of")
+	continuedFrom := q.ulid("continuation_of")
+	conversation := q.ulid("conversation")
 	tr := q.timeRange()
 	if !q.ok(w) {
 		return
 	}
-	f := store.FlowRunFilter{FlowID: flowID, EventID: eventID, ReplayOf: replayOf, Time: tr, ListOpts: opts}
+	f := store.FlowRunFilter{
+		FlowID: flowID, EventID: eventID, ReplayOf: replayOf, ContinuationOf: continuedFrom, Conversation: conversation, Time: tr, ListOpts: opts,
+	}
 	if status != "" {
 		f.Statuses = []store.FlowRunStatus{store.FlowRunStatus(status)}
 	}

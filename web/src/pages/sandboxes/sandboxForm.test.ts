@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { SandboxConfig } from "../../api/sandboxes";
-import { configFromForm, formFromConfig, textToList } from "./sandboxForm";
+import {
+  configFromForm,
+  formFromConfig,
+  parseKeepAlive,
+  textToList,
+} from "./sandboxForm";
 
 const base: SandboxConfig = {
   enabled: true,
@@ -8,6 +13,7 @@ const base: SandboxConfig = {
   approval: "rules",
   approval_rules: { shell: [], fs_write: [] },
   timeout: "10m",
+  keep_alive: "1m",
   resources: { cpus: 0, memory_mb: 0, disk_gb: 0 },
   root: "",
   socket: "",
@@ -74,5 +80,31 @@ describe("sandbox form", () => {
 
   it("splits lines", () => {
     expect(textToList("a\n  \n b ")).toEqual(["a", "b"]);
+  });
+
+  it("validates keep_alive like the server", () => {
+    for (const ok of ["30s", "1m", "2h", "1d", "1h30m", "1.5h", " 5m "]) {
+      expect(parseKeepAlive(ok), ok).toEqual({ value: ok.trim() });
+    }
+    // 0 is allowed and sent with a unit: the API's duration format needs one.
+    expect(parseKeepAlive("0")).toEqual({ value: "0s" });
+    expect(parseKeepAlive("0s")).toEqual({ value: "0s" });
+    expect(parseKeepAlive("0m")).toEqual({ value: "0m" });
+    for (const bad of ["", "  ", "-1m", "30", "soon", "1 m", "m", "1m 30s"]) {
+      expect("error" in parseKeepAlive(bad), `"${bad}"`).toBe(true);
+    }
+    expect(parseKeepAlive("-1m")).toEqual({
+      error: "Keep alive must not be negative",
+    });
+  });
+
+  it("puts keep_alive in the config and reports a bad one", () => {
+    const r = configFromForm({ ...formFromConfig(base), keep_alive: "0" });
+    if (!("config" in r)) throw new Error("unexpected errors");
+    expect(r.config.keep_alive).toBe("0s");
+
+    const bad = configFromForm({ ...formFromConfig(base), keep_alive: "-5m" });
+    if (!("errors" in bad)) throw new Error("expected errors");
+    expect(Object.keys(bad.errors)).toEqual(["keep_alive"]);
   });
 });

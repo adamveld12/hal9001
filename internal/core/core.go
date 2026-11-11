@@ -475,6 +475,13 @@ type Assist interface {
 	ToolCreated(ctx context.Context, toolID string) error
 	// TargetRenamed points the open sessions on the file oldID of kind (store.AssistTarget*) at newID.
 	TargetRenamed(ctx context.Context, kind, oldID, newID string) error
+	// Fork creates a general chat that continues the agent run of a flow node (agentRunID names any phase of the node
+	// run; the chat continues its last phase). The run is not changed. No agent process starts and no message is
+	// sent: the user's first message restores the run's context (the runtime's own session, or a compacted transcript)
+	// and starts the first turn. store.ErrNotFound for an unknown run or one that is a turn of a chat, ErrInvalidState
+	// while the run is still running or waiting for an approval, *ValidationError when the node's runtime is no longer
+	// configured.
+	Fork(ctx context.Context, agentRunID string) (*store.AssistSession, error)
 }
 
 // DraftConflictError is UpdateDraft's hash mismatch (409 conflict).

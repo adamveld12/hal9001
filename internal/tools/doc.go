@@ -48,11 +48,18 @@
 //
 // SandboxProvider(manager, opts) adds fs_read, fs_write, fs_list, fs_search and shell to runs whose node sets
 // `sandbox:`. It opens a session through the sandbox Manager (node image, repo, ref; the node input becomes
-// input.json) and closes it with Session.CloseWith(success): a failed run keeps its per_run workspace. fs_write and
-// shell use Tool.Policy (VerdictAllow / VerdictApprove / VerdictDeny): an approval's reason carries the policy rule and,
-// for fs_write, a unified diff; a deny is recorded as a denied permission request (decided by policy) and the agent
-// gets a tool error. The per_run workspace is keyed by the node run, so the propose and execute phases of an approve
-// node share it. (Depot stops its per_run sandbox when a phase ends, so only its workdir name is shared.)
+// input.json). When the run ends (Session.CloseWith(success)) the session is held in opts.Keeper for the backend's
+// keep_alive and then closed with the run's outcome: a failed run keeps its per_run workspace; keep_alive 0 closes it
+// at once. fs_write and shell use Tool.Policy (VerdictAllow / VerdictApprove / VerdictDeny): an approval's reason
+// carries the policy rule and, for fs_write, a unified diff; a deny is recorded as a denied permission request
+// (decided by policy) and the agent gets a tool error. The per_run workspace is keyed by the node run, so the propose
+// and execute phases of an approve node share it: opening the second closes the session still held from the first.
+// (Depot stops its per_run sandbox when a phase ends, so only its workdir name is shared.)
+//
+// A RunSpec with Conversation set (a chat continued from an agent run) gets a lease instead (sandbox_lease.go): a
+// sandbox.Session that takes over the run's held sandbox on the first Extension.BeforeTurn, is held for keep_alive
+// after every turn (Extension.AfterTurn), and is recreated from the same image, repo and ref, with a notice, when it
+// expired. Its log belongs to the conversation.
 //
 // RunInSandbox(ctx, session, lang, script, stdin, env, timeout) runs a tool script (bash, python, node, or exec for a
 // command line) inside a sandbox session; env values are exported for that command and redacted from the result.

@@ -37,6 +37,14 @@
 //   - Close(ctx, false) keeps a failed per_run workspace for debugging; backends implement Sweeper to remove
 //     it after the retention period (call Sweep(ctx, maxAge) on the Backend returned by New).
 //
+// # Keeping a sandbox after its run
+//
+// Keeper holds a Session after the run that used it ended, for the sandbox's keep_alive (spec.Sandbox.KeepAlive,
+// default 1m): Hold(key, sess, ttl, success) closes it with Close(ctx, success) when ttl has passed (at once for
+// ttl <= 0, or when a new Hold uses the same key), Take(key) hands it to a new owner and CloseAll closes everything
+// on shutdown. NewKeeper takes an agent.Clock so tests advance time by hand. Adopt moves a held session's log to a
+// new RunLog when a conversation takes the sandbox over.
+//
 // # Approval
 //
 // NewPolicy(cfg) compiles a sandbox's approval settings. Policy.Decide(OpShell, {"command": ...}) and

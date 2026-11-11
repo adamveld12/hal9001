@@ -340,6 +340,22 @@ func flowRunBrief(fr store.FlowRun) flowRunBriefView {
 	}
 }
 
+// continuationView links a continuation run to the run and conversation it came from.
+type continuationView struct {
+	OfRunID        string  `json:"of_run_id"`
+	ConversationID string  `json:"conversation_id"`
+	NodeID         string  `json:"node_id"`
+	Port           string  `json:"port"`
+	ApprovalID     *string `json:"approval_id"`
+}
+
+func continuationOf(c *store.Continuation) *continuationView {
+	if c == nil {
+		return nil
+	}
+	return &continuationView{OfRunID: c.OfRunID, ConversationID: c.ConversationID, NodeID: c.NodeID, Port: c.Port, ApprovalID: nonEmpty(c.ApprovalID)}
+}
+
 type eventSummaryView struct {
 	ID             string             `json:"id"`
 	SensorID       string             `json:"sensor_id"`
@@ -405,6 +421,8 @@ type flowRunView struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	StartedAt   *time.Time `json:"started_at"`
 	EndedAt     *time.Time `json:"ended_at"`
+	// Continuation is set for a run of kind continuation: the run, conversation, node and port it continues from.
+	Continuation *continuationView `json:"continuation"`
 }
 
 func flowRunFull(fr store.FlowRun) flowRunView {
@@ -412,6 +430,7 @@ func flowRunFull(fr store.FlowRun) flowRunView {
 		ID: fr.ID, FlowID: fr.FlowID, FlowHash: fr.FlowHash, EventID: nonEmpty(fr.EventID), Kind: string(fr.Kind),
 		ReplayOf: nonEmpty(fr.ReplayOf), DryRun: fr.DryRun, Status: string(fr.Status), Error: nonEmpty(fr.Error), CancelledBy: nonEmpty(fr.CancelledBy),
 		CreatedAt: utc(fr.CreatedAt), StartedAt: utcPtr(fr.StartedAt), EndedAt: utcPtr(fr.EndedAt),
+		Continuation: continuationOf(fr.Continuation),
 	}
 }
 

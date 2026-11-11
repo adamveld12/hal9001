@@ -227,6 +227,25 @@ func debugReadTools() []operatorTool {
 		restTool("agent_run_sandbox_log", "Read the sandbox log of an agent run: provisioning, every shell command and file operation with its result, and denied calls. Secrets are redacted.",
 			obj(logProps("agent run"), "id"), nil, idPath("/api/agent-runs/", "/sandbox-log", logQuery)),
 
+		restTool("conversations_list", "List conversations, newest activity first: assistant chats and the agent runs of flow nodes in one list, with forks of runs. status is running, awaiting_approval, idle, succeeded, failed, killed, denied, interrupted, timeout or closed; q searches titles, ids, messages, prompts and results.",
+			obj(withListProps(map[string]any{
+				"source":      map[string]any{"type": "string", "enum": []string{"flow", "chat"}, "description": "flow: agent runs of flow nodes; chat: assistant chats."},
+				"kind":        map[string]any{"type": "string", "enum": []string{"general", "sensor", "flow", "tool", "agent"}, "description": "A chat's target kind, or agent for flow runs."},
+				"flow":        idProp("flow"),
+				"node":        prop("string", "Node id."),
+				"flow_run":    idProp("flow run"),
+				"runtime":     prop("string", "Runtime name."),
+				"status":      map[string]any{"type": "string", "enum": []string{"running", "awaiting_approval", "idle", "succeeded", "failed", "killed", "denied", "interrupted", "timeout", "closed"}, "description": "Normalised status."},
+				"q":           prop("string", "Text to search for (case-insensitive, at most 200 characters)."),
+				"forked_from": idProp("agent run"),
+				"since":       prop("string", "Only conversations with activity at or after this time (RFC 3339)."),
+				"until":       prop("string", "Only conversations with activity before this time (RFC 3339)."),
+			})), nil, list("/api/conversations", []string{"source", "kind", "flow", "node", "flow_run", "runtime", "status", "q", "forked_from", "since", "until"}, nil)),
+		restTool("conversation_get", "Read one conversation (an assistant chat id or an agent run id) with the chats forked from it.",
+			obj(map[string]any{"id": idProp("conversation")}, "id"), nil, getByID("/api/conversations/")),
+		restTool("conversation_messages", "Read a conversation's transcript in one shape for chats and flow runs: user, assistant, tool (arguments and results) and system messages, oldest first, at most the newest 2000.",
+			obj(map[string]any{"id": idProp("conversation")}, "id"), nil, idPath("/api/conversations/", "/messages", nil)),
+
 		restTool("sensor_runs_list", "List the polls of one sensor, newest first, with status, error and item counts.",
 			obj(withListProps(map[string]any{
 				"id":     idProp("sensor"),

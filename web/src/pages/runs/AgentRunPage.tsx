@@ -22,6 +22,8 @@ import { factList, trimText } from "../../lib/contextSummary";
 import { useNow } from "../approvals/timeLeft";
 import { durationBetween, formatBytes, shortId } from "../../lib/format";
 import { Meta, Mono, TextLink } from "./Meta";
+import { ContinueInChatButton, ForksSection } from "./ContinueInChat";
+import { isFlowAgentRun } from "./continue";
 import { useAssist } from "../assist/context";
 import { PermissionRequests } from "./PermissionRequests";
 import { PhaseTimeline } from "./PhaseTimeline";
@@ -152,6 +154,7 @@ export function AgentRunPage() {
                 Flow run <Mono>{shortId(run.flow_run_id)}</Mono>
               </TextLink>
             )}
+            {isFlowAgentRun(run) && <ContinueInChatButton run={run} />}
             {run.assist_session_id && (
               <button
                 type="button"
@@ -238,6 +241,8 @@ export function AgentRunPage() {
               ]}
             />
           </Panel>
+
+          {isFlowAgentRun(run) && <ForksSection agentRunId={run.id} />}
 
           <Panel title="Phases">
             <PhaseTimeline

@@ -318,7 +318,7 @@ Templates are Go `text/template`. Where they apply: sensor `key`; command `cwd`;
 | `.event` | The original event payload. |
 | `.input` | The input payload of this node (what the upstream node emitted). For entry nodes it equals `.event`. |
 | `.flow.id`, `.flow.hash`, `.flow.dry_run` | The flow being run. |
-| `.run.id`, `.run.event_id`, `.run.kind` | The flow run; `kind` is `live`, `replay` or `test`. |
+| `.run.id`, `.run.event_id`, `.run.kind` | The flow run; `kind` is `live`, `replay`, `test` or `continuation`. |
 
 Helpers: `json VALUE` (compact JSON, no HTML escaping), `default DEFAULT VALUE`, `trunc N STRING` (first N runes).
 `default` and `trunc` take the subject last so they work in pipelines: `{{.input.title | trunc 80}}`.
@@ -572,7 +572,7 @@ notification.
   mcp_servers:
     - {name: docs, type: http, url: "https://example.com/mcp", headers: {Authorization: "Bearer ..."}}
     - {name: local, command: my-mcp, args: [--stdio], env: {TOKEN: abc}}
-  sandbox: my-sandbox      # optional: sandbox backend id; adds fs/shell tools run there
+  sandbox: my-sandbox      # optional: sandbox backend id; adds fs/shell tools run there (kept for its keep_alive after the run ends)
   image: ubuntu:24.04      # optional sandbox options
   repo: "~/code/app"
   ref: main
@@ -815,6 +815,51 @@ Each emission on a port is delivered downstream as `{"input": <the agent node's 
 port (classes include `timeout`, `approval_timeout`, `spawn_failed`, `agent_exit`, `agent_error`, `mode_unavailable`,
 `model_rejected`, `policy_rejected`, `empty_proposal`, `no_output`).
 
+### Continuing an agent run in chat and emitting back
+
+On the agent run page you can **Continue in chat**: the chat is a fork of the run (the original run is not changed). The
+chat has one `emit_<port>` tool for each declared port of the agent node that has an outgoing edge, or `emit_out` for a
+node without declared ports. Calling one **sends the result to the flow**, but only after you approve it:
+
+1. The agent calls `emit_<port>` only when you asked it to send or emit the result to the flow. The arguments are checked
+   against the port's schema, the same one the original run used (the inbox note schema for a port without a schema).
+   `emit_out` takes `final_message` and, for a node whose output is a note, an optional `note`. An invalid call is
+   refused at once and the agent can correct it; you are not asked.
+2. A valid call raises a `tool_call` approval, in the chat and in the Approvals page. Its reason shows the flow, the node
+   and port, the node(s) the port leads to, the payload, and that approving starts a new flow run.
+3. **Approve** starts a new flow run of kind `continuation`. **Deny** returns a tool error to the agent and the chat goes
+   on. No run is started without an approval.
+
+The continuation run:
+
+- **Runs only what follows the port.** The nodes on the path from the entry node to the agent node are copied from the
+  original run (same inputs and outputs, with the reason `reused from flow run <id>`) and are not run again. The agent
+  node is recorded `done` on the emitted port with the reason `emitted from conversation <id>`; its output is the
+  payload you approved, shaped like a real emission: `{"input": <the node's input>, "agent": {"run_id": <the original
+  agent run>, "status": "succeeded", "port", "output", "final_message", "note", "proposal", "comment"}}`. For a declared
+  port `output` is the tool's arguments and `final_message` is empty. For `emit_out`, `final_message` is the argument
+  and `note` and `output` hold the note when one was given. Only the nodes behind that port's edges are queued, with that
+  payload as their input. Fan-out, diamonds and nodes behind other ports behave as in any run; other ports of the agent
+  node run nothing.
+- **Uses the flow version of the original run** (stored by hash), so node ids and edges match. Prompts, tools, sensors
+  and runtimes are resolved from the current workspace, as for every run. If the stored version is gone, the node is
+  missing or the port has no edge, the emit fails with an error to the agent. The original event is kept, so `{{.event}}`
+  resolves as before.
+- **Follows the normal rules.** The run waits in the queue for the kill switch and for the flow's `max_concurrent`.
+  Approval nodes ask, nodes with `requires_approval` park until approved, and `dry_run` is inherited from the original
+  run (and applies when the flow has since been switched to `dry_run: true`).
+- **One run per approved emit.** Approving two emit calls starts two runs; a node with `emit: many` may be emitted from
+  more than once. The original run and its node runs are never modified. The link is on the continuation run.
+
+`GET /api/flow-runs/{id}` shows `continuation: {of_run_id, conversation_id, node_id, port, approval_id}` (null for other
+kinds). `GET /api/flow-runs?continuation_of=<flow run id>` and `?conversation=<chat session id>` list the continuation
+runs of a run or of a chat; `kind=continuation` lists them all. `hal9001 runs list --continuation-of ID` and `runs get
+ID --table` show the same.
+
+In the web UI the Agent run page and the agent node panel of a run have a **Continue in chat** button (disabled until the
+run ends) and list the chats forked from the run. A continuation run shows a banner linking the original run and the chat,
+marks the node runs reused from the original, and the original run lists its continuation runs under **Continued by**.
+
 ### Testing agent nodes (`simulate_emit`)
 
 Flow tests (`test-node`, assist draft tests) skip agent nodes unless told what to emit. `simulate_emit` makes the node
@@ -858,7 +903,8 @@ error naming path and reason. Simulation is not available for real runs.
   the node run with stdin, stdout, stderr, exit code and duration. Rejected with `423` while the kill switch is
   engaged. In the UI this is "Run node on sample" in the flow editor.
 - **Follow a run.** `hal9001 runs get <id> --wait` blocks until the run finishes or awaits approval. `runs list --kind
-  live|replay|test` filters by kind.
+  live|replay|test|continuation` filters by kind. Without `--kind` every kind but `test` is listed, so continuation runs
+  appear in the default run list like live and replay runs.
 - **Queue.** A run waits in the queue when its flow is at `max_concurrent` (`waiting_for: flow_slot`), or when it is
   running but its only unfinished nodes wait for `max_agent_runs` or `max_command_runs` (`agent_slot`, `command_slot`);
   while the kill switch is engaged every item waits for it. Runs awaiting approval are not queued (see Approvals).

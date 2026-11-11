@@ -26,6 +26,7 @@ import { DiffView } from "./DiffView";
 import { EditFields } from "./EditFields";
 import { initialDrafts } from "./edits";
 import { describeDecision } from "./queue";
+import { clipReason } from "./reason";
 import { timeLeft, useNow } from "./timeLeft";
 
 const STALE_POLL_MS = 3000;
@@ -102,6 +103,31 @@ function Description({ a }: { a: Approval }) {
   );
 }
 
+/** The policy or emit reason of a pending tool call, monospace and wrapped, clipped with an expand control. */
+function ReasonBlock({ reason }: { reason: string }) {
+  const [open, setOpen] = useState(false);
+  const clip = clipReason(reason);
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        Reason
+      </div>
+      <pre className="m-0 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-raised p-2 font-mono text-xs">
+        {open ? reason : clip.text}
+      </pre>
+      {clip.clipped && (
+        <button
+          type="button"
+          className="mt-1 text-xs text-accent underline"
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "Show less" : "Show all"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Details({ a }: { a: Approval }) {
   const d = a.details;
   const diffs = detailDiffs(a);
@@ -117,6 +143,9 @@ function Details({ a }: { a: Approval }) {
         <pre className="m-0 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-raised p-2 font-mono text-xs">
           {d.command}
         </pre>
+      )}
+      {a.status === "pending" && a.permission_request?.reason && (
+        <ReasonBlock reason={a.permission_request.reason} />
       )}
       {diffs.map((diff, i) => (
         <DiffView key={`${i}:${diff.path ?? ""}`} diff={diff} />

@@ -8,70 +8,146 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"hal9001/internal/sandbox"
+	"hal9001/internal/spec"
 )
 
 // SandboxOptions configures SandboxProvider.
 type SandboxOptions struct {
 	// GitToken returns the token used to clone RunSpec.Repo; nil uses the user's `gh auth token`.
 	GitToken func(ctx context.Context) string
-	// Log returns the run log of one sandbox session (provisioning, every operation, teardown); nil keeps no log.
+	// Log returns the run log of one sandbox session (provisioning, every operation, teardown); nil keeps no log. For a
+	// conversation's sandbox (rs.Conversation set) it opens a session that belongs to the conversation.
 	Log func(ctx context.Context, rs RunSpec, info RunInfo) sandbox.RunLog
+	// Keeper holds the sandbox of a run after the run ended, for the backend's keep_alive. Nil closes it with the run
+	// (keep_alive is not applied); a conversation's sandbox then closes after every turn.
+	Keeper *sandbox.Keeper
 }
 
 // maxReadBytes caps what fs_read returns in one call.
 const maxReadBytes = 256 << 10
 
 // SandboxProvider adds fs_read, fs_write, fs_list, fs_search and shell to runs whose node names a sandbox. The
-// session is opened through m with the node's image, repo and ref and the node input as input.json; it closes
-// with the run (a failed run keeps its workspace). fs_write and shell approvals follow the sandbox's policy.
+// session is opened through m with the node's image, repo and ref and the node input as input.json. When the run
+// ends, the sandbox stays in opt.Keeper for the backend's keep_alive and is then closed (a failed run keeps its
+// workspace). A run that opens a workspace still held from an earlier phase of the same node run closes the held one
+// first. For a conversation (RunSpec.Conversation) the provider returns a lease: see sandbox_lease.go.
+// fs_write and shell approvals follow the sandbox's policy.
 func SandboxProvider(m *sandbox.Manager, opt SandboxOptions) Provider {
-	return func(ctx context.Context, spec RunSpec) (Extension, error) {
-		if spec.Sandbox == "" {
-			return Extension{}, nil
-		}
-		info := spec.Info()
-		var lg sandbox.RunLog
-		if opt.Log != nil {
-			lg = opt.Log(ctx, spec, info)
-		}
-		policy, err := m.Policy(spec.Sandbox)
-		if err != nil {
-			if lg != nil {
-				lg.Add(sandbox.LogEntry{Kind: sandbox.KindLifecycle, Level: sandbox.LevelError, Title: "Sandbox policy is invalid: " + err.Error(), Error: err.Error()})
-				lg.Update(sandbox.SessionUpdate{Status: sandbox.StatusFailed, Error: err.Error()})
-			}
-			return Extension{}, err
-		}
-		// The workspace is keyed by the node run, so the propose and execute phases of an approve node share it.
-		key := spec.RunID
-		if info.NodeRunID != "" {
-			key = info.NodeRunID
-		}
-		rs := sandbox.RunSpec{RunID: key, Image: spec.Image, Repo: spec.Repo, Ref: spec.Ref, Log: lg}
-		if len(info.Input) > 0 {
-			rs.Input = info.Input
-		}
-		if spec.Repo != "" {
-			if opt.GitToken != nil {
-				rs.GitToken = opt.GitToken(ctx)
-			} else {
-				rs.GitToken = sandbox.GitHubToken(ctx)
-			}
-		}
-		sess, err := m.Open(ctx, spec.Sandbox, rs)
-		if err != nil {
-			return Extension{}, fmt.Errorf("sandbox %s: %w", spec.Sandbox, err)
-		}
-		st := &sandboxTools{name: spec.Sandbox, sess: sess, policy: policy, log: lg}
-		return Extension{
-			Tools:     st.tools(),
-			Sandbox:   sess,
-			CloseWith: func(success bool) { _ = sess.Close(context.WithoutCancel(ctx), success) },
-		}, nil
+	p := &sandboxProvider{m: m, opt: opt, workspaces: map[string]string{}}
+	return p.provide
+}
+
+type sandboxProvider struct {
+	m   *sandbox.Manager
+	opt SandboxOptions
+
+	mu sync.Mutex
+	// workspaces maps the workspace key of a held run sandbox (the node run id) to its Keeper key (the agent run id).
+	workspaces map[string]string
+}
+
+func (p *sandboxProvider) provide(ctx context.Context, run RunSpec) (Extension, error) {
+	if run.Sandbox == "" {
+		return Extension{}, nil
 	}
+	info := run.Info()
+	var lg sandbox.RunLog
+	if run.Conversation == nil && p.opt.Log != nil {
+		lg = p.opt.Log(ctx, run, info)
+	}
+	policy, err := p.m.Policy(run.Sandbox)
+	if err != nil {
+		if lg != nil {
+			lg.Add(sandbox.LogEntry{Kind: sandbox.KindLifecycle, Level: sandbox.LevelError, Title: "Sandbox policy is invalid: " + err.Error(), Error: err.Error()})
+			lg.Update(sandbox.SessionUpdate{Status: sandbox.StatusFailed, Error: err.Error()})
+		}
+		return Extension{}, err
+	}
+	if run.Conversation != nil {
+		return p.provideLease(ctx, run, policy)
+	}
+	// The workspace is keyed by the node run, so the propose and execute phases of an approve node share it.
+	key := run.RunID
+	if info.NodeRunID != "" {
+		key = info.NodeRunID
+	}
+	p.releaseWorkspace(key)
+	rs := p.runSpec(ctx, run, info, key)
+	rs.Log = lg
+	sess, err := p.m.Open(ctx, run.Sandbox, rs)
+	if err != nil {
+		return Extension{}, fmt.Errorf("sandbox %s: %w", run.Sandbox, err)
+	}
+	st := &sandboxTools{name: run.Sandbox, sess: sess, policy: policy, log: lg}
+	return Extension{
+		Tools:     st.tools(),
+		Sandbox:   sess,
+		CloseWith: func(success bool) { p.endRun(ctx, run, key, sess, lg, success) },
+	}, nil
+}
+
+// runSpec is the sandbox.RunSpec of a run: the node's image, repo and ref, the git token and the input as input.json.
+func (p *sandboxProvider) runSpec(ctx context.Context, run RunSpec, info RunInfo, key string) sandbox.RunSpec {
+	rs := sandbox.RunSpec{RunID: key, Image: run.Image, Repo: run.Repo, Ref: run.Ref}
+	if len(info.Input) > 0 {
+		rs.Input = info.Input
+	}
+	if run.Repo != "" {
+		if p.opt.GitToken != nil {
+			rs.GitToken = p.opt.GitToken(ctx)
+		} else {
+			rs.GitToken = sandbox.GitHubToken(ctx)
+		}
+	}
+	return rs
+}
+
+// keepAlive is how long the sandbox of backend stays after its run ended. fallback is used when the config cannot be read.
+func (p *sandboxProvider) keepAlive(backend string, fallback time.Duration) time.Duration {
+	cfg, err := p.m.Config(backend)
+	if err != nil {
+		return fallback
+	}
+	return cfg.KeepAlive.Std()
+}
+
+// releaseWorkspace closes the held sandbox of the workspace key, if there is one.
+func (p *sandboxProvider) releaseWorkspace(key string) {
+	p.mu.Lock()
+	holdKey, ok := p.workspaces[key]
+	delete(p.workspaces, key)
+	p.mu.Unlock()
+	if ok && p.opt.Keeper != nil {
+		p.opt.Keeper.Release(holdKey)
+	}
+}
+
+// endRun is the end of a run: the sandbox is held for keep_alive, or closed at once when that is 0 (or there is no Keeper).
+func (p *sandboxProvider) endRun(ctx context.Context, run RunSpec, key string, sess sandbox.Session, lg sandbox.RunLog, success bool) {
+	ttl := p.keepAlive(run.Sandbox, spec.DefaultSandboxKeepAlive.Std())
+	if p.opt.Keeper == nil || ttl <= 0 {
+		_ = sess.Close(context.WithoutCancel(ctx), success)
+		return
+	}
+	if lg != nil {
+		lg.Add(sandbox.LogEntry{
+			Kind: sandbox.KindLifecycle, Title: "Run ended; sandbox kept for " + spec.Duration(ttl).String(),
+			Fields: map[string]string{"keep_alive": spec.Duration(ttl).String(), "run_succeeded": fmt.Sprint(success)},
+		})
+	}
+	p.opt.Keeper.Hold(run.RunID, sess, ttl, success)
+	p.mu.Lock()
+	for ws, holdKey := range p.workspaces {
+		if !p.opt.Keeper.Holding(holdKey) {
+			delete(p.workspaces, ws)
+		}
+	}
+	p.workspaces[key] = run.RunID
+	p.mu.Unlock()
 }
 
 type sandboxTools struct {
@@ -79,6 +155,11 @@ type sandboxTools struct {
 	sess   sandbox.Session
 	policy *sandbox.Policy
 	log    sandbox.RunLog // may be nil
+	// logFn, when set, returns the log to write to (a lease changes it with its sandbox) and replaces log.
+	logFn func() sandbox.RunLog
+	// lease marks a conversation's sandbox, whose workdir can change when it is recreated: the tool descriptions
+	// then do not name it.
+	lease bool
 }
 
 // annotate tells the sandbox log which tool call the session operations that follow belong to.
@@ -88,7 +169,11 @@ func annotate(ctx context.Context, c Call) context.Context {
 
 // blocked logs a call that was not run.
 func (s *sandboxTools) blocked(b Blocked) {
-	if s.log == nil {
+	lg := s.log
+	if s.logFn != nil {
+		lg = s.logFn()
+	}
+	if lg == nil {
 		return
 	}
 	var a struct{ Command, Path string }
@@ -115,7 +200,7 @@ func (s *sandboxTools) blocked(b Blocked) {
 		prefix, e.Level, e.Approval, e.Error = "Not run (approval failed)", sandbox.LevelError, "approval failed: "+b.Reason, b.Reason
 	}
 	e.Title = prefix + ": " + b.Tool + " " + what
-	s.log.Add(e)
+	lg.Add(e)
 }
 
 func firstLine(s string) string {
@@ -148,7 +233,10 @@ func (s *sandboxTools) tools() []Tool {
 }
 
 func (s *sandboxTools) toolList() []Tool {
-	where := fmt.Sprintf("in the %q sandbox workdir %s", s.name, s.sess.Workdir())
+	where := fmt.Sprintf("in the %q sandbox workdir", s.name)
+	if !s.lease {
+		where += " " + s.sess.Workdir()
+	}
 	return []Tool{
 		{
 			Name: "fs_read",

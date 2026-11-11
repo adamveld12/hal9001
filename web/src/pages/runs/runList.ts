@@ -26,7 +26,7 @@ function oneOf<T extends string>(
   return allowed.find((a) => a === value) ?? "";
 }
 
-/** Filters of the flow-run list. Empty string = no filter (kind: server default, live and replay). */
+/** Filters of the flow-run list. Empty string = no filter (kind: server default, live, replay and continuation). */
 export interface FlowRunFilters {
   flow: string;
   status: "" | FlowRunStatus;
