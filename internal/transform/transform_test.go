@@ -2,13 +2,11 @@ package transform
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -35,10 +33,13 @@ func parseSteps(t *testing.T, doc string) []Step {
 func preview(t *testing.T, steps []Step, input string) Result {
 	t.Helper()
 	needJQ(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	return Preview(ctx, steps, []byte(input), NewRunner("", 10*time.Second))
+	return Preview(t.Context(), steps, []byte(input), testRunner())
 }
+
+// testRunner runs jq without a time limit. These tests check what jq computes, not how long it takes; a limit would
+// make the result depend on how loaded the machine is (every jq run is a process start). A hung jq ends with the
+// test binary's -timeout.
+func testRunner() RunFunc { return NewRunner("", 0) }
 
 // outs returns the compact payloads of a result, in order.
 func outs(r Result) []string {
@@ -718,8 +719,7 @@ func TestPreviewDropReasonsAndCounts(t *testing.T) {
 				t.Errorf("dropped steps = %v", dropped)
 			}
 			needJQ(t)
-			run := NewRunner("", 10*time.Second)
-			if got := DropReason(t.Context(), parseSteps(t, tc.steps), []byte(tc.input), run); got != tc.reason {
+			if got := DropReason(t.Context(), parseSteps(t, tc.steps), []byte(tc.input), testRunner()); got != tc.reason {
 				t.Errorf("DropReason = %q", got)
 			}
 		})
