@@ -72,6 +72,9 @@ The daemon decides, the menubar app executes; the daemon never replaces the app 
       app and daemon are back. Untick it again.
 - [ ] Install command-line tool: `~/.local/bin/hal9001` links into the app; the alert says whether
       `~/.local/bin` is on your PATH. `hal9001 status --table` works in a new terminal.
+- [ ] **Install the MCP…** (directly below Install command-line tool…) opens the web UI at Settings > MCP in the default
+      browser.
+- [ ] **hal9001 on GitHub** (above Quit) opens https://github.com/adamveld12/hal9001 in the default browser.
 
 ## 4. Notifications
 

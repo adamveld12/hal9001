@@ -40,7 +40,7 @@ Manual checklist for what tests can't cover: [macos-app.md](macos-app.md). Authe
 - Menubar: HAL eye with a count of unread items plus pending approvals; throbs slowly while flows run. Menu: Inbox (N),
   Approvals (M); Flows and Sensors submenus ("All flows" / "All sensors" at top, active run counts per flow, paused
   sensors marked); Settings; a Service submenu (Start / Stop / Restart service), Open logs, Launch at login,
-  Install command-line tool….
+  Install command-line tool…, Install the MCP… (opens Settings → MCP), hal9001 on GitHub, Quit.
 - Native notifications with the HAL icon: title = flow, subtitle = item/approval/request/tool call, body = first
   lines; grouped per flow, dry runs labelled, high/urgent play a sound. Buttons: notes Open / Mark read / Archive;
   approvals Approve / Deny / Approve with comment… / Deny with comment…; editable requests Approve as-is / Deny /

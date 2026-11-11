@@ -44,6 +44,9 @@ const (
 	phaseInstalling = "installing"
 )
 
+// GitHubURL is the project page the menu links to.
+const GitHubURL = "https://github.com/adamveld12/hal9001"
+
 // maxUpdateErrorLen is how much of a failed update's message fits in a menu line; the log has all of it.
 const maxUpdateErrorLen = 80
 
@@ -200,10 +203,10 @@ func BuildMenu(snap *Snapshot, ui string, svc ServiceState) Menu {
 		Entry{Kind: Separator},
 	)
 	if svc.Bundled {
-		m.Entries = append(m.Entries, serviceEntries(svc, upd)...)
+		m.Entries = append(m.Entries, serviceEntries(svc, upd, ui)...)
 		m.Entries = append(m.Entries, Entry{Kind: Separator})
 	}
-	m.Entries = append(m.Entries, Entry{Kind: Quit, Title: "Quit"})
+	m.Entries = append(m.Entries, Entry{Kind: Link, Title: "hal9001 on GitHub", URL: GitHubURL}, Entry{Kind: Quit, Title: "Quit"})
 	return m
 }
 
@@ -267,7 +270,7 @@ func shorten(s string) string {
 }
 
 // serviceEntries is the part of the menu about the daemon service and the app's own settings.
-func serviceEntries(svc ServiceState, upd *UpdateStatus) []Entry {
+func serviceEntries(svc ServiceState, upd *UpdateStatus, ui string) []Entry {
 	var es []Entry
 	action := func(id, title string) Entry { return Entry{Kind: Action, ID: id, Title: title} }
 	if svc.Headless {
@@ -296,7 +299,8 @@ func serviceEntries(svc ServiceState, upd *UpdateStatus) []Entry {
 	}
 	login := action(ActionLaunchAtLogin, "Launch at login")
 	login.Checked = svc.LaunchAtLogin
-	return append(es, login, action(ActionInstallCLI, "Install command-line tool…"))
+	return append(es, login, action(ActionInstallCLI, "Install command-line tool…"),
+		Entry{Kind: Link, Title: "Install the MCP…", URL: ui + "/settings/mcp"})
 }
 
 func counted(label string, n int) string {
