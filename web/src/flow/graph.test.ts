@@ -135,6 +135,21 @@ describe("ports", () => {
     expect(allPorts(readonly)).toEqual(["out", "error"]);
     expect(declaredPorts(byId["note-large"])).toEqual(["out"]);
   });
+
+  it("adds denied once to any node with requires_approval", () => {
+    const flow = triageGithub();
+    const byId = Object.fromEntries(flow.nodes.map((n) => [n.id, n]));
+    const gated = { ...byId["classify"], requires_approval: true };
+    expect(allPorts(gated)).toEqual(["small", "large", "error", "denied"]);
+    const note = { ...byId["note-large"], requires_approval: true };
+    expect(allPorts(note)).toEqual(["out", "error", "denied"]);
+    // An approve-mode agent already has denied; the gate does not repeat it.
+    const agent = { ...byId["review-small"], requires_approval: true };
+    expect(allPorts(agent)).toEqual(["out", "error", "denied"]);
+    // A gated agent outside approve mode gets it from the gate alone.
+    const readonly = { ...agent, mode: "readonly" as const };
+    expect(allPorts(readonly)).toEqual(["out", "error", "denied"]);
+  });
 });
 
 describe("node factories", () => {

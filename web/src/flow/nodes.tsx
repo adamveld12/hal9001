@@ -7,6 +7,7 @@ import { useCanvasContext } from "./canvasContext";
 import { IN_HANDLE, type FlowGraphNode, type SensorGraphNode } from "./graph";
 import {
   allPorts,
+  isGated,
   isImplicitPort,
   type Diagnostic,
   type FlowNode,
@@ -97,6 +98,7 @@ function Card({
   subtitle,
   children,
   left,
+  gated = false,
 }: {
   id: string;
   selected: boolean;
@@ -106,6 +108,8 @@ function Card({
   subtitle?: string;
   children?: ReactNode;
   left?: ReactNode;
+  /** The node waits for an approval before it runs. */
+  gated?: boolean;
 }) {
   const ctx = useCanvasContext();
   const diags = ctx.diagnostics.get(id) ?? [];
@@ -139,6 +143,15 @@ function Card({
           <Icon name={icon} size={14} />
         </span>
         <span className="truncate font-medium">{title}</span>
+        {gated && (
+          <span
+            title="Requires approval"
+            aria-label="Requires approval"
+            className="shrink-0 text-warn"
+          >
+            <Icon name="lock" size={12} />
+          </span>
+        )}
         {ov ? (
           <span
             className={cx(
@@ -275,6 +288,7 @@ export function FlowNodeView({ id, data, selected }: NodeProps<FlowGraphNode>) {
       title={node.id}
       subtitle={summary(node)}
       left={<InHandle />}
+      gated={isGated(node)}
     >
       {node.type === "transform" && <StepSummaries node={node} />}
       <PortRows node={node} />

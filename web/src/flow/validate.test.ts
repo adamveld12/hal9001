@@ -85,6 +85,50 @@ describe("validateFlow", () => {
     ).toBe(true);
   });
 
+  it("allows edges from denied on a gated node and flags them when the gate is removed", () => {
+    const flow = triageGithub();
+    const note = flow.nodes[3];
+    if (note.type !== "inbox") throw new Error("fixture changed");
+    note.requires_approval = true;
+    flow.edges.push({ from: "note-large", port: "denied", to: "review-small" });
+    expect(
+      validateFlow(flow).some((x) => x.message.includes('no port "denied"')),
+    ).toBe(false);
+    delete note.requires_approval;
+    expect(
+      validateFlow(flow).some((x) => x.message.includes('no port "denied"')),
+    ).toBe(true);
+  });
+
+  it("rejects requires_approval on an approval node", () => {
+    const flow = triageGithub();
+    flow.nodes.push({
+      id: "ask",
+      type: "approval",
+      title: "ok?",
+      requires_approval: true,
+    } as never);
+    const d = validateFlow(flow).find(
+      (x) => x.node_id === "ask" && x.path?.endsWith(".requires_approval"),
+    );
+    expect(d?.severity).toBe("error");
+  });
+
+  it("allows approval_timeout on agents, but elsewhere only with requires_approval", () => {
+    const flow = triageGithub();
+    const cmd = flow.nodes[0];
+    const agent = flow.nodes[2];
+    if (cmd.type !== "command" || agent.type !== "agent")
+      throw new Error("fixture changed");
+    agent.approval_timeout = "30m";
+    cmd.approval_timeout = "30m";
+    const timeoutErrors = () =>
+      validateFlow(flow).filter((x) => x.path?.endsWith(".approval_timeout"));
+    expect(timeoutErrors().map((x) => x.node_id)).toEqual([cmd.id]);
+    cmd.requires_approval = true;
+    expect(timeoutErrors()).toEqual([]);
+  });
+
   it("reports unknown nodes, duplicate ids, self loops, and cycles", () => {
     const flow = triageGithub();
     flow.edges.push({ from: "ghost", to: "classify" });
