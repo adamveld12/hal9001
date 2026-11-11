@@ -232,6 +232,7 @@ func settingsText(ws *spec.Workspace) string {
 	w("| `max_agent_runs` | %d | Agent runs that may execute at once; more wait in the queue. |\n", cfg.MaxAgentRuns)
 	w("| `max_command_runs` | %d | Command (script) runs that may execute at once. |\n", cfg.MaxCommandRuns)
 	w("| `approval_timeout` | %s | How long an agent node waits for the user's approval unless the node sets its own `approval_timeout`. |\n", cfg.ApprovalTimeout.Std())
+	w("| `max_steers_per_run` | %d | Steered denials (a denial with steering text) one conversation or flow agent run takes before the next gated action is held for the user and the agent is told to stop and wait. 1 to 100. |\n", cfg.MaxSteers())
 	w("| `notify_min_priority` | %s | Lowest inbox priority that sends a notification. |\n", cfg.NotifyMinPriority)
 	w("| `notify_via` | %s | Where notifications go: auto (the macOS app when connected, else terminal-notifier), app, terminal-notifier or none (log only). |\n", cfg.NotifyVia)
 	w("| `system_prompt` | %s | The user's app-wide system prompt (Configure > Settings > Context): markdown added to the start of every agent call, flows and assistant. Its text is already in your prompt when set; you cannot change it, tell the user to edit it. |\n", systemPromptState(cfg.SystemPrompt))
@@ -273,6 +274,7 @@ runtimes.txt, sandboxes.md, tools.md and prompts/. Never guess them.
 | Field | Meaning |
 |---|---|
 | ` + "`title`" + `, ` + "`body`" + ` | Templates shown to the approver. |
+| ` + "`description`" + ` | **Required** template: one or two sentences saying what the approver is asked and why. The flow is invalid without it. |
 | ` + "`fields`" + ` | Input paths shown as a table. |
 | ` + "`editable`" + ` | Input paths the approver may change before approving. |
 | ` + "`priority`" + ` | ` + "`low`, `normal`, `high`, `urgent`" + `. |

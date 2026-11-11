@@ -501,7 +501,7 @@ nodes:
     instructions: One.
     ports:
       r: {schema: `+reviewedPortSchema+`}
-  - {id: confirm, type: approval, title: "Ship {{.input.agent.output.body}}?"}
+  - {id: confirm, type: approval, title: "Ship {{.input.agent.output.body}}?", description: "Asks whether to ship the agent output"}
   - {id: sent, type: inbox, title: sent}
 edges:
   - {from: work, port: r, to: confirm}

@@ -415,7 +415,7 @@ func TestSettingsAreRedactedAndPatchedInPlace(t *testing.T) {
 	r.decode(&s0)
 
 	patched := e.do("PATCH", "/api/settings", map[string]any{
-		"expected_hash": s0.Hash, "max_agent_runs": 5, "approval_timeout": "90m", "notify_min_priority": "urgent",
+		"expected_hash": s0.Hash, "max_agent_runs": 5, "approval_timeout": "90m", "notify_min_priority": "urgent", "max_steers_per_run": 7,
 	}).want(200)
 	if strings.Contains(string(patched.Body), "argon2id") {
 		t.Errorf("patch response leaks the hash: %s", patched.Body)
@@ -425,7 +425,7 @@ func TestSettingsAreRedactedAndPatchedInPlace(t *testing.T) {
 		Config map[string]any
 	}
 	patched.decode(&s1)
-	if s1.Hash == s0.Hash || s1.Config["max_agent_runs"] != float64(5) || s1.Config["approval_timeout"] != "1h30m" || s1.Config["notify_min_priority"] != "urgent" {
+	if s1.Hash == s0.Hash || s1.Config["max_agent_runs"] != float64(5) || s1.Config["approval_timeout"] != "1h30m" || s1.Config["notify_min_priority"] != "urgent" || s1.Config["max_steers_per_run"] != float64(7) {
 		t.Errorf("patched config = %v", s1)
 	}
 	file := e.readHome("config.yaml")
@@ -434,14 +434,14 @@ func TestSettingsAreRedactedAndPatchedInPlace(t *testing.T) {
 			t.Errorf("patching rewrote the file and lost %q:\n%s", keep, file)
 		}
 	}
-	if !strings.Contains(file, "max_agent_runs: 5") || e.reloads.Load() != 1 {
+	if !strings.Contains(file, "max_agent_runs: 5") || !strings.Contains(file, "max_steers_per_run: 7") || e.reloads.Load() != 1 {
 		t.Errorf("file not patched or no reload (%d):\n%s", e.reloads.Load(), file)
 	}
 
 	if r := e.do("PATCH", "/api/settings", map[string]any{"expected_hash": s0.Hash, "max_agent_runs": 9}).want(409); r.problem() != "conflict" {
 		t.Errorf("stale patch: %s", r.Body)
 	}
-	for _, bad := range []map[string]any{{"max_agent_runs": 0}, {"retention_days": -3}, {"notify_min_priority": "loud"}, {"approval_timeout": "0s"}, {}} {
+	for _, bad := range []map[string]any{{"max_agent_runs": 0}, {"retention_days": -3}, {"notify_min_priority": "loud"}, {"approval_timeout": "0s"}, {"max_steers_per_run": 0}, {"max_steers_per_run": 101}, {}} {
 		if r := e.do("PATCH", "/api/settings", bad); r.Status != 422 {
 			t.Errorf("PATCH %v -> %d %s", bad, r.Status, r.Body)
 		}

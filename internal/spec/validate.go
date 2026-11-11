@@ -189,6 +189,9 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 	c.enum("notify_via", g.NotifyVia, NotifyVias, false)
 	c.enum("update_channel", g.UpdateChannel, UpdateChannels, false)
 	c.positiveDuration("approval_timeout", g.ApprovalTimeout, "approval_timeout")
+	if g.MaxSteersPerRun < 1 || g.MaxSteersPerRun > MaxMaxSteersPerRun {
+		c.errorf(CodeInvalidValue, "max_steers_per_run", "max_steers_per_run must be between 1 and %d, got %d", MaxMaxSteersPerRun, g.MaxSteersPerRun)
+	}
 	if len(g.SystemPrompt) > MaxSystemPromptBytes {
 		c.errorf(CodeInvalidValue, "system_prompt", "system_prompt is %d bytes, over the %d byte limit", len(g.SystemPrompt), MaxSystemPromptBytes)
 	}
@@ -328,7 +331,7 @@ var nodeFieldsAllowed = map[string][]string{
 	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "ports", "emit", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "requires_approval", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links", "requires_approval", "approval_timeout"},
 	NodeTransform: {"steps", "timeout", "requires_approval", "approval_timeout"},
-	NodeApproval:  {"title", "body", "fields", "editable", "priority", "timeout", "on_timeout"},
+	NodeApproval:  {"title", "description", "body", "fields", "editable", "priority", "timeout", "on_timeout"},
 }
 
 // setFields lists the optional node fields that are set, in struct order.
@@ -342,7 +345,7 @@ func (n *Node) setFields() []string {
 		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
 		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"emit", n.Emit != ""}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
-		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"editable", len(n.Editable) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
+		{"title", n.Title != ""}, {"description", n.Description != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"editable", len(n.Editable) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
 		{"side_effect", n.SideEffect}, {"requires_approval", n.RequiresApproval}, {"allow", n.Allow != nil}, {"mcp_servers", len(n.MCPServers) > 0},
@@ -456,6 +459,10 @@ func validateApproval(c *collector, p string, n *Node) {
 		c.errorf(CodeRequired, p+".title", "title is required")
 	}
 	c.template(p+".title", n.Title)
+	if strings.TrimSpace(n.Description) == "" {
+		c.errorf(CodeRequired, p+".description", "description is required: say what the approver is asked and why")
+	}
+	c.template(p+".description", n.Description)
 	c.template(p+".body", n.Body)
 	c.enum(p+".priority", n.Priority, Priorities, false)
 	seen := map[string]bool{}

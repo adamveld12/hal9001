@@ -203,7 +203,7 @@ func TestFlowValidationErrors(t *testing.T) {
 		},
 		{
 			name: "approval node cannot also require approval",
-			yaml: flowWith("  - {id: a, type: approval, title: ok, requires_approval: true}\n", "  []\n"),
+			yaml: flowWith("  - {id: a, type: approval, title: ok, description: d, requires_approval: true}\n", "  []\n"),
 			code: CodeFieldNotAllowed, path: "nodes[0].requires_approval", node: "a", msg: `field "requires_approval" is not valid on approval nodes`,
 		},
 		{
@@ -539,5 +539,38 @@ func TestRequiresApprovalAddsDeniedPort(t *testing.T) {
 	}
 	if got := strings.Join(f.NodeByID("review").OutPorts(), ","); got != "out,denied,error" {
 		t.Errorf("approve agent with requires_approval must list denied once, got %q", got)
+	}
+}
+
+func TestApprovalNodeDescriptionRequired(t *testing.T) {
+	check := func(node string) []Diagnostic {
+		f, ds := ParseFlow("f", []byte(flowWith(node, "  []\n")))
+		if f == nil {
+			t.Fatalf("flow did not parse: %v", ds)
+		}
+		return ValidateFlow(f, nil)
+	}
+	has := func(ds []Diagnostic, code, path string) bool {
+		for _, d := range ds {
+			if d.Severity == SeverityError && d.Code == code && d.Path == path {
+				return true
+			}
+		}
+		return false
+	}
+	if ds := check("  - {id: a, type: approval, title: Ship}\n"); !has(ds, CodeRequired, "nodes[0].description") {
+		t.Errorf("missing description: %v", ds)
+	}
+	if ds := check("  - {id: a, type: approval, title: Ship, description: '  '}\n"); !has(ds, CodeRequired, "nodes[0].description") {
+		t.Errorf("blank description: %v", ds)
+	}
+	if ds := check("  - {id: a, type: approval, title: Ship, description: 'Deploy {{.input.name}}?'}\n"); has(ds, CodeRequired, "nodes[0].description") {
+		t.Errorf("description given: %v", ds)
+	}
+	if ds := check("  - {id: a, type: approval, title: Ship, description: 'Deploy {{.input.name'}\n"); !has(ds, CodeInvalidTemplate, "nodes[0].description") {
+		t.Errorf("bad description template: %v", ds)
+	}
+	if ds := check("  - {id: a, type: inbox, title: t, description: d}\n"); !has(ds, CodeFieldNotAllowed, "nodes[0].description") {
+		t.Errorf("description on inbox: %v", ds)
 	}
 }

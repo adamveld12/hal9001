@@ -23,6 +23,7 @@ function node(over: Partial<ApprovalNode> = {}): ApprovalNode {
     id: "ask",
     type: "approval",
     title: "Ship {{.input.title}}?",
+    description: "Asks whether to ship",
     ...over,
   };
 }
@@ -136,8 +137,25 @@ describe("approval node validation", () => {
     edges: [],
   });
 
+  it("needs a description", () => {
+    const fresh = newNode("approval", "ask", { x: 0, y: 0 }) as ApprovalNode;
+    expect(fresh.description).toBe("");
+    const errs = (n: ApprovalNode) =>
+      validateFlow(flow(n)).filter(
+        (d) => d.severity === "error" && d.path?.endsWith(".description"),
+      );
+    expect(errs(fresh)).toHaveLength(1);
+    expect(errs({ ...fresh, description: "  " })).toHaveLength(1);
+    expect(errs({ ...fresh, description: "Deploy {{.input.name}}?" })).toEqual(
+      [],
+    );
+  });
+
   it("needs a title, and on_timeout needs a timeout", () => {
-    const base = newNode("approval", "ask", { x: 0, y: 0 }) as ApprovalNode;
+    const base = {
+      ...(newNode("approval", "ask", { x: 0, y: 0 }) as ApprovalNode),
+      description: "Asks whether to continue",
+    };
     expect(
       validateFlow(flow(base)).filter((d) => d.severity === "error"),
     ).toEqual([]);

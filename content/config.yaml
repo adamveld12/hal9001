@@ -19,6 +19,11 @@ notify_min_priority: normal
 # fails with approval_timeout.
 approval_timeout: 1h
 
+# Steered denials (a denial with additional steering text) one run or
+# conversation takes before the next gated action is held for you and the agent
+# is told to stop and wait. 1 to 100.
+max_steers_per_run: 3
+
 # Hostnames (besides localhost:9001 and 127.0.0.1:9001) the server accepts.
 # "Share on your tailnet" (Settings > Tailscale, `hal9001 tailscale serve`) adds
 # this Mac's Tailscale name (e.g. my-mac.my-tailnet.ts.net) here itself. Only edit

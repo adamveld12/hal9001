@@ -54,6 +54,9 @@ func (c *Config) ApplyDefaults() {
 	if c.ApprovalTimeout == 0 {
 		c.ApprovalTimeout = DefaultApprovalTimeout
 	}
+	if c.MaxSteersPerRun == 0 {
+		c.MaxSteersPerRun = DefaultMaxSteersPerRun
+	}
 	if c.Tailscale.HTTPSPort == 0 {
 		c.Tailscale.HTTPSPort = DefaultTailscaleHTTPSPort
 	}
@@ -119,6 +122,9 @@ func (c Config) Minimal() Config {
 	if c.ApprovalTimeout == DefaultApprovalTimeout {
 		c.ApprovalTimeout = 0
 	}
+	if c.MaxSteersPerRun == DefaultMaxSteersPerRun {
+		c.MaxSteersPerRun = 0
+	}
 	if c.Tailscale.HTTPSPort == DefaultTailscaleHTTPSPort {
 		c.Tailscale.HTTPSPort = 0
 	}
@@ -137,6 +143,14 @@ func (c Config) Minimal() Config {
 		c.Auth.Services = nil
 	}
 	return c
+}
+
+// MaxSteers returns the steered-denial cap per conversation or flow agent run.
+func (c *Config) MaxSteers() int {
+	if c.MaxSteersPerRun > 0 {
+		return c.MaxSteersPerRun
+	}
+	return DefaultMaxSteersPerRun
 }
 
 // ApprovalTimeoutFor returns the approval timeout for agent node n: the

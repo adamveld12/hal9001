@@ -92,6 +92,7 @@ function SettingsEditor({
       ["dedup retention days", base.dedup_retention_days],
       ["notify min priority", base.notify_min_priority],
       ["approval timeout", base.approval_timeout],
+      ["max steers per run", base.max_steers_per_run],
       ["unsaved edits", draft !== null || undefined],
       ["form errors", invalid ? Object.keys(errors).join(", ") : undefined],
     ]),
@@ -216,6 +217,22 @@ function SettingsEditor({
               value={form.approval_timeout}
               invalid={!!errors.approval_timeout}
               onChange={(e) => edit("approval_timeout", e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Max steers per run"
+            hint="Steered denials (a denial with additional steering text) one run or conversation takes before the next gated action is held for you and the agent is told to stop and wait."
+            error={
+              errors.max_steers_per_run
+                ? [errors.max_steers_per_run]
+                : undefined
+            }
+          >
+            <TextInput
+              inputMode="numeric"
+              value={form.max_steers_per_run}
+              invalid={!!errors.max_steers_per_run}
+              onChange={(e) => edit("max_steers_per_run", e.target.value)}
             />
           </Field>
         </div>

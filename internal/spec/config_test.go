@@ -108,6 +108,8 @@ func TestConfigValidationErrors(t *testing.T) {
 		{"service to missing stack", "auth: {services: {admin: nope}}\n", CodeUnknownStack, "auth.services.admin", `stack "nope", which is not defined`},
 		{"unknown service", "auth: {services: {root: default}}\n", CodeInvalidEnum, "auth.services.root", `unknown service "root"`},
 		{"unknown key", "port: 9002\n", CodeUnknownField, "port", `unknown field "port"`},
+		{"steers too high", "max_steers_per_run: 101\n", CodeInvalidValue, "max_steers_per_run", "between 1 and 100"},
+		{"steers negative", "max_steers_per_run: -1\n", CodeInvalidValue, "max_steers_per_run", "between 1 and 100"},
 		{"bad duration", "approval_timeout: forever\n", CodeYAMLType, "approval_timeout", `invalid duration "forever"`},
 	}
 	for _, tt := range tests {
@@ -197,5 +199,24 @@ func TestRuntimeSpawnValidation(t *testing.T) {
 			}
 			t.Fatalf("want %s containing %q in %v", tt.path, tt.msg, ds)
 		})
+	}
+}
+
+func TestMaxSteersPerRun(t *testing.T) {
+	cfg, ds := ParseConfig([]byte("{}\n"))
+	if len(ds) != 0 || cfg.MaxSteers() != DefaultMaxSteersPerRun {
+		t.Fatalf("default: %v %d", ds, cfg.MaxSteers())
+	}
+	cfg, _ = ParseConfig([]byte("max_steers_per_run: 5\n"))
+	if cfg.MaxSteers() != 5 {
+		t.Errorf("MaxSteers = %d", cfg.MaxSteers())
+	}
+	if _, ds := CheckConfig([]byte("max_steers_per_run: 100\n")); len(ds) != 0 {
+		t.Errorf("100 is in range: %v", ds)
+	}
+	def := Config{MaxSteersPerRun: DefaultMaxSteersPerRun}
+	out, err := MarshalConfig(def)
+	if err != nil || strings.Contains(string(out), "max_steers_per_run") {
+		t.Errorf("default written: %v\n%s", err, out)
 	}
 }

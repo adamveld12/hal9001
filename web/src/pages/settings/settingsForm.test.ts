@@ -17,6 +17,7 @@ const config = {
   dedup_retention_days: 180,
   notify_min_priority: "high" as const,
   approval_timeout: "1h",
+  max_steers_per_run: 3,
 };
 
 describe("formFromConfig", () => {
@@ -28,6 +29,7 @@ describe("formFromConfig", () => {
       dedup_retention_days: "180",
       notify_min_priority: "normal",
       approval_timeout: "1h",
+      max_steers_per_run: "3",
     });
   });
 
@@ -88,6 +90,28 @@ describe("validateForm", () => {
     for (const good of ["90s", "1.5h", "1h30m", "7d"]) {
       expect(validateForm({ ...ok, approval_timeout: good })).toEqual({});
     }
+  });
+});
+
+describe("max_steers_per_run", () => {
+  const ok = formFromConfig(config);
+
+  it("is a whole number from 1 to 100", () => {
+    for (const bad of ["0", "101", "-1", "", "x", "2.5"]) {
+      expect(validateForm({ ...ok, max_steers_per_run: bad })).toHaveProperty(
+        "max_steers_per_run",
+      );
+    }
+    for (const good of ["1", "3", "100"]) {
+      expect(validateForm({ ...ok, max_steers_per_run: good })).toEqual({});
+    }
+  });
+
+  it("is sent as a number when changed", () => {
+    expect(buildPatch(ok, { ...ok, max_steers_per_run: "5" }, "h")).toEqual({
+      expected_hash: "h",
+      max_steers_per_run: 5,
+    });
   });
 });
 

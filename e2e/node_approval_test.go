@@ -36,16 +36,18 @@ nodes:
 }
 
 type gateApproval struct {
-	ID      string `json:"id"`
-	FlowRun string `json:"flow_run_id"`
-	NodeRun string `json:"node_run_id"`
-	Request struct {
-		Gate   bool                          `json:"gate"`
-		Title  string                        `json:"title"`
-		BodyMD string                        `json:"body_md"`
-		DryRun bool                          `json:"dry_run"`
-		Fields []struct{ Key, Value string } `json:"fields"`
-	} `json:"request"`
+	ID          string `json:"id"`
+	FlowRun     string `json:"flow_run_id"`
+	NodeRun     string `json:"node_run_id"`
+	Gate        bool   `json:"gate"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Details     struct {
+		BodyMD  string                        `json:"body_md"`
+		Command string                        `json:"command"`
+		DryRun  bool                          `json:"dry_run"`
+		Fields  []struct{ Key, Value string } `json:"fields"`
+	} `json:"details"`
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -80,16 +82,16 @@ func TestRequiresApprovalApprove(t *testing.T) {
 	if n := d.Node(parked, "act"); n.Status != "awaiting_approval" || n.NodeType != "command" || !strings.HasPrefix(n.Reason, "awaiting approval "+ap.ID) {
 		t.Fatalf("parked node: %+v", n)
 	}
-	if !ap.Request.Gate || ap.Request.Title != "g: run act?" || ap.FlowRun != run || ap.NodeRun == "" || ap.Request.DryRun || ap.ExpiresAt != "" {
+	if !ap.Gate || ap.Title != "g: run act?" || ap.Description != "Run node act (command) of flow g" || !strings.Contains(ap.Details.Command, "echo ran") || ap.FlowRun != run || ap.NodeRun == "" || ap.Details.DryRun || ap.ExpiresAt != "" {
 		t.Fatalf("approval: %+v", ap)
 	}
 	for _, want := range []string{"echo ran", `"name": "api"`} {
-		if !strings.Contains(ap.Request.BodyMD, want) {
-			t.Errorf("approval body lacks %q:\n%s", want, ap.Request.BodyMD)
+		if !strings.Contains(ap.Details.BodyMD, want) {
+			t.Errorf("approval body lacks %q:\n%s", want, ap.Details.BodyMD)
 		}
 	}
-	if len(ap.Request.Fields) < 3 || ap.Request.Fields[1].Key != "node" || ap.Request.Fields[1].Value != "act (command)" {
-		t.Errorf("fields: %+v", ap.Request.Fields)
+	if len(ap.Details.Fields) < 3 || ap.Details.Fields[1].Key != "node" || ap.Details.Fields[1].Value != "act (command)" {
+		t.Errorf("fields: %+v", ap.Details.Fields)
 	}
 	if d.marks() != 0 {
 		t.Fatal("the node ran before it was approved")
@@ -193,8 +195,8 @@ func TestRequiresApprovalDryRun(t *testing.T) {
 	run := d.InjectRun("src", map[string]any{"id": "7"})
 	d.WaitRun(run, "awaiting_approval")
 	ap := d.gateApproval()
-	if !ap.Request.DryRun || !strings.HasPrefix(ap.Request.BodyMD, "This is a dry run: approving or denying only exercises the flow's branches.") {
-		t.Fatalf("dry-run approval: %+v", ap.Request)
+	if !ap.Details.DryRun || !strings.HasPrefix(ap.Details.BodyMD, "This is a dry run: approving or denying only exercises the flow's branches.") {
+		t.Fatalf("dry-run approval: %+v", ap)
 	}
 	d.Decide(ap.ID, true, nil)
 	d.WaitRun(run, "succeeded")
@@ -267,15 +269,15 @@ func TestRequiresApprovalInboxNode(t *testing.T) {
 	run := d.InjectRun("src", map[string]any{"id": "1"})
 	d.WaitRun(run, "awaiting_approval")
 	ap := d.gateApproval()
-	if ap.Request.Title != "gi: run note?" || !strings.Contains(ap.Request.BodyMD, "body 1") {
-		t.Errorf("approval: %+v", ap.Request)
+	if ap.Title != "gi: run note?" || !strings.Contains(ap.Details.BodyMD, "body 1") {
+		t.Errorf("approval: %+v", ap)
 	}
 	var titles bool
-	for _, f := range ap.Request.Fields {
+	for _, f := range ap.Details.Fields {
 		titles = titles || (f.Key == "title" && f.Value == "Look at 1")
 	}
 	if !titles || len(d.Inbox()) != 0 {
-		t.Fatalf("fields %+v, inbox %+v", ap.Request.Fields, d.Inbox())
+		t.Fatalf("fields %+v, inbox %+v", ap.Details.Fields, d.Inbox())
 	}
 	d.Decide(ap.ID, true, nil)
 	d.WaitRun(run, "succeeded")
@@ -333,8 +335,8 @@ func TestRequiresApprovalAgentGateThenProposal(t *testing.T) {
 	if work.Status != "awaiting_approval" || len(d.AgentRuns(work.ID)) != 0 || len(d.Approvals("pending")) != 1 {
 		t.Fatalf("before the gate is approved: node %+v", work)
 	}
-	if !strings.Contains(ap.Request.BodyMD, "Review 42") {
-		t.Errorf("gate body lacks the instructions:\n%s", ap.Request.BodyMD)
+	if !strings.Contains(ap.Details.BodyMD, "Review 42") {
+		t.Errorf("gate body lacks the instructions:\n%s", ap.Details.BodyMD)
 	}
 	d.Decide(ap.ID, true, nil)
 

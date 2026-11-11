@@ -54,7 +54,7 @@ import { TransformForm } from "./transform/TransformForm";
 import { diagnosticField } from "./validate";
 import { SandboxSection } from "./SandboxSection";
 import { ToolsSection } from "./ToolsSection";
-import { RequestBody } from "../pages/approvals/ApprovalDetail";
+import { RequestBody } from "../pages/approvals/RequestBody";
 import { EditFieldsPreview } from "../pages/approvals/EditFields";
 import { PriorityBadge } from "../pages/inbox/InboxList";
 import { fieldChoices, previewApproval, toggleField } from "./approval";
@@ -1090,6 +1090,20 @@ function ApprovalForm({
           value={node.title}
           invalid={msgs(diags, "title").length > 0}
           onChange={(e) => onChange((n) => ({ ...n, title: e.target.value }))}
+        />
+      </Field>
+      <Field
+        label="Description (template, required)"
+        error={msgs(diags, "description")}
+        hint="One or two sentences on what the approver is asked and why."
+      >
+        <TextArea
+          rows={3}
+          value={node.description ?? ""}
+          invalid={msgs(diags, "description").length > 0}
+          onChange={(e) =>
+            onChange((n) => ({ ...n, description: e.target.value }))
+          }
         />
       </Field>
       <Field label="Body (markdown template)" error={msgs(diags, "body")}>

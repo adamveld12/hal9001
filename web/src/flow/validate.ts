@@ -181,6 +181,12 @@ function nodeDiagnostics(
     }
     case "approval": {
       if (node.title.trim() === "") at("title", "an approval needs a title");
+      if ((node.description ?? "").trim() === "") {
+        at(
+          "description",
+          "description is required: say what the approver is asked and why",
+        );
+      }
       if (node.on_timeout && !node.timeout) {
         at("on_timeout", "on_timeout only applies with a timeout");
       }
