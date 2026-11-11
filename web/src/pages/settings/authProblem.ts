@@ -26,6 +26,26 @@ export function parseConfirmation(e: unknown): ConfirmationRequired | null {
   };
 }
 
+/** The sentence the dialog shows once when the change ends this session. */
+export const ENDS_SESSION_WARNING =
+  "This ends your current session; you will need to sign in again.";
+
+/**
+ * What the confirm dialog lists: the server's reasons, minus the ones that only say the session ends and you sign in
+ * again (the warning says that once, when `endsSession` is set), and without repeats.
+ */
+export function confirmReasons(c: ConfirmationRequired): string[] {
+  const saysSessionEnds = (r: string) =>
+    /\bsession\b/i.test(r) && /\bsign in\b/i.test(r);
+  const seen = new Set<string>();
+  return c.reasons.filter((r) => {
+    const key = r.trim().toLowerCase();
+    if (seen.has(key) || (c.endsSession && saysSessionEnds(r))) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** The `Retry-After` of a 429 `rate-limited`, in seconds; null for any other error. */
 export function parseRateLimit(
   e: unknown,

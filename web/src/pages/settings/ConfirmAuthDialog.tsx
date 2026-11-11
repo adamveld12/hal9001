@@ -1,5 +1,9 @@
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import type { ConfirmationRequired } from "./authProblem";
+import {
+  confirmReasons,
+  ENDS_SESSION_WARNING,
+  type ConfirmationRequired,
+} from "./authProblem";
 
 /** Shown when the server answers 409 `confirmation-required`: why, and "Do it anyway" repeats the change with `confirm: true`. */
 export function ConfirmAuthDialog({
@@ -26,24 +30,26 @@ export function ConfirmAuthDialog({
     >
       {confirmation && (
         <div className="space-y-2">
-          {confirmation.reasons.length > 0 ? (
+          {confirmReasons(confirmation).length > 0 ? (
             <ul
               className="m-0 list-disc space-y-1 pl-4"
               data-testid="auth-confirm-reasons"
             >
-              {confirmation.reasons.map((r) => (
+              {confirmReasons(confirmation).map((r) => (
                 <li key={r}>{r}</li>
               ))}
             </ul>
           ) : (
-            <p className="m-0">The server asks you to confirm this change.</p>
+            !confirmation.endsSession && (
+              <p className="m-0">The server asks you to confirm this change.</p>
+            )
           )}
           {confirmation.endsSession && (
             <p
               className="m-0 font-bold text-fg"
               data-testid="auth-confirm-ends-session"
             >
-              This ends your current session; you will need to sign in again.
+              {ENDS_SESSION_WARNING}
             </p>
           )}
         </div>

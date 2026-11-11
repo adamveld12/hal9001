@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError, type Problem } from "../../api/client";
 import {
   changeErrorLines,
+  confirmReasons,
   diagnosticsByPath,
   parseConfirmation,
   parseRateLimit,
@@ -162,5 +163,23 @@ describe("changeErrorLines shownElsewhere", () => {
     });
     expect(changeErrorLines(e, ["current_password"])).toEqual([]);
     expect(changeErrorLines(e)).toEqual(["current_password: wrong password"]);
+  });
+});
+
+describe("confirmReasons", () => {
+  const ends =
+    "This ends the session you are using now, so you will have to sign in again.";
+  it("drops the reason that restates the ends-session warning, once the warning is shown", () => {
+    expect(
+      confirmReasons({
+        reasons: [ends, "Password sign-in will be off."],
+        endsSession: true,
+      }),
+    ).toEqual(["Password sign-in will be off."]);
+  });
+  it("keeps it when the change does not end the session, and drops repeats", () => {
+    expect(
+      confirmReasons({ reasons: [ends, ends], endsSession: false }),
+    ).toEqual([ends]);
   });
 });
