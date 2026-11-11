@@ -197,6 +197,25 @@ function nodeDiagnostics(
       break;
     }
   }
+  if (node.type === "approval") {
+    // Not in the node type; a flow loaded from YAML may still carry it.
+    if ("requires_approval" in node) {
+      at(
+        "requires_approval",
+        "an approval node already asks; requires_approval is not valid on it",
+      );
+    }
+  } else if (
+    node.type !== "agent" &&
+    node.approval_timeout !== undefined &&
+    node.approval_timeout !== "" &&
+    !node.requires_approval
+  ) {
+    at(
+      "approval_timeout",
+      "approval_timeout is only valid with requires_approval",
+    );
+  }
   return out;
 }
 

@@ -158,7 +158,9 @@ type envOptions struct {
 	ui     http.Handler
 	assist core.Assist
 	// operator is the operator tool set served at /mcp; port and executable are what /api/mcp/info reports.
-	operator   *tools.Operator
+	operator *tools.Operator
+	// mcp serves the /api/mcp/ run-token operations.
+	mcp        MCPHub
 	port       int
 	executable string
 	update     func(e *env) update.Options
@@ -199,7 +201,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.reloads.Add(1)
 			e.ws.Store(spec.Load(e.home))
 		},
-		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, Port: eo.port, Executable: eo.executable, Update: e.upd,
+		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, MCP: eo.mcp, Port: eo.port, Executable: eo.executable, Update: e.upd,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

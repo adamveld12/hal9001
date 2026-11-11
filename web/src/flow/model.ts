@@ -61,6 +61,10 @@ export interface CommandNode {
   ports?: string[];
   timeout?: string;
   side_effect?: boolean;
+  /** Ask in the Inbox before the node runs; adds the `denied` port. */
+  requires_approval?: boolean;
+  /** Bounds the gate's wait; only valid with `requires_approval`. */
+  approval_timeout?: string;
   /** Command nodes accept `dir` only. */
   cwd?: DirCwd;
   ui?: UIPos;
@@ -97,7 +101,10 @@ export interface AgentNode {
   /** Custom tools: an id, or an id with an approval override. */
   tools?: NodeToolRef[];
   timeout?: string;
+  /** Bounds the agent's own approvals and, with `requires_approval`, the gate. */
   approval_timeout?: string;
+  /** Ask in the Inbox before the agent starts; adds the `denied` port. */
+  requires_approval?: boolean;
   ui?: UIPos;
 }
 
@@ -110,6 +117,8 @@ export interface InboxNode {
   summary_md?: string;
   suggested_reply?: string;
   links?: { label: string; url: string }[];
+  requires_approval?: boolean;
+  approval_timeout?: string;
   ui?: UIPos;
 }
 
@@ -212,9 +221,17 @@ export function declaredPorts(node: FlowNode): string[] {
   }
 }
 
+/** Whether the node waits for an approval before it runs (every type but approval). */
+export function isGated(node: FlowNode): boolean {
+  return node.type !== "approval" && node.requires_approval === true;
+}
+
 /** Ports implicit on every node of this shape (REQUIREMENTS §6). */
 export function implicitPorts(node: FlowNode): string[] {
-  if (node.type === "agent" && node.mode === "approve") {
+  const denied =
+    (node.type === "agent" && node.mode === "approve") || isGated(node);
+  // `denied` may already be declared (an approval node); it is never listed twice.
+  if (denied && !declaredPorts(node).includes(DENIED_PORT)) {
     return [ERROR_PORT, DENIED_PORT];
   }
   return [ERROR_PORT];

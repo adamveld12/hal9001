@@ -120,7 +120,7 @@ func (e *Engine) TestNode(ctx context.Context, req core.TestNodeRequest) (*store
 	if err := e.st.CreateFlowRun(ctx, fr); err != nil {
 		return nil, nil, err
 	}
-	if node.Type == spec.NodeApproval {
+	if node.Type == spec.NodeApproval || node.RequiresApproval {
 		e.simulations.Store(fr.ID, simulatedDecision(req.SimulateApproval))
 	}
 	if req.SimulateEmit != nil {

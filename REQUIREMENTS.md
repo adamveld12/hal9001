@@ -43,7 +43,7 @@ flowchart LR
 | Item / Event | One item from a sensor that passes dedup. Immutable, stored. |
 | Flow | DAG of nodes subscribed to 1+ sensors. YAML file. |
 | FlowRun | One execution of one flow for one event (or replay / manual test). |
-| Node | `command`, `agent`, `inbox`, `approval` ("Request approval": parks the node on a pending `request` approval until approved, denied or timed out; ports `approved`/`denied`; docs/flows.md), or `transform` (plain-language steps compiled to jq, for people who do not write code). Has named output ports. |
+| Node | `command`, `agent`, `inbox`, `approval` ("Request approval": parks the node on a pending `request` approval until approved, denied or timed out; ports `approved`/`denied`; docs/flows.md; any other node can ask the same way before it runs with `requires_approval`), or `transform` (plain-language steps compiled to jq, for people who do not write code). Has named output ports. |
 | NodeRun | One execution of a node within a FlowRun. |
 | AgentRun | Agent CLI session(s) behind an agent NodeRun, incl. full transcript. |
 | Prompt | Reusable prompt template file selected by agent nodes. |
@@ -208,7 +208,8 @@ Rules
 - Graph must be a DAG; validated on load and save (cycles, unknown nodes, undeclared ports, unreachable nodes → error shown in editor).
 - Entry nodes = nodes with no incoming edges; each receives the event.
 - Fan-out: one output port can feed multiple nodes; they run concurrently.
-- Implicit ports on every node: `error`. Agent nodes also have `denied` (approve mode).
+- Implicit ports on every node: `error`. Agent nodes also have `denied` (approve mode), as does any node with `requires_approval`.
+- `requires_approval: true` (every node type but `approval`; optional `approval_timeout`): when the node is reached hal raises a `request` approval ("<flow>: run <node>?", with the node's resolved configuration and input) and parks the node as `awaiting_approval`. Approve runs the node; deny or timeout skips it and emits the input and the decision on port `denied` (an unwired `denied` ends the branch without failing the run; `error` stays for real failures). Dry runs still ask; docs/flows.md.
 - `side_effect: true` on command nodes marks them as acting on the world; skipped (recorded as `skipped:dry_run`) in dry-run.
 - Templates (`key`, `cwd`, `inbox` fields, prompts) use Go `text/template` with data `{.event, .input, .flow, .run}` (`.input` = node input payload) plus a few helpers (`json`, `default`, `trunc`).
 

@@ -347,7 +347,7 @@ func (f *Flow) EntryNodes() []string {
 }
 
 // OutPorts returns every port the node may emit on: the declared ports (an agent node without ports: out) plus
-// the implicit error port, plus denied for agent nodes in approve mode. Call
+// the implicit error port, plus denied for agent nodes in approve mode and nodes with requires_approval. Call
 // it on a node of a flow that has had defaults applied.
 func (n *Node) OutPorts() []string {
 	var ports []string
@@ -365,7 +365,7 @@ func (n *Node) OutPorts() []string {
 	default:
 		ports = []string{PortOut}
 	}
-	if n.Type == NodeAgent && n.Mode == ModeApprove {
+	if (n.Type == NodeAgent && n.Mode == ModeApprove || n.RequiresApproval) && !slices.Contains(ports, PortDenied) {
 		ports = append(ports, PortDenied)
 	}
 	return append(ports, PortError)

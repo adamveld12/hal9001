@@ -186,7 +186,7 @@ func Run(ctx context.Context, opts Options) error {
 	// (defers run last in, first out).
 	assistMgr, err := assist.New(assist.Options{
 		Store: st, Home: home, Host: eng.AssistHost(), Log: log,
-		URL: "http://127.0.0.1:" + strconv.Itoa(port), IdleTimeout: opts.AssistIdleTimeout, Executable: opts.Executable,
+		URL: "http://127.0.0.1:" + strconv.Itoa(port), IdleTimeout: opts.AssistIdleTimeout, Executable: opts.Executable, Version: opts.Version,
 	})
 	if err != nil {
 		return fmt.Errorf("daemon: assist: %w", err)

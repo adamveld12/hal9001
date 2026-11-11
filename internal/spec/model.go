@@ -48,7 +48,7 @@ const (
 	MCPSSE   = "sse"
 
 	// Ports. Every node has PortError implicitly; agent nodes in approve mode
-	// also have PortDenied. PortOut is the default declared port.
+	// and nodes with requires_approval also have PortDenied. PortOut is the default declared port.
 	PortOut    = "out"
 	PortError  = "error"
 	PortDenied = "denied"
@@ -256,6 +256,9 @@ type Flow struct {
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
 //	approval: title, body, fields, priority, timeout, on_timeout
+//
+// requires_approval and approval_timeout apply to every type but approval: the node waits for a user's approval
+// before it runs, and a denial (or the timeout) leaves it on port denied.
 type Node struct {
 	ID   string `yaml:"id" json:"id"`
 	Type string `yaml:"type" json:"type"`
@@ -299,10 +302,15 @@ type Node struct {
 	OnTimeout string   `yaml:"on_timeout,omitempty" json:"on_timeout,omitempty"`
 
 	// command and agent
-	Cwd             *Cwd     `yaml:"cwd,omitempty" json:"cwd,omitempty"`
-	Timeout         Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	ApprovalTimeout Duration `yaml:"approval_timeout,omitempty" json:"approval_timeout,omitempty"`
-	SideEffect      bool     `yaml:"side_effect,omitempty" json:"side_effect,omitempty"`
+	Cwd        *Cwd     `yaml:"cwd,omitempty" json:"cwd,omitempty"`
+	Timeout    Duration `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	SideEffect bool     `yaml:"side_effect,omitempty" json:"side_effect,omitempty"`
+
+	// RequiresApproval gates any node but approval: before it runs it raises an approval, runs once approved, and
+	// emits on port denied (without running) when the user denies it or ApprovalTimeout passes. ApprovalTimeout also
+	// bounds an agent node's own approvals (per-tool calls, proposals) and falls back to the config value there.
+	RequiresApproval bool     `yaml:"requires_approval,omitempty" json:"requires_approval,omitempty"`
+	ApprovalTimeout  Duration `yaml:"approval_timeout,omitempty" json:"approval_timeout,omitempty"`
 
 	Allow      *Allow      `yaml:"allow,omitempty" json:"allow,omitempty"`
 	MCPServers []MCPServer `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`

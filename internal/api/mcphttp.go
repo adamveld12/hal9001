@@ -195,7 +195,22 @@ func (c *clientNames) get(key string) string {
 // dispatcher returns the API an operator tool runs against: this server's own routes, called in-process with the
 // identity of the MCP request (its cookie, peer address and Host), so every endpoint applies the auth service it
 // declares exactly as it would for the MCP client calling the REST API directly.
-func (s *Server) dispatcher(orig *http.Request) tools.APIFunc {
+func (s *Server) dispatcher(orig *http.Request) tools.APIFunc { return dispatchTo(s.mux, orig) }
+
+// readDispatcher is the API the read tools of an assist session run against: the GET operations of the `api` service,
+// called in-process without the auth stack (the session belongs to a user who is signed in to the UI; the agent's own
+// request carries only a run token). It refuses every other method, so no tool call through it changes anything.
+func (s *Server) readDispatcher(orig *http.Request) tools.APIFunc {
+	call := dispatchTo(s.readMux, orig)
+	return func(ctx context.Context, method, path string, q url.Values, body []byte) (int, []byte, error) {
+		if method != http.MethodGet {
+			return 0, nil, fmt.Errorf("read tools only GET: %s %s refused", method, path)
+		}
+		return call(ctx, method, path, q, body)
+	}
+}
+
+func dispatchTo(mux *http.ServeMux, orig *http.Request) tools.APIFunc {
 	return func(ctx context.Context, method, path string, q url.Values, body []byte) (int, []byte, error) {
 		u := url.URL{Path: path, RawQuery: q.Encode()}
 		req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
@@ -211,7 +226,7 @@ func (s *Server) dispatcher(orig *http.Request) tools.APIFunc {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		rec := &recorder{header: http.Header{}, status: http.StatusOK}
-		s.mux.ServeHTTP(rec, req)
+		mux.ServeHTTP(rec, req)
 		return rec.status, rec.body.Bytes(), nil
 	}
 }

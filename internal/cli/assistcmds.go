@@ -142,7 +142,7 @@ func assistCmds() []*command {
 			fs.StringVar(&testSensor, "sensor", "", "flow sessions: run this draft sensor like a poll")
 			fs.StringVar(&testFromSensor, "from-sensor", "", "flow sessions: run this draft sensor and use its output item as the flow's input")
 			fs.IntVar(&testItem, "item", 0, "with --from-sensor: which output item (default 0)")
-			fs.StringVar(&testSimulate, "simulate-approval", "", "flow sessions: the decision request-approval nodes take, approved (default) or denied")
+			fs.StringVar(&testSimulate, "simulate-approval", "", "flow sessions: the decision request-approval nodes and requires_approval gates take, approved (default) or denied")
 			fs.Var(&testSimulateEmit, "simulate-emit", "flow sessions: make an agent node emit instead of running, <node>:<port>[=<json object>] (repeatable; default output: a minimal payload from the port's schema)")
 		},
 		run: func(ctx context.Context, c *call) error {

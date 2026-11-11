@@ -775,7 +775,8 @@ function AgentForm({
                 const next = { ...n, mode };
                 if (mode !== "approve") {
                   delete next.approve;
-                  delete next.approval_timeout;
+                  // With requires_approval the timeout also bounds the gate.
+                  if (!next.requires_approval) delete next.approval_timeout;
                 }
                 return next;
               })
@@ -896,11 +897,15 @@ function AgentForm({
         <Field
           label="Approval timeout"
           error={msgs(diags, "approval_timeout")}
-          hint="Default 1h"
+          hint={
+            node.requires_approval
+              ? "For the approval before the node runs and for its own approvals. Empty: the gate waits until decided, own approvals default 1h."
+              : "Default 1h"
+          }
         >
           <TextInput
             value={node.approval_timeout ?? ""}
-            placeholder="1h"
+            placeholder={node.requires_approval ? "none" : "1h"}
             onChange={(e) =>
               onChange((n) => setOpt(n, "approval_timeout", e.target.value))
             }
@@ -915,6 +920,68 @@ function compactAllow(a: { tools?: string[] }) {
   const out: { tools?: string[] } = {};
   if (a.tools && a.tools.length > 0) out.tools = a.tools;
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The "Requires approval" switch shared by every runnable node. Agents keep
+ * their one Approval timeout field (it bounds the gate too); the other types
+ * get a timeout field here while the switch is on.
+ */
+function RequiresApprovalSection({
+  node,
+  diags,
+  onChange,
+}: {
+  node: Exclude<FlowNode, ApprovalNode>;
+  diags: Diagnostic[];
+  onChange: (p: (n: FlowNode) => FlowNode) => void;
+}) {
+  const on = node.requires_approval === true;
+  return (
+    <div className="space-y-1.5" data-section="requires-approval">
+      <Toggle
+        label="Requires approval"
+        checked={on}
+        onChange={(v) =>
+          onChange((n) => {
+            if (n.type === "approval") return n;
+            const next = { ...n };
+            if (v) {
+              next.requires_approval = true;
+            } else {
+              delete next.requires_approval;
+              if (next.type !== "agent") delete next.approval_timeout;
+            }
+            return next;
+          })
+        }
+      />
+      <p className="m-0 text-[11px] text-muted">
+        Ask in the Inbox before this node runs. Denying sends the input down the{" "}
+        <code className="font-mono">denied</code> port instead of running it.
+      </p>
+      {msgs(diags, "requires_approval").map((m) => (
+        <p key={m} className="m-0 text-[11px] text-bad">
+          {m}
+        </p>
+      ))}
+      {on && node.type !== "agent" && (
+        <Field
+          label="Approval timeout"
+          error={msgs(diags, "approval_timeout")}
+          hint="Empty waits until someone decides; on timeout the node is denied, e.g. 24h."
+        >
+          <TextInput
+            value={node.approval_timeout ?? ""}
+            placeholder="none"
+            onChange={(e) =>
+              onChange((n) => setOpt(n, "approval_timeout", e.target.value))
+            }
+          />
+        </Field>
+      )}
+    </div>
+  );
 }
 
 function InboxForm({
@@ -1216,9 +1283,15 @@ export function Inspector(props: InspectorProps) {
   const idError =
     draftId !== node.id &&
     (draftId.trim() === "" || props.idTaken(draftId.trim()));
-  const nodeLevel = diagnostics.filter(
-    (d) => diagnosticField(d) === undefined || diagnosticField(d) === "edges",
-  );
+  const nodeLevel = diagnostics.filter((d) => {
+    const field = diagnosticField(d);
+    // Approval nodes have no section for this field, so show it here.
+    return (
+      field === undefined ||
+      field === "edges" ||
+      (node.type === "approval" && field === "requires_approval")
+    );
+  });
 
   const commitId = () => {
     if (draftId.trim() === node.id) return;
@@ -1337,6 +1410,13 @@ export function Inspector(props: InspectorProps) {
         <TransformForm
           node={node}
           flowId={props.flowId}
+          diags={diagnostics}
+          onChange={props.onChange}
+        />
+      )}
+      {node.type !== "approval" && (
+        <RequiresApprovalSection
+          node={node}
           diags={diagnostics}
           onChange={props.onChange}
         />

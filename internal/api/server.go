@@ -79,8 +79,11 @@ type Options struct {
 // methods for the daemon: PublishConfigChange (feed it the hot-reload watcher's
 // paths so SSE clients see edits made on disk) and Close.
 type Server struct {
-	opts    Options
-	mux     *http.ServeMux
+	opts Options
+	mux  *http.ServeMux
+	// readMux serves the GET operations of the `api` service without auth, for the in-process calls of assist
+	// sessions' read tools (see readDispatcher). It is never reachable from the network.
+	readMux *http.ServeMux
 	started time.Time
 
 	bus *changeBus
@@ -116,7 +119,7 @@ func New(opts Options) http.Handler {
 		opts.Log = slog.Default()
 	}
 	s := &Server{
-		opts: opts, mux: http.NewServeMux(), started: time.Now().UTC(), bus: newChangeBus(),
+		opts: opts, mux: http.NewServeMux(), readMux: http.NewServeMux(), started: time.Now().UTC(), bus: newChangeBus(),
 		probes: map[string]probeResultView{}, heartbeat: heartbeatInterval,
 	}
 	s.mcpHandler = mcp.NewStreamableHTTPHandler(s.operatorServer, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
@@ -183,6 +186,9 @@ func (s *Server) mountContract() {
 			}
 			pattern := method + " " + muxPath(path)
 			s.mux.Handle(pattern, handler)
+			if method == http.MethodGet && svc == string(auth.ServiceAPI) && !public && op.OperationID != "streamEvents" {
+				s.readMux.Handle(pattern, h)
+			}
 			s.routes = append(s.routes, pattern)
 		}
 	}

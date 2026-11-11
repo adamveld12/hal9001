@@ -2967,6 +2967,20 @@ export interface components {
       label: string;
       url: string;
     };
+    /**
+     * @description Any node but `approval`. When the node is reached (its input is ready, before it runs) hal raises an approval of
+     *     type `request` (`request.gate` true; title `<flow>: run <node id>?`, with the node's resolved configuration and its
+     *     input) and parks the node as `awaiting_approval` (no concurrency slot; it survives daemon restarts). Approving runs
+     *     the node as usual. Denying, or `approval_timeout` passing, skips the node and emits the input on the extra port
+     *     `denied`: `{"input": <node input>, "approval": {decision: denied|timeout, comment, decided_by, decided_at, approval_id}}`.
+     *     With no edge on `denied` the branch stops and the node run is recorded as done on port `denied` (error `denied`
+     *     or `approval_timeout`), not failed. A dry run still asks, tagged `dry_run`. Test runs (`test-node`, the assist flow
+     *     test) do not wait: they take the decision from `simulate_approval`.
+     * @default false
+     */
+    RequiresApproval: boolean;
+    /** @description How long the `requires_approval` approval waits before it expires and counts as denied (decision `timeout`). Only valid with `requires_approval`; without it the approval waits until decided. */
+    GateApprovalTimeout: components["schemas"]["Duration"];
     /** @description Tools of the node's `mcp_servers` the agent may call (hal's own tools are always allowed). Entries are regular expressions over the tool title or name. Agents have no shell or file tools. */
     AgentAllow: {
       /** @description Regexes over tool title or name. */
@@ -3003,6 +3017,8 @@ export interface components {
       timeout?: components["schemas"]["Duration"];
       /** @description Skipped in dry-run, recorded as decision `skipped` with reason `dry_run`. */
       side_effect?: boolean;
+      requires_approval?: components["schemas"]["RequiresApproval"];
+      approval_timeout?: components["schemas"]["GateApprovalTimeout"];
       ui?: components["schemas"]["NodeUI"];
     };
     McpToolList: {
@@ -3071,8 +3087,10 @@ export interface components {
       };
     };
     /**
-     * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve`; with `ports`
-     *     declared, those declared ports replace `out`.
+     * @description Runs a coding agent over ACP (§7). Ports: `out`, `error`, and `denied` when `mode` is `approve` or `requires_approval` is set;
+     *     with `ports` declared, those declared ports replace `out`.
+     *     A `denied` payload says which approval refused it: a proposal denial carries `agent` (with the `proposal` and `comment`),
+     *     a `requires_approval` denial carries `approval` and the agent did not start.
      *     `approve` applies to approve mode only (default `proposal`). `approval_timeout` falls back to the config value.
      *     Exactly one of `prompt` (a library prompt name) or `instructions` (inline prompt template) is required.
      *     `output` (`note` default, or `none`) applies to inline `instructions` only. With `note` the agent ends its
@@ -3113,7 +3131,9 @@ export interface components {
       model?: string;
       cwd?: components["schemas"]["Cwd"];
       timeout?: components["schemas"]["Duration"];
+      /** @description How long the agent's own approvals (per-tool calls, proposals) wait, falling back to the config value; with `requires_approval` it also bounds the gate's wait, which has no timeout when this is unset. */
       approval_timeout?: components["schemas"]["Duration"];
+      requires_approval?: components["schemas"]["RequiresApproval"];
       allow?: components["schemas"]["AgentAllow"];
       mcp_servers?: components["schemas"]["McpServer"][];
       /** @description Sandbox backend id; adds fs and shell tools executed there. Validated where sandboxes are defined. */
@@ -3148,6 +3168,8 @@ export interface components {
       summary_md?: string;
       suggested_reply?: string;
       links?: components["schemas"]["NoteLink"][];
+      requires_approval?: components["schemas"]["RequiresApproval"];
+      approval_timeout?: components["schemas"]["GateApprovalTimeout"];
       ui?: components["schemas"]["NodeUI"];
     };
     /**
@@ -3158,7 +3180,8 @@ export interface components {
      *     routed by `on_timeout`) the payload is `{"input": <node input>, "approval": {decision: approved|denied|timeout,
      *     comment, decided_by, decided_at, edited, edits?}}`. With `editable`, the approver may change those input paths when
      *     approving; the payload's `input` carries the edited values and `approval.edits` is `{path: {before, after}}`.
-     *     In a dry run the approval is still created, tagged `dry_run`, and says so.
+     *     In a dry run the approval is still created, tagged `dry_run`, and says so. (Every other node type can ask for
+     *     approval before it runs with `requires_approval`; this node cannot.)
      *     Test runs (`test-node`, the assist flow test) do not wait: they take the decision from `simulate_approval`.
      */
     ApprovalNode: {
@@ -3323,6 +3346,8 @@ export interface components {
       type: "transform";
       steps?: components["schemas"]["TransformStep"][];
       timeout?: components["schemas"]["Duration"];
+      requires_approval?: components["schemas"]["RequiresApproval"];
+      approval_timeout?: components["schemas"]["GateApprovalTimeout"];
       ui?: components["schemas"]["NodeUI"];
     };
     TransformPreviewRequest: {
@@ -4008,7 +4033,7 @@ export interface components {
        */
       dry_run?: boolean;
       /**
-       * @description For an `approval` node: the decision to take instead of waiting for one.
+       * @description For an `approval` node or a node with `requires_approval`: the decision to take instead of waiting for one.
        * @default approved
        * @enum {string}
        */
@@ -4825,8 +4850,10 @@ export interface components {
       created_at: components["schemas"]["Timestamp"];
       expires_at: components["schemas"]["NullableTimestamp"];
     };
-    /** @description What an `approval` node asked, rendered when the node ran. */
+    /** @description What an `approval` node (or the `requires_approval` gate of another node) asked, rendered when the node was reached. */
     ApprovalRequestContent: {
+      /** @description The approval a node with `requires_approval` raised before running: approving runs the node, denying emits its input on port `denied`. */
+      gate: boolean;
       title: string;
       /** @description Markdown. In a dry run the first line says so. */
       body_md: string;
@@ -5478,7 +5505,7 @@ export interface components {
         [key: string]: unknown;
       } | null;
       /**
-       * @description Flow sessions: the decision `approval` nodes take in the test; the test never waits for a person.
+       * @description Flow sessions: the decision `approval` nodes and `requires_approval` gates take in the test; the test never waits for a person.
        * @default approved
        * @enum {string}
        */
