@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.14",
-  "build": 14,
-  "commit": "1612dbdf06018bc0ffe7ef14b58babdeea3dc980",
-  "published_at": "2026-11-11T00:40:21Z",
+  "version": "0.1.15",
+  "build": 15,
+  "commit": "006fedb972b41086888b528899784d9475e8c352",
+  "published_at": "2026-11-11T01:13:07Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.14/HAL9001-0.1.14.app.zip",
-  "size": 27737234,
-  "sha256": "cfc791a1ba95d717fae2a4e8b9effe50de3166217775a0790b4484bb0c10ae10",
-  "signature": "tYUfYdSOL2mg01sJ5TPRsQdtDlfr+o64oSrN+NZWN8S5OdVp3+55OGyvgnlWEMmbS4/KoQWULWQQWAb06nLSAg==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.14",
-  "notes": "## Changes\n\n- Menu: Install the MCP… and GitHub links (#10) (1612dbd)\n- Header GitHub link and flashing favicon while flows run (#9) (a83cae9)\n\nCommit: 1612dbdf06018bc0ffe7ef14b58babdeea3dc980\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.15/HAL9001-0.1.15.app.zip",
+  "size": 27802649,
+  "sha256": "f2a90d191c15dc5f77ec677afa1d11438c0ec548b113f8f06674aaccc9206086",
+  "signature": "aA84FpqcHEjl2ubqxk0guP+tqgXnZAal+aYJ8dyUVrifF5bmCL5qn3eYQY99TuxrNjZeQiIMFPZC3gkKv6ULCg==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.15",
+  "notes": "## Changes\n\n- assist: read-only inspection tools and GitHub issue links (#13) (006fedb)\n\nCommit: 006fedb972b41086888b528899784d9475e8c352\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
