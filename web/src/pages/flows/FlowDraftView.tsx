@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useAssistTestResult } from "../../api/assist";
 import { usePromptNames } from "../../api/prompts";
 import { useSensorIds } from "../../api/sensors";
-import { useRuntimeNames } from "../../api/settings";
+import { useRuntimeOptions } from "../../api/settings";
 import { LoadingState } from "../../components/ui";
 import { FlowEditor } from "../../flow/FlowEditor";
 import type { Flow } from "../../flow/model";
@@ -31,7 +31,7 @@ export function FlowDraftView({
   const sync = useFlowDraftSync({ targetId, sessionId, editorFlow });
   const sensors = useSensorIds();
   const prompts = usePromptNames();
-  const runtimes = useRuntimeNames();
+  const runtimes = useRuntimeOptions();
   const test = useAssistTestResult(sessionId);
 
   const testResult = test.data;

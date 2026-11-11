@@ -16,7 +16,7 @@ import {
 } from "../../api/flows";
 import { usePromptNames } from "../../api/prompts";
 import { useSensorIds } from "../../api/sensors";
-import { useRuntimeNames } from "../../api/settings";
+import { useRuntimeOptions } from "../../api/settings";
 import { CodeEditor } from "../../components/CodeEditor";
 import {
   Button,
@@ -152,7 +152,7 @@ function Loaded({
   const validate = useValidateFlow();
   const sensors = useSensorIds();
   const prompts = usePromptNames();
-  const runtimes = useRuntimeNames();
+  const runtimes = useRuntimeOptions();
 
   const changedOnDisk = refetched.hash !== loaded.hash;
 
