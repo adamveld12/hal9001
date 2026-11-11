@@ -30,11 +30,16 @@ Always available to every agent run (executed on the local hal instance):
 | `now(timezone?)` | Current time. |
 | `run_context()`, `node_input()`, `event()` | The run's state: ids, trigger, node input payload, original event. |
 
-Added when the agent node has `output: note` or `output: tool` (inline `instructions` or a prompt file with `output: note`):
-`submit_output(...)`, whose input schema is the node's `output_schema` (the note schema for `note` or when none is set).
-Calls are validated against it; an invalid call is a tool error with each path and reason. The last valid call wins. It
-needs no approval, is recorded like any hal tool call, and exists only in that run's session (docs/flows.md, "Structured
-output"). The planning phase of an approve+proposal node does not get it.
+Added when the agent node has `output: note` (inline `instructions` or a prompt file with `output: note`): `submit_output(...)`
+with the note schema. Calls are validated; an invalid call is a tool error with each path and reason. A valid call is the
+inbox note without text parsing; without one the final message is parsed. It needs no approval, is recorded like any hal
+tool call, and exists only in that run's session.
+
+Added per declared port of an agent node with `ports` that has an outgoing edge: `emit_<port>(...)`, whose input schema is
+the port schema. It exists only in the session of that single agent run and node, is hal-internal (changes nothing outside
+hal, so it is allowed in `readonly` too), validates its input (a failure is a tool error with path and reason), and routing
+to a port never bypasses approvals: downstream `approval` nodes and tool-call approvals apply as usual. The planning phase of an
+approve+proposal node does not get emit tools. See docs/flows.md, "Outputs and ports".
 
 Added when the agent node sets `sandbox:` (see below): `fs_read`, `fs_write`, `fs_list`, `fs_search`, `shell` executed in
 that sandbox's working directory.
