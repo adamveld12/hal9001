@@ -126,6 +126,11 @@ type ConversationSandbox struct {
 	// FromAgentRunID is the agent run the conversation was forked from. Its sandbox is taken over when it is still
 	// being kept alive; otherwise a new one is created (and BeforeTurn reports that the run's file changes are gone).
 	FromAgentRunID string
+	// NodeRunID is the original run's node run: the conversation's sandbox sessions are recorded under it (they are
+	// pruned with it) but belong to the conversation. Input is the node's input payload, written to input.json of a
+	// recreated sandbox like the original.
+	NodeRunID string
+	Input     json.RawMessage
 }
 
 // Extension is what a Provider adds to one session.
