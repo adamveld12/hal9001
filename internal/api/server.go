@@ -368,6 +368,11 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"listAssistSamples":   s.listAssistSamples,
 		"cancelAssistSession": s.cancelAssistSession,
 
+		"listConversations":        s.listConversations,
+		"getConversation":          s.getConversation,
+		"listConversationMessages": s.listConversationMessages,
+		"forkConversation":         s.forkConversation,
+
 		"getTailscaleStatus":      s.getTailscaleStatus,
 		"refreshTailscale":        s.refreshTailscale,
 		"enableTailscaleServe":    s.enableTailscaleServe,

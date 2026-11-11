@@ -129,6 +129,7 @@ func (a *app) tree() *command {
 		group("sandboxes", "list, inspect, configure and check sandbox backends", sandboxCmds()...),
 		group("conversations", "inspect conversations: chats and agent runs of flow nodes", conversationSandboxCmds()...),
 		group("assist", "AI-assisted sensor authoring: sessions, draft, test runs", assistCmds()...),
+		group("conversations", "assistant chats and agent runs in one list: transcripts, continue a run in a chat", conversationCmds()...),
 	}}
 	return root
 }

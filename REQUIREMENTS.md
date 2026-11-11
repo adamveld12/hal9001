@@ -359,8 +359,8 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 | agent_runs | id, node_run_id (null for an assist turn), assist_session_id (assist turns only), runtime, agent info + capabilities from `initialize`, mode, approve style, policy, phase (propose/execute), session_id, resumed_via (load/new_session), cwd, rendered prompt, argv, status, stop_reason, result JSON, raw JSON-RPC blob |
 | agent_events | agent_run_id, seq, ts, kind (message/thought/tool_call/tool_call_update/plan/...), tool_call_id, payload (the `session/update` body) |
 | permission_requests | id, agent_run_id, tool_call_id, tool kind, title, raw input, options offered, decision (allow/reject/cancelled/expired), decided_by (policy/user/timeout), matched rule, reason, timestamps |
-| assist_sessions | id, target (kind general/sensor/flow/tool, id or none), title, runtime, model, status, error, latest draft (yaml, hash, parsed id, diagnostics, author), last agent run, the agent's session id |
-| assist_messages | id, session_id, role (user/assistant/tool/system), text, agent_run_id, tool call (title, kind, status, raw input, content), approval_id |
+| assist_sessions | id, target (kind general/sensor/flow/tool, id or none), title, runtime, model, status, error, latest draft (yaml, hash, parsed id, diagnostics, author), last agent run, the agent's session id, forked_from_agent_run_id (the flow node's agent run a chat continues; empty otherwise), fork_context (resumed/replayed once the first turn restored the run's context) |
+| assist_messages | id, session_id, role (user/assistant/tool/system), kind (empty, divider, notice), text, agent_run_id, tool call (title, kind, status, raw input, content), approval_id |
 | approvals | id, agent_run_id, type (proposal/tool_call), permission_request_id (tool_call only), proposal_md, status, decided_at, comment |
 | inbox_items | id, source (agent_run/node_run), title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run |
 | auth_events | id, ts, service, endpoint, per-module results, outcome, principal, remote addr, host, session id |
@@ -385,7 +385,7 @@ If parsing fails, the inbox item is created with the raw final message, `priorit
 The backend is a JSON REST API; the web UI and the CLI are both clients of it and have no private endpoints. Everything the tool does can be driven and verified with `curl` or the CLI.
 
 - Contract: `api/openapi.yaml` (OpenAPI 3.1), updated in the same commit as handlers. TS types for the UI are generated from it.
-- Resources: sensors (incl. `POST /api/sensors/{id}/poll` and `/reset`), events, flows (CRUD on YAML + `validate`, `POST /api/flows/{id}/run`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), auth, app updates (`GET /api/update`, `POST /api/update/check|install|report`).
+- Resources: sensors (incl. `POST /api/sensors/{id}/poll` and `/reset`), events, flows (CRUD on YAML + `validate`, `POST /api/flows/{id}/run`), flow runs, node runs, agent runs + agent events + permission requests, approvals (`approve` / `deny`), inbox, prompts, settings, kill switch, assist sessions (§5.1), conversations (`/api/conversations`: chats and the agent runs of flow nodes in one list with one transcript shape, and forking a run into a chat; docs/assist.md), auth, app updates (`GET /api/update`, `POST /api/update/check|install|report`).
 - Test entry points:
   - `POST /api/events` injects an event for a sensor id without polling (body = item JSON); goes through dedup and fan-out exactly like a polled item.
   - `POST /api/flows/{id}/test-node` runs one node on a supplied input (same as "Run node on sample").

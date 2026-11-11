@@ -51,6 +51,7 @@ tags:
   - {name: update, description: 'macOS app self-update: state, check, install, installer reports'}
   - {name: sandboxes, description: 'Sandbox backends: config, environment, connectivity check'}
   - {name: assist, description: 'AI-assisted sensor authoring: sessions, draft, test runs'}
+  - {name: conversations, description: 'Assistant chats and agent runs of flow nodes as one list of conversations, their transcripts, and forking a run into a chat'}
   - {name: auth, description: 'Login, sessions, passkeys, auth events'}
   - {name: tailscale, description: 'Share hal9001 on your tailnet: detection, `tailscale serve`, allowed_hosts'}
   - {name: mcp, description: 'hal MCP server: the remote endpoint and connection info for external clients, and the per-run backend of the stdio server hal injects into agent sessions (authorized by a capability token)'}
@@ -2902,6 +2903,136 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         default: {$ref: '#/components/responses/Error'}
+  /api/conversations:
+    get:
+      operationId: listConversations
+      tags: [conversations]
+      summary: List conversations
+      description: |
+        Every assistant chat (an assist session of any kind, closed ones included; `source: chat`, `id` = the session id) and
+        every agent run of a flow node (`source: flow`, `id` = the run's last phase) in one list, ordered by last activity,
+        newest first, then by id. The turns of a chat are not listed on their own. A propose-phase run that has an
+        execute-phase run (`prev_agent_run_id`) belongs to that run's conversation and is not listed separately.
+
+        `status` is normalised. A chat's `idle`, `running`, `awaiting_approval`, `failed` and `closed` are kept. An agent run's
+        `succeeded`, `failed`, `denied`, `killed`, `interrupted`, `timeout`, `running` and `awaiting_approval` are kept and
+        `queued` is `running`. So `running` and `awaiting_approval` cover both sources, and `idle` and `closed` only chats.
+
+        `q` is a case-insensitive substring (ASCII) match on the title, ids, flow and node ids, the text of a chat's messages
+        and the prompt and result text of a flow run (prompts and results over 64 KiB are stored outside the database and not
+        searched). `forked_from` lists the chats forked from that agent run (or from another phase of its node run).
+        `since` is inclusive and `until` exclusive, on the last activity. The cursor is opaque and stable while rows
+        share a timestamp.
+      x-hal-service: api
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: source, in: query, schema: {$ref: '#/components/schemas/ConversationSource'}}
+        - {name: kind, in: query, description: 'A chat''s target kind, or `agent` for flow conversations.', schema: {$ref: '#/components/schemas/ConversationKind'}}
+        - {name: flow, in: query, description: 'Flow id: runs of that flow, forks of them and chats that draft that flow.', schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: node, in: query, description: 'Node id.', schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: flow_run, in: query, description: 'Flow run id: its agent runs and the forks of them.', schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: runtime, in: query, schema: {$ref: '#/components/schemas/Slug'}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/ConversationStatus'}}
+        - {name: forked_from, in: query, description: 'Agent run id: only the chats forked from it.', schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: q, in: query, description: 'Text to search for (at most 200 characters).', schema: {type: string, maxLength: 200}}
+        - {$ref: '#/components/parameters/ConversationSince'}
+        - {$ref: '#/components/parameters/ConversationUntil'}
+      responses:
+        '200':
+          description: One page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationList'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/conversations/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+    get:
+      operationId: getConversation
+      tags: [conversations]
+      summary: Get a conversation
+      description: |
+        One conversation with the chats forked from it. `id` is an assist session id or an agent run id of a flow node; a
+        propose-phase run that has an execute-phase run resolves to the conversation of the execute-phase run (its `id`
+        is the execute-phase run's). 404 for anything else, including an agent run that is a turn of a chat.
+      x-hal-service: api
+      responses:
+        '200':
+          description: The conversation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationDetail'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/conversations/{id}/messages:
+    parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+    get:
+      operationId: listConversationMessages
+      tags: [conversations]
+      summary: Get the transcript of a conversation
+      description: |
+        The transcript in one shape for both sources, oldest first, at most the newest 2000 entries (`truncated` says
+        older ones were left out). A chat's entries are its stored messages (`id` is the message id; the same entries as
+        `GET /api/assist/sessions/{id}`). For a flow conversation the server folds the agent run's events into the same
+        shape, like the Agent run page: the rendered prompt is the first `user` message, adjacent chunks of the agent's text
+        are one `assistant` message, a tool call and its updates are one `tool` message (with its arguments and results;
+        `approval_id` is the approval that gated it), thoughts and plans are left out, a proposal approval and the way the
+        run ended (finished, failed, emitted on a port) are `system` messages. Their `id` is
+        `<agent_run_id>:<zero padded seq>`, stable while the run grows. A propose-phase run that has an execute-phase run
+        contributes its entries first. Content is redacted as in the other endpoints.
+      x-hal-service: api
+      responses:
+        '200':
+          description: The transcript.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationMessageList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/conversations/{id}/fork:
+    parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+    post:
+      operationId: forkConversation
+      tags: [conversations]
+      summary: Continue an agent run in a chat
+      description: |
+        Creates a chat that continues the agent run of a flow node (`id` is the run, or the propose-phase run of a node
+        run whose execute-phase run is then the one continued). The run is not changed. The chat is an assist session of
+        kind `general` with the node's runtime and model, a divider message ("Continued from run X") and the link
+        `forked_from`. No agent process starts and nothing is sent: the user's first message (`POST
+        /api/assist/sessions/{id}/messages`) starts the first turn, which restores the run's context by loading the
+        runtime's own session when it supports that and the run's working directory still exists (`fork_context`
+        `resumed`), else by sending a compacted transcript of the run (`replayed`); the divider then says which. The chat has
+        the node's custom tools, the node's sandbox tools (a sandbox the run still keeps alive is taken over), the read
+        tools and, for the ports of the node that lead somewhere, `emit_<port>` tools that start a new flow run once the user
+        approves. 404 for an unknown run or one that is a turn of a chat; 409 `invalid-state` while the run is running or
+        waiting for an approval; 422 when the node's runtime is no longer configured.
+      x-hal-service: admin
+      responses:
+        '201':
+          description: The new conversation (source `chat`).
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Conversation'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
   /api/runtimes:
     get:
       operationId: listRuntimes
@@ -3769,6 +3900,22 @@ components:
       in: path
       required: true
       schema: {$ref: '#/components/schemas/Ulid'}
+    ConversationId:
+      name: id
+      in: path
+      required: true
+      description: 'An assist session id or an agent run id of a flow node.'
+      schema: {$ref: '#/components/schemas/Ulid'}
+    ConversationSince:
+      name: since
+      in: query
+      description: Only conversations with activity at or after this time.
+      schema: {type: string, format: date-time}
+    ConversationUntil:
+      name: until
+      in: query
+      description: Only conversations with activity before this time.
+      schema: {type: string, format: date-time}
     SessionId:
       name: id
       in: path
@@ -6705,6 +6852,8 @@ components:
         error: {type: [string, 'null'], description: Why the last turn failed; null otherwise.}
         draft: {$ref: '#/components/schemas/AssistDraft'}
         last_agent_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'The agent run of the latest turn (`GET /api/agent-runs/{id}`). Every turn is one agent run.'}
+        forked_from_agent_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Set for a chat that continues the agent run of a flow node (`POST /api/conversations/{id}/fork`); null otherwise. Always present.'}
+        fork_context: {oneOf: [{$ref: '#/components/schemas/ForkContext'}, {type: 'null'}], description: 'How a fork restored the run''s context; null before its first turn and for a chat that is not a fork. Always present.'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
     AssistSessionList:
@@ -6736,6 +6885,7 @@ components:
         agent_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: The turn's agent run; null for user messages.}
         tool_call: {oneOf: [{$ref: '#/components/schemas/AssistToolCall'}, {type: 'null'}]}
         approval_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'The tool-call approval that gated this call, to be decided with `POST /api/approvals/{id}/approve|deny`.'}
+        kind: {$ref: '#/components/schemas/ConversationMessageKind'}
         created_at: {$ref: '#/components/schemas/Timestamp'}
     AssistStreamMessage:
       allOf:
@@ -6744,6 +6894,90 @@ components:
           required: [session_id]
           properties:
             session_id: {$ref: '#/components/schemas/Ulid'}
+    ConversationSource: {type: string, enum: [flow, chat]}
+    ConversationKind:
+      type: string
+      description: 'A chat''s assist target kind, or `agent` for the agent run of a flow node.'
+      enum: [general, sensor, flow, tool, agent]
+    ConversationStatus:
+      type: string
+      description: |
+        Normalised status. `running`: a chat turn or an agent run (queued or running) is in progress. `awaiting_approval`: blocked
+        on an approval. `idle`: a chat without a running turn. `closed`: an ended chat. `succeeded`, `denied`, `killed`,
+        `interrupted` and `timeout`: how an agent run ended; `failed` is both a failed run and a chat whose last turn failed.
+      enum: [running, awaiting_approval, idle, succeeded, failed, killed, denied, interrupted, timeout, closed]
+    ForkContext: {type: string, description: 'How a fork restored the run''s context: `resumed` (session/load) or `replayed` (a compacted transcript in the first prompt).', enum: [resumed, replayed]}
+    ConversationForkRef:
+      type: object
+      description: The agent run a chat continues.
+      required: [agent_run_id, flow_id, flow_run_id, node_id]
+      properties:
+        agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'Null when the run was pruned.'}
+        flow_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}]}
+    Conversation:
+      type: object
+      required: [id, source, kind, title, status, running, continuable, runtime, model, flow_id, flow_run_id, node_id, node_run_id, agent_run_id, assist_session_id, forked_from, fork_context, fork_count, started_at, updated_at, ended_at, preview]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        source: {$ref: '#/components/schemas/ConversationSource'}
+        kind: {$ref: '#/components/schemas/ConversationKind'}
+        title: {type: string, description: 'A chat''s title (the start of its first message; "New chat" before it, "Continued: <flow> / <node>" for a fork without a message), or `<flow> / <node>` for a flow conversation.'}
+        status: {$ref: '#/components/schemas/ConversationStatus'}
+        running: {type: boolean, description: 'A turn or run is in progress (`running` or `awaiting_approval`).'}
+        continuable: {type: boolean, description: 'A flow run that ended can be continued in a chat (`POST /api/conversations/{id}/fork`); a chat can be continued unless it is closed.'}
+        runtime: {$ref: '#/components/schemas/Slug'}
+        model: {type: [string, 'null']}
+        flow_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}], description: 'The flow of a flow conversation; for a fork the flow of the run it continues; for a chat that drafts a flow, that flow.'}
+        flow_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        node_id: {oneOf: [{$ref: '#/components/schemas/Slug'}, {type: 'null'}]}
+        node_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        agent_run_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Flow conversations: the last phase of the node run (`GET /api/agent-runs/{id}`). Null for a chat.'}
+        assist_session_id: {oneOf: [{$ref: '#/components/schemas/Ulid'}, {type: 'null'}], description: 'Chats: the assist session (`GET /api/assist/sessions/{id}`; the same as `id`). Null for a flow conversation.'}
+        forked_from: {oneOf: [{$ref: '#/components/schemas/ConversationForkRef'}, {type: 'null'}]}
+        fork_context: {oneOf: [{$ref: '#/components/schemas/ForkContext'}, {type: 'null'}], description: 'Null for a chat that is not a fork and before a fork''s first turn.'}
+        fork_count: {type: integer, minimum: 0, description: 'Chats forked from this flow conversation (any of its phases). Always 0 for a chat.'}
+        started_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}  # last activity: a chat's last change; a run's end, or its start while it runs
+        ended_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        preview: {type: string, description: 'The start of the last user or assistant text of a chat, or of the result of a flow run (its error or prompt when it has no result); at most 160 characters, one line.'}
+    ConversationList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Conversation'}}
+        next_cursor: {$ref: '#/components/schemas/NextCursor'}
+    ConversationDetail:
+      allOf:
+        - {$ref: '#/components/schemas/Conversation'}
+        - type: object
+          required: [forks]
+          properties:
+            forks: {type: array, items: {$ref: '#/components/schemas/Conversation'}, description: 'Chats forked from this conversation, newest activity first, at most 50. Empty for a chat.'}
+    ConversationMessageKind:
+      type: string
+      description: '`divider`: the "Continued from run X" line at the start of a fork. `notice`: a system notice (for example that the sandbox was recreated). Empty for every other message.'
+      enum: ['', divider, notice]
+    ConversationMessage:
+      type: object
+      description: One transcript entry, in the shape of `AssistMessage` (see there for `tool_call`) with a string `id` and a `kind`.
+      required: [id, role, kind, text, agent_run_id, tool_call, approval_id, created_at]
+      properties:
+        id: {type: string, description: 'A chat message''s id, or `<agent_run_id>:<zero padded seq>` for a flow conversation.'}
+        role: {$ref: '#/components/schemas/AssistRole'}
+        kind: {$ref: '#/components/schemas/ConversationMessageKind'}
+        text: {type: [string, 'null'], description: 'Null for `tool` messages.'}
+        agent_run_id: {$ref: '#/components/schemas/NullableUlid'}
+        tool_call: {oneOf: [{$ref: '#/components/schemas/AssistToolCall'}, {type: 'null'}]}
+        approval_id: {$ref: '#/components/schemas/NullableUlid'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    ConversationMessageList:
+      type: object
+      required: [items, truncated]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ConversationMessage'}, description: Oldest first.}
+        truncated: {type: boolean, description: Older entries were left out (only the newest 2000 are returned).}
     AssistSessionDetail:
       allOf:
         - {$ref: '#/components/schemas/AssistSession'}
