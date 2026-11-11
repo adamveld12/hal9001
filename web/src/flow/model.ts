@@ -75,8 +75,10 @@ export interface AgentNode {
   prompt?: string;
   /** Inline prompt template. */
   instructions?: string;
-  /** Inline instructions only: `note` (default) or `none`. */
-  output?: "note" | "none";
+  /** Inline instructions only: `note` (default), `none`, or `tool` (structured via submit_output). */
+  output?: "note" | "none" | "tool";
+  /** Only with `output: tool`: JSON Schema of the submit_output arguments; omitted = default note schema. */
+  output_schema?: Record<string, unknown>;
   extra_prompt?: string;
   model?: string;
   cwd?: AgentCwd;

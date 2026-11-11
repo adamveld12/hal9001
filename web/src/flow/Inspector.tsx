@@ -30,12 +30,21 @@ import {
   type Lang,
 } from "./model";
 import {
+  canSaveAsPrompt,
   promptSource,
   templateHints,
   toInlinePrompt,
   toSavedPrompt,
+  withOutput,
+  type AgentOutput,
   type PromptSource,
 } from "./agentPrompt";
+import {
+  NOTE_SCHEMA_TEXT,
+  outputFieldHints,
+  parseOutputSchema,
+  schemaText,
+} from "./outputSchema";
 import { discoverFields } from "./transform/fields";
 import { useSampleInput } from "./transform/useSampleInput";
 import { TransformForm } from "./transform/TransformForm";
@@ -318,6 +327,74 @@ function CwdForm({
   );
 }
 
+/** JSON editor for `output_schema`; keeps the raw text so invalid input is not lost while typing. */
+function OutputSchemaField({
+  schema,
+  diags,
+  onChange,
+}: {
+  schema: Record<string, unknown> | undefined;
+  diags: Diagnostic[];
+  onChange: (s: Record<string, unknown> | undefined) => void;
+}) {
+  const key = JSON.stringify(schema ?? null);
+  const [text, setText] = useState(schemaText(schema));
+  const [seen, setSeen] = useState(key);
+  const [parseError, setParseError] = useState<string>();
+  if (seen !== key) {
+    // The node changed outside this editor (another node, undo, assist): show it.
+    setSeen(key);
+    setText(schemaText(schema));
+    setParseError(undefined);
+  }
+  const apply = (next: string) => {
+    setText(next);
+    const r = parseOutputSchema(next);
+    if (!r.ok) {
+      setParseError(r.error);
+      return;
+    }
+    setParseError(undefined);
+    setSeen(JSON.stringify(r.value ?? null));
+    onChange(r.value);
+  };
+  const errors = [
+    ...(parseError ? [parseError] : []),
+    ...msgs(diags, "output_schema"),
+  ];
+  const fieldHints = outputFieldHints(schema);
+  return (
+    <div className="space-y-1" data-section="output-schema">
+      <Field
+        label="Output schema (JSON Schema)"
+        error={errors}
+        hint="The agent must call submit_output with arguments matching this schema. Empty uses the default note schema."
+      >
+        <CodeEditor
+          label="Output schema"
+          lang="json"
+          value={text}
+          invalid={errors.length > 0}
+          onChange={apply}
+          minHeight="8rem"
+          maxHeight="20rem"
+        />
+      </Field>
+      <div className="flex gap-2">
+        <Button onClick={() => apply(NOTE_SCHEMA_TEXT)}>Use note schema</Button>
+        <Button disabled={text === ""} onClick={() => apply("")}>
+          Clear (default note schema)
+        </Button>
+      </div>
+      <div className="text-[11px] text-muted">
+        {fieldHints.length > 0
+          ? `Downstream fields: ${fieldHints.join(" ")}`
+          : "The schema has no top-level properties to reference downstream."}
+      </div>
+    </div>
+  );
+}
+
 function PromptSection({
   node,
   diags,
@@ -344,6 +421,7 @@ function PromptSection({
   );
   const inline = source === "inline";
   const instructionErrors = msgs(diags, "instructions");
+  const canSave = canSaveAsPrompt(node);
   const nameOk =
     /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(saveName) &&
     !prompts.includes(saveName);
@@ -352,7 +430,7 @@ function PromptSection({
       buildPromptMarkdown({
         name: saveName,
         description: "",
-        output: node.output ?? "note",
+        output: node.output === "none" ? "none" : "note",
         body: node.instructions ?? "",
       }),
       {
@@ -400,25 +478,40 @@ function PromptSection({
           <Field
             label="Output"
             error={msgs(diags, "output")}
-            hint="note: the agent ends with an inbox note; none: free text."
+            hint="note: the agent ends with an inbox note; none: free text; tool: structured output through submit_output."
           >
             <Select
               value={node.output ?? "note"}
               onChange={(e) =>
-                onChange((n) => ({
-                  ...n,
-                  output: e.target.value as "note" | "none",
-                }))
+                onChange((n) => withOutput(n, e.target.value as AgentOutput))
               }
             >
-              <option>note</option>
-              <option>none</option>
+              <option value="note">note</option>
+              <option value="none">none</option>
+              <option value="tool">Tool (structured)</option>
             </Select>
           </Field>
+          {node.output === "tool" && (
+            <OutputSchemaField
+              schema={node.output_schema}
+              diags={diags}
+              onChange={(s) =>
+                onChange((n) => {
+                  const { output_schema: _s, ...rest } = n;
+                  return s === undefined ? rest : { ...rest, output_schema: s };
+                })
+              }
+            />
+          )}
           <div className="flex items-end gap-2">
             <Field
               label="Save as reusable prompt"
               error={create.error ? [errorMessage(create.error)] : []}
+              hint={
+                canSave
+                  ? undefined
+                  : "Saved prompts support note and none only."
+              }
             >
               <TextInput
                 value={saveName}
@@ -428,6 +521,7 @@ function PromptSection({
             </Field>
             <Button
               disabled={
+                !canSave ||
                 !nameOk ||
                 (node.instructions ?? "").trim() === "" ||
                 create.isPending
