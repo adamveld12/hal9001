@@ -9,7 +9,7 @@
 //	seen_keys             (sensor_id, dedup_key, first_seen); outlives events
 //	events                deduplicated sensor items, immutable
 //	flow_versions         (flow_id, hash) -> YAML snapshot
-//	flow_runs             flow, flow_hash, event, kind live|replay|test, replay_of, dry_run, status; also the flow-run queue
+//	flow_runs             flow, flow_hash, event, kind live|replay|test|continuation, replay_of, continuation_* links, dry_run, status; also the flow-run queue
 //	node_runs             per node: parent, type, status, decision, reason, ports, script/argv/env keys snapshot,
 //	                      stdin/stdout/stderr, exit, timing; also the node-run queue
 //	agent_runs            per agent phase: runtime, info, capabilities, mode, style, policy, phase, session, resume, cwd,

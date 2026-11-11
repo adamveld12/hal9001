@@ -55,6 +55,8 @@ const (
 	KindLive   FlowRunKind = "live"
 	KindReplay FlowRunKind = "replay"
 	KindTest   FlowRunKind = "test"
+	// KindContinuation is a run started by an approved emit of a chat that continues an agent run (see Continuation).
+	KindContinuation FlowRunKind = "continuation"
 
 	NodeQueued           NodeRunStatus = "queued"
 	NodeRunning          NodeRunStatus = "running"
@@ -163,7 +165,9 @@ func (s FlowRunStatus) Terminal() bool {
 	return false
 }
 
-func (k FlowRunKind) valid() bool { return k == KindLive || k == KindReplay || k == KindTest }
+func (k FlowRunKind) valid() bool {
+	return k == KindLive || k == KindReplay || k == KindTest || k == KindContinuation
+}
 
 func (s NodeRunStatus) valid() bool {
 	switch s {
@@ -357,10 +361,23 @@ type FlowRun struct {
 	EndedAt   *time.Time    `json:"ended_at,omitempty"`
 	// CancelledBy is the principal who removed the run from the queue (status cancelled).
 	CancelledBy string `json:"cancelled_by,omitempty"`
+	// Continuation links a run of kind continuation to what it continues; nil for the other kinds.
+	Continuation *Continuation `json:"continuation,omitempty"`
 
 	// FlowYAML is write-only input. When set on CreateFlowRun, the flow version
 	// (FlowID, FlowHash) is inserted in the same transaction if missing.
 	FlowYAML string `json:"-"`
+}
+
+// Continuation says where a continuation run came from: the flow run whose agent node the user continued in chat
+// (OfRunID), the conversation (the assist session id), the agent node and the port that were emitted, and the
+// approval of the emit tool call that started the run. The original run is not changed; the link lives on the new run.
+type Continuation struct {
+	OfRunID        string `json:"of_run_id"`
+	ConversationID string `json:"conversation_id"`
+	NodeID         string `json:"node_id"`
+	Port           string `json:"port"`
+	ApprovalID     string `json:"approval_id"`
 }
 
 // NodeRun is one execution of one node within a flow run.
