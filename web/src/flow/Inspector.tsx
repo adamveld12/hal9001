@@ -25,26 +25,28 @@ import {
   type ApprovalNode,
   type CommandNode,
   type Diagnostic,
+  type Flow,
   type FlowNode,
   type InboxNode,
   type Lang,
 } from "./model";
 import {
-  canSaveAsPrompt,
   promptSource,
   templateHints,
   toInlinePrompt,
   toSavedPrompt,
-  withOutput,
-  type AgentOutput,
   type PromptSource,
 } from "./agentPrompt";
 import {
-  NOTE_SCHEMA_TEXT,
-  outputFieldHints,
-  parseOutputSchema,
-  schemaText,
-} from "./outputSchema";
+  addPort,
+  freshPortName,
+  portNameError,
+  setPort,
+  unusedPorts,
+  unusedPortMessage,
+} from "./agentPorts";
+import { outputsSection } from "./outputsPreview";
+import { parsePortSchema, schemaText } from "./portSchema";
 import { discoverFields } from "./transform/fields";
 import { useSampleInput } from "./transform/useSampleInput";
 import { TransformForm } from "./transform/TransformForm";
@@ -65,9 +67,15 @@ export interface InspectorProps {
   idTaken: (id: string) => boolean;
   /** Id of the flow being edited (samples are looked up per flow and node). */
   flowId: string;
+  /** The flow being edited (current graph), for the generated outputs preview. */
+  flow: Flow;
   /** `coalesce` merges consecutive edits of one field into one undo step. */
   onChange: (patch: (n: FlowNode) => FlowNode, coalesce?: string) => void;
   onRename: (id: string) => void;
+  /** Rename an output port of this agent node; its edges follow. */
+  onRenamePort: (from: string, to: string) => void;
+  /** Remove an output port of this agent node and its edges. */
+  onRemovePort: (port: string) => void;
   onDelete: () => void;
 }
 
@@ -327,14 +335,14 @@ function CwdForm({
   );
 }
 
-/** JSON editor for `output_schema`; keeps the raw text so invalid input is not lost while typing. */
-function OutputSchemaField({
+/** JSON editor for a port's schema; keeps the raw text so invalid input is not lost while typing. */
+function PortSchemaField({
   schema,
-  diags,
+  errors: external,
   onChange,
 }: {
   schema: Record<string, unknown> | undefined;
-  diags: Diagnostic[];
+  errors: string[];
   onChange: (s: Record<string, unknown> | undefined) => void;
 }) {
   const key = JSON.stringify(schema ?? null);
@@ -342,14 +350,14 @@ function OutputSchemaField({
   const [seen, setSeen] = useState(key);
   const [parseError, setParseError] = useState<string>();
   if (seen !== key) {
-    // The node changed outside this editor (another node, undo, assist): show it.
+    // The node changed outside this editor (undo, assist): show it.
     setSeen(key);
     setText(schemaText(schema));
     setParseError(undefined);
   }
   const apply = (next: string) => {
     setText(next);
-    const r = parseOutputSchema(next);
+    const r = parsePortSchema(next);
     if (!r.ok) {
       setParseError(r.error);
       return;
@@ -358,38 +366,194 @@ function OutputSchemaField({
     setSeen(JSON.stringify(r.value ?? null));
     onChange(r.value);
   };
-  const errors = [
-    ...(parseError ? [parseError] : []),
-    ...msgs(diags, "output_schema"),
-  ];
-  const fieldHints = outputFieldHints(schema);
+  const errors = [...(parseError ? [parseError] : []), ...external];
   return (
-    <div className="space-y-1" data-section="output-schema">
+    <div className="space-y-1">
       <Field
-        label="Output schema (JSON Schema)"
+        label="Schema (JSON Schema)"
         error={errors}
-        hint="The agent must call submit_output with arguments matching this schema. Empty uses the default note schema."
+        hint="Arguments of the emit tool; the top level must be type: object. Empty uses the inbox note schema, valid only when the port leads directly to inbox nodes."
       >
         <CodeEditor
-          label="Output schema"
+          label="Port schema"
           lang="json"
           value={text}
           invalid={errors.length > 0}
           onChange={apply}
-          minHeight="8rem"
-          maxHeight="20rem"
+          minHeight="6rem"
+          maxHeight="16rem"
         />
       </Field>
-      <div className="flex gap-2">
-        <Button onClick={() => apply(NOTE_SCHEMA_TEXT)}>Use note schema</Button>
-        <Button disabled={text === ""} onClick={() => apply("")}>
-          Clear (default note schema)
+      <Button disabled={text === ""} onClick={() => apply("")}>
+        Clear (inbox shortcut)
+      </Button>
+    </div>
+  );
+}
+
+/** Port name field: edits locally, renames (with its edges) on commit when valid. */
+function PortNameInput({
+  name,
+  others,
+  onRename,
+}: {
+  name: string;
+  others: string[];
+  onRename: (to: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  const error = draft === name ? undefined : portNameError(draft, others);
+  const commit = () => {
+    if (draft === name) return;
+    if (error) setDraft(name);
+    else onRename(draft);
+  };
+  return (
+    <Field label="Name" error={error ? [error] : []}>
+      <TextInput
+        value={draft}
+        invalid={error !== undefined}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setDraft(name);
+        }}
+      />
+    </Field>
+  );
+}
+
+function portDiagMessages(diags: Diagnostic[], port: string): string[] {
+  return diags
+    .filter((d) => {
+      const m = /\.ports\.([^.[]+)/.exec(d.path ?? "");
+      return m !== null && m[1] === port && d.code !== "unused_port";
+    })
+    .map((d) => d.message);
+}
+
+function PortsSection({
+  node,
+  flow,
+  diags,
+  onChange,
+  onRenamePort,
+  onRemovePort,
+}: {
+  node: AgentNode;
+  flow: Flow;
+  diags: Diagnostic[];
+  onChange: (p: (n: AgentNode) => AgentNode) => void;
+  onRenamePort: (from: string, to: string) => void;
+  onRemovePort: (port: string) => void;
+}) {
+  const names = Object.keys(node.ports ?? {});
+  const unused = unusedPorts(node, flow.edges);
+  return (
+    <div className="space-y-2" data-section="ports">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium text-muted">Output ports</span>
+        <Button
+          onClick={() => onChange((n) => addPort(n, freshPortName(names)))}
+        >
+          Add port
         </Button>
       </div>
+      {names.length === 0 && (
+        <div className="text-[11px] text-muted">
+          Without ports the agent ends with a note (see Output). With ports it
+          must finish by calling one emit tool per outcome, and each port is a
+          handle on the node.
+        </div>
+      )}
+      {msgs(diags, "ports").map((m) => (
+        <div key={m} className="text-[11px] text-bad">
+          {m}
+        </div>
+      ))}
+      {names.map((name) => (
+        <div
+          key={name}
+          className="space-y-2 rounded border border-line p-2"
+          data-port={name}
+        >
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <PortNameInput
+                name={name}
+                others={names.filter((n) => n !== name)}
+                onRename={(to) => onRenamePort(name, to)}
+              />
+            </div>
+            <Button onClick={() => onRemovePort(name)}>Remove</Button>
+          </div>
+          {unused.includes(name) && (
+            <div className="flex gap-1.5 text-[11px] text-warn">
+              <Icon name="warning" size={13} className="mt-px shrink-0" />
+              {unusedPortMessage(name)}
+            </div>
+          )}
+          <Field
+            label="Description"
+            hint="Shown to the agent as the tool description."
+          >
+            <TextInput
+              value={node.ports?.[name]?.description ?? ""}
+              onChange={(e) =>
+                onChange((n) =>
+                  setPort(n, name, { description: e.target.value }),
+                )
+              }
+            />
+          </Field>
+          <PortSchemaField
+            schema={node.ports?.[name]?.schema}
+            errors={portDiagMessages(diags, name)}
+            onChange={(schema) => onChange((n) => setPort(n, name, { schema }))}
+          />
+        </div>
+      ))}
+      {names.length > 0 && (
+        <Field
+          label="Emit"
+          hint="one: the last valid call wins. many: each call is a separate emission; downstream runs once per emission."
+        >
+          <Select
+            value={node.emit ?? "one"}
+            onChange={(e) =>
+              onChange((n) => {
+                const { emit: _e, ...rest } = n;
+                return e.target.value === "many"
+                  ? { ...rest, emit: "many" }
+                  : rest;
+              })
+            }
+          >
+            <option value="one">one</option>
+            <option value="many">many</option>
+          </Select>
+        </Field>
+      )}
+      <OutputsPreview node={node} flow={flow} />
+    </div>
+  );
+}
+
+function OutputsPreview({ node, flow }: { node: AgentNode; flow: Flow }) {
+  const text = outputsSection(flow, node);
+  if (text === undefined) return null;
+  return (
+    <div className="space-y-1" data-section="outputs-preview">
+      <div className="text-[11px] font-medium text-muted">
+        Generated outputs section
+      </div>
+      <pre className="overflow-x-auto whitespace-pre-wrap rounded border border-line bg-raised p-2 font-mono text-[11px]">
+        {text}
+      </pre>
       <div className="text-[11px] text-muted">
-        {fieldHints.length > 0
-          ? `Downstream fields: ${fieldHints.join(" ")}`
-          : "The schema has no top-level properties to reference downstream."}
+        hal appends this to the prompt at run time; it is not saved in the flow
+        file.
       </div>
     </div>
   );
@@ -420,8 +584,8 @@ function PromptSection({
     [sample.input],
   );
   const inline = source === "inline";
+  const hasPorts = Object.keys(node.ports ?? {}).length > 0;
   const instructionErrors = msgs(diags, "instructions");
-  const canSave = canSaveAsPrompt(node);
   const nameOk =
     /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(saveName) &&
     !prompts.includes(saveName);
@@ -475,43 +639,35 @@ function PromptSection({
               maxHeight="20rem"
             />
           </Field>
-          <Field
-            label="Output"
-            error={msgs(diags, "output")}
-            hint="note: the agent ends with an inbox note; none: free text; tool: structured output through submit_output."
-          >
-            <Select
-              value={node.output ?? "note"}
-              onChange={(e) =>
-                onChange((n) => withOutput(n, e.target.value as AgentOutput))
-              }
+          {hasPorts ? (
+            <div className="text-[11px] text-muted" data-section="output">
+              Output: the agent returns its result through the emit tools of its
+              ports.
+            </div>
+          ) : (
+            <Field
+              label="Output"
+              error={msgs(diags, "output")}
+              hint="note: the agent ends with an inbox note (also via submit_output); none: free text."
             >
-              <option value="note">note</option>
-              <option value="none">none</option>
-              <option value="tool">Tool (structured)</option>
-            </Select>
-          </Field>
-          {node.output === "tool" && (
-            <OutputSchemaField
-              schema={node.output_schema}
-              diags={diags}
-              onChange={(s) =>
-                onChange((n) => {
-                  const { output_schema: _s, ...rest } = n;
-                  return s === undefined ? rest : { ...rest, output_schema: s };
-                })
-              }
-            />
+              <Select
+                value={node.output ?? "note"}
+                onChange={(e) =>
+                  onChange((n) => ({
+                    ...n,
+                    output: e.target.value as "note" | "none",
+                  }))
+                }
+              >
+                <option value="note">note</option>
+                <option value="none">none</option>
+              </Select>
+            </Field>
           )}
           <div className="flex items-end gap-2">
             <Field
               label="Save as reusable prompt"
               error={create.error ? [errorMessage(create.error)] : []}
-              hint={
-                canSave
-                  ? undefined
-                  : "Saved prompts support note and none only."
-              }
             >
               <TextInput
                 value={saveName}
@@ -521,7 +677,6 @@ function PromptSection({
             </Field>
             <Button
               disabled={
-                !canSave ||
                 !nameOk ||
                 (node.instructions ?? "").trim() === "" ||
                 create.isPending
@@ -562,14 +717,20 @@ function AgentForm({
   prompts,
   runtimes,
   flowId,
+  flow,
   onChange,
+  onRenamePort,
+  onRemovePort,
 }: {
   flowId: string;
+  flow: Flow;
   node: AgentNode;
   diags: Diagnostic[];
   prompts: string[];
   runtimes: string[];
   onChange: (p: (n: AgentNode) => AgentNode) => void;
+  onRenamePort: (from: string, to: string) => void;
+  onRemovePort: (port: string) => void;
 }) {
   const promptOptions =
     node.prompt && !prompts.includes(node.prompt)
@@ -649,6 +810,14 @@ function AgentForm({
         prompts={promptOptions}
         flowId={flowId}
         onChange={onChange}
+      />
+      <PortsSection
+        node={node}
+        flow={flow}
+        diags={diags}
+        onChange={onChange}
+        onRenamePort={onRenamePort}
+        onRemovePort={onRemovePort}
       />
       <Field
         label="Extra prompt (template)"
@@ -759,27 +928,34 @@ function InboxForm({
 }) {
   return (
     <>
-      <Field label="Title (template)" error={msgs(diags, "title")}>
+      <Field
+        label="Title (template)"
+        error={msgs(diags, "title")}
+        hint="May be empty when only agent ports without a schema lead here: the agent's title is used."
+      >
         <TextInput
           value={node.title}
           invalid={msgs(diags, "title").length > 0}
           onChange={(e) => onChange((n) => ({ ...n, title: e.target.value }))}
         />
       </Field>
-      <Field label="Priority" error={msgs(diags, "priority")}>
-        <Select
+      <Field
+        label="Priority"
+        error={msgs(diags, "priority")}
+        hint="A priority, or a template that renders to one."
+      >
+        <TextInput
+          list={`priorities-${node.id}`}
           value={node.priority ?? "normal"}
           onChange={(e) =>
-            onChange((n) => ({
-              ...n,
-              priority: e.target.value as InboxNode["priority"],
-            }))
+            onChange((n) => ({ ...n, priority: e.target.value }))
           }
-        >
+        />
+        <datalist id={`priorities-${node.id}`}>
           {PRIORITIES.map((p) => (
-            <option key={p}>{p}</option>
+            <option key={p} value={p} />
           ))}
-        </Select>
+        </datalist>
       </Field>
       <Field
         label="Summary (markdown template)"
@@ -1130,6 +1306,9 @@ export function Inspector(props: InspectorProps) {
           prompts={props.prompts}
           runtimes={props.runtimes}
           flowId={props.flowId}
+          flow={props.flow}
+          onRenamePort={props.onRenamePort}
+          onRemovePort={props.onRemovePort}
           onChange={(p) =>
             props.onChange((n) => (n.type === "agent" ? p(n) : n))
           }

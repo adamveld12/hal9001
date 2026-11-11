@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"hal9001/internal/core"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 )
@@ -236,4 +237,26 @@ func nextCursor(c string) *string {
 		return nil
 	}
 	return &c
+}
+
+var emitPortRE = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// checkSimulatedEmit validates the shape of one simulate_emit entry (path names it in the error): a port name and,
+// when given, an output that is a JSON object. Whether the port exists and the output fits its schema is checked by
+// the engine against the flow.
+func checkSimulatedEmit(w http.ResponseWriter, path string, em *core.SimulatedEmit) bool {
+	if !emitPortRE.MatchString(em.Port) {
+		fieldProblem(w, path+".port", "port must be a port name (lowercase letters, digits and _)")
+		return false
+	}
+	if out := bytes.TrimSpace(em.Output); len(out) > 0 && string(out) != "null" {
+		var obj map[string]any
+		if json.Unmarshal(out, &obj) != nil || obj == nil {
+			fieldProblem(w, path+".output", "output must be a JSON object")
+			return false
+		}
+	} else {
+		em.Output = nil
+	}
+	return true
 }

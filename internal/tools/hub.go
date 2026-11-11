@@ -98,7 +98,7 @@ type RunSpec struct {
 	// dry-run agent node, the planning phase of a proposal).
 	ReadOnly bool
 
-	// Output, when set, adds the submit_output tool to the session (agent nodes with an output tool or note).
+	// Output, when set, adds the output tools of the sink to the session: submit_output (output: note) or emit_<port> (ports).
 	Output *OutputSink
 
 	// Node fields for providers (sandbox, custom tools): see internal/spec.Node.
@@ -233,7 +233,7 @@ func (h *Hub) Open(ctx context.Context, spec RunSpec) (*Session, error) {
 	}
 	s := &Session{h: h, spec: spec, reg: h.base.Clone(), ready: make(chan struct{})}
 	if spec.Output != nil {
-		if err := s.reg.Register(spec.Output.tool()); err != nil {
+		if err := s.reg.Register(spec.Output.registered()...); err != nil {
 			return nil, err
 		}
 	}

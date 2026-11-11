@@ -13,6 +13,7 @@ import {
   ERROR_PORT,
   DENIED_PORT,
 } from "./model";
+import { agentPortDiagnostics, inboxFedBySchemalessPorts } from "./agentPorts";
 import { validateSteps } from "./transform/validateSteps";
 
 type Pair = Pick<FlowEdge, "from" | "to">;
@@ -112,7 +113,11 @@ export function cycleEdgeKeys(flow: Flow): Set<string> {
 
 const BAD_ID = /[\s|]/;
 
-function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
+function nodeDiagnostics(
+  node: FlowNode,
+  index: number,
+  flow: Flow,
+): Diagnostic[] {
   const out: Diagnostic[] = [];
   const at = (
     field: string,
@@ -162,10 +167,16 @@ function nodeDiagnostics(node: FlowNode, index: number): Diagnostic[] {
       ) {
         at("cwd", "worktree cwd needs a repo");
       }
+      out.push(...agentPortDiagnostics(node, index, flow.edges));
       break;
     }
     case "inbox": {
-      if (node.title.trim() === "") at("title", "an inbox note needs a title");
+      if (
+        node.title.trim() === "" &&
+        !inboxFedBySchemalessPorts(flow, node.id)
+      ) {
+        at("title", "an inbox note needs a title");
+      }
       break;
     }
     case "approval": {
@@ -217,7 +228,7 @@ export function validateFlow(flow: Flow): Diagnostic[] {
       });
     }
     ids.set(n.id, i);
-    out.push(...nodeDiagnostics(n, i));
+    out.push(...nodeDiagnostics(n, i, flow));
   });
 
   const byId = new Map(flow.nodes.map((n) => [n.id, n]));

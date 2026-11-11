@@ -88,6 +88,7 @@ type Engine struct {
 	tools    *tools.Hub
 
 	assistTests sync.Map // flow run id -> *assistTest, for the runs of TestFlow
+	simEmits    sync.Map // flow run id -> map[node id]core.SimulatedEmit: agent nodes of test runs that emit instead of running
 	simulations sync.Map // flow run id -> "approved"|"denied": the simulated decision of approval nodes in test runs
 }
 

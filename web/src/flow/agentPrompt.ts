@@ -4,20 +4,6 @@ import type { AgentNode } from "./model";
 export const DEFAULT_INSTRUCTIONS =
   "Look at this item and say what needs attention.\n\n{{.input}}\n";
 
-export type AgentOutput = NonNullable<AgentNode["output"]>;
-
-/** Set the output mode; `output_schema` only exists with `tool`. */
-export function withOutput(node: AgentNode, output: AgentOutput): AgentNode {
-  if (output === "tool") return { ...node, output };
-  const { output_schema: _s, ...rest } = node;
-  return { ...rest, output };
-}
-
-/** Saved prompts support `note` and `none` only. */
-export function canSaveAsPrompt(node: AgentNode): boolean {
-  return node.output !== "tool";
-}
-
 export type PromptSource = "inline" | "library";
 
 /** Where the node's prompt lives: a saved prompt only when `prompt` is set. */
@@ -31,13 +17,13 @@ export function toInlinePrompt(node: AgentNode, text?: string): AgentNode {
   return {
     ...rest,
     instructions: text ?? (node.instructions || DEFAULT_INSTRUCTIONS),
-    output: node.output ?? "note",
+    ...(node.ports ? {} : { output: node.output ?? "note" }),
   };
 }
 
 /** Switch the node to a saved prompt (`name` may be empty until one is chosen). */
 export function toSavedPrompt(node: AgentNode, name = ""): AgentNode {
-  const { instructions: _i, output: _o, output_schema: _s, ...rest } = node;
+  const { instructions: _i, output: _o, ...rest } = node;
   return name === "" ? { ...rest } : { ...rest, prompt: name };
 }
 

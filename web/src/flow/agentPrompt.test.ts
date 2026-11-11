@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  canSaveAsPrompt,
   DEFAULT_INSTRUCTIONS,
   promptSource,
   templateHints,
   toInlinePrompt,
   toSavedPrompt,
-  withOutput,
 } from "./agentPrompt";
 import { newNode, type AgentNode } from "./model";
 
@@ -49,33 +47,9 @@ describe("agent prompt source", () => {
     ).toEqual(["{{.input.title}}", "{{.input.user.login}}"]);
   });
 
-  it("switching to a saved prompt drops output_schema", () => {
-    const tool = {
-      ...withOutput(fresh(), "tool"),
-      output_schema: { type: "object" },
-    };
-    const n = toSavedPrompt(tool, "p");
-    expect(n.output_schema).toBeUndefined();
-    expect(n.output).toBeUndefined();
-  });
-
-  it("only the tool output keeps output_schema", () => {
-    const tool = {
-      ...withOutput(fresh(), "tool"),
-      output_schema: { type: "object" },
-    };
-    expect(tool.output).toBe("tool");
-    expect(withOutput(tool, "tool").output_schema).toEqual({ type: "object" });
-    for (const o of ["note", "none"] as const) {
-      const n = withOutput(tool, o);
-      expect(n.output).toBe(o);
-      expect("output_schema" in n).toBe(false);
-    }
-  });
-
-  it("tool output cannot be saved as a library prompt", () => {
-    expect(canSaveAsPrompt(fresh())).toBe(true);
-    expect(canSaveAsPrompt(withOutput(fresh(), "none"))).toBe(true);
-    expect(canSaveAsPrompt(withOutput(fresh(), "tool"))).toBe(false);
+  it("inline prompts of a node with ports get no output", () => {
+    const n = { ...fresh(), ports: { done: {} } } as AgentNode;
+    delete n.output;
+    expect(toInlinePrompt(toSavedPrompt(n, "p")).output).toBeUndefined();
   });
 });

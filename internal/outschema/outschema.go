@@ -1,6 +1,6 @@
-// Package outschema compiles and applies the JSON Schemas of agent output: the `output_schema` of an agent node with
-// `output: tool`, and the default note schema. The schema becomes the input schema of the run's `submit_output` tool,
-// and every call is validated against it.
+// Package outschema compiles and applies the JSON Schemas of agent output: the schema of a port of an agent node and
+// the default note schema. The schema becomes the input schema of the run's `emit_<port>` (or `submit_output`) tool, and
+// every call is validated against it.
 package outschema
 
 import (
@@ -75,7 +75,7 @@ func cleanCompileError(err error) error {
 			return errors.New("not valid JSON Schema:\n" + strings.Join(lines, "\n"))
 		}
 	}
-	return errors.New(strings.ReplaceAll(err.Error(), resourceURL, "output_schema"))
+	return errors.New(strings.ReplaceAll(err.Error(), resourceURL, "schema"))
 }
 
 // Doc is the schema as a JSON object (the tool's input schema).

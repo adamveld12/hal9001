@@ -42,8 +42,6 @@ const (
 
 	OutputNote = "note"
 	OutputNone = "none"
-	// OutputTool: the agent returns its result by calling the submit_output tool, validated against output_schema.
-	OutputTool = "tool"
 
 	MCPStdio = "stdio"
 	MCPHTTP  = "http"
@@ -253,7 +251,7 @@ type Flow struct {
 // validation rejects fields that do not belong to the node's type.
 //
 //	command: lang, script|command, ports, cwd (dir only), timeout, side_effect
-//	agent:   runtime, mode, approve, prompt|instructions, output, output_schema, extra_prompt, model, cwd, timeout,
+//	agent:   runtime, mode, approve, prompt|instructions, output, ports, emit, extra_prompt, model, cwd, timeout,
 //	         approval_timeout, allow, mcp_servers, sandbox, image, repo, ref, tools
 //	inbox:   title, priority, summary_md, suggested_reply, links
 //	transform: steps, timeout
@@ -267,7 +265,7 @@ type Node struct {
 
 	// command
 	Lang    string   `yaml:"lang,omitempty" json:"lang,omitempty"`
-	Ports   []string `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Ports   Ports    `yaml:"ports,omitempty" json:"ports,omitzero"`
 	Script  string   `yaml:"script,omitempty" json:"script,omitempty"`
 	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 
@@ -278,12 +276,13 @@ type Node struct {
 	Prompt      string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 	ExtraPrompt string `yaml:"extra_prompt,omitempty" json:"extra_prompt,omitempty"`
 	// Instructions is an inline prompt template (alternative to Prompt);
-	// Output (note|none|tool, default note) applies only to inline instructions. OutputSchema is the JSON Schema
-	// of the submit_output tool's arguments (output tool only; default: the inbox note schema).
-	Instructions string     `yaml:"instructions,omitempty" json:"instructions,omitempty"`
-	Output       string     `yaml:"output,omitempty" json:"output,omitempty"`
-	OutputSchema JSONSchema `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
-	Model        string     `yaml:"model,omitempty" json:"model,omitempty"`
+	// Output (note|none, default note) applies only to inline instructions.
+	Instructions string `yaml:"instructions,omitempty" json:"instructions,omitempty"`
+	Output       string `yaml:"output,omitempty" json:"output,omitempty"`
+	Model        string `yaml:"model,omitempty" json:"model,omitempty"`
+	// Emit (one|many, default one) applies to an agent node with ports: one emission (the last valid call) or one per
+	// valid emit_<port> call.
+	Emit string `yaml:"emit,omitempty" json:"emit,omitempty"`
 
 	// inbox
 	Title          string `yaml:"title,omitempty" json:"title,omitempty"`

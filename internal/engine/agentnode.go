@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"hal9001/internal/agent"
-	"hal9001/internal/outschema"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -57,18 +56,21 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		wtKey = nr.ID
 	}
 
-	out, err := e.agentOutputOf(ne)
-	if err != nil {
-		return failure(errConfig, err.Error())
-	}
+	out := e.agentOutputOf(ne)
 	// Only output: note parses the final message as a note, whatever the mode. Readonly agents with output none or
-	// tool produce no note of their own.
+	// ports produce no note of their own.
 	expectNote := out.mode == spec.OutputNote
 	// The planning phase of an approve+proposal run only writes the plan; the result is returned in the execute phase.
 	planning := mode == agent.ModeApprove && style != agent.ApprovePerTool && prev == nil
 	var sink *tools.OutputSink
-	if out.schema != nil && !planning {
-		sink = tools.NewOutputSink(out.schema, out.mode == spec.OutputTool)
+	if !planning {
+		if sink, err = newOutputSink(node, out); err != nil {
+			return failure(errConfig, err.Error())
+		}
+	}
+	if sink != nil && out.ports && prev == nil {
+		// The generated Outputs section ends the prompt; the proposal phase and its resume add their own.
+		prompt += "\n\n" + spec.OutputsSection(out.emits, node.Emit == spec.EmitMany)
 	}
 	runID := e.st.NewID()
 	phase := agent.PhasePropose
@@ -107,10 +109,22 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		ToolsReady:      tools.ToolsReady(ht.sess),
 	}
 	if sink != nil {
-		req.Output = &agent.OutputHook{
-			Value: sink.Value, LastError: sink.LastError, Required: sink.Required(), AsNote: out.asNote,
+		hook := &agent.OutputHook{
+			Done: sink.Done, LastError: sink.LastError, Required: sink.Required(), AsNote: !out.ports,
 			FollowUp: sink.FollowUpPrompt(), ResumeNote: sink.ResumeNote(),
 		}
+		if out.ports {
+			hook.Emissions = func() []agent.Emission {
+				var ems []agent.Emission
+				for _, em := range sink.Emissions() {
+					ems = append(ems, agent.Emission{Port: em.Port, Output: em.Output})
+				}
+				return ems
+			}
+		} else {
+			hook.Value = sink.Value
+		}
+		req.Output = hook
 	}
 	if node.Allow != nil {
 		req.Allow.Tools = node.Allow.Tools
@@ -149,37 +163,39 @@ func (e *Engine) runAgent(ctx context.Context, ne *nodeEnv) nodeOutcome {
 
 // agentOutput is how an agent node returns its result.
 type agentOutput struct {
-	mode string // spec.OutputNote, OutputNone or OutputTool
-	// schema is the schema of the submit_output tool; nil with output none.
-	schema *outschema.Schema
-	// asNote: a valid submission is the inbox note (the schema is the note schema).
-	asNote bool
+	// mode is spec.OutputNote or spec.OutputNone for a node without ports (the final message is the result).
+	mode string
+	// ports: the node declares ports; emits are the tools of those with an outgoing edge.
+	ports bool
+	emits []spec.EmitTool
 }
 
-// agentOutputOf resolves the node's output mode: the inline `output` (default note) or the prompt file's.
-func (e *Engine) agentOutputOf(ne *nodeEnv) (agentOutput, error) {
+// agentOutputOf resolves how the node returns its result: through its ports, or the inline `output` (default note) or
+// the prompt file's.
+func (e *Engine) agentOutputOf(ne *nodeEnv) agentOutput {
 	node := ne.node
-	mode := spec.OutputNone
-	switch {
-	case node.Instructions != "":
-		mode = firstNonEmpty(node.Output, spec.OutputNote)
-	default:
-		if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
-			mode = spec.OutputNote
-		}
+	if !node.Ports.IsZero() {
+		return agentOutput{mode: spec.OutputNone, ports: true, emits: ne.flow.EmitTools(node)}
 	}
-	switch {
-	case mode == spec.OutputNone:
-		return agentOutput{mode: mode}, nil
-	case mode == spec.OutputTool && len(node.OutputSchema) > 0:
-		s, err := outschema.Compile(node.OutputSchema)
-		if err != nil {
-			return agentOutput{}, fmt.Errorf("output_schema: %w", err)
-		}
-		return agentOutput{mode: mode, schema: s}, nil
-	default:
-		return agentOutput{mode: mode, schema: outschema.Note(), asNote: true}, nil
+	if node.Instructions != "" {
+		return agentOutput{mode: firstNonEmpty(node.Output, spec.OutputNote)}
 	}
+	if p := ne.snap.prompts[node.Prompt]; p != nil && p.Output == spec.OutputNote {
+		return agentOutput{mode: spec.OutputNote}
+	}
+	return agentOutput{mode: spec.OutputNone}
+}
+
+// newOutputSink returns the sink of the run's output tools: emit_<port> for ports with an edge, submit_output for
+// output: note, none otherwise.
+func newOutputSink(node *spec.Node, out agentOutput) (*tools.OutputSink, error) {
+	switch {
+	case out.ports && len(out.emits) > 0:
+		return tools.NewPortSink(out.emits, node.Emit == spec.EmitMany)
+	case !out.ports && out.mode == spec.OutputNote:
+		return tools.NewNoteSink(), nil
+	}
+	return nil, nil
 }
 
 // parkedProposal finds the propose-phase run of a node that is being resumed,
@@ -322,12 +338,18 @@ func (e *Engine) agentOutcome(ne *nodeEnv, res agent.RunRecord, expectNote bool)
 		if err := e.noteToInbox(ne, res, expectNote); err != nil {
 			e.log.Error("engine: create inbox item from agent note", "agent_run", res.ID, "err", err)
 		}
-		out.outputs = []runner.Output{{Port: spec.PortOut, Payload: e.agentPayload(ne, res)}}
 		out.reason = "agent run " + res.ID
+		if len(res.Emissions) > 0 {
+			for _, em := range res.Emissions {
+				out.outputs = append(out.outputs, runner.Output{Port: em.Port, Payload: e.agentPayload(ne, res, em.Port, em.Output)})
+			}
+		} else if ne.node.Ports.IsZero() {
+			out.outputs = []runner.Output{{Port: spec.PortOut, Payload: e.agentPayload(ne, res, spec.PortOut, res.Output)}}
+		}
 	case agent.StatusDenied:
 		out.status, out.decision, out.class = store.NodeDone, store.DecisionEmitted, agent.ReasonDenied
 		out.reason = firstNonEmpty(res.Error, "denied")
-		out.outputs = []runner.Output{{Port: spec.PortDenied, Payload: e.agentPayload(ne, res)}}
+		out.outputs = []runner.Output{{Port: spec.PortDenied, Payload: e.agentPayload(ne, res, spec.PortDenied, nil)}}
 	case agent.StatusKilled:
 		out.status, out.decision, out.class, out.reason = store.NodeKilled, store.DecisionError, errKilled, "killed by the kill switch"
 	case agent.StatusInterrupted:
@@ -339,6 +361,10 @@ func (e *Engine) agentOutcome(ne *nodeEnv, res agent.RunRecord, expectNote bool)
 		}
 		out = failure(firstNonEmpty(class, "agent_error"), ne.snap.red.String(firstNonEmpty(res.Error, "agent run "+string(res.Status))))
 		out.argv = res.Argv
+		if class == agent.ReasonNoOutput {
+			// What the agent said instead of calling a tool travels with the error.
+			out.errorExtra = map[string]any{"final_message": ne.snap.red.String(res.FinalMessage)}
+		}
 	}
 	return out
 }
@@ -352,17 +378,28 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
-// agentPayload is what an agent node emits downstream: its input and a summary
-// of the run, so a following node can use both ({{.input.input.x}} and
-// {{.input.agent.final_message}}, {{.input.agent.note.title}}, {{.input.agent.output.<field>}} ...).
-func (e *Engine) agentPayload(ne *nodeEnv, res agent.RunRecord) json.RawMessage {
+// agentPayload is what an agent node emits downstream on a port: its input and a summary of the run, so a following
+// node can use both ({{.input.input.x}} and {{.input.agent.final_message}}, {{.input.agent.note.title}},
+// {{.input.agent.output.<field>}} ...). output is the validated arguments of the emit_<port> (or submit_output) call.
+func (e *Engine) agentPayload(ne *nodeEnv, res agent.RunRecord, port string, output json.RawMessage) json.RawMessage {
+	return e.payloadOf(ne, res.ID, port, output, res.FinalMessage, string(res.Status), res.Note)
+}
+
+// emitPayload is the payload of an emission without a structured note (a simulated emission).
+func (e *Engine) emitPayload(ne *nodeEnv, runID, port string, output json.RawMessage, finalMessage, status string) json.RawMessage {
+	return e.payloadOf(ne, runID, port, output, finalMessage, status, nil)
+}
+
+// payloadOf builds the payload of one emission: {"input": <agent input>, "agent": {run_id, status, port, output,
+// final_message, note, proposal, comment}}. A nil output is null.
+func (e *Engine) payloadOf(ne *nodeEnv, runID, port string, output json.RawMessage, finalMessage, status string, note *agent.Note) json.RawMessage {
 	return e.agentSummary(ne, map[string]any{
-		"run_id": res.ID, "status": string(res.Status), "final_message": res.FinalMessage, "note": res.Note,
-		"output": outputValue(res.Output), "proposal": "", "comment": "",
+		"run_id": runID, "status": status, "port": port, "final_message": finalMessage, "note": note,
+		"output": outputValue(output), "proposal": "", "comment": "",
 	})
 }
 
-// outputValue is the submit_output result as a payload value: null when the run made no valid call.
+// outputValue is an emission's arguments as a payload value: null when there are none.
 func outputValue(raw json.RawMessage) any {
 	if len(raw) == 0 {
 		return nil
@@ -420,7 +457,7 @@ func (e *Engine) noteToInbox(ne *nodeEnv, res agent.RunRecord, expectNote bool) 
 // deniedPayload is the payload of a denied proposal: the node's input with the proposal and comment.
 func (e *Engine) deniedPayload(ne *nodeEnv, run *store.AgentRun, ap *store.Approval) json.RawMessage {
 	return e.agentSummary(ne, map[string]any{
-		"run_id": run.ID, "status": "denied", "final_message": "", "note": nil, "output": nil,
+		"run_id": run.ID, "status": "denied", "port": spec.PortDenied, "final_message": "", "note": nil, "output": nil,
 		"proposal": e.readContent(ap.Proposal), "comment": ap.Comment,
 	})
 }

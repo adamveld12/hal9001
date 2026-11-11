@@ -89,6 +89,9 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 	var zero core.AssistFlowTestResult
 	flow := req.Flow.Clone()
 	flow.ApplyDefaults()
+	if err := validateSimulatedEmits(&flow, req.SimulateEmit); err != nil {
+		return zero, err
+	}
 	raw, err := spec.MarshalFlow(flow)
 	if err != nil {
 		return zero, fmt.Errorf("engine: marshal flow: %w", err)
@@ -122,6 +125,10 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 	defer e.assistTests.Delete(fr.ID)
 	e.simulations.Store(fr.ID, simulatedDecision(req.SimulateApproval))
 	defer e.simulations.Delete(fr.ID)
+	if len(req.SimulateEmit) > 0 {
+		e.simEmits.Store(fr.ID, req.SimulateEmit)
+		defer e.simEmits.Delete(fr.ID)
+	}
 
 	entries := flow.EntryNodes()
 	if len(entries) == 0 {
@@ -184,7 +191,7 @@ func (e *Engine) TestFlow(ctx context.Context, req core.FlowTestRequest) (core.A
 			Decision: strPtr(string(nr.Decision)), Reason: strPtr(nr.Reason), Error: strPtr(nr.Error),
 			Ports: nr.Ports, Outputs: []core.AssistFlowTestOutput{}, WouldCreate: at.would[nr.ID],
 			Stdout: strPtr(truncate(e.readContent(nr.Stdout), previewLimit)), Stderr: strPtr(truncate(e.readContent(nr.Stderr), previewLimit)),
-			ExitCode: nr.ExitCode, DurationMS: nr.DurationMS,
+			ExitCode: nr.ExitCode, DurationMS: nr.DurationMS, Simulated: strings.HasPrefix(nr.Reason, simulatedReasonPrefix),
 		}
 		if n.Ports == nil {
 			n.Ports = []string{}

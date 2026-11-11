@@ -14,9 +14,16 @@ import (
 func outputHook(e *env, after int, required bool, value string) *agent.OutputHook {
 	return &agent.OutputHook{
 		Required: required, FollowUp: "You must call submit_output now.",
+		Done: func() bool { return value != "" && len(e.callsOf("session/prompt")) >= after },
 		Value: func() json.RawMessage {
 			if value != "" && len(e.callsOf("session/prompt")) >= after {
 				return json.RawMessage(value)
+			}
+			return nil
+		},
+		Emissions: func() []agent.Emission {
+			if value != "" && len(e.callsOf("session/prompt")) >= after {
+				return []agent.Emission{{Port: "reviewed", Output: json.RawMessage(value)}, {Port: "needs_human", Output: json.RawMessage(value)}}
 			}
 			return nil
 		},
@@ -37,13 +44,13 @@ func promptTexts(e *env) []string {
 }
 
 // A turn that ends without a valid submission gets exactly one reminder in the same session; a valid submission after
-// it makes the run succeed with the output recorded.
+// it makes the run succeed with the output and the emissions recorded.
 func TestRequiredOutputIsRequestedOnce(t *testing.T) {
 	e := newEnv(t, finalOnly())
 	req := e.req(agent.ModeReadonly, "")
 	req.Output = outputHook(e, 2, true, `{"verdict":"ok"}`)
 	rec := e.run(req)
-	if rec.Status != agent.StatusSucceeded || string(rec.Output) != `{"verdict":"ok"}` {
+	if rec.Status != agent.StatusSucceeded || string(rec.Output) != `{"verdict":"ok"}` || len(rec.Emissions) != 2 || rec.Emissions[1].Port != "needs_human" {
 		t.Fatalf("status %s output %s error %q", rec.Status, rec.Output, rec.Error)
 	}
 	texts := promptTexts(e)

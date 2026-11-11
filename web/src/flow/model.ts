@@ -1,3 +1,4 @@
+import type { components } from "../api/schema";
 import type { NodeToolRef } from "./toolSelection";
 // Flow model: the JSON form of the YAML in REQUIREMENTS §6 (snake_case keys,
 // identical to the file on disk). The editor edits this model directly; the
@@ -65,6 +66,8 @@ export interface CommandNode {
   ui?: UIPos;
 }
 
+export type AgentPort = components["schemas"]["AgentPort"];
+
 export interface AgentNode {
   id: string;
   type: "agent";
@@ -75,10 +78,12 @@ export interface AgentNode {
   prompt?: string;
   /** Inline prompt template. */
   instructions?: string;
-  /** Inline instructions only: `note` (default), `none`, or `tool` (structured via submit_output). */
-  output?: "note" | "none" | "tool";
-  /** Only with `output: tool`: JSON Schema of the submit_output arguments; omitted = default note schema. */
-  output_schema?: Record<string, unknown>;
+  /** Inline instructions only: `note` (default) or `none`. Not allowed together with `ports`. */
+  output?: "note" | "none";
+  /** Output ports in declaration order (object key order); each becomes an `emit_<port>` tool. */
+  ports?: Record<string, AgentPort>;
+  /** With `ports`: `one` (default, the last valid call wins) or `many` (one emission per call). */
+  emit?: "one" | "many";
   extra_prompt?: string;
   model?: string;
   cwd?: AgentCwd;
@@ -100,7 +105,8 @@ export interface InboxNode {
   id: string;
   type: "inbox";
   title: string;
-  priority?: Priority;
+  /** A priority name or a template that renders to one. */
+  priority?: Priority | string;
   summary_md?: string;
   suggested_reply?: string;
   links?: { label: string; url: string }[];
@@ -183,12 +189,20 @@ export function edgeKey(e: FlowEdge): string {
   return `${e.from}|${edgePort(e)}|${e.to}`;
 }
 
+/** Declared output port names of an agent node, in declaration order. */
+export function agentPortNames(node: AgentNode): string[] {
+  return Object.keys(node.ports ?? {});
+}
+
 /** Ports a node author declares (excluding implicit ones). */
 export function declaredPorts(node: FlowNode): string[] {
   switch (node.type) {
     case "command":
       return node.ports && node.ports.length > 0 ? node.ports : [DEFAULT_PORT];
-    case "agent":
+    case "agent": {
+      const names = agentPortNames(node);
+      return names.length > 0 ? names : [DEFAULT_PORT];
+    }
     case "inbox":
       return [DEFAULT_PORT];
     case "approval":

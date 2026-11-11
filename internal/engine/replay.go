@@ -91,6 +91,11 @@ func (e *Engine) TestNode(ctx context.Context, req core.TestNodeRequest) (*store
 	if node == nil {
 		return nil, nil, fmt.Errorf("%w: node %q in flow %q", core.ErrUnknownRef, req.NodeID, flowID)
 	}
+	if req.SimulateEmit != nil {
+		if err := validateSimulatedEmits(flow, map[string]core.SimulatedEmit{node.ID: *req.SimulateEmit}); err != nil {
+			return nil, nil, err
+		}
+	}
 	input := []byte(strings.TrimSpace(string(req.Input)))
 	if req.EventID != "" {
 		ev, err := e.st.GetEvent(ctx, req.EventID)
@@ -117,6 +122,9 @@ func (e *Engine) TestNode(ctx context.Context, req core.TestNodeRequest) (*store
 	}
 	if node.Type == spec.NodeApproval {
 		e.simulations.Store(fr.ID, simulatedDecision(req.SimulateApproval))
+	}
+	if req.SimulateEmit != nil {
+		e.simEmits.Store(fr.ID, map[string]core.SimulatedEmit{node.ID: *req.SimulateEmit})
 	}
 	nr := &store.NodeRun{FlowRunID: fr.ID, NodeID: node.ID, NodeType: nodeRunType(node), Stdin: store.Inline(string(input))}
 	if err := e.st.CreateNodeRun(ctx, nr); err != nil {

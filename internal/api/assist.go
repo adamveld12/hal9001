@@ -283,14 +283,15 @@ func (s *Server) updateAssistDraft(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SampleIndex      *int            `json:"sample_index"`
-		EventID          string          `json:"event_id"`
-		Input            json.RawMessage `json:"input"`
-		Args             json.RawMessage `json:"args"`
-		Sensor           string          `json:"sensor"`
-		FromSensor       string          `json:"from_sensor"`
-		Item             *int            `json:"item"`
-		SimulateApproval string          `json:"simulate_approval"`
+		SampleIndex      *int                          `json:"sample_index"`
+		EventID          string                        `json:"event_id"`
+		Input            json.RawMessage               `json:"input"`
+		Args             json.RawMessage               `json:"args"`
+		Sensor           string                        `json:"sensor"`
+		FromSensor       string                        `json:"from_sensor"`
+		Item             *int                          `json:"item"`
+		SimulateApproval string                        `json:"simulate_approval"`
+		SimulateEmit     map[string]core.SimulatedEmit `json:"simulate_emit"`
 	}
 	if !decodeJSON(w, r, &req, true) {
 		return
@@ -317,6 +318,17 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 		fieldProblem(w, "simulate_approval", "simulate_approval must be approved or denied")
 		return
 	}
+	for id, em := range req.SimulateEmit {
+		path := "simulate_emit." + id
+		if !spec.ValidID(id) {
+			fieldProblem(w, "simulate_emit", "simulate_emit keys must be node ids, got "+id)
+			return
+		}
+		if !checkSimulatedEmit(w, path, &em) {
+			return
+		}
+		req.SimulateEmit[id] = em
+	}
 	if string(req.Input) == "null" {
 		req.Input = nil
 	}
@@ -329,7 +341,7 @@ func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := svc.TestDraft(r.Context(), r.PathValue("id"), r.Header.Get(assistAgentHeader) != "",
 		core.AssistTestRequest{SampleIndex: req.SampleIndex, EventID: req.EventID, Input: req.Input, Args: req.Args,
-			Sensor: req.Sensor, FromSensor: req.FromSensor, Item: req.Item, SimulateApproval: req.SimulateApproval})
+			Sensor: req.Sensor, FromSensor: req.FromSensor, Item: req.Item, SimulateApproval: req.SimulateApproval, SimulateEmit: req.SimulateEmit})
 	if err != nil {
 		s.writeError(w, r, err)
 		return

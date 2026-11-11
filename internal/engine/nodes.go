@@ -52,6 +52,15 @@ func (n *nodeEnv) data() map[string]any {
 		spec.RunInfo{ID: n.fr.ID, EventID: n.fr.EventID, Kind: string(n.fr.Kind)})
 }
 
+// emittedString is the string field of the agent emission this node received (input.agent.output.<field>), or "".
+func (n *nodeEnv) emittedString(field string) string {
+	in, _ := n.inputV.(map[string]any)
+	ag, _ := in["agent"].(map[string]any)
+	out, _ := ag["output"].(map[string]any)
+	s, _ := out[field].(string)
+	return s
+}
+
 func (n *nodeEnv) render(name, tmpl string) (string, error) {
 	return spec.RenderNamed(name, tmpl, n.data())
 }
@@ -69,6 +78,8 @@ type nodeOutcome struct {
 	argv, envKeys   []string
 	stdout, stderr  string
 	routableFailure bool // a failed outcome that the error port may catch
+	// errorExtra adds fields to the payload of the error port (the agent's final message of a no_output failure).
+	errorExtra map[string]any
 }
 
 func failure(class, reason string) nodeOutcome {
@@ -114,6 +125,8 @@ func (e *Engine) execNode(parent context.Context, nr *store.NodeRun) {
 		out = e.runInbox(ne)
 	case ne.node.Type == spec.NodeApproval:
 		out = e.runApproval(ne)
+	case ne.node.Type == spec.NodeAgent && e.simulatedEmit(fr.ID, ne.node.ID) != nil:
+		out = e.runSimulatedAgent(ne)
 	case ne.node.Type == spec.NodeAgent && e.assistTestOf(fr.ID) != nil:
 		out = nodeOutcome{status: store.NodeSkipped, decision: store.DecisionSkipped, reason: assistTestAgentSkip}
 	case ne.node.Type == spec.NodeAgent:
@@ -235,7 +248,7 @@ func (e *Engine) runCommand(ctx context.Context, ne *nodeEnv) nodeOutcome {
 		c.lang, c.script, c.argv, c.envKeys, c.stdout, c.stderr, c.exit = out.lang, out.script, out.argv, out.envKeys, out.stdout, out.stderr, out.exit
 		return c
 	}
-	oc := res.Outcome(node.Ports)
+	oc := res.Outcome(node.Ports.Names())
 	switch oc.Decision {
 	case runner.DecisionError:
 		out.status, out.decision, out.routableFailure = store.NodeFailed, store.DecisionError, true
@@ -275,7 +288,7 @@ func (e *Engine) runTransform(ctx context.Context, ne *nodeEnv) nodeOutcome {
 	}
 	cmd := *ne.node
 	cmd.Type, cmd.Lang, cmd.Script, cmd.Steps = spec.NodeCommand, spec.LangJQ, prog, nil
-	cmd.Ports = transform.Ports(ne.node.Steps)
+	cmd.Ports = spec.NamePorts(transform.Ports(ne.node.Steps)...)
 	sub := *ne
 	sub.node = &cmd
 	out := e.runCommand(ctx, &sub)
@@ -342,7 +355,7 @@ func (e *Engine) runInbox(ne *nodeEnv) nodeOutcome {
 	n := ne.node
 	it := &store.InboxItem{
 		SourceType: store.SourceNodeRun, NodeRunID: ne.nr.ID, FlowRunID: ne.fr.ID,
-		Priority: store.Priority(n.Priority), DryRun: ne.fr.DryRun,
+		DryRun: ne.fr.DryRun,
 	}
 	fields := []struct {
 		name, tmpl string
@@ -352,6 +365,14 @@ func (e *Engine) runInbox(ne *nodeEnv) nodeOutcome {
 		{"summary_md", n.SummaryMD, &it.SummaryMD},
 		{"suggested_reply", n.SuggestedReply, &it.SuggestedReply},
 	}
+	prio, err := ne.render("priority", firstNonEmpty(n.Priority, spec.PriorityNormal))
+	if err != nil {
+		return failure(errTemplate, err.Error())
+	}
+	if prio = strings.ToLower(strings.TrimSpace(prio)); !slices.Contains(spec.Priorities, prio) {
+		return failure(errTemplate, fmt.Sprintf("priority rendered %q, want one of %s", prio, strings.Join(spec.Priorities, ", ")))
+	}
+	it.Priority = store.Priority(prio)
 	for _, f := range fields {
 		v, err := ne.render(f.name, f.tmpl)
 		if err != nil {
@@ -370,6 +391,7 @@ func (e *Engine) runInbox(ne *nodeEnv) nodeOutcome {
 		}
 		it.Links = append(it.Links, store.InboxLink{Label: ne.snap.red.String(label), URL: ne.snap.red.String(url)})
 	}
+	e.fillFromEmission(ne, it)
 	if strings.TrimSpace(it.Title) == "" {
 		return failure(errTemplate, "title rendered empty")
 	}
@@ -416,10 +438,14 @@ func (e *Engine) finishNode(ne *nodeEnv, out nodeOutcome) {
 	nr, fr := ne.nr, ne.fr
 	at := e.assistTestOf(fr.ID)
 	if out.routableFailure && out.status == store.NodeFailed && routes(fr, at) && hasEdge(ne.flow, nr.NodeID, spec.PortError) {
-		payload, _ := json.Marshal(map[string]any{
+		body := map[string]any{
 			"input": json.RawMessage(nonEmptyJSON(ne.input)), "error": out.class, "reason": out.reason,
 			"exit_code": out.exit, "stderr": truncate(out.stderr, 4000),
-		})
+		}
+		for k, v := range out.errorExtra {
+			body[k] = v
+		}
+		payload, _ := json.Marshal(body)
 		out.status = store.NodeDone
 		out.outputs = []runner.Output{{Port: spec.PortError, Payload: payload}}
 	}
@@ -481,4 +507,53 @@ func distinctPorts(outs []runner.Output) []string {
 		}
 	}
 	return ports
+}
+
+// fillFromEmission is the inbox shortcut: an inbox node after an agent port without a schema receives the inbox note
+// as the agent's emission (input.agent.output) and takes the fields it does not set itself from it. A missing title
+// or summary_md is taken from the emission; a node without a title is a note node, so it also takes the priority (when
+// it keeps the default), suggested reply and links. Whatever the node sets wins.
+func (e *Engine) fillFromEmission(ne *nodeEnv, it *store.InboxItem) {
+	noteNode := strings.TrimSpace(it.Title) == ""
+	red := ne.snap.red
+	if noteNode {
+		it.Title = red.String(ne.emittedString("title"))
+	}
+	if strings.TrimSpace(it.SummaryMD) == "" {
+		it.SummaryMD = red.String(ne.emittedString("summary_md"))
+	}
+	if !noteNode {
+		return
+	}
+	if it.SuggestedReply == "" {
+		it.SuggestedReply = red.String(ne.emittedString("suggested_reply"))
+	}
+	if p := ne.emittedString("priority"); p != "" && it.Priority == store.PriorityNormal && slices.Contains(spec.Priorities, p) {
+		it.Priority = store.Priority(p)
+	}
+	if len(it.Links) == 0 {
+		for _, l := range ne.emittedLinks() {
+			it.Links = append(it.Links, store.InboxLink{Label: red.String(l.label), URL: red.String(l.url)})
+		}
+	}
+}
+
+type emittedLink struct{ label, url string }
+
+// emittedLinks are the links of the agent emission this node received (input.agent.output.links).
+func (n *nodeEnv) emittedLinks() []emittedLink {
+	in, _ := n.inputV.(map[string]any)
+	ag, _ := in["agent"].(map[string]any)
+	out, _ := ag["output"].(map[string]any)
+	raw, _ := out["links"].([]any)
+	var links []emittedLink
+	for _, r := range raw {
+		m, _ := r.(map[string]any)
+		l, _ := m["label"].(string)
+		u, _ := m["url"].(string)
+		if l != "" && u != "" {
+			links = append(links, emittedLink{l, u})
+		}
+	}
+	return links
 }

@@ -88,7 +88,7 @@ func TestFlowDefaults(t *testing.T) {
 	if filter.Timeout.Std() != 60*time.Second {
 		t.Errorf("command timeout = %v, want 60s", filter.Timeout)
 	}
-	if got := strings.Join(filter.Ports, ","); got != "out" {
+	if got := strings.Join(filter.Ports.Names(), ","); got != "out" {
 		t.Errorf("default ports = %q, want out", got)
 	}
 	if got := strings.Join(classify.OutPorts(), ","); got != "small,large,error" {
@@ -247,29 +247,9 @@ func TestFlowValidationErrors(t *testing.T) {
 			code: CodeRequired, path: "nodes[0].instructions", node: "a", msg: "set instructions (inline prompt) or prompt (a file in prompts/)",
 		},
 		{
-			name: "output_schema needs output tool",
-			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, instructions: hi, output_schema: {type: object}}\n", "  []\n"),
-			code: CodeFieldNotAllowed, path: "nodes[0].output_schema", node: "a", msg: "only valid with output: tool",
-		},
-		{
-			name: "output_schema must be valid JSON Schema",
-			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, instructions: hi, output: tool, output_schema: {type: object, properties: {p: {type: strng}}}}\n", "  []\n"),
-			code: CodeInvalidValue, path: "nodes[0].output_schema", node: "a", msg: "/properties/p/type",
-		},
-		{
-			name: "output_schema must describe an object",
-			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, instructions: hi, output: tool, output_schema: {type: string}}\n", "  []\n"),
-			code: CodeInvalidValue, path: "nodes[0].output_schema", node: "a", msg: "type: object",
-		},
-		{
-			name: "output_schema cannot reference a remote schema",
-			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, instructions: hi, output: tool, output_schema: {type: object, properties: {p: {$ref: 'https://example.com/s.json'}}}}\n", "  []\n"),
-			code: CodeInvalidValue, path: "nodes[0].output_schema", node: "a", msg: "remote",
-		},
-		{
 			name: "unknown output",
 			yaml: flowWith("  - {id: a, type: agent, runtime: claude, mode: auto, instructions: hi, output: json}\n", "  []\n"),
-			code: CodeInvalidEnum, path: "nodes[0].output", node: "a", msg: "note | none | tool",
+			code: CodeInvalidEnum, path: "nodes[0].output", node: "a", msg: "note | none",
 		},
 		{
 			name: "invalid lang",
@@ -520,66 +500,5 @@ func TestFlowIDFromFileName(t *testing.T) {
 	}
 	if out, _ := MarshalFlow(*f); strings.Contains(string(out), "\nid:") || strings.HasPrefix(string(out), "id:") {
 		t.Errorf("marshal wrote an id line:\n%s", out)
-	}
-}
-
-const toolOutputFlow = `enabled: true
-subscribe: []
-nodes:
-  - id: review
-    type: agent
-    runtime: claude
-    mode: readonly
-    instructions: Review it.
-    output: tool
-    output_schema:
-      type: object
-      required: [priority, verdict, body]
-      properties:
-        priority: {enum: [urgent, high, normal, low]}
-        linear_urls: {type: array, items: {type: string}}
-        verdict: {type: string}
-        body: {type: string}
-edges: []
-`
-
-func TestOutputToolSchemaParsesAndRoundTrips(t *testing.T) {
-	f, ds := CheckFlow("t", []byte(toolOutputFlow), testRefs())
-	for _, d := range ds {
-		if d.Severity == SeverityError {
-			t.Fatalf("valid output_schema rejected: %v", ds)
-		}
-	}
-	n := f.Nodes[0]
-	if n.Output != OutputTool || n.OutputSchema["type"] != "object" {
-		t.Fatalf("node: %+v", n)
-	}
-	out, err := MarshalFlow(*f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(out)
-	// Keywords keep a readable order: type, required, properties.
-	ti, ri, pi := strings.Index(text, "type: object"), strings.Index(text, "required:"), strings.Index(text, "properties:")
-	if ti < 0 || ti >= ri || ri >= pi {
-		t.Errorf("schema keywords out of order:\n%s", text)
-	}
-	g, ds := ParseFlow("t", out)
-	if len(ds) != 0 {
-		t.Fatalf("saved file does not parse: %v\n%s", ds, text)
-	}
-	if h1, h2 := mustJSON(t, f), mustJSON(t, g); h1 != h2 {
-		t.Errorf("round trip changed the flow:\n%s\n%s", h1, h2)
-	}
-}
-
-func TestOutputToolWithoutSchemaIsValid(t *testing.T) {
-	head, _, _ := strings.Cut(toolOutputFlow, "    output_schema:")
-	y := head + "edges: []\n"
-	_, ds := CheckFlow("t", []byte(y), testRefs())
-	for _, d := range ds {
-		if d.Severity == SeverityError {
-			t.Fatalf("output: tool without output_schema (note schema default): %v", ds)
-		}
 	}
 }

@@ -46,7 +46,7 @@ func (m *Manager) testFlow(ctx context.Context, s *session, byAgent, gated bool,
 	}
 	s.mu.Unlock()
 
-	return m.host.TestFlow(ctx, core.FlowTestRequest{Flow: flow, Input: input, EventID: eventID, SimulateApproval: req.SimulateApproval})
+	return m.host.TestFlow(ctx, core.FlowTestRequest{Flow: flow, Input: input, EventID: eventID, SimulateApproval: req.SimulateApproval, SimulateEmit: req.SimulateEmit})
 }
 
 // testInput picks the input of a flow test: the given payload, a stored event, a sample, or the first sample.

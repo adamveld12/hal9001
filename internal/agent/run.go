@@ -472,10 +472,10 @@ func (r *run) prompt() {
 	}
 }
 
-// needsOutput reports that the turn just ended normally but a required submit_output result is still missing.
+// needsOutput reports that the turn just ended normally but a required emit_<port> call is still missing.
 func (r *run) needsOutput() bool {
 	h := r.p.req.Output
-	if h == nil || !h.Required || r.p.phase == PhasePropose || h.Value() != nil || r.failed() {
+	if h == nil || !h.Required || r.p.phase == PhasePropose || h.Done() || r.failed() {
 		return false
 	}
 	r.mu.Lock()
@@ -671,9 +671,17 @@ func (r *run) finishCompleted() {
 	}
 
 	var output json.RawMessage
+	var emissions []Emission
 	if h := r.p.req.Output; h != nil {
-		if output = h.Value(); output == nil && h.Required {
-			msg := "the agent ended its turn without a valid submit_output call, even after a reminder"
+		if h.Done() {
+			if h.Value != nil {
+				output = h.Value()
+			}
+			if h.Emissions != nil {
+				emissions = h.Emissions()
+			}
+		} else if h.Required {
+			msg := "the agent ended its turn without a valid emit_<port> call, even after a reminder"
 			if last := h.LastError(); last != "" {
 				msg += "; the last call was refused: " + last
 			}
@@ -687,6 +695,7 @@ func (r *run) finishCompleted() {
 	r.rec.Status = StatusSucceeded
 	r.rec.EndedAt = &now
 	r.rec.Output = output
+	r.rec.Emissions = emissions
 	switch {
 	case output != nil && r.p.req.Output.AsNote:
 		// Validated against the note schema by the tool: no text parsing.

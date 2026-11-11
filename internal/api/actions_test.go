@@ -401,6 +401,9 @@ func TestTestNode(t *testing.T) {
 		"no source":        {map[string]any{"node_id": "filter", "input": map[string]any{}}, 400},
 		"json missing":     {map[string]any{"node_id": "filter", "input": map[string]any{"source": "json"}}, 400},
 		"no input":         {map[string]any{"node_id": "filter"}, 400},
+		"emit bad port":    {map[string]any{"node_id": "filter", "input": map[string]any{"source": "json", "json": 1}, "simulate_emit": map[string]any{"port": "Bad-Port"}}, 422},
+		"emit bad output":  {map[string]any{"node_id": "filter", "input": map[string]any{"source": "json", "json": 1}, "simulate_emit": map[string]any{"port": "ok", "output": []int{1}}}, 422},
+		"emit unknown key": {map[string]any{"node_id": "filter", "input": map[string]any{"source": "json", "json": 1}, "simulate_emit": map[string]any{"port": "ok", "extra": 1}}, 400},
 	} {
 		started.Add(1)
 		started.Done()

@@ -7,7 +7,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// JSONSchema is a JSON Schema document (an agent node's output_schema) as decoded from YAML or JSON.
+// JSONSchema is a JSON Schema document (the schema of an agent node port) as decoded from YAML or JSON.
 type JSONSchema map[string]any
 
 // schemaKeyOrder is the order the common keywords are written in; any other keyword follows alphabetically.
@@ -84,7 +84,7 @@ func valueNode(k string, v any, inNames bool) (*yaml.Node, error) {
 	default:
 		n := &yaml.Node{}
 		if err := n.Encode(v); err != nil {
-			return nil, fmt.Errorf("output_schema.%s: %w", k, err)
+			return nil, fmt.Errorf("schema.%s: %w", k, err)
 		}
 		return n, nil
 	}
@@ -98,4 +98,15 @@ func allScalars(s []any) bool {
 		}
 	}
 	return true
+}
+
+// UnmarshalYAML decodes into a plain map so that nested objects are map[string]any too (yaml.v3 would otherwise use
+// JSONSchema for them, and the schema code expects the plain type).
+func (s *JSONSchema) UnmarshalYAML(n *yaml.Node) error {
+	var m map[string]any
+	if err := n.Decode(&m); err != nil {
+		return err
+	}
+	*s = JSONSchema(m)
+	return nil
 }

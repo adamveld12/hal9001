@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"hal9001/internal/outschema"
 	"hal9001/internal/transform"
 )
 
@@ -21,6 +20,8 @@ type Refs struct {
 	Runtimes map[string]Runtime
 	// Tools are the custom tool ids (valid or not). Nil skips the check of an agent node's tools.
 	Tools map[string]bool
+	// PromptOutputs is the front-matter output of each prompt file that parsed ("note", "none" or "").
+	PromptOutputs map[string]string
 	// Sandboxes are the enabled sandbox backends (valid config files only) by backend name.
 	Sandboxes map[string]Sandbox
 }
@@ -321,7 +322,7 @@ func ValidatePrompt(p *Prompt) []Diagnostic {
 
 var nodeFieldsAllowed = map[string][]string{
 	NodeCommand:   {"lang", "ports", "script", "command", "cwd", "timeout", "side_effect"},
-	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "output_schema", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
+	NodeAgent:     {"runtime", "mode", "approve", "prompt", "instructions", "output", "ports", "emit", "extra_prompt", "model", "cwd", "timeout", "approval_timeout", "allow", "mcp_servers", "sandbox", "image", "repo", "ref", "tools"},
 	NodeInbox:     {"title", "priority", "summary_md", "suggested_reply", "links"},
 	NodeTransform: {"steps", "timeout"},
 	NodeApproval:  {"title", "body", "fields", "editable", "priority", "timeout", "on_timeout"},
@@ -334,10 +335,10 @@ func (n *Node) setFields() []string {
 		name string
 		set  bool
 	}{
-		{"lang", n.Lang != ""}, {"ports", len(n.Ports) > 0}, {"script", n.Script != ""}, {"command", len(n.Command) > 0},
+		{"lang", n.Lang != ""}, {"ports", !n.Ports.IsZero()}, {"script", n.Script != ""}, {"command", len(n.Command) > 0},
 		{"steps", len(n.Steps) > 0},
 		{"runtime", n.Runtime != ""}, {"mode", n.Mode != ""}, {"approve", n.Approve != ""}, {"prompt", n.Prompt != ""},
-		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"output_schema", len(n.OutputSchema) > 0}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
+		{"instructions", n.Instructions != ""}, {"output", n.Output != ""}, {"emit", n.Emit != ""}, {"extra_prompt", n.ExtraPrompt != ""}, {"model", n.Model != ""},
 		{"title", n.Title != ""}, {"body", n.Body != ""}, {"fields", len(n.Fields) > 0}, {"editable", len(n.Editable) > 0}, {"on_timeout", n.OnTimeout != ""}, {"priority", n.Priority != ""}, {"summary_md", n.SummaryMD != ""},
 		{"suggested_reply", n.SuggestedReply != ""}, {"links", len(n.Links) > 0},
 		{"cwd", n.Cwd != nil}, {"timeout", n.Timeout != 0}, {"approval_timeout", n.ApprovalTimeout != 0},
@@ -401,6 +402,8 @@ func ValidateFlow(f *Flow, refs *Refs) []Diagnostic {
 	c.node = ""
 
 	validateEdges(c, &g, index)
+	validateAgentPortEdges(c, &g, index)
+	validateInboxTitles(c, &g, index)
 	return c.ds
 }
 
@@ -488,9 +491,12 @@ func validateTransform(c *collector, p string, n *Node) {
 	}
 }
 
-func validatePorts(c *collector, p string, ports []string) {
+func validatePorts(c *collector, p string, decls Ports) {
+	if decls.Map {
+		c.errorf(CodeInvalidValue, p+".ports", "a command node's ports are a list of names; port definitions are for agent nodes")
+	}
 	seen := map[string]bool{}
-	for i, port := range ports {
+	for i, port := range decls.Names() {
 		pp := fmt.Sprintf("%s.ports[%d]", p, i)
 		switch {
 		case port == PortError || port == PortDenied:
@@ -527,21 +533,12 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 		c.errorf(CodeRequired, p+".instructions", "set instructions (inline prompt) or prompt (a file in prompts/)")
 	}
 	if n.Output != "" {
-		c.enum(p+".output", n.Output, []string{OutputNote, OutputNone, OutputTool}, false)
+		c.enum(p+".output", n.Output, []string{OutputNote, OutputNone}, false)
 		if n.Instructions == "" {
 			c.errorf(CodeFieldNotAllowed, p+".output", "output is only valid with instructions; a prompt file sets its own output")
 		}
 	}
-	if len(n.OutputSchema) > 0 {
-		switch {
-		case n.Output != OutputTool:
-			c.errorf(CodeFieldNotAllowed, p+".output_schema", "output_schema is only valid with output: tool")
-		default:
-			if _, err := outschema.Compile(n.OutputSchema); err != nil {
-				c.errorf(CodeInvalidValue, p+".output_schema", "invalid output_schema: %s", err)
-			}
-		}
-	}
+	validateAgentPorts(c, p, n, refs)
 	c.template(p+".instructions", n.Instructions)
 	if n.Prompt != "" {
 		if !ValidID(n.Prompt) {
@@ -608,12 +605,16 @@ func validateAgent(c *collector, p string, n *Node, refs *Refs) {
 	}
 }
 
+// validateInbox checks an inbox node. The title is required by validateInboxTitles, because an inbox node fed by an
+// agent port without a schema may take it from the agent's emission. The priority is a priority name or a template that
+// must render to one at run time.
 func validateInbox(c *collector, p string, n *Node) {
-	if n.Title == "" {
-		c.errorf(CodeRequired, p+".title", "title is required")
-	}
 	c.template(p+".title", n.Title)
-	c.enum(p+".priority", n.Priority, Priorities, false)
+	if IsTemplate(n.Priority) {
+		c.template(p+".priority", n.Priority)
+	} else {
+		c.enum(p+".priority", n.Priority, Priorities, false)
+	}
 	c.template(p+".summary_md", n.SummaryMD)
 	c.template(p+".suggested_reply", n.SuggestedReply)
 	for i, l := range n.Links {

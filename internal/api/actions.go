@@ -424,11 +424,12 @@ func (s *Server) testFlowNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		NodeID           string        `json:"node_id"`
-		Node             *spec.Node    `json:"node"`
-		Input            testNodeInput `json:"input"`
-		DryRun           bool          `json:"dry_run"`
-		SimulateApproval string        `json:"simulate_approval"`
+		NodeID           string              `json:"node_id"`
+		Node             *spec.Node          `json:"node"`
+		Input            testNodeInput       `json:"input"`
+		DryRun           bool                `json:"dry_run"`
+		SimulateApproval string              `json:"simulate_approval"`
+		SimulateEmit     *core.SimulatedEmit `json:"simulate_emit"`
 	}
 	if !decodeJSON(w, r, &req, false) {
 		return
@@ -451,7 +452,10 @@ func (s *Server) testFlowNode(w http.ResponseWriter, r *http.Request) {
 		fieldProblem(w, "simulate_approval", "simulate_approval must be approved or denied")
 		return
 	}
-	engineReq := core.TestNodeRequest{FlowID: flowID, NodeID: req.NodeID, DryRun: req.DryRun, SimulateApproval: req.SimulateApproval}
+	if req.SimulateEmit != nil && !checkSimulatedEmit(w, "simulate_emit", req.SimulateEmit) {
+		return
+	}
+	engineReq := core.TestNodeRequest{FlowID: flowID, NodeID: req.NodeID, DryRun: req.DryRun, SimulateApproval: req.SimulateApproval, SimulateEmit: req.SimulateEmit}
 	if req.Node != nil {
 		if req.Node.ID != req.NodeID {
 			fieldProblem(w, "node.id", "node.id must equal node_id")

@@ -97,6 +97,13 @@ type ResetResult struct {
 	Poll        *PollResult // set when the reset ran the sensor
 }
 
+// SimulatedEmit makes an agent node of a test emit on Port instead of running the agent. Output is the emitted
+// arguments (a JSON object); empty means a minimal payload generated from the port's schema.
+type SimulatedEmit struct {
+	Port   string          `json:"port"`
+	Output json.RawMessage `json:"output,omitempty"`
+}
+
 // TestNodeRequest is POST /api/flows/{id}/test-node. Flow, when non-nil, is an
 // unsaved editor copy that is validated and used instead of the file on disk.
 type TestNodeRequest struct {
@@ -109,6 +116,8 @@ type TestNodeRequest struct {
 	DryRun  bool
 	// SimulateApproval is the decision an approval node takes in the test: "approved" (default) or "denied".
 	SimulateApproval string
+	// SimulateEmit makes the node under test, an agent node, emit instead of running the agent.
+	SimulateEmit *SimulatedEmit
 }
 
 // ApprovalDecision is a user decision on an approval.
@@ -244,6 +253,8 @@ type AssistTestRequest struct {
 	Args json.RawMessage
 	// SimulateApproval is the decision approval nodes take in a flow session's test: "approved" (default) or "denied".
 	SimulateApproval string
+	// SimulateEmit makes agent nodes of a flow session's test emit instead of running (node id -> emit).
+	SimulateEmit map[string]SimulatedEmit
 }
 
 // AssistSample is one sample input of a flow session.
@@ -295,6 +306,8 @@ type FlowTestRequest struct {
 	EventID string
 	// SimulateApproval is the decision approval nodes take in the test: "approved" (default) or "denied".
 	SimulateApproval string
+	// SimulateEmit makes agent nodes emit instead of running (node id -> emit).
+	SimulateEmit map[string]SimulatedEmit
 }
 
 // AssistFlowTestOutput is one payload a node emitted.
@@ -320,19 +333,21 @@ type AssistInboxPreviewLink struct {
 
 // AssistFlowTestNode is what one node did in a flow test.
 type AssistFlowTestNode struct {
-	NodeID      string                 `json:"node_id"`
-	NodeRunID   string                 `json:"node_run_id"`
-	Status      string                 `json:"status"`
-	Decision    *string                `json:"decision"`
-	Reason      *string                `json:"reason"`
-	Error       *string                `json:"error"`
-	Ports       []string               `json:"ports"`
-	Outputs     []AssistFlowTestOutput `json:"outputs"`
-	WouldCreate *AssistInboxPreview    `json:"would_create"`
-	Stdout      *string                `json:"stdout"`
-	Stderr      *string                `json:"stderr"`
-	ExitCode    *int                   `json:"exit_code"`
-	DurationMS  *int64                 `json:"duration_ms"`
+	NodeID    string                 `json:"node_id"`
+	NodeRunID string                 `json:"node_run_id"`
+	Status    string                 `json:"status"`
+	Decision  *string                `json:"decision"`
+	Reason    *string                `json:"reason"`
+	Error     *string                `json:"error"`
+	Ports     []string               `json:"ports"`
+	Outputs   []AssistFlowTestOutput `json:"outputs"`
+	// Simulated marks an agent node that emitted through simulate_emit instead of running.
+	Simulated   bool                `json:"simulated"`
+	WouldCreate *AssistInboxPreview `json:"would_create"`
+	Stdout      *string             `json:"stdout"`
+	Stderr      *string             `json:"stderr"`
+	ExitCode    *int                `json:"exit_code"`
+	DurationMS  *int64              `json:"duration_ms"`
 }
 
 // AssistFlowTestEdge is an edge a payload travelled along in a flow test.

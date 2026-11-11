@@ -173,6 +173,10 @@ func TestMutatingCommandsSendJSONBodiesWithJSONContentType(t *testing.T) {
 		{"test-node reads pasted JSON from stdin", []string{"flows", "test-node", "triage-github", "classify"}, `{"a":[1,2]}`, "POST /api/flows/triage-github/test-node", nil,
 			map[string]any{"node_id": "classify", "dry_run": false, "input": map[string]any{"source": "json", "json": map[string]any{"a": []any{1, 2}}}},
 			canned{status: 202, body: map[string]any{"flow_run": flowRun(id1, "running"), "node_run": nodeRun("running")}}},
+		{"test-node --simulate-emit splits the port from the output at the first =", []string{"flows", "test-node", "triage-github", "triage", "--json", "1", "--simulate-emit", `reviewed={"title":"a=b"}`}, "", "POST /api/flows/triage-github/test-node", nil,
+			map[string]any{"node_id": "triage", "dry_run": false, "input": map[string]any{"source": "json", "json": float64(1)},
+				"simulate_emit": map[string]any{"port": "reviewed", "output": map[string]any{"title": "a=b"}}},
+			ok(map[string]any{"flow_run": flowRun(id1, "succeeded"), "node_run": nodeRun("done")})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -531,6 +535,10 @@ func TestUsageErrorsExitTwoWithoutContactingTheDaemon(t *testing.T) {
 		{"events", "replay", id1},
 		{"flows", "test-node", "f", "n", "--event", id1, "--json", "{}"},
 		{"flows", "test-node", "f", "n", "--node-run", id1 + ":x"},
+		{"flows", "test-node", "f", "n", "--json", "1", "--simulate-emit", "Bad-Port"},
+		{"flows", "test-node", "f", "n", "--json", "1", "--simulate-emit", "ok=[1]"},
+		{"assist", "test", id1, "--simulate-emit", "noport"},
+		{"assist", "test", id1, "--simulate-emit", "n:ok", "--simulate-emit", "n:other"},
 	} {
 		res := f.run(runOpts{}, args...)
 		if res.code != cli.ExitUsage {

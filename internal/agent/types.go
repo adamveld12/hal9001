@@ -83,7 +83,7 @@ const (
 	ReasonModelRejected   = "model_rejected"
 	ReasonStopReason      = "stop_reason"
 	ReasonEmptyProposal   = "empty_proposal"
-	// ReasonNoOutput: the run required a submit_output call and ended without a valid one, even after a reminder.
+	// ReasonNoOutput: the run required an emit_<port> call and ended without a valid one, even after a reminder.
 	ReasonNoOutput = "no_output"
 	// ReasonPolicyEndedTurn: the policy rejected a tool call and the agent
 	// ended its turn instead of continuing (e.g. codex).
@@ -244,24 +244,34 @@ type RunRequest struct {
 	ToolsReady func(ctx context.Context)
 }
 
-// OutputHook connects a run to the submit_output tool of its hal tool session. The executor does not know the tool: it
-// asks the hook whether the agent submitted a valid result.
+// OutputHook connects a run to the output tools of its hal tool session (submit_output or emit_<port>). The executor
+// does not know the tools: it asks the hook whether the agent made a valid call.
 type OutputHook struct {
-	// Value returns the latest valid submission (a JSON object), or nil when there is none.
+	// Done reports that the agent made at least one valid call.
+	Done func() bool
+	// Value returns the first valid submission (a JSON object), or nil when there is none (submit_output).
 	Value func() json.RawMessage
+	// Emissions returns the valid calls in call order (emit_<port> tools).
+	Emissions func() []Emission
 	// LastError returns why the latest call was refused ("" when none was).
 	LastError func() string
-	// Required: a turn that ends without a valid submission is followed by one reminder (FollowUp) in the same
-	// session, and a run still without one fails with ReasonNoOutput. Without Required a missing submission is not an
-	// error here (the caller falls back to parsing the final message).
+	// Required: a turn that ends without a valid call is followed by one reminder (FollowUp) in the same session, and
+	// a run still without one fails with ReasonNoOutput. Without Required a missing call is not an error here (the
+	// caller falls back to parsing the final message).
 	Required bool
 	// FollowUp is the reminder prompt (Required only).
 	FollowUp string
 	// ResumeNote is appended to the "Approved. Execute the plan." prompt of an approved proposal, so the agent knows
-	// the result is returned through the tool (Required only).
+	// how the result is returned (Required only).
 	ResumeNote string
 	// AsNote turns a valid submission into the run's Note (its schema is the note schema).
 	AsNote bool
+}
+
+// Emission is one valid emit_<port> call: the port and the validated arguments.
+type Emission struct {
+	Port   string
+	Output json.RawMessage
 }
 
 func (r *RunRequest) style() ApproveStyle {
@@ -331,6 +341,8 @@ type RunRecord struct {
 	NoteParseError string
 	// Output is the valid submit_output submission (JSON object), nil when the run made none.
 	Output json.RawMessage
+	// Emissions are the valid emit_<port> calls in call order (the last one only when the node emits one result).
+	Emissions []Emission
 	// Proposal and ApprovalID are set for a propose-phase run that produced
 	// a proposal (Status awaiting_approval).
 	Proposal   string
