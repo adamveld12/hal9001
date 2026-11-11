@@ -110,6 +110,12 @@ func (m *Manager) Open(ctx context.Context, backend string, rs RunSpec) (Session
 	if rs.Lifecycle == "" && mg != nil {
 		rs.Lifecycle = mg.cfg.Lifecycle
 	}
+	var names []string
+	if mg != nil {
+		names = append(append([]string(nil), mg.envNames...), mapKeys(rs.Env)...)
+		sort.Strings(names)
+		names = slices.Compact(names)
+	}
 	if log != nil {
 		fields := map[string]string{"backend": backend, "lifecycle": rs.Lifecycle}
 		if rs.Image != "" {
@@ -120,12 +126,6 @@ func (m *Manager) Open(ctx context.Context, backend string, rs RunSpec) (Session
 		}
 		if rs.Ref != "" {
 			fields["ref"] = rs.Ref
-		}
-		var names []string
-		if mg != nil {
-			names = append(append([]string(nil), mg.envNames...), mapKeys(rs.Env)...)
-			sort.Strings(names)
-			names = slices.Compact(names)
 		}
 		log.Update(SessionUpdate{Status: StatusProvisioning, Info: SessionInfo{
 			Image: rs.Image, Repo: CleanRepo(rs.Repo), Ref: rs.Ref, Lifecycle: rs.Lifecycle, EnvNames: names,
@@ -154,25 +154,25 @@ func (m *Manager) Open(ctx context.Context, backend string, rs RunSpec) (Session
 	if err != nil {
 		return fail(err)
 	}
-	if log == nil {
-		return sess, nil
+	if log != nil {
+		info := SessionInfo{Workdir: sess.Workdir()}
+		if d, ok := sess.(Describer); ok {
+			info = d.Describe()
+		}
+		info.Lifecycle = rs.Lifecycle
+		took := time.Since(start)
+		fields := map[string]string{"workdir": info.Workdir, "duration_ms": fmt.Sprint(ms(took))}
+		if info.Name != "" {
+			fields["sandbox"] = info.Name
+		}
+		if info.ID != "" {
+			fields["sandbox_id"] = info.ID
+		}
+		log.Add(LogEntry{Kind: KindLifecycle, Title: "Sandbox ready in " + took.Round(time.Millisecond).String(), Duration: took, Fields: fields})
+		log.Update(SessionUpdate{Status: StatusReady, Info: info})
 	}
-	info := SessionInfo{Workdir: sess.Workdir()}
-	if d, ok := sess.(Describer); ok {
-		info = d.Describe()
-	}
-	info.Lifecycle = rs.Lifecycle
-	took := time.Since(start)
-	fields := map[string]string{"workdir": info.Workdir, "duration_ms": fmt.Sprint(ms(took))}
-	if info.Name != "" {
-		fields["sandbox"] = info.Name
-	}
-	if info.ID != "" {
-		fields["sandbox_id"] = info.ID
-	}
-	log.Add(LogEntry{Kind: KindLifecycle, Title: "Sandbox ready in " + took.Round(time.Millisecond).String(), Duration: took, Fields: fields})
-	log.Update(SessionUpdate{Status: StatusReady, Info: info})
-	return &loggedSession{Session: sess, log: log, backend: backend, lifecycle: rs.Lifecycle}, nil
+	meta := SessionInfo{Image: rs.Image, Repo: CleanRepo(rs.Repo), Ref: rs.Ref, Lifecycle: rs.Lifecycle, EnvNames: names}
+	return &loggedSession{Session: sess, log: log, backend: backend, lifecycle: rs.Lifecycle, secrets: mg.secrets, meta: meta}, nil
 }
 
 // Policy returns the approval policy of backend.

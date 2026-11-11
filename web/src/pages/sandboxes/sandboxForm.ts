@@ -7,6 +7,8 @@ import type { SandboxConfig } from "../../api/sandboxes";
  */
 export interface SandboxForm {
   config: SandboxConfig;
+  /** keep_alive as typed; configFromForm validates it. */
+  keep_alive: string;
   imagesText: string;
   secretsText: string;
   cpus: string;
@@ -23,6 +25,7 @@ const num = (n: number) => (n === 0 ? "" : String(n));
 export function formFromConfig(config: SandboxConfig): SandboxForm {
   return {
     config,
+    keep_alive: config.keep_alive,
     imagesText: config.images.join("\n"),
     secretsText: Object.entries(config.secrets)
       .map(([k, v]) => `${k}=${v}`)
@@ -51,6 +54,36 @@ function wholeNumber(text: string, what: string): number | string {
   return Number(text.trim());
 }
 
+/** A bare zero, the only number the server accepts without a unit. */
+const ZERO = /^0+$/;
+/** The shape of the API's Duration: one or more number + unit parts. */
+const DURATION = /^(\d+(\.\d+)?(ns|us|ms|s|m|h|d))+$/;
+
+/**
+ * Checks the keep_alive field by the server's rule: a duration such as 30s, 1m
+ * or 2h, from 0 up. A bare 0 is accepted and returned as 0s (the API's
+ * duration format needs a unit); 0 removes the sandbox when a run ends.
+ * Negative values, text and numbers without a unit are errors.
+ */
+export function parseKeepAlive(
+  text: string,
+): { value: string } | { error: string } {
+  const t = text.trim();
+  if (t === "") {
+    return {
+      error: "Enter a duration such as 30s, 1m or 2h (0 removes it at once)",
+    };
+  }
+  if (t.startsWith("-")) return { error: "Keep alive must not be negative" };
+  if (ZERO.test(t)) return { value: "0s" };
+  if (!DURATION.test(t)) {
+    return {
+      error: `"${t}" is not a duration: use a number and a unit, such as 30s, 1m or 2h`,
+    };
+  }
+  return { value: t };
+}
+
 /**
  * The config the form describes, or the errors that prevent it. Only shape
  * errors are found here; the server validates the rest and its diagnostics
@@ -74,6 +107,8 @@ export function configFromForm(
   const cpus =
     form.cpus.trim() === "" ? 0 : Number(form.cpus.trim().replace(",", "."));
   if (!Number.isFinite(cpus) || cpus < 0) errors.cpus = "CPUs must be a number";
+  const keepAlive = parseKeepAlive(form.keep_alive);
+  if ("error" in keepAlive) errors.keep_alive = keepAlive.error;
   const ints = {
     memory_mb: wholeNumber(form.memory_mb, "Memory"),
     disk_gb: wholeNumber(form.disk_gb, "Disk"),
@@ -83,10 +118,13 @@ export function configFromForm(
   for (const [k, v] of Object.entries(ints)) {
     if (typeof v === "string") errors[k as keyof SandboxForm] = v;
   }
-  if (Object.keys(errors).length > 0) return { errors };
+  if ("error" in keepAlive || Object.keys(errors).length > 0) {
+    return { errors };
+  }
   return {
     config: {
       ...form.config,
+      keep_alive: keepAlive.value,
       images: textToList(form.imagesText),
       secrets,
       resources: {

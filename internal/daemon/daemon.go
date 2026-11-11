@@ -191,7 +191,10 @@ func Run(ctx context.Context, opts Options) error {
 		RetentionDays: func() int { return d.effective(d.workspace()).Config.Value.RetentionDays },
 	})
 	defer d.sandboxes.Close()
-	eng.ToolHub().AddProvider(tools.SandboxProvider(d.sandboxes, tools.SandboxOptions{Log: eng.SandboxRunLog}))
+	// The keeper holds a run's sandbox for its keep_alive; it is closed (all held sandboxes torn down) before the manager.
+	keeper := sandbox.NewKeeper(sandbox.KeeperOptions{Clock: opts.Clock, Log: log})
+	defer keeper.CloseAll()
+	eng.ToolHub().AddProvider(tools.SandboxProvider(d.sandboxes, tools.SandboxOptions{Log: eng.SandboxRunLog, Keeper: keeper}))
 
 	ui, err := webui.New(webui.Options{Dir: opts.WebDir})
 	if err != nil {

@@ -2163,6 +2163,78 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         default: {$ref: '#/components/responses/Error'}
+  /api/conversations/{id}/sandbox-log:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 'The conversation id: an assist session id (a chat, including a chat continued from an agent run) or an agent run id.'
+        schema: {$ref: '#/components/schemas/Ulid'}
+    get:
+      operationId: getConversationSandboxLog
+      tags: [agents]
+      summary: Sandbox log of a conversation
+      description: |
+        Same response shape and query parameters as the sandbox log of an agent run. For a chat it lists the sandbox
+        sessions that belong to the chat (`assist_session_id` set): a sandbox taken over from the agent run the chat was
+        continued from (the session header is copied and its first entry says `Reattached sandbox of run <id>`), and the
+        sandboxes created later when the earlier one had been removed after `keep_alive`. The agent run's own log stays on
+        the agent run and its node run, which do not list the chat's sessions. For a conversation that is an agent run of a
+        flow node the response is that run's log. `sessions` is empty (200) when the conversation used no sandbox; 404 when
+        the id is neither an assist session nor an agent run.
+      x-hal-service: api
+      parameters:
+        - name: after_id
+          in: query
+          description: Return only entries with an `id` greater than this. Default 0 (from the start).
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+        - name: tail
+          in: query
+          description: Return the newest `limit` entries (after `after_id`) instead of the oldest; `has_more` then says older entries were left out.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Sessions and a page of entries.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SandboxLog'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/conversations/{id}/sandbox-log/raw:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 'The conversation id: an assist session id or an agent run id.'
+        schema: {$ref: '#/components/schemas/Ulid'}
+    get:
+      operationId: downloadConversationSandboxLog
+      tags: [agents]
+      summary: Download the sandbox log of a conversation as text
+      description: |
+        The whole log as plain text, one block per entry (`<time> <level> <title>`, then the command, output and details
+        indented), as a download. Same sessions, redaction and caps as the JSON form.
+      x-hal-service: api
+      responses:
+        '200':
+          description: Text file.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename="sandbox-log-<id>.txt"`'
+              schema: {type: string}
+          content:
+            text/plain:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        default: {$ref: '#/components/responses/Error'}
   /api/approvals:
     get:
       operationId: listApprovals
@@ -5379,13 +5451,14 @@ components:
       description: |
         Config of one sandbox backend (`sandboxes/<backend>.yaml`). The fields after `resources` belong to the backend
         named in their description and are ignored by the others. Credentials are not part of it (see the env endpoints).
-      required: [enabled, lifecycle, approval, approval_rules, timeout, resources, root, socket, images, network, org_id, image_ref, architecture, timeout_minutes, disable_tailnet, disable_depot_cache, secrets, endpoint, kubeconfig, context, namespace, service_account, host, port, user, key_file, host_key]
+      required: [enabled, lifecycle, approval, approval_rules, timeout, keep_alive, resources, root, socket, images, network, org_id, image_ref, architecture, timeout_minutes, disable_tailnet, disable_depot_cache, secrets, endpoint, kubeconfig, context, namespace, service_account, host, port, user, key_file, host_key]
       properties:
         enabled: {type: boolean, description: 'Always true for local, which cannot be disabled (a stored false is ignored with a warning). Required fields of other backends are only checked while enabled. An enabled depot also needs DEPOT_TOKEN in its env file (422 "Depot token is required" otherwise).'}
         lifecycle: {$ref: '#/components/schemas/SandboxLifecycle'}
         approval: {$ref: '#/components/schemas/SandboxApprovalMode'}
         approval_rules: {$ref: '#/components/schemas/SandboxApprovalRules'}
         timeout: {$ref: '#/components/schemas/Duration', description: Default timeout of one command.}
+        keep_alive: {$ref: '#/components/schemas/Duration', description: 'How long the sandbox of a run stays after the run ends, so a chat can continue in it. `0s` removes it at once. Default `1m` when the file does not set it; any non-negative duration is accepted (`0` is accepted on input).'}
         resources: {$ref: '#/components/schemas/SandboxResources'}
         root: {type: string, description: 'local, ssh: root directory (`<root>/runs/<run-id>` for per_run). local default `<home>/data/sandboxes/local`; ssh may be relative to the remote home.'}
         socket: {type: string, description: 'docker: Engine socket (`/path`, `unix:///path` or `tcp://host:port`). Default `DOCKER_HOST`, then the usual socket locations.'}
@@ -5970,12 +6043,13 @@ components:
         has_more: {type: boolean}
     SandboxSession:
       type: object
-      description: One sandbox an agent run opened. `agent_run_id` is the id the run has or would have (the sandbox is provisioned before the agent run is recorded, and when provisioning fails there is no agent run).
-      required: [id, node_run_id, agent_run_id, backend, status, env_names, truncated, entry_count, started_at]
+      description: One sandbox an agent run or a conversation opened. `agent_run_id` is the id the run has or would have (the sandbox is provisioned before the agent run is recorded, and when provisioning fails there is no agent run); for a session of a conversation it is the conversation id. `node_run_id` is the node run of the original run, so the session is pruned with it.
+      required: [id, node_run_id, agent_run_id, assist_session_id, backend, status, env_names, truncated, entry_count, started_at]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         node_run_id: {$ref: '#/components/schemas/Ulid'}
         agent_run_id: {$ref: '#/components/schemas/Ulid'}
+        assist_session_id: {type: string, description: 'The chat (assist session) this sandbox belongs to; empty for a sandbox of an agent run. Sessions with this set are listed by the conversation sandbox log only.'}
         backend: {type: string, enum: [local, docker, depot, kubernetes, ssh]}
         status:
           type: string
@@ -6051,7 +6125,7 @@ components:
     SandboxLogAppendedEvent:
       description: |
         A sandbox log entry was added. `data` is `SandboxLogEntry` without `stdout` and `stderr` (fetch `after_id` for the
-        content) plus `agent_run_id` and `node_run_id`; the stream filters `agent_run_id` and `flow_run_id` apply.
+        content) plus `agent_run_id`, `node_run_id` and `assist_session_id`; the stream filters `agent_run_id`, `assist_session_id` and `flow_run_id` apply.
       allOf:
         - {$ref: '#/components/schemas/StreamEnvelope'}
         - type: object
@@ -6063,10 +6137,11 @@ components:
       allOf:
         - {$ref: '#/components/schemas/SandboxLogEntry'}
         - type: object
-          required: [agent_run_id, node_run_id]
+          required: [agent_run_id, node_run_id, assist_session_id]
           properties:
             agent_run_id: {$ref: '#/components/schemas/Ulid'}
             node_run_id: {$ref: '#/components/schemas/Ulid'}
+            assist_session_id: {type: string}
     PermissionOption:
       type: object
       required: [option_id, name, kind]

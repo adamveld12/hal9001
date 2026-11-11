@@ -44,6 +44,9 @@ const (
 	RuleDeny    = "deny"
 )
 
+// DefaultSandboxKeepAlive is the keep_alive of a sandbox config that does not set one.
+const DefaultSandboxKeepAlive = Duration(time.Minute)
+
 // SandboxResources are compute limits. Zero means the backend default.
 type SandboxResources struct {
 	CPUs     float64 `yaml:"cpus,omitempty" json:"cpus"`
@@ -79,11 +82,14 @@ type SandboxRules struct {
 // the backend's env file. The local backend is always enabled: its `enabled`
 // field is ignored (a false value only draws a warning).
 type Sandbox struct {
-	Enabled   bool             `yaml:"enabled" json:"enabled"`
-	Lifecycle string           `yaml:"lifecycle" json:"lifecycle"`
-	Approval  string           `yaml:"approval" json:"approval"`
-	Rules     SandboxRules     `yaml:"approval_rules,omitempty" json:"approval_rules"`
-	Timeout   Duration         `yaml:"timeout" json:"timeout"`               // default command timeout
+	Enabled   bool         `yaml:"enabled" json:"enabled"`
+	Lifecycle string       `yaml:"lifecycle" json:"lifecycle"`
+	Approval  string       `yaml:"approval" json:"approval"`
+	Rules     SandboxRules `yaml:"approval_rules,omitempty" json:"approval_rules"`
+	Timeout   Duration     `yaml:"timeout" json:"timeout"` // default command timeout
+	// KeepAlive is how long the sandbox of a run stays after the run ends, so a chat can continue in it. 0 removes it
+	// at once. Not omitted when 0: an absent field means DefaultSandboxKeepAlive.
+	KeepAlive Duration         `yaml:"keep_alive" json:"keep_alive"`
 	Resources SandboxResources `yaml:"resources,omitempty" json:"resources"` // docker, depot, kubernetes
 
 	Root string `yaml:"root,omitempty" json:"root"` // local, ssh
@@ -116,7 +122,7 @@ type Sandbox struct {
 // DefaultSandbox returns the config a backend has before its file exists.
 func DefaultSandbox(backend string) Sandbox {
 	s := Sandbox{
-		Lifecycle: LifecyclePerRun, Approval: ApprovalRules, Timeout: Duration(10 * time.Minute),
+		Lifecycle: LifecyclePerRun, Approval: ApprovalRules, Timeout: Duration(10 * time.Minute), KeepAlive: DefaultSandboxKeepAlive,
 		Network: true,
 		Rules: SandboxRules{
 			Shell:   []SandboxShellRule{},
@@ -253,6 +259,9 @@ func ValidateSandbox(backend string, s *Sandbox) []Diagnostic {
 	}
 	if s.Timeout.Std() <= 0 {
 		c.errorf(CodeInvalidValue, "timeout", "timeout must be a positive duration")
+	}
+	if s.KeepAlive.Std() < 0 {
+		c.errorf(CodeInvalidValue, "keep_alive", "keep_alive must be a duration of 0 or more (for example 30s, 1m, 2h; 0 removes the sandbox at once)")
 	}
 	for i, r := range s.Rules.Shell {
 		p := fmt.Sprintf("approval_rules.shell[%d]", i)

@@ -205,21 +205,50 @@ func withRedaction(l RunLog, secrets []string) RunLog {
 	return redactLog{l, newRedactor(secrets)}
 }
 
-// loggedSession records every operation of the session it wraps in the run log.
+// loggedSession records every operation of the session it wraps in the run log. log may be nil.
 type loggedSession struct {
 	Session
 	log       RunLog
 	backend   string
 	lifecycle string
+	secrets   []string    // values redacted from what a log adopted later receives
+	meta      SessionInfo // what the session was opened with
+}
+
+// Adopt returns a session for the sandbox of sess that logs to log from now on, and the log sess used before (nil
+// when it had none). sess must come from Manager.Open and must not be used afterwards: closing the returned session
+// tears the sandbox down and records that on log. log gets the same secret redaction the first log had. Adopt does not
+// write to either log: the caller records the hand-over.
+func Adopt(sess Session, log RunLog) (Session, RunLog, bool) {
+	ls, ok := sess.(*loggedSession)
+	if !ok {
+		return nil, nil, false
+	}
+	return &loggedSession{Session: ls.Session, log: withRedaction(log, ls.secrets), backend: ls.backend, lifecycle: ls.lifecycle, secrets: ls.secrets, meta: ls.meta}, ls.log, true
 }
 
 func ms(d time.Duration) int64 { return d.Milliseconds() }
 
+// Describe is the backend's description of the sandbox plus what the session was opened with (image, repo, ref,
+// lifecycle, environment variable names).
 func (s *loggedSession) Describe() SessionInfo {
+	info := SessionInfo{Workdir: s.Workdir()}
 	if d, ok := s.Session.(Describer); ok {
-		return d.Describe()
+		info = d.Describe()
 	}
-	return SessionInfo{Workdir: s.Workdir()}
+	fill := func(dst *string, v string) {
+		if *dst == "" {
+			*dst = v
+		}
+	}
+	fill(&info.Image, s.meta.Image)
+	fill(&info.Repo, s.meta.Repo)
+	fill(&info.Ref, s.meta.Ref)
+	fill(&info.Lifecycle, s.meta.Lifecycle)
+	if len(info.EnvNames) == 0 {
+		info.EnvNames = s.meta.EnvNames
+	}
+	return info
 }
 
 func (s *loggedSession) Exec(ctx context.Context, cmd string, stdin []byte, timeout time.Duration) (ExecResult, error) {

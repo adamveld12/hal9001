@@ -223,6 +223,18 @@ function ConfigForm({
               />
             </Field>
           </div>
+          <Field
+            label="Keep alive"
+            hint="How long the sandbox stays after a run ends, so you can continue it in chat. 0 removes it immediately."
+            error={opt(errors.keep_alive)}
+          >
+            <TextInput
+              value={form.keep_alive}
+              placeholder="1m"
+              invalid={!!errors.keep_alive}
+              onChange={(e) => editForm({ keep_alive: e.target.value })}
+            />
+          </Field>
         </div>
       </Panel>
 

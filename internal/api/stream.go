@@ -525,7 +525,7 @@ func (h *hub) handle(c store.Change) bool {
 		}
 		v := newSandboxEntryView(*e)
 		v.Stdout, v.Stderr = "", ""
-		h.publish("sandbox_log.appended", sandboxLogAppendedView{sandboxEntryView: v, AgentRunID: ss.AgentRunID, NodeRunID: ss.NodeRunID}, rv.sandboxMeta(*ss), false)
+		h.publish("sandbox_log.appended", sandboxLogAppendedView{sandboxEntryView: v, AgentRunID: ss.AgentRunID, NodeRunID: ss.NodeRunID, AssistSessionID: ss.AssistSessionID}, rv.sandboxMeta(*ss), false)
 	case store.ResAuthEvent:
 		if c.Op != store.OpCreate {
 			return false
