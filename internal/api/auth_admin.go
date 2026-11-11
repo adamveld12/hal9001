@@ -318,8 +318,8 @@ func (s *Server) planAuthChange(ctx context.Context, c authCaller, f *authFile, 
 		return ch, nil
 	}
 
-	// Lock-out rule: this Mac must keep getting in. A local request may not
-	// take that away; a remote one may, once it has confirmed.
+	// Lock-out rule: this Mac must keep getting in. No caller, local or remote,
+	// confirmed or not, may take that away.
 	was := s.opts.Auth.LocalAdmitted(ctx, authcfg.AuthConfig(&f.cfg))
 	now := s.opts.Auth.LocalAdmitted(ctx, newCfg)
 	var lost []auth.Service
@@ -329,17 +329,14 @@ func (s *Server) planAuthChange(ctx context.Context, c authCaller, f *authFile, 
 		}
 	}
 	if len(lost) > 0 {
-		if c.local {
-			for _, svc := range lost {
-				ch.diags = append(ch.diags, spec.Diagnostic{
-					Severity: spec.SeverityError, Code: codeLocalhostTrustRequired, Path: "auth.services." + string(svc),
-					Message: fmt.Sprintf("this Mac's own browser and CLI would no longer be let in to the %s service: keep localhost-trust in its stack", svc),
-				})
-			}
-			ch.blocked = true
-			return ch, nil
+		for _, svc := range lost {
+			ch.diags = append(ch.diags, spec.Diagnostic{
+				Severity: spec.SeverityError, Code: codeLocalhostTrustRequired, Path: "auth.services." + string(svc),
+				Message: fmt.Sprintf("this Mac's own browser and CLI would no longer be let in to the %s service: keep localhost-trust in its stack", svc),
+			})
 		}
-		ch.reasons = append(ch.reasons, "This Mac's own browser and CLI will have to sign in too.")
+		ch.blocked = true
+		return ch, nil
 	}
 
 	ch.endMatch, ch.endWhy = in.endMatch, in.endWhy

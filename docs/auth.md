@@ -208,12 +208,14 @@ module from every stack. Edits keep the comments of `config.yaml`. The method `l
 
 The server enforces these; the UI only shows them.
 
-- A request from this Mac (what `localhost-trust` accepts) cannot remove or disable `localhost-trust`: the new stacks
-  must still admit a plain local request for every service, otherwise `422` with the diagnostic
-  `localhost_trust_required`, and nothing is written.
-- A change needs `confirm: true` when it disables the method this request or session was admitted by, leaves a remote
-  request with no remote method (`tailscale`, `passkeys`, `password`), or removes `localhost-trust` on a remote
-  request. Without it the server answers `409 confirmation-required` with `reasons` and `ends_session`, and changes
+- On this Mac (`localhost-trust`) can never be turned off, whoever asks. Any change that would stop a plain local
+  request from being admitted to any service (switching methods, `PUT /api/auth/stacks` including the advanced editor,
+  moving a service to a stack without it, and so on) is refused with `422` and the diagnostic
+  `localhost_trust_required`, nothing is written. This holds for remote callers too, and `confirm: true` does not bypass
+  it. The preview reports it as an error finding.
+- A change needs `confirm: true` when it disables the method this request or session was admitted by, or leaves a remote
+  request with no remote method (`tailscale`, `passkeys`, `password`). Without it the server answers
+  `409 confirmation-required` with `reasons` and `ends_session`, and changes
   nothing. Repeat the request with `confirm: true` to go ahead. The UI shows this as a confirm dialog.
 - A change ends the sessions that were established with a method it removes. Turning a method off ends its sessions;
   `PUT /api/auth/stacks` ends sessions whose method no longer appears in the `admin` stack. When the caller's own session

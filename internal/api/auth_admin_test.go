@@ -414,34 +414,55 @@ func TestALocalRequestCannotTakeLocalhostTrustAway(t *testing.T) {
 	}
 }
 
-func TestARemoteRequestMayTakeLocalhostTrustAwayOnlyWhenItConfirms(t *testing.T) {
+func TestARemoteRequestCannotTakeLocalhostTrustAwayEvenConfirmed(t *testing.T) {
 	e := newAuthEnv(t)
 	e.withPassword()
 	cookie := e.loginRemote(testPW)
 	before := e.configText()
-
-	r := e.send("PUT", "/api/auth/stacks", keepHash(stacksReq("tailscale-identity", "webauthn", "password")), remoteWith(cookie)).want(409)
-	body := r.json()
-	reasons, _ := body["reasons"].([]any)
-	if r.problem() != "confirmation-required" || len(reasons) != 1 || !strings.Contains(reasons[0].(string), "own browser and CLI") || body["ends_session"] != false {
-		t.Errorf("problem = %s", r.Body)
+	wantBlocked := func(r *resp, svc string) {
+		t.Helper()
+		if r.problem() != "validation-failed" || !strings.Contains(strings.Join(r.diagnosticCodes(), " "), "localhost_trust_required@auth.services."+svc) {
+			t.Errorf("problem = %s", r.Body)
+		}
+		if e.configText() != before {
+			t.Error("a refused change wrote config.yaml")
+		}
 	}
-	if e.configText() != before {
-		t.Error("an unconfirmed change wrote config.yaml")
-	}
 
+	// Removing localhost-trust from every stack: refused with and without confirm.
 	req := keepHash(stacksReq("tailscale-identity", "webauthn", "password"))
+	wantBlocked(e.send("PUT", "/api/auth/stacks", req, remoteWith(cookie)).want(422), "admin")
 	req["confirm"] = true
-	e.send("PUT", "/api/auth/stacks", req, remoteWith(cookie)).want(200)
-	if strings.Contains(e.configText(), "module: localhost-trust") {
-		t.Errorf("localhost-trust is still in config.yaml:\n%s", e.configText())
+	wantBlocked(e.send("PUT", "/api/auth/stacks", req, remoteWith(cookie)).want(422), "admin")
+
+	// Moving one service to a stack without localhost-trust is refused too.
+	req = keepHash(stacksReq("localhost-trust", "password"))
+	req["stacks"].(map[string]any)["remote-only"] = []map[string]any{{"module": "password", "control": "sufficient"}}
+	req["services"].(map[string]string)["admin"] = "remote-only"
+	req["confirm"] = true
+	wantBlocked(e.send("PUT", "/api/auth/stacks", req, remoteWith(cookie)).want(422), "admin")
+
+	// The preview reports it as a blocking finding.
+	var pv struct {
+		Valid       bool `json:"valid"`
+		Diagnostics []struct {
+			Severity string `json:"severity"`
+			Code     string `json:"code"`
+		} `json:"diagnostics"`
 	}
-	if !e.overview(remoteWith(cookie)).Password.Set {
-		t.Error("the password hash was lost")
+	e.send("POST", "/api/auth/stacks/preview", keepHash(stacksReq("tailscale-identity", "webauthn", "password")), remoteWith(cookie)).want(200).decode(&pv)
+	found := false
+	for _, d := range pv.Diagnostics {
+		found = found || (d.Code == "localhost_trust_required" && d.Severity == "error")
 	}
-	if len(e.events("auth_stacks_change", remoteWith(cookie))) != 1 {
-		t.Error("the change was not logged")
+	if pv.Valid || !found {
+		t.Errorf("preview = %+v", pv)
 	}
+	if len(e.events("auth_stacks_change", remoteWith(cookie))) != 0 {
+		t.Error("a refused change was logged as applied")
+	}
+	// Methods cannot switch localhost at all.
+	e.send("PATCH", "/api/auth/methods", map[string]any{"localhost": false, "confirm": true}, remoteWith(cookie)).want(400)
 }
 
 func TestSwitchingOffTheMethodTheCallerCameInNeedsConfirmationAndEndsTheSession(t *testing.T) {

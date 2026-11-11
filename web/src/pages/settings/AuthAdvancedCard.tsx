@@ -135,6 +135,9 @@ function StacksForm({ server }: { server: AuthStacks }) {
 
   const busy = previewCall.isPending || change.busy;
   const canSave = dirty && current !== null && current.valid && current.changed;
+  const locksOutThisMac =
+    current?.diagnostics.some((d) => d.code === "localhost_trust_required") ??
+    false;
 
   return (
     <div className="space-y-3">
@@ -170,7 +173,9 @@ function StacksForm({ server }: { server: AuthStacks }) {
           title={
             canSave
               ? undefined
-              : "Review the changes first; errors block saving"
+              : locksOutThisMac
+                ? "On this Mac (localhost-trust) can never be turned off: keep it in every service's stack"
+                : "Review the changes first; errors block saving"
           }
           onClick={() => void save()}
         >

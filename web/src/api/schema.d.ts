@@ -2900,12 +2900,11 @@ export interface paths {
      *     `«redacted»` option value keeps the stored one. The result must pass the validator that loads the config (unknown
      *     modules, controls, services or stacks; 422 with diagnostics) and the server's own rules:
      *
-     *     - A local request (peer, Host and headers that `localhost-trust` accepts) cannot remove or disable
-     *       `localhost-trust`: the new stacks must still admit a plain local request for every service, otherwise 422
-     *       with the diagnostic `localhost_trust_required` and nothing is written.
+     *     - On this Mac (`localhost-trust`) can never be turned off, by a local or a remote caller and with or without `confirm`:
+     *       the new stacks must still admit a plain local request for every service, otherwise 422 with the diagnostic
+     *       `localhost_trust_required` and nothing is written.
      *     - 409 `confirmation-required` (`reasons`, `ends_session`) until `confirm: true` when the change removes the method
-     *       this request was admitted by, or leaves a remote request with no remote method in the `admin` stack, or removes
-     *       `localhost-trust` on a remote request.
+     *       this request was admitted by, or leaves a remote request with no remote method in the `admin` stack.
      *
      *     Sessions established with a method that no longer appears in the `admin` stack's methods are ended. 409 `conflict`
      *     when `expected_hash` is stale. Logged as `auth_stacks_change`.
@@ -5914,7 +5913,7 @@ export interface components {
     AuthStacksPreview: {
       /** @description No error diagnostics: the change could be written (after confirmation, when required). */
       valid: boolean;
-      /** @description Validator findings, and `localhost_trust_required` when a local request would lose `localhost-trust`. */
+      /** @description Validator findings, and the blocking `localhost_trust_required` when any request (local or remote) would remove `localhost-trust`. */
       diagnostics: components["schemas"]["Diagnostic"][];
       changed: boolean;
       confirm_required: boolean;
