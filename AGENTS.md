@@ -56,7 +56,7 @@ This is a fun side project; iteration speed beats rigor.
 
 ## Known flaky tests
 
-Until fixed: `TestScenario14aPausedStopsSensorsAndQueuesRuns`, `TestScenario15RestartInterruptsRunsKeepsProposals`, and `internal/transform` and `internal/runner` tests under load. One retry is allowed. Don't debug unrelated flakes.
+Until fixed: `TestScenario14aPausedStopsSensorsAndQueuesRuns`, `TestScenario15RestartInterruptsRunsKeepsProposals`, and `internal/transform` and `internal/runner` tests under load. `mise run push` retries once only if the log has failure records and every one is on this list (a passing mention does not count; any other failure blocks the retry). Don't debug unrelated flakes.
 
 ## Parallel work
 

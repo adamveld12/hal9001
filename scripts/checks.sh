@@ -33,6 +33,7 @@ gitleaks_range() {
   mise exec -- gitleaks git --redact --no-banner --log-opts="origin/main..HEAD"
 }
 
+step "flaky-classify tests" scripts/flaky-classify.test.sh
 step "golangci-lint fmt --diff" mise exec -- golangci-lint fmt --diff ./...
 step "prettier --check" mise exec -- pnpm --dir web format:check
 step "gen:api diff" gen_api_diff
