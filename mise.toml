@@ -26,7 +26,7 @@ description = "Create the worktree ../hal9001-wt-<name> on branch feat/<name> (o
 run = "scripts/wt.sh"
 
 [tasks.push]
-description = "Push the current branch to origin with gh credentials (SSH fallback for workflow-scope rejections, one retry on a known flaky pre-push test; --force-with-lease only when passed)"
+description = "Push the current branch to origin with gh credentials (SSH fallback for workflow-scope rejections; --force-with-lease only when passed)"
 run = "scripts/push.sh"
 
 [tasks.checks]
