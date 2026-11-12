@@ -4,8 +4,8 @@ import { useRuntimeNames } from "../../api/settings";
 import { Button, Select, TextInput } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import {
-  hasActiveFilters,
-  NO_CHAT_FILTERS,
+  clearBarFilters,
+  hasBarFilters,
   Q_DEBOUNCE_MS,
   SOURCES,
   STATUSES,
@@ -149,8 +149,11 @@ export function FilterBar({
           />
         </label>
       </div>
-      {hasActiveFilters(filters) && (
-        <Button variant="ghost" onClick={() => onChange(NO_CHAT_FILTERS)}>
+      {hasBarFilters(filters) && (
+        <Button
+          variant="ghost"
+          onClick={() => onChange(clearBarFilters(filters))}
+        >
           Clear filters
         </Button>
       )}

@@ -26,6 +26,8 @@ export type ConversationForkRef = Schemas["ConversationForkRef"];
 export interface ConversationQuery {
   source?: ConversationSource;
   flow?: string;
+  /** Flow run id: its agent conversations, forks of them and those of its continuation runs. */
+  flow_run?: string;
   runtime?: string;
   status?: ConversationStatus;
   /** RFC 3339 time, inclusive. */

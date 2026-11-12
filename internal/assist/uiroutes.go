@@ -40,7 +40,7 @@ var inboxQuery = []uiQuery{
 
 // chatQuery is the query of the chat routes; a conversation opens in the same page, which reads the same filters.
 var chatQuery = []uiQuery{
-	{"source", "flow|chat"}, {"flow", "flow id"}, {"runtime", "runtime name"},
+	{"source", "flow|chat"}, {"flow", "flow id"}, {"flow_run", "flow run id: its agent conversations, forks of them and those of its continuation runs"}, {"runtime", "runtime name"},
 	{"status", "a conversation status: running, awaiting_approval, idle, succeeded, failed, killed, denied, interrupted, timeout, closed"},
 	{"since", "a day, YYYY-MM-DD"}, {"until", "a day, YYYY-MM-DD"}, {"q", "search text"},
 }

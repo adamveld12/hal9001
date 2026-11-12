@@ -86,7 +86,7 @@ func inboxItem(read bool) map[string]any {
 		"id": id1, "source": "agent_run", "source_id": id2, "flow_run_id": id1, "node_run_id": id3, "agent_run_id": id2,
 		"flow_id": "triage-slack", "node_id": "note", "event_id": nil, "title": "Large PR needs you", "priority": "high",
 		"summary_md": "babylist/web#4120", "suggested_reply": nil, "links": []any{}, "read": read, "starred": false,
-		"archived": false, "dry_run": false, "parse_error": false, "created_at": ts,
+		"archived": false, "dry_run": false, "parse_error": false, "agent_chats": 0, "created_at": ts,
 	}
 }
 
