@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -169,7 +168,7 @@ func (m *Manager) Detail(name string) (Detail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m.load(name, s)
-	return Detail{View: viewLocked(name, cfg, s), Tools: slices.Clone(s.st.Tools)}, nil
+	return Detail{View: viewLocked(name, cfg, s), Tools: append([]Tool{}, s.st.Tools...)}, nil
 }
 
 func (m *Manager) view(name string, cfg spec.RemoteMCP) View {
@@ -261,12 +260,18 @@ func (m *Manager) Disconnect(name string) error {
 	if !cfg.UsesOAuth() {
 		return fmt.Errorf("%w: %q authenticates with %s", ErrNotOAuth, name, cfg.AuthMode())
 	}
+	return m.DropAuth(name)
+}
+
+// DropAuth deletes the stored OAuth token, registration and pending authorizations of name whatever its configured mode
+// is (the API calls it when a change of URL, mode or client makes the tokens meaningless).
+func (m *Manager) DropAuth(name string) error {
 	s := m.get(name)
 	s.mu.Lock()
 	m.load(name, s)
 	s.sec.Token, s.sec.Endpoints, s.sec.Registration = nil, nil, nil
 	s.st.NeedsReconnect, s.st.LastError, s.st.LastErrorAt = false, "", nil
-	err = errors.Join(m.saveSecrets(name, s), m.saveState(name, s))
+	err := errors.Join(m.saveSecrets(name, s), m.saveState(name, s))
 	s.mu.Unlock()
 	m.mu.Lock()
 	for st, p := range m.flows {

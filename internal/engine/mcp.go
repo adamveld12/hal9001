@@ -1,9 +1,6 @@
 package engine
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"hal9001/internal/mcpclient"
@@ -48,43 +45,20 @@ func (e *Engine) grantMCP(runID, sensorID string, servers []string, ttl time.Dur
 	if len(servers) == 0 || e.opt.MCPClient == nil {
 		return nil, nil
 	}
-	token, grant, err := e.opt.MCPClient.IssueRunToken(runID, sensorID, servers, ttl+time.Minute)
+	acc, err := e.opt.MCPClient.GrantScript(runID, sensorID, servers, ttl, e.opt.MCPURL, e.opt.Executable, path)
 	if err != nil {
 		return nil, err
 	}
-	env := map[string]string{
-		"HAL9001_URL":       e.opt.MCPURL,
-		"HAL9001_RUN_TOKEN": token,
-	}
-	if dir := e.executableDir(); dir != "" {
-		env["PATH"] = dir + string(os.PathListSeparator) + path
-	}
 	return &mcpRun{
-		Env: env,
+		Env: acc.Env,
 		Calls: func() []store.SensorMCPCall {
-			logs := grant.Calls()
+			logs := acc.Calls()
 			out := make([]store.SensorMCPCall, 0, len(logs))
 			for _, c := range logs {
 				out = append(out, store.SensorMCPCall{Server: c.Server, Tool: c.Tool, At: c.At, DurationMS: c.DurationMS, OK: c.OK, Error: c.Error})
 			}
 			return out
 		},
-		Revoke: func() { e.opt.MCPClient.RevokeRunToken(token) },
+		Revoke: acc.Revoke,
 	}, nil
-}
-
-// executableDir is the directory of the hal9001 binary, so that `hal9001 mcp call` resolves in a script even when
-// the command-line tool was never installed. Empty when the binary is not named hal9001 (a test binary).
-func (e *Engine) executableDir() string {
-	exe := e.opt.Executable
-	if exe == "" {
-		var err error
-		if exe, err = os.Executable(); err != nil {
-			return ""
-		}
-	}
-	if strings.TrimSuffix(filepath.Base(exe), ".exe") != "hal9001" {
-		return ""
-	}
-	return filepath.Dir(exe)
 }

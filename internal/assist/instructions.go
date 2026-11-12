@@ -80,7 +80,8 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("| `cwd` | Optional working directory (a plain path). Default: the sensor's persistent state directory `$HAL_STATE_DIR`. |\n")
 	w("| `key` | Required. A Go `text/template` over ONE item that yields its dedup key. |\n")
 	w("| `first_run` | `baseline` (default): the first poll marks every item seen without firing. `fire`: the first poll emits every item. |\n")
-	w("| `timeout` | Default `60s`. The process group is killed when it is exceeded. |\n\n")
+	w("| `timeout` | Default `60s`. The process group is killed when it is exceeded. |\n")
+	w("| `mcp_servers` | Optional list of connected remote MCP servers (see `mcp_servers_list`) the script may call with `hal9001 mcp call <server> <tool> --args '<json>'`. Each must exist. |\n\n")
 
 	w("## What the script must print\n\n")
 	w("- stdout is the result: a JSON array of items, or JSONL (one JSON value per line). An item is normally an object. Print nothing for \"no items\" (or `[]`).\n")
@@ -104,6 +105,7 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("| Variable | Value |\n|---|---|\n")
 	w("| `HAL_STATE_DIR` | Persistent scratch directory of this sensor (a temporary one during `assist test`). |\n")
 	w("| `HAL_LAST_SUCCESS_AT` | See above. |\n")
+	w("| `HAL9001_URL`, `HAL9001_RUN_TOKEN` | Only when `mcp_servers` is set: where `hal9001 mcp call` reaches the daemon and the run token that grants exactly the listed servers. Never print them. |\n")
 	w("| `HAL_RUN_ID`, `HAL_NODE` | The run id and the sensor id. |\n\n")
 	w("Credentials available to this sensor (NAMES only; reference them as `$NAME`, never paste a value):\n\n")
 	w("- From the global env file: %s\n", nameList(globalEnv))

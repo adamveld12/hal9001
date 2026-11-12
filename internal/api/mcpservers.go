@@ -268,7 +268,7 @@ func (s *Server) updateRemoteMcpServer(w http.ResponseWriter, r *http.Request) {
 	}
 	// Tokens were issued for one url, one auth mode and one client: any other is a new connection.
 	if old.UsesOAuth() && (old.URL != def.URL || old.AuthMode() != def.AuthMode() || old.ClientID != def.ClientID) {
-		if err := m.Disconnect(name); err != nil && !errors.Is(err, mcpclient.ErrUnknownServer) {
+		if err := m.DropAuth(name); err != nil {
 			s.writeError(w, r, err)
 			return
 		}
@@ -498,5 +498,6 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log().Warn("api: MCP authorization failed", "server", name, "err", err)
 	}
-	http.Redirect(w, r, "/settings/context?mcp_server="+url.QueryEscape(name), http.StatusFound)
+	w.Header().Set("Location", "/settings/context?mcp_server="+url.QueryEscape(name))
+	w.WriteHeader(http.StatusFound)
 }

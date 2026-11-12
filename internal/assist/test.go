@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -135,6 +136,16 @@ func (m *Manager) runSensorDraft(ctx context.Context, sensor *spec.Sensor, targe
 		return zero, err
 	}
 	defer cleanup()
+	if m.opt.MCP != nil {
+		access, err := m.opt.MCP.GrantScript(env["HAL_RUN_ID"], sensor.ID, sensor.MCPServers, sensor.Timeout.Std(), m.opt.URL, m.opt.Executable, env["PATH"])
+		if err != nil {
+			return zero, fmt.Errorf("assist: grant MCP access: %w", err)
+		}
+		if access != nil {
+			defer access.Revoke()
+			maps.Copy(env, access.Env)
+		}
+	}
 
 	// The run ends with the request or the engine.
 	runCtx, cancel := context.WithCancelCause(ctx)

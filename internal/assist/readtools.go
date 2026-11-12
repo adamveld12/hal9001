@@ -95,5 +95,5 @@ func inspectGuide(drafts bool) string {
 	w("Set `diagnostics: true` and `refs` to add the hal9001 version and build, the macOS version and the ids; it never adds settings or secrets. Never put secret values, tokens or environment values in an issue, and cut any you see in output you quote. ")
 	w("Default repository is `%s` (bugs and requests about hal9001 itself); pass `repo: owner/name` only when the user names another one. Use `labels: [\"bug\"]` for bugs. ", tools.DefaultIssueRepo)
 	w("After the call say in a sentence that the issue is ready to open from the button in the chat, and mention anything the user should add. If the result says `truncated`, tell them the link holds only the start and to paste the full text with Copy body.\n\n")
-	return b.String()
+	return b.String() + mcpGuide(drafts)
 }

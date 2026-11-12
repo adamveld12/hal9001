@@ -44,6 +44,7 @@ func (s *session) sessionTools() []tools.Tool {
 		out = s.draftTools()
 	}
 	out = append(out, s.helperTools()...)
+	out = append(out, s.mcpTools()...)
 	return append(out, s.uiTools()...)
 }
 
@@ -383,11 +384,16 @@ func (s *session) testDescribe(json.RawMessage, string) tools.ApprovalText {
 	if target == "" {
 		target = "(new)"
 	}
+	fields := []tools.ApprovalField{{Key: "draft", Value: kind + " " + target}, {Key: "credentials", Value: strings.Join(creds, ", ")}}
+	if mcp := mcpFact(id); mcp != "" {
+		fields = append(fields, tools.ApprovalField{Key: "mcp", Value: mcp})
+		with += " and calls remote MCP servers (" + mcp + ")"
+	}
 	return tools.ApprovalText{
 		Title:       "Test the draft " + kind + " " + target,
 		Description: fmt.Sprintf("Run the draft %s %s: its %s changed since it was last tested or approved. It uses %s.", kind, target, what, with),
 		Command:     id.text(),
-		Fields:      []tools.ApprovalField{{Key: "draft", Value: kind + " " + target}, {Key: "credentials", Value: strings.Join(creds, ", ")}},
+		Fields:      fields,
 	}
 }
 
