@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.29",
-  "build": 29,
-  "commit": "7e9519b905685d2eeb2ba79f09c7375004fe4a53",
-  "published_at": "2026-11-12T22:49:41Z",
+  "version": "0.1.30",
+  "build": 30,
+  "commit": "eb3b983498e0c908cf77f5506a40cf0d97e2110b",
+  "published_at": "2026-11-12T22:58:21Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.29/HAL9001-0.1.29.app.zip",
-  "size": 28788916,
-  "sha256": "270b4ada9254347288fb4790daed40d4e26c2078ee211980275e5a312f8adea4",
-  "signature": "YAeRGxm8NIWn20BAzXbX4kK0nvWwzAd+bh+rd4a0pk1fH2Y74MMbPSTSz0mrqysaO0mKi0ekebvH0zjqM6+4BQ==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.29",
-  "notes": "## Changes\n\n- MCP servers: connect remote MCP servers (OAuth), call them from sensors and the chat assistant (#26) (7e9519b)\n- AGENTS: drop fixed flaky-test list (#25) (a722be9)\n\nCommit: 7e9519b905685d2eeb2ba79f09c7375004fe4a53\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.30/HAL9001-0.1.30.app.zip",
+  "size": 28878133,
+  "sha256": "0c2e559613dd7674e1f8dc4438f0aea9d5038d7f54dcdb21c7cc1e8be2ef3c5a",
+  "signature": "Y4aKjPjqJFP3RgNGIOWUQ/5maBN728FkIIf7h9lt6Bu+mdsENBxIA9MugKcOkA+vIyP3Gj6RooZxNAyERgIUDQ==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.30",
+  "notes": "## Changes\n\n- Inbox actions: agent notes carry questions, actions and a reply box (#28) (eb3b983)\n- Inbox: Agent chats link to the Chat list filtered by flow run (#27) (a4e7eaf)\n\nCommit: eb3b983498e0c908cf77f5506a40cf0d97e2110b\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
