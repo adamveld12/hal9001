@@ -32,6 +32,9 @@ type scriptID struct {
 	Sensors []nodeScript `json:"sensors,omitempty"`
 	// Tool marks the identity of a custom tool draft (Lang, Script, Command and Env are set).
 	Tool bool `json:"tool,omitempty"`
+	// MCP are the remote MCP servers the sensor declares: granting a script another server is a different thing to
+	// approve.
+	MCP []string `json:"mcp_servers,omitempty"`
 }
 
 // nodeScript is what one command node of a flow executes. ID names the node in the text shown to the user; it is
@@ -89,6 +92,8 @@ func scriptOf(s *spec.Sensor, available []string) scriptID {
 		}
 	}
 	sort.Strings(id.Env)
+	id.MCP = append([]string(nil), s.MCPServers...)
+	sort.Strings(id.MCP)
 	return id
 }
 
@@ -162,6 +167,9 @@ func (id scriptID) text() string {
 	fmt.Fprintf(&b, "# lang: %s\n", id.Lang)
 	if id.Cwd != "" {
 		fmt.Fprintf(&b, "# cwd: %s\n", id.Cwd)
+	}
+	if len(id.MCP) > 0 {
+		fmt.Fprintf(&b, "# MCP servers the script may call: %s\n", strings.Join(id.MCP, ", "))
 	}
 	if len(id.Env) == 0 {
 		b.WriteString("# credentials referenced: none\n")

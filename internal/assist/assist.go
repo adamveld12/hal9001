@@ -97,6 +97,9 @@ type Options struct {
 	IdleTimeout time.Duration
 	// Version is hal9001's version, for the diagnostics block of github_issue_link.
 	Version string
+	// MCP is the remote MCP client behind mcp_servers_list, mcp_server_inspect and mcp_call, and the run token of
+	// draft tests of sensors that declare mcp_servers. Optional.
+	MCP MCPClient
 }
 
 // Manager implements core.Assist.

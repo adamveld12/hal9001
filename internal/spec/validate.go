@@ -24,6 +24,9 @@ type Refs struct {
 	PromptOutputs map[string]string
 	// Sandboxes are the enabled sandbox backends (valid config files only) by backend name.
 	Sandboxes map[string]Sandbox
+	// MCPServers are the names of the configured remote MCP servers (config.yaml mcp_servers). Nil skips the check
+	// of a sensor's mcp_servers.
+	MCPServers map[string]bool
 }
 
 var (
@@ -241,6 +244,9 @@ func ValidateConfig(cfg *Config) []Diagnostic {
 			}
 		}
 	}
+	for _, name := range sortedKeys(g.MCPServers) {
+		validateRemoteMCP(c, "mcp_servers."+name, name, g.MCPServers[name])
+	}
 	validateAuth(c, &g.Auth)
 	return c.ds
 }
@@ -286,8 +292,8 @@ func validateAuth(c *collector, a *Auth) {
 }
 
 // ValidateSensor checks a Sensor (not its id against a file name; see
-// CheckSensor).
-func ValidateSensor(s *Sensor) []Diagnostic {
+// CheckSensor). refs may be nil to skip reference checks.
+func ValidateSensor(s *Sensor, refs *Refs) []Diagnostic {
 	g := s.Clone()
 	g.ApplyDefaults()
 	c := &collector{}
@@ -310,6 +316,7 @@ func ValidateSensor(s *Sensor) []Diagnostic {
 	}
 	c.enum("first_run", g.FirstRun, []string{FirstRunBaseline, FirstRunFire}, false)
 	c.positiveDuration("timeout", g.Timeout, "timeout")
+	validateSensorMCPServers(c, g.MCPServers, refs)
 	return c.ds
 }
 

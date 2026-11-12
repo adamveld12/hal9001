@@ -1236,6 +1236,219 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/mcp-servers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Remote MCP servers hal connects to
+     * @description The remote MCP servers of `config.yaml` `mcp_servers` (Settings → Context → MCP servers) with their status and
+     *     tool count, by name. A view never carries a secret: only whether a client secret or API key is stored.
+     */
+    get: operations["listRemoteMcpServers"];
+    put?: never;
+    /**
+     * Add a remote MCP server
+     * @description Adds `mcp_servers.<name>` to `config.yaml` (comments and order of the file are kept) and stores `client_secret`
+     *     and `api_key` in the secrets store (`data/mcp/`), never in the file. For an OAuth server nothing is contacted
+     *     yet: use `POST /api/mcp-servers/{name}/connect`. The name must be new (409 otherwise).
+     */
+    post: operations["createRemoteMcpServer"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp-servers/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    /** One remote MCP server with its cached tools */
+    get: operations["getRemoteMcpServer"];
+    /**
+     * Change a remote MCP server
+     * @description Replaces the definition of the server. `client_secret` and `api_key` are write-only: omit them to keep the stored
+     *     value, send an empty string to remove it. Changing the `url`, the `auth` mode or the `client_id` disconnects an
+     *     OAuth server (its tokens were issued for something else).
+     */
+    put: operations["updateRemoteMcpServer"];
+    post?: never;
+    /**
+     * Remove a remote MCP server
+     * @description Removes the entry from `config.yaml` and deletes its stored credentials and tool cache. Refused with 409 while a
+     *     sensor lists the server in `mcp_servers` (the problem names them): remove it from those sensors first.
+     */
+    delete: operations["deleteRemoteMcpServer"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp-servers/{name}/connect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Start the OAuth authorization of a server
+     * @description For the OAuth auth modes. Discovers the authorization server (the `WWW-Authenticate` challenge, protected
+     *     resource metadata of RFC 9728, authorization server metadata of RFC 8414 or OIDC discovery), registers hal9001
+     *     as a client (RFC 7591) unless a client id was pasted, and returns the authorization URL: authorization code with
+     *     PKCE S256, a single-use `state` that expires after 10 minutes and the `resource` parameter of RFC 8707. Open it
+     *     in a browser on this Mac; the redirect lands on `GET /oauth/callback` of this daemon
+     *     (`http://127.0.0.1:<port>/oauth/callback`). 422 when the server needs no OAuth, or when its authorization server
+     *     has no dynamic registration and no client id was configured.
+     */
+    post: operations["connectRemoteMcpServer"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp-servers/{name}/disconnect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Drop the OAuth tokens of a server
+     * @description Deletes the stored access token, refresh token and client registration. The definition and the tool cache stay;
+     *     the status becomes `disconnected`. 422 for a server that does not use OAuth.
+     */
+    post: operations["disconnectRemoteMcpServer"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp-servers/{name}/test": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Test the connection to a server
+     * @description Connects (Streamable HTTP, then SSE when that cannot be established), initializes the session and lists the
+     *     tools. A failure is still 200 with `ok: false` and the reason. The cached tool list is left alone.
+     */
+    post: operations["testRemoteMcpServer"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp-servers/{name}/tools/refresh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * List the tools of a server again and cache them
+     * @description Runs `tools/list`, replaces the cached list and returns it with what changed since the previous cache (a tool
+     *     added or removed, or its title, description or schema changed). A change posts an informational Inbox note. The
+     *     first refresh of a server has nothing to compare with and posts none. 409 when the server is not connected (OAuth
+     *     without a token, or a key server without a key); 502 when the server cannot be reached.
+     */
+    post: operations["refreshRemoteMcpServerTools"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/mcp-servers/{name}/call": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Call a tool of a remote MCP server
+     * @description Calls one tool and returns its result. Two kinds of caller:
+     *
+     *     - A **run token** (`Authorization: Bearer hal_run_...`, the `HAL9001_RUN_TOKEN` of a sensor poll or draft test;
+     *       what `hal9001 mcp call` sends). It grants exactly the servers the sensor lists in `mcp_servers`: any other
+     *       server is 403, nothing is asked, and the server's credentials never leave the daemon. Every call is logged in
+     *       the sensor run (`mcp_calls`).
+     *     - Any other caller needs the `admin` service like the rest of the API (for example `curl`, or the CLI with
+     *       `localhost-trust`). There is no approval on this endpoint: the assistant's own `mcp_call` tool is the path that
+     *       always asks.
+     *
+     *     A tool that reports an error is 200 with `is_error: true`; 4xx/5xx mean the call did not reach the tool.
+     */
+    post: operations["callRemoteMcpServerTool"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/oauth/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * OAuth redirect target of a remote MCP server authorization
+     * @description Where the authorization server redirects the browser after the user decided (`http://127.0.0.1:<port>/oauth/callback`).
+     *     Public: the browser may not hold a session for this host, and the credential is the `state`: random, bound to one
+     *     server, single use and valid for 10 minutes. It validates the state, exchanges the code (with the PKCE verifier and
+     *     the `resource` parameter), stores the tokens and redirects (302) to `/settings/context?mcp_server=<name>`; a failed
+     *     authorization is shown there on the server's card. An unknown, expired or reused state is a 400 and nothing is
+     *     stored (a browser, which sends `Accept: text/html`, gets a small page saying so instead of the problem JSON).
+     */
+    get: operations["oauthCallback"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/mcp": {
     parameters: {
       query?: never;
@@ -3242,7 +3455,8 @@ export interface components {
      *     unauthenticated 401, authentication-failed 401, forbidden 403, host-not-allowed 403,
      *     origin-not-allowed 403, not-found 404, conflict/already-exists/invalid-state 409, login-expired 410,
      *     payload-too-large 413, unsupported-media-type 415, validation-failed 422, paused 423, internal 500,
-     *     unavailable 503; confirmation-required 409 (an auth change that needs `confirm: true`), rate-limited 429.
+     *     unavailable 503; confirmation-required 409 (an auth change that needs `confirm: true`), rate-limited 429,
+     *     upstream-error 502 (a remote MCP server or its authorization server could not be reached or answered badly).
      * @enum {string}
      */
     ProblemType:
@@ -3264,7 +3478,8 @@ export interface components {
       | "urn:hal9001:problem:internal"
       | "urn:hal9001:problem:unavailable"
       | "urn:hal9001:problem:confirmation-required"
-      | "urn:hal9001:problem:rate-limited";
+      | "urn:hal9001:problem:rate-limited"
+      | "urn:hal9001:problem:upstream-error";
     Problem: {
       type: components["schemas"]["ProblemType"];
       /** @description Short summary of the class. */
@@ -3432,6 +3647,8 @@ export interface components {
       key?: string;
       first_run?: components["schemas"]["FirstRun"];
       timeout?: components["schemas"]["Duration"];
+      /** @description Remote MCP servers (`config.yaml` `mcp_servers`) the script may call with `hal9001 mcp call`. The poll gets a run token for exactly these servers and never sees their credentials. Each must exist. */
+      mcp_servers?: components["schemas"]["RemoteMcpServerName"][];
     };
     /**
      * @description Working directory of a node (§7.5). `mode: dir` uses `path`; `mode: worktree` uses `repo` and `ref`. All
@@ -3528,6 +3745,164 @@ export interface components {
       /** @description The tool output, or the error message when `is_error` is true. */
       text: string;
       is_error: boolean;
+    };
+    /**
+     * @description Name of a remote MCP server: a lowercase slug of at most 32 characters. It is the key under `mcp_servers` in `config.yaml` and what a sensor lists in `mcp_servers`.
+     * @example notion
+     */
+    RemoteMcpServerName: string;
+    /**
+     * @description `oauth`: OAuth with automatic client registration (RFC 7591; the default). `oauth_client`: OAuth with a pasted
+     *     client id and secret, for providers without dynamic registration. `header`: one secret header (an API key) on
+     *     every request. `none`: no credentials.
+     * @enum {string}
+     */
+    RemoteMcpAuthMode: "oauth" | "oauth_client" | "header" | "none";
+    /**
+     * @description `connected`: credentials are in place and nothing is known to be wrong. `needs_reconnect`: the server rejected the
+     *     stored OAuth credentials and refreshing them failed; connect again. `disconnected`: no credentials yet.
+     *     `error`: the last operation failed (see `error`). `unknown`: nothing was tried yet.
+     * @enum {string}
+     */
+    RemoteMcpStatus:
+      "connected" | "needs_reconnect" | "disconnected" | "error" | "unknown";
+    /** @description One entry of `mcp_servers` in `config.yaml`. Only non-secret fields live in the file. */
+    RemoteMcpConfig: {
+      /** @description Streamable HTTP endpoint (https; http only for localhost). */
+      url: string;
+      auth?: components["schemas"]["RemoteMcpAuthMode"];
+      /** @description Pasted OAuth client id (`auth: oauth_client`). */
+      client_id?: string;
+      /** @description Name of the header that carries the API key (`auth: header`). */
+      header?: string;
+      /** @description OAuth scopes to request instead of the ones the server advertises. */
+      scopes?: string[];
+    };
+    /**
+     * @description A configured remote MCP server and what is known about it. It never carries a secret: `has_client_secret` and
+     *     `has_api_key` only say that one is stored.
+     */
+    RemoteMcpServer: {
+      name: components["schemas"]["RemoteMcpServerName"];
+      url: string;
+      auth: components["schemas"]["RemoteMcpAuthMode"];
+      /** @description Pasted OAuth client id; not a secret. */
+      client_id?: string;
+      header?: string;
+      scopes: string[];
+      has_client_secret: boolean;
+      has_api_key: boolean;
+      status: components["schemas"]["RemoteMcpStatus"];
+      /** @description Message of the last failed operation; absent while connected. */
+      error?: string;
+      error_at?: components["schemas"]["Timestamp"];
+      /** @description Tools in the cached list. */
+      tool_count: number;
+      tools_refreshed_at?: components["schemas"]["Timestamp"];
+      token_expires_at?: components["schemas"]["Timestamp"];
+      /** @description Name the server reported at initialization. */
+      server_name?: string;
+      server_version?: string;
+      /**
+       * @description The transport the last successful connection used.
+       * @enum {string}
+       */
+      transport?: "streamable_http" | "sse";
+    };
+    RemoteMcpServerList: {
+      items: components["schemas"]["RemoteMcpServer"][];
+    };
+    /** @description One tool as the server describes it. */
+    RemoteMcpTool: {
+      name: string;
+      title?: string;
+      description: string;
+      /** @description JSON Schema of the arguments. */
+      input_schema: {
+        [key: string]: unknown;
+      };
+      /** @description JSON Schema of `structured_content`, when the tool declares one. */
+      output_schema?: {
+        [key: string]: unknown;
+      };
+    };
+    /** @description A `RemoteMcpServer` with the tool list cached by the last refresh. */
+    RemoteMcpServerDetail: components["schemas"]["RemoteMcpServer"] & {
+      tools: components["schemas"]["RemoteMcpTool"][];
+    };
+    RemoteMcpServerCreateRequest: {
+      name: components["schemas"]["RemoteMcpServerName"];
+      url: string;
+      auth?: components["schemas"]["RemoteMcpAuthMode"];
+      client_id?: string;
+      /** @description Write-only. Stored in the secrets store, never in `config.yaml`. */
+      client_secret?: string;
+      header?: string;
+      /** @description Write-only. The header value sent as is (include a scheme such as `Bearer ` when the server needs one). */
+      api_key?: string;
+      scopes?: string[];
+    };
+    RemoteMcpServerUpdateRequest: {
+      url: string;
+      auth?: components["schemas"]["RemoteMcpAuthMode"];
+      client_id?: string;
+      /** @description Write-only. Omit to keep the stored value; an empty string removes it. */
+      client_secret?: string;
+      header?: string;
+      /** @description Write-only. Omit to keep the stored value; an empty string removes it. */
+      api_key?: string;
+      scopes?: string[];
+    };
+    RemoteMcpConnectResult: {
+      /** @description Open this URL in a browser on the Mac that runs hal9001. */
+      authorize_url: string;
+      expires_at: components["schemas"]["Timestamp"];
+    };
+    RemoteMcpTestResult: {
+      ok: boolean;
+      status: components["schemas"]["RemoteMcpStatus"];
+      latency_ms: number;
+      server_name?: string;
+      server_version?: string;
+      protocol_version?: string;
+      tool_count: number;
+      /** @enum {string} */
+      transport?: "streamable_http" | "sse";
+      /** @description Why the test failed. */
+      error?: string;
+    };
+    RemoteMcpToolChanges: {
+      added: string[];
+      removed: string[];
+      /** @description Tools whose title, description or schema differ. */
+      changed: string[];
+    };
+    RemoteMcpToolsRefresh: {
+      server: components["schemas"]["RemoteMcpServerDetail"];
+      changes: components["schemas"]["RemoteMcpToolChanges"];
+    };
+    RemoteMcpCallRequest: {
+      tool: string;
+      arguments?: {
+        [key: string]: unknown;
+      };
+    };
+    RemoteMcpCallResult: {
+      /** @description The tool reported an error; `text` says which. */
+      is_error: boolean;
+      /** @description The text content blocks of the result joined by newlines. */
+      text: string;
+      /** @description The tool's structured result when it returned one. */
+      structured_content?: unknown;
+    };
+    /** @description One tool call a sensor run made with its run token. */
+    RemoteMcpCallLog: {
+      server: components["schemas"]["RemoteMcpServerName"];
+      tool: string;
+      at: components["schemas"]["Timestamp"];
+      duration_ms: number;
+      ok: boolean;
+      error?: string;
     };
     /** @description Everything a client needs to connect to hal's MCP server, built from the running daemon. */
     McpInfo: {
@@ -4033,6 +4408,10 @@ export interface components {
         [key: string]: components["schemas"]["RuntimeConfig"];
       };
       auth?: components["schemas"]["AuthConfig"];
+      /** @description Remote MCP servers hal connects to as a client, by name. Credentials are not part of the file; they live in the secrets store. */
+      mcp_servers?: {
+        [key: string]: components["schemas"]["RemoteMcpConfig"];
+      };
     };
     /** @description Structured agent result (§7.4). */
     StructuredNote: {
@@ -4927,6 +5306,8 @@ export interface components {
       stderr: components["schemas"]["TextBlob"];
       /** @description Failure class: `timeout`, `exit_nonzero`, `invalid_output`, `killed`, `interrupted`. */
       error: string | null;
+      /** @description Tool calls the script made with `hal9001 mcp call` (the run token), in order. */
+      mcp_calls?: components["schemas"]["RemoteMcpCallLog"][];
     };
     SensorRunList: {
       items: components["schemas"]["SensorRun"][];
@@ -6550,7 +6931,8 @@ export interface components {
       | "assist.start_draft"
       | "update.status"
       | "update.install"
-      | "runtime.adapter";
+      | "runtime.adapter"
+      | "mcp_server.updated";
     /**
      * @description Fields shared by every message. `id` equals the SSE `id:` field and increases monotonically within one daemon
      *     run. Records in `data` have text previews truncated to 4 KiB; fetch the resource for full content.
@@ -6596,7 +6978,8 @@ export interface components {
       | components["schemas"]["AssistStartDraftEvent"]
       | components["schemas"]["UpdateStatusEvent"]
       | components["schemas"]["UpdateInstallEvent"]
-      | components["schemas"]["RuntimeAdapterEvent"];
+      | components["schemas"]["RuntimeAdapterEvent"]
+      | components["schemas"]["RemoteMcpServerUpdatedEvent"];
     StreamReady: {
       server_time: components["schemas"]["Timestamp"];
       version: string;
@@ -7051,6 +7434,24 @@ export interface components {
        */
       type: "update.install";
     };
+    /**
+     * @description A remote MCP server changed (status, credentials, tool list, definition) or was removed. `data` is
+     *     `RemoteMcpServerUpdated`. Clients refetch `GET /api/mcp-servers`.
+     */
+    RemoteMcpServerUpdatedEvent: components["schemas"]["StreamEnvelope"] & {
+      /** @enum {unknown} */
+      type?: "mcp_server.updated";
+      data?: components["schemas"]["RemoteMcpServerUpdated"];
+    } & {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "mcp_server.updated";
+    };
+    RemoteMcpServerUpdated: {
+      name: components["schemas"]["RemoteMcpServerName"];
+    };
   };
   responses: {
     /** @description Any other error, including 5xx. The `type` URI says which class. */
@@ -7215,6 +7616,7 @@ export interface components {
     AuthService: components["schemas"]["AuthService"];
     SandboxBackend: components["schemas"]["SandboxBackendName"];
     EnvKey: components["schemas"]["EnvKeyName"];
+    RemoteMcpServerName: components["schemas"]["RemoteMcpServerName"];
   };
   requestBodies: never;
   headers: {
@@ -9074,6 +9476,344 @@ export interface operations {
         };
       };
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  listRemoteMcpServers: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Every configured server, sorted by name. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpServerList"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      default: components["responses"]["Error"];
+    };
+  };
+  createRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RemoteMcpServerCreateRequest"];
+      };
+    };
+    responses: {
+      /** @description The new server. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpServerDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  getRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The server and the tool list cached by the last refresh. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpServerDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      default: components["responses"]["Error"];
+    };
+  };
+  updateRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RemoteMcpServerUpdateRequest"];
+      };
+    };
+    responses: {
+      /** @description The server after the change. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpServerDetail"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  deleteRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Removed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  connectRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The URL to open. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpConnectResult"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      /** @description The server or its authorization server could not be reached or did not answer as the authorization specification requires. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      default: components["responses"]["Error"];
+    };
+  };
+  disconnectRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The server after the change. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpServerDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  testRemoteMcpServer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The outcome. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpTestResult"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  refreshRemoteMcpServerTools: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The fresh list and the differences. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpToolsRefresh"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      /** @description The server could not be reached or answered with an error. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      default: components["responses"]["Error"];
+    };
+  };
+  callRemoteMcpServerTool: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["RemoteMcpServerName"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RemoteMcpCallRequest"];
+      };
+    };
+    responses: {
+      /** @description The tool's result. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RemoteMcpCallResult"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      /** @description The server could not be reached or answered with a protocol error. */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      default: components["responses"]["Error"];
+    };
+  };
+  oauthCallback: {
+    parameters: {
+      query?: {
+        state?: string;
+        code?: string;
+        error?: string;
+        error_description?: string;
+        iss?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Back to the MCP servers card. */
+      302: {
+        headers: {
+          Location?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       default: components["responses"]["Error"];
     };

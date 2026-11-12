@@ -18,6 +18,7 @@ import (
 	"hal9001/internal/apispec"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/mcpclient"
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -173,6 +174,8 @@ type envOptions struct {
 	tailscale func(e *env) *tailscale.Manager
 	// authTailscale is the Tailscale client of the auth manager (whois, status); nil is the real CLI, which no test uses.
 	authTailscale tailscale.Client
+	// mcpClient builds the remote MCP client; without one the /api/mcp-servers operations answer 503.
+	mcpClient func(e *env) *mcpclient.Manager
 }
 
 func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
@@ -214,6 +217,10 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 	if eo.tailscale != nil {
 		tsm = eo.tailscale(e)
 	}
+	var mcm *mcpclient.Manager
+	if eo.mcpClient != nil {
+		mcm = eo.mcpClient(e)
+	}
 	e.srv = New(Options{
 		Tailscale: tsm,
 		Store:     st, Home: e.home, Engine: e.eng, Auth: e.mgr, Runtimes: rm,
@@ -223,6 +230,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.ws.Store(spec.Load(e.home))
 		},
 		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, MCP: eo.mcp, Port: eo.port, Executable: eo.executable, Update: e.upd,
+		MCPClient: mcm,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

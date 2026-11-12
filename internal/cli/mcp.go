@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -224,4 +225,81 @@ func (p *mcpProxy) do(ctx context.Context, method, path string, body, out any) e
 		return nil
 	}
 	return json.Unmarshal(data, out)
+}
+
+// EnvRunToken is the run token of a sensor poll or draft test (docs/mcp-servers.md). With it, `hal9001 mcp call` is
+// authorized for exactly the servers the sensor lists in mcp_servers; the daemon holds the servers' credentials.
+const EnvRunToken = "HAL9001_RUN_TOKEN" //nolint:gosec // an environment variable name, not a credential
+
+// mcpCommand is `hal9001 mcp`: the stdio MCP server when named alone (or with flags), and `mcp call` for scripts.
+func mcpCommand() *command {
+	return &command{
+		name:    "mcp",
+		summary: "hal's stdio MCP server (alone: for one agent run with --token, or the operator tools for another MCP client); `mcp call` calls a tool of a connected remote MCP server",
+		subs:    []*command{cmd("call", "call a tool of a remote MCP server (a sensor script's declared mcp_servers) and print its result as JSON", mcpCallLeaf())},
+		def:     mcpLeaf(),
+	}
+}
+
+// mcpCallLeaf is `hal9001 mcp call <server> <tool> --args '<json>'`. It posts to the daemon, which holds the server's
+// credentials; the token in HAL9001_RUN_TOKEN (set for a sensor that lists mcp_servers) limits it to those servers. The
+// output is the tool's structured content when it has any, else {"text": "..."}; a tool that reports an error exits
+// non-zero with the message on stderr.
+func mcpCallLeaf() *leaf {
+	var args string
+	return &leaf{
+		usage:   "<server> <tool> [--args '<json object>']",
+		minArgs: 2, maxArgs: 2,
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&args, "args", "", "the tool's arguments as a JSON object (default {}; - reads it from stdin)")
+		},
+		run: func(ctx context.Context, c *call) error {
+			arguments := map[string]any{}
+			raw := strings.TrimSpace(args)
+			if raw == "-" {
+				b, err := io.ReadAll(io.LimitReader(c.env.Stdin, 1<<20))
+				if err != nil {
+					return fmt.Errorf("read --args from stdin: %w", err)
+				}
+				raw = strings.TrimSpace(string(b))
+			}
+			if raw != "" {
+				if err := json.Unmarshal([]byte(raw), &arguments); err != nil || arguments == nil {
+					return usagef("mcp call: --args must be a JSON object")
+				}
+			}
+			body, err := json.Marshal(map[string]any{"tool": c.args[1], "arguments": arguments})
+			if err != nil {
+				return err
+			}
+			cl := c.client()
+			if tok := c.env.Getenv(EnvRunToken); tok != "" {
+				cl.headers = http.Header{"Authorization": {"Bearer " + tok}}
+			}
+			resp, err := cl.do(ctx, http.MethodPost, "/api/mcp-servers/"+url.PathEscape(c.args[0])+"/call", nil, body)
+			if err != nil {
+				return err
+			}
+			var res struct {
+				IsError    bool            `json:"is_error"`
+				Text       string          `json:"text"`
+				Structured json.RawMessage `json:"structured_content"`
+			}
+			if err := json.Unmarshal(resp.Body, &res); err != nil {
+				return fmt.Errorf("mcp call: unexpected response: %w", err)
+			}
+			if res.IsError {
+				_, _ = fmt.Fprintf(c.stderr(), "hal9001: %s on %s reported an error: %s\n", c.args[1], c.args[0], res.Text)
+				return &silentError{}
+			}
+			out := res.Structured
+			if len(out) == 0 || string(out) == "null" {
+				if out, err = json.Marshal(map[string]string{"text": res.Text}); err != nil {
+					return err
+				}
+			}
+			_, err = fmt.Fprintf(c.stdout(), "%s\n", out)
+			return err
+		},
+	}
 }

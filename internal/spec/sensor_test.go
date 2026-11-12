@@ -28,7 +28,7 @@ timeout: 60s
 `
 
 func TestRequirementsSensorLoadsClean(t *testing.T) {
-	s, ds := CheckSensor("github-notifications", []byte(requirementsSensor))
+	s, ds := CheckSensor("github-notifications", []byte(requirementsSensor), nil)
 	if len(ds) != 0 {
 		t.Fatalf("diagnostics: %v", ds)
 	}
@@ -46,7 +46,7 @@ func TestSensorDefaults(t *testing.T) {
 }
 
 func TestSensorWithoutScheduleIsManual(t *testing.T) {
-	s, ds := CheckSensor("s", []byte("id: s\nlang: bash\nscript: echo\nkey: '{{.id}}'\n"))
+	s, ds := CheckSensor("s", []byte("id: s\nlang: bash\nscript: echo\nkey: '{{.id}}'\n"), nil)
 	if len(ds) != 0 {
 		t.Fatalf("diagnostics: %v", ds)
 	}
@@ -79,7 +79,7 @@ func TestSensorValidationErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, ds := CheckSensor("s", []byte(tt.yaml))
+			_, ds := CheckSensor("s", []byte(tt.yaml), nil)
 			var found bool
 			for _, d := range ds {
 				if d.Code == tt.code && d.Path == tt.path && strings.Contains(d.Message, tt.msg) && d.File == "sensors/s.yaml" {
@@ -209,15 +209,15 @@ func TestSensorMarshalRoundTrip(t *testing.T) {
 
 func TestSensorIDFromFileName(t *testing.T) {
 	const body = "interval: 1m\nlang: bash\nscript: echo\nkey: k\n"
-	s, ds := CheckSensor("poller", []byte("description: Polls things\n"+body))
+	s, ds := CheckSensor("poller", []byte("description: Polls things\n"+body), nil)
 	if len(ds) != 0 || s.ID != "poller" || s.Description != "Polls things" {
 		t.Errorf("no id field: id %q desc %q diags %v", s.ID, s.Description, ds)
 	}
-	s, ds = CheckSensor("poller", []byte("id: other\n"+body))
+	s, ds = CheckSensor("poller", []byte("id: other\n"+body), nil)
 	if s.ID != "poller" || len(ds) != 1 || ds[0].Code != CodeIDMismatch || ds[0].Severity != SeverityWarning {
 		t.Errorf("legacy id: id %q diags %v", s.ID, ds)
 	}
-	s, ds = CheckSensor("poller", []byte("id: poller\n"+body))
+	s, ds = CheckSensor("poller", []byte("id: poller\n"+body), nil)
 	if len(ds) != 0 {
 		t.Errorf("matching legacy id should be silent: %v", ds)
 	}

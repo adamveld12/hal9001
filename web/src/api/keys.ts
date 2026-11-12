@@ -48,6 +48,7 @@ export const QUERY_ROOTS = [
   "auth-stacks",
   "tailscale",
   "mcp-info",
+  "mcp-servers",
   "flow-samples",
   "transform-preview",
   "blob",

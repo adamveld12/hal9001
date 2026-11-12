@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -83,7 +84,7 @@ func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (cor
 		return zero, err
 	}
 	target := s.row.TargetID
-	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
+	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML), m.sensorRefs())
 	if sensor == nil || spec.HasErrors(ds) {
 		s.mu.Unlock()
 		for i := range ds {
@@ -135,6 +136,16 @@ func (m *Manager) runSensorDraft(ctx context.Context, sensor *spec.Sensor, targe
 		return zero, err
 	}
 	defer cleanup()
+	if m.opt.MCP != nil {
+		access, err := m.opt.MCP.GrantScript(env["HAL_RUN_ID"], sensor.ID, sensor.MCPServers, sensor.Timeout.Std(), m.opt.URL, m.opt.Executable, env["PATH"])
+		if err != nil {
+			return zero, fmt.Errorf("assist: grant MCP access: %w", err)
+		}
+		if access != nil {
+			defer access.Revoke()
+			maps.Copy(env, access.Env)
+		}
+	}
 
 	// The run ends with the request or the engine.
 	runCtx, cancel := context.WithCancelCause(ctx)

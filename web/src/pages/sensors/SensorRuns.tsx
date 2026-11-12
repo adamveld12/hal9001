@@ -17,6 +17,7 @@ import {
 import { cx } from "../../lib/cx";
 import { durationBetween, formatTime } from "../../lib/format";
 import { isFailedRun } from "./view";
+import { SensorMcpCalls } from "./SensorMcp";
 
 function RunDetails({ run }: { run: SensorRun }) {
   // List responses cut output to 4 KiB; the single-run response has up to 64 KiB.
@@ -49,6 +50,7 @@ function RunDetails({ run }: { run: SensorRun }) {
         <div className="text-[11px] font-medium text-muted">stderr</div>
         <BlobView blob={r.stderr} />
       </div>
+      <SensorMcpCalls calls={r.mcp_calls} />
     </div>
   );
 }

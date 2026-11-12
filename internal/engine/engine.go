@@ -12,6 +12,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/core"
+	"hal9001/internal/mcpclient"
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -43,6 +44,9 @@ type Options struct {
 	// Runtimes finds the agents of runtimes that have no command of their own; default: a manager over Home/data
 	// and BasePATH.
 	Runtimes *runtimes.Manager
+	// MCPClient connects to the remote MCP servers of config.yaml. A sensor that lists mcp_servers gets a run token
+	// for them; the client's Inbox notes are posted through the engine. Optional.
+	MCPClient *mcpclient.Manager
 }
 
 // Engine executes sensors, flows and agent runs. It implements core.Engine.

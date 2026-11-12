@@ -82,6 +82,14 @@ func (c Config) Clone() Config {
 	c.AllowedHosts = slices.Clone(c.AllowedHosts)
 	c.AllowedLogins = slices.Clone(c.AllowedLogins)
 	c.Runtimes = maps.Clone(c.Runtimes)
+	if c.MCPServers != nil {
+		servers := make(map[string]RemoteMCP, len(c.MCPServers))
+		for k, v := range c.MCPServers {
+			v.Scopes = slices.Clone(v.Scopes)
+			servers[k] = v
+		}
+		c.MCPServers = servers
+	}
 	c.Auth.Services = maps.Clone(c.Auth.Services)
 	if c.Auth.Stacks != nil {
 		stacks := make(map[string][]AuthModule, len(c.Auth.Stacks))
@@ -178,6 +186,7 @@ func (s *Sensor) ApplyDefaults() {
 // Clone returns a copy sharing no slices with s.
 func (s Sensor) Clone() Sensor {
 	s.Command = slices.Clone(s.Command)
+	s.MCPServers = slices.Clone(s.MCPServers)
 	return s
 }
 

@@ -106,7 +106,7 @@ func checkDraftSensors(ws *spec.Workspace, dir string, refs *spec.Refs) ([]draft
 				Message: fmt.Sprintf("sensor name %q is invalid (letters, digits, - and _, at most 64 characters)", f.ID)})
 		} else {
 			refs.Sensors[f.ID] = true
-			_, sds := spec.CheckSensor(f.ID, []byte(f.YAML))
+			_, sds := spec.CheckSensor(f.ID, []byte(f.YAML), refs)
 			ds = append(ds, sds...)
 			switch {
 			case saved != nil && saved.Hash == spec.Hash(spec.DropLegacyID([]byte(f.YAML))):
@@ -142,8 +142,8 @@ func checkDraftSensors(ws *spec.Workspace, dir string, refs *spec.Refs) ([]draft
 }
 
 // parseDraftSensor parses one draft sensor for a test or the approval identity; nil when it has errors.
-func parseDraftSensor(f draftSensor) (*spec.Sensor, []spec.Diagnostic) {
-	sensor, ds := spec.CheckSensor(f.ID, []byte(f.YAML))
+func parseDraftSensor(f draftSensor, refs *spec.Refs) (*spec.Sensor, []spec.Diagnostic) {
+	sensor, ds := spec.CheckSensor(f.ID, []byte(f.YAML), refs)
 	for i := range ds {
 		ds[i].File = SensorsDir + "/" + f.ID + draftSensorSuffix
 	}
@@ -223,7 +223,7 @@ func (s *session) testPlanLocked(req core.AssistTestRequest) testPlan {
 			p.diagnostics = invalidDiagnostics("sensor", fmt.Sprintf("the session has no draft sensor %q (write sensors/%s.yaml with draft_write first)", sensorID, sensorID))
 			return p
 		}
-		sensor, ds := parseDraftSensor(f)
+		sensor, ds := parseDraftSensor(f, s.m.sensorRefs())
 		if sensor == nil {
 			p.diagnostics = ds
 			return p

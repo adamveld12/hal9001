@@ -8,6 +8,9 @@ This is separate from the MCP server hal9001 injects into the agents *it* runs (
 That one is scoped to one run and exposes `gh_api`, `now`, `run_context` and the other run tools. The one on this page is
 for clients **you** start, and exposes the operator tools below.
 
+This page is the server side. For the client side, where hal9001 connects to remote MCP servers such as Notion and lets
+sensors and the chat assistant call their tools, see [mcp-servers.md](mcp-servers.md).
+
 Settings → MCP in the web UI shows the exact URL, binary path and copy-paste install commands for your running daemon.
 This page explains the model and lists the commands.
 
