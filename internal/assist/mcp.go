@@ -109,10 +109,16 @@ func (s *session) mcpCallDescribe(raw json.RawMessage, _ string) tools.ApprovalT
 	if err != nil {
 		return tools.ApprovalText{}
 	}
-	args := "{}"
+	// The chat shows the description and the first line of the command; the Approvals page shows all of it. The
+	// arguments are what the user approves, so they are in both: compact in the description, complete in the command.
+	summary := fmt.Sprintf("Call the %q tool on the MCP server %q.", a.Tool, a.Server)
+	command := a.Server + "." + a.Tool
 	if len(a.Args) > 0 {
-		if b, err := json.MarshalIndent(a.Args, "", "  "); err == nil {
-			args = string(b)
+		if compact, err := json.Marshal(a.Args); err == nil {
+			summary = fmt.Sprintf("Call the %q tool on the MCP server %q with arguments %s", a.Tool, a.Server, tools.ClipRunes(string(compact), 380))
+		}
+		if pretty, err := json.MarshalIndent(a.Args, "", "  "); err == nil {
+			command += "\n" + string(pretty)
 		}
 	}
 	desc := ""
@@ -128,13 +134,12 @@ func (s *session) mcpCallDescribe(raw json.RawMessage, _ string) tools.ApprovalT
 	}
 	return tools.ApprovalText{
 		Title:       fmt.Sprintf("Call %s on %s", a.Tool, a.Server),
-		Description: fmt.Sprintf("Call the %q tool on the MCP server %q with the arguments shown.", a.Tool, a.Server),
-		Command:     a.Server + "." + a.Tool,
+		Description: summary,
+		Command:     command,
 		Fields: []tools.ApprovalField{
 			{Key: "server", Value: a.Server},
 			{Key: "tool", Value: a.Tool},
 			{Key: "tool description", Value: desc},
-			{Key: "arguments", Value: args},
 		},
 	}
 }

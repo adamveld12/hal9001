@@ -109,8 +109,8 @@ func TestMCPCallAlwaysAsksButRefusesWhatCannotWorkBeforeAskingAnybody(t *testing
 	for _, fl := range at.Fields {
 		fields[fl.Key] = fl.Value
 	}
-	if at.Title != "Call search on notion" || at.Command != "notion.search" || fields["server"] != "notion" || fields["tool"] != "search" ||
-		fields["tool description"] != "Search pages." || !strings.Contains(fields["arguments"], `"query": "roadmap"`) || !strings.Contains(at.Description, `"search"`) {
+	if at.Title != "Call search on notion" || !strings.HasPrefix(at.Command, "notion.search\n") || !strings.Contains(at.Command, `"query": "roadmap"`) || fields["server"] != "notion" || fields["tool"] != "search" ||
+		fields["tool description"] != "Search pages." || !strings.Contains(at.Description, `"search"`) || !strings.Contains(at.Description, `{"query":"roadmap"}`) {
 		t.Errorf("approval text = %+v", at)
 	}
 }

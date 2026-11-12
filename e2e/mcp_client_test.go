@@ -227,8 +227,9 @@ func TestAssistantInspectsMCPServersAndEveryCallWaitsForTheUser(t *testing.T) {
 		kv := f.(map[string]any)
 		fields[kv["key"].(string)] = kv["value"].(string)
 	}
-	if details["command"] != "notion.echo" || fields["server"] != "notion" || fields["tool"] != "echo" ||
-		fields["tool description"] != "Return the arguments as structured content." || !strings.Contains(fields["arguments"], `"message": "one"`) {
+	cmd, _ := details["command"].(string)
+	if !strings.HasPrefix(cmd, "notion.echo\n") || !strings.Contains(cmd, `"message": "one"`) || !strings.Contains(ap["description"].(string), `{"message":"one"}`) || fields["server"] != "notion" || fields["tool"] != "echo" ||
+		fields["tool description"] != "Return the arguments as structured content." {
 		t.Errorf("approval details = %v", details)
 	}
 	// Nothing has run yet: the call is waiting for the user.

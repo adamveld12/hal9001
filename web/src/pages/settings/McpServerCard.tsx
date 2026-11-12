@@ -104,7 +104,7 @@ export function McpServerCard({
             value={server.transport === "sse" ? "SSE" : "Streamable HTTP"}
           />
         )}
-        {server.token_expires_at && (
+        {server.token_expires_at && server.status === "connected" && (
           <Meta
             label="Token expires"
             value={<Time ts={server.token_expires_at} />}

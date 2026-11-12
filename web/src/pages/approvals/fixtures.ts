@@ -53,7 +53,7 @@ export const mcpCallApproval: Approval = approval({
   type: "tool_call",
   title: "Call notion-search on notion",
   description:
-    'Call the "notion-search" tool on the MCP server "notion" with the arguments shown.',
+    'Call the "notion-search" tool on the MCP server "notion" with arguments {"page_size":10,"query":"roadmap"}',
   origin: { kind: "chat", label: "Chat: Weekly planning", client: null },
   details: {
     body_md: "",
@@ -65,12 +65,9 @@ export const mcpCallApproval: Approval = approval({
         value:
           "Search the workspace for pages and databases by title or content.",
       },
-      {
-        key: "arguments",
-        value: '{\n  "query": "roadmap",\n  "page_size": 10\n}',
-      },
     ],
-    command: "notion.notion-search",
+    command:
+      'notion.notion-search\n{\n  "page_size": 10,\n  "query": "roadmap"\n}',
     tool: "mcp_call",
     diffs: [],
     dry_run: false,
