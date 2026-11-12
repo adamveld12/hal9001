@@ -292,6 +292,10 @@ returns to the page you came from before the Chat page (the inbox when there is 
   <flow>`, links to the run page and has `Clear filter`. The filter stays while you open conversations. The Inbox shows the
   link `Agent chats (N)` on a note whose flow run has agent conversations; N is `agent_chats` of the inbox item.
 
+  ![An Inbox note with the Agent chats (5) link](images/inbox-agent-chats/inbox-light.png) ([dark](images/inbox-agent-chats/inbox-dark.png))
+
+  ![The Chat list filtered by a run, with the banner, a fork and continuation conversations](images/inbox-agent-chats/chat-filtered-light.png) ([dark](images/inbox-agent-chats/chat-filtered-dark.png))
+
 - A **chat** uses the live path of the drawer (the session and its stream), with the message box, approval cards,
   starter prompts and notices. A draft chat (sensor, flow, tool) points to the editor and to the drawer, where its Save and
   Test cards are.
