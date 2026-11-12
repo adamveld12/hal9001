@@ -55,7 +55,7 @@ header (or `Cmd/Ctrl+K`) puts the cursor in the page's message box, or opens a n
 
 | Kind | Has | Started by |
 |---|---|---|
-| `general` | The read tools, `github_issue_link`, `navigate_ui`, `start_draft`. No draft, no draft tools, no `yaml`. | Ask AI in the header, New chat |
+| `general` | The read tools, `github_issue_link`, `navigate_ui`, `start_draft`, and (when the daemon has an MCP client) `mcp_servers_list`, `mcp_server_inspect`, `mcp_call`. No draft, no draft tools, no `yaml`. | Ask AI in the header, New chat |
 | `sensor`, `flow`, `tool` | Everything of `general`, plus the draft and `draft_read`, `draft_write`, `draft_test`, `validate`. | "Create with AI"/"Ask AI" on those pages, or `start_draft` |
 
 Asking for a draft in a general chat ("make a sensor for X", "change the flow I have open"): the assistant calls
@@ -394,11 +394,13 @@ through hal's MCP tools, and each turn starts with the hal context block (sessio
 | `draft_read` | The draft with its validation diagnostics. `path` also reads `instructions` (the authoring guide), `prompts/<name>.md` and, in flow sessions, `sensors/<id>.yaml` (the draft sensor, else the saved one; `sensors` lists the drafts) and `reference/<file>` (read-only; a directory lists its entries). | never |
 | `draft_write` | Replaces the draft, or in flow sessions a draft prompt `prompts/<name>.md` or draft sensor `sensors/<id>.yaml`; returns the diagnostics. | never |
 | `validate` | The draft's diagnostics. | never |
-| `draft_test` (`sample`, `event`, `sensor`, `from_sensor` + `item` for flows) | Runs the draft like a poll or one flow run with your credentials; redacted result. | **When the script changed** since you last tested or approved it (or since the saved sensor's script): a `tool_call` approval whose chat message carries what runs, which credentials it mentions, and a diff against the last approved version. Allow records that script as approved; unchanged scripts run without asking. |
+| `draft_test` (`sample`, `event`, `sensor`, `from_sensor` + `item` for flows) | Runs the draft like a poll or one flow run with your credentials; redacted result. A sensor that declares `mcp_servers` gets a run token for them, so `hal9001 mcp call` works inside the test ([mcp-servers.md](mcp-servers.md#sensors)). | **When the script changed** since you last tested or approved it (or since the saved sensor's script): a `tool_call` approval whose chat message carries what runs, which credentials it mentions, the MCP servers the sensor declares and the tools its script calls, and a diff against the last approved version. Allow records that script as approved; unchanged scripts run without asking. |
 | `gh_api`, `pr_view`, `now`, ... | hal's always-available tools. | as for flow agents |
 | `navigate_ui`, `start_draft` | Move the user's view / hand over to a draft session ([above](#navigate_ui-and-start_draft)). Publish a stream event, change nothing. | never |
 | Read tools (below): `flow_runs_list`, `flow_run_get`, `agent_run_get`, `events_list`, ... | Everything the CLI can list, get and inspect. | never |
 | `github_issue_link` | Builds a prefilled GitHub new-issue link (below). Calls nothing. | never |
+| `mcp_servers_list`, `mcp_server_inspect` | The remote MCP servers you connected with their status, and one server's tools with descriptions and schemas ([mcp-servers.md](mcp-servers.md#the-chat-assistant)). Only offered when the daemon has an MCP client. | never |
+| `mcp_call` | Calls one tool of a remote MCP server. The approval card shows server, tool, description and arguments. A call to a server that is not connected is refused before asking. | **always** |
 
 The chat assistant also has the hub's `request_approval` (title, **required** `description`, optional body, priority, editable
 fields): it asks you for a decision and returns `{approval_id, status, decision, comment, values, edited, edits, message?}`. The

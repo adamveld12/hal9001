@@ -17,7 +17,7 @@ func newEngine(p engineParams) (*engine.Engine, error) {
 		Log:       p.Log,
 		UIBaseURL: p.UIBaseURL,
 		Clock:     p.Clock,
-		MCPURL:    p.MCPURL, Executable: p.Executable,
+		MCPURL:    p.MCPURL, Executable: p.Executable, MCPClient: p.MCPClient,
 	})
 }
 
@@ -43,5 +43,6 @@ func newAPI(p apiParams) http.Handler {
 		Sinks:        p.Sinks,
 		Update:       p.Update,
 		Tailscale:    p.Tailscale,
+		MCPClient:    p.MCPClient,
 	})
 }

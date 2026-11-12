@@ -31,6 +31,7 @@ import (
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
 	"hal9001/internal/inboxact"
+	"hal9001/internal/mcpclient"
 	"hal9001/internal/notify"
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
@@ -84,6 +85,9 @@ type Options struct {
 	// Update serves the /api/update operations and its stream events. Optional: without it GET /api/update reports
 	// updates as disabled and the other operations answer 503.
 	Update *update.Service
+	// MCPClient serves the /api/mcp-servers operations and /oauth/callback (remote MCP servers hal connects to as a
+	// client, docs/mcp-servers.md). Optional: without it they answer 503.
+	MCPClient *mcpclient.Manager
 }
 
 // Server is the http.Handler New returns. Besides serving requests it has two
@@ -276,6 +280,18 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"markMcpReady": s.markMcpReady,
 		"getMcpInfo":   s.getMcpInfo,
 		"serveMcp":     s.serveMcp,
+
+		"listRemoteMcpServers":        s.listRemoteMcpServers,
+		"createRemoteMcpServer":       s.createRemoteMcpServer,
+		"getRemoteMcpServer":          s.getRemoteMcpServer,
+		"updateRemoteMcpServer":       s.updateRemoteMcpServer,
+		"deleteRemoteMcpServer":       s.deleteRemoteMcpServer,
+		"connectRemoteMcpServer":      s.connectRemoteMcpServer,
+		"disconnectRemoteMcpServer":   s.disconnectRemoteMcpServer,
+		"testRemoteMcpServer":         s.testRemoteMcpServer,
+		"refreshRemoteMcpServerTools": s.refreshRemoteMcpServerTools,
+		"callRemoteMcpServerTool":     s.callRemoteMcpServerTool,
+		"oauthCallback":               s.oauthCallback,
 
 		"getUpdate":     s.getUpdate,
 		"checkUpdate":   s.checkUpdate,

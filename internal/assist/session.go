@@ -101,7 +101,7 @@ func (s *session) applyDraft(yaml, by string) {
 	case s.isTool():
 		row.DraftID, row.DraftDiagnostics = evaluateTool(yaml, row.TargetID)
 	default:
-		row.DraftID, row.DraftDiagnostics = evaluate(yaml, row.TargetID)
+		row.DraftID, row.DraftDiagnostics = evaluate(yaml, row.TargetID, s.m.sensorRefs())
 	}
 	row.DraftUpdatedAt, row.DraftUpdatedBy = s.m.st.Now(), by
 }
@@ -109,8 +109,8 @@ func (s *session) applyDraft(yaml, by string) {
 // evaluate validates a draft like a sensor file. A new sensor is named by the draft's id: line (the file name it
 // is saved under, never stored in the file). When editing an existing sensor the name is the target's and an id:
 // line that differs is ignored with a warning.
-func evaluate(yaml, target string) (sensorID string, diagnostics json.RawMessage) {
-	sensor, ds := spec.CheckSensor(target, []byte(yaml))
+func evaluate(yaml, target string, refs *spec.Refs) (sensorID string, diagnostics json.RawMessage) {
+	sensor, ds := spec.CheckSensor(target, []byte(yaml), refs)
 	for i := range ds {
 		ds[i].File = SensorDraftFile
 	}
@@ -251,7 +251,7 @@ func (s *session) adopt(id string) error {
 	case s.isTool():
 		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, id)
 	default:
-		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id)
+		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, id, s.m.sensorRefs())
 	}
 	return s.saveLocked()
 }
@@ -271,7 +271,7 @@ func (s *session) retarget(oldID, newID string) error {
 	case s.isTool():
 		s.row.DraftID, s.row.DraftDiagnostics = evaluateTool(s.row.DraftYAML, newID)
 	default:
-		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, newID)
+		s.row.DraftID, s.row.DraftDiagnostics = evaluate(s.row.DraftYAML, newID, s.m.sensorRefs())
 	}
 	return s.saveLocked()
 }
@@ -705,7 +705,7 @@ func (s *session) draftScriptLocked() (id scriptID, available []string, ok bool)
 		available = s.m.availableEnvOf(s.row.TargetKind, s.row.TargetID)
 		return scriptOfTool(tool, available), available, true
 	}
-	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
+	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML), s.m.sensorRefs())
 	if sensor == nil || spec.HasErrors(ds) {
 		return scriptID{}, nil, false
 	}

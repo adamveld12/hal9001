@@ -105,7 +105,7 @@ func (a *app) tree() *command {
 		cmd("validate", "check sensors, flows, prompts and config offline", validateLeaf()),
 		startersGroup(),
 		cmd("version", "print the version", versionLeaf()),
-		cmd("mcp", "run hal's stdio MCP server: for one agent run (--token, spawned by the agent) or, without a token, the operator tools of the daemon for another MCP client", mcpLeaf()),
+		mcpCommand(),
 		group("auth", "authentication helpers",
 			cmd("set-password", "set the password for the password auth module", setPasswordLeaf())),
 		group("tailscale", "share hal9001 on your tailnet", tailscaleCmds()...),

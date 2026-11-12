@@ -1,4 +1,4 @@
--- hal9001 schema v21: inbox actions. A note written by an agent can carry questions and actions (JSON, validated against
+-- hal9001 schema v22: inbox actions. A note written by an agent can carry questions and actions (JSON, validated against
 -- the note schema before they get here) and a reply box. The first interaction with a note forks the agent's
 -- conversation once; conversation_id is that fork (an assist session id, no foreign key: sessions are pruned on their
 -- own schedule). Every interaction (a batch of answers, an action, a reply) is a row of inbox_interactions with the

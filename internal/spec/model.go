@@ -161,6 +161,8 @@ type Config struct {
 	Tailscale     Tailscale          `yaml:"tailscale,omitempty" json:"tailscale"`
 	Runtimes      map[string]Runtime `yaml:"runtimes,omitempty" json:"runtimes"`
 	Auth          Auth               `yaml:"auth,omitempty" json:"auth"`
+	// MCPServers are the remote MCP servers hal9001 connects to as a client, by name (docs/mcp-servers.md).
+	MCPServers map[string]RemoteMCP `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 }
 
 // RuntimeKinds are the runtime families hal9001 knows how to detect, install and lock down.
@@ -259,6 +261,9 @@ type Sensor struct {
 	Key      string   `yaml:"key" json:"key"`
 	FirstRun string   `yaml:"first_run,omitempty" json:"first_run"`
 	Timeout  Duration `yaml:"timeout,omitempty" json:"timeout"`
+	// MCPServers names the configured remote MCP servers (config.yaml mcp_servers) the script may call with
+	// `hal9001 mcp call`. A poll gets a run-scoped token for exactly these servers and no server credentials.
+	MCPServers []string `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 }
 
 // Flow is flows/<id>.yaml (REQUIREMENTS §6).

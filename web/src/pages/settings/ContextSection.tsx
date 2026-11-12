@@ -11,6 +11,7 @@ import {
 } from "../../components/ui";
 import { usePageContext } from "../../layout/pageContext";
 import { factList } from "../../lib/contextSummary";
+import { McpServersSection } from "./McpServersSection";
 import {
   byteLength,
   MAX_SYSTEM_PROMPT_BYTES,
@@ -37,6 +38,7 @@ export function ContextSection() {
           saved={settings.data.config.system_prompt ?? ""}
         />
       )}
+      <McpServersSection />
     </div>
   );
 }

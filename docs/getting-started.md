@@ -97,6 +97,15 @@ Details: [mcp.md](mcp.md).
   `sensor_create` wait for your approval in the Inbox; `request_approval` asks you for a decision and `send_note` leaves a
   note. No tool can approve or deny. Loopback only, same auth as the API.
 
+## Remote MCP servers (hal9001 as a client)
+
+Details: [mcp-servers.md](mcp-servers.md).
+
+- Settings → Context → MCP servers connects hal9001 to remote MCP servers such as Notion or Linear, with OAuth (automatic
+  registration or a pasted client ID and secret), an API key header, or no authentication. Credentials stay in the daemon.
+- A sensor lists the servers it may use in `mcp_servers` and calls their tools with `hal9001 mcp call <server> <tool>
+  --args '<json>'`. The chat assistant lists, inspects and calls tools too, and asks you before every call.
+
 ## Chat assistant
 
 Details: [assist.md](assist.md).

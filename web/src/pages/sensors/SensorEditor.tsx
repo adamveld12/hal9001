@@ -48,6 +48,7 @@ import { DiagnosticsList } from "../files/DiagnosticsList";
 import { useEditState } from "../files/useEditState";
 import { PauseToggle } from "./PauseToggle";
 import { SensorEnvSection } from "./SensorEnvSection";
+import { SensorMcpHint } from "./SensorMcp";
 import { SensorRuns } from "./SensorRuns";
 import { ResetDialog, RunNowResult, type RunNowOutcome } from "./SensorRunNow";
 import {
@@ -430,6 +431,7 @@ function Editor({
             minHeight="12rem"
             maxHeight="32rem"
           />
+          <SensorMcpHint servers={detail.sensor?.mcp_servers ?? []} />
           {saveError && (
             <div role="alert" className="text-xs text-bad">
               {saveError}

@@ -49,6 +49,7 @@ flowchart LR
 | Prompt | Reusable prompt template file selected by agent nodes. |
 | Inbox item | Structured note for me (from read-only agents or `inbox` nodes). |
 | Approval | A decision hal asks me for, with one shape: title, required description, details (command, diff, fields), priority, origin and the conversation it was requested in. Raised only by `RaiseApproval`, whatever asked: an approve-mode agent's proposal or gated tool call, an agent's `request_approval`, a node gate, a Request approval node, an MCP client. Approve, Deny (with optional additional steering) or Deny + stop (tool calls). `max_steers_per_run` (default 3) bounds steered denials per conversation. |
+| Remote MCP server | An MCP server hal connects to as a client (`mcp_servers` in `config.yaml`), with OAuth or an API key kept in `data/mcp/`. Sensors and the chat assistant call its tools (docs/mcp-servers.md). Not the MCP servers an agent node passes through. |
 
 ## 3. Storage layout
 
@@ -67,6 +68,7 @@ Home dir defaults to `~/.hal9001` (override `--home`). Config files are meant to
   data/state/<node>/   # persistent per-sensor/per-node scratch dir ($HAL_STATE_DIR)
   data/worktrees/<run>/
   data/assist/<session>/  # AI-assisted authoring: the draft sensor.yaml and the agent's instructions (§5.1)
+  data/mcp/<name>.secrets.json  # remote MCP server credentials and OAuth tokens (0600, never returned by the API); <name>.state.json holds the tool cache (no secrets)
 ```
 
 - Config files are hot-reloaded on change (fsnotify). The UI writes YAML; if the file changed on disk since the UI loaded it (hash mismatch), the save is rejected with a conflict.
@@ -123,6 +125,7 @@ timeout: 60s
 
 - Output: JSON array or JSONL of items. Each item gets a dedup key from the `key` template; unseen keys become Events.
 - Every poll is recorded (SensorRun: start, duration, item count, new count, stdout/stderr, exit code). Failures are shown on the sensor page and don't advance `HAL_LAST_SUCCESS_AT`.
+- Remote MCP servers: a sensor may list `mcp_servers: [<name>]` (names from `config.yaml` `mcp_servers`; unknown or repeated names are validation errors). The poll's environment then has `HAL9001_URL` and `HAL9001_RUN_TOKEN`, a run-scoped token for exactly those servers, and the script calls a tool with `hal9001 mcp call <server> <tool> --args '<json>'` (stdout: the tool's structured content, else `{"text": ...}`; a tool error exits 1). The script never sees the server's credentials. No approval at poll time; every call is recorded on the SensorRun as `mcp_calls`. `hal9001 mcp` without `call` is still the stdio bridge to hal's own MCP server. See docs/mcp-servers.md.
 - Manual "Run now" (`POST /api/sensors/{id}/poll`, optional body `{rerun_seen, flows}`). It is an explicit user action: it works while the sensor is paused or has no subscriber, is rejected (423) under the kill switch, and never applies `first_run: baseline` (only the scheduler's first poll baselines). New items become events and fan out as usual; with `rerun_seen` items whose key was already seen are replayed (`kind: replay`, current flow version) into each target flow, where the replayed event is the key's most recent event or, if retention pruned it, a new event stored for that manual run; the dedup state does not change. `flows` restricts fan-out and re-runs to the listed flows (which may be disabled). The response is the SensorRun plus `new_events`, `rerun_events`, `flow_run_ids`. Sensors pause with the kill switch.
 - Run a flow now (`POST /api/flows/{id}/run`, `{rerun_seen}`): polls every sensor the flow subscribes to, in parallel, with that flow as the only target; also for a flow with `enabled: false` (explicit user action); 422 when it subscribes to nothing.
 - A sensor with neither `interval` nor `cron` is manual-only: valid, never scheduled, `next_poll_at` null, status `manual`.

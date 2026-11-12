@@ -102,6 +102,7 @@ func (w *Workspace) Refs() *Refs {
 		}
 	}
 	r.Sandboxes = enabledSandboxes(w.Home)
+	r.MCPServers = MCPServerRefs(w.Config.Value)
 	return r
 }
 
@@ -174,9 +175,10 @@ func Load(home string) *Workspace {
 		refs.Runtimes[k] = v
 	}
 	refs.Sandboxes = enabledSandboxes(home)
+	refs.MCPServers = MCPServerRefs(w.Config.Value)
 
 	for _, n := range sensorNames {
-		w.Sensors = append(w.Sensors, loadFile(home, KindSensor, n, func(b []byte) (*Sensor, []Diagnostic) { return CheckSensor(n, b) }))
+		w.Sensors = append(w.Sensors, loadFile(home, KindSensor, n, func(b []byte) (*Sensor, []Diagnostic) { return CheckSensor(n, b, refs) }))
 	}
 	for _, n := range w.listDir(DirTools, ".yaml") {
 		w.Tools = append(w.Tools, loadFile(home, KindTool, n, func(b []byte) (*Tool, []Diagnostic) { return CheckTool(n, b) }))

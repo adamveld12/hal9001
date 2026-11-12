@@ -16,6 +16,9 @@ approval.
   transcript and log the CLI shows (read-only, no approval) to explain a failure. For a bug it builds a prefilled GitHub
   issue link; nothing is filed until you submit it. Edits still go through a draft, your Save and the approval gate
   ([docs/assist.md](docs/assist.md)).
+- **Remote MCP servers as a client.** Connect hal9001 to servers such as Notion or Linear (OAuth or an API key). Sensors
+  call their tools with `hal9001 mcp call`, and the chat assistant calls them after your approval. Credentials stay in the
+  daemon ([docs/mcp-servers.md](docs/mcp-servers.md)).
 - **API first.** The UI and the `hal9001` CLI are clients of one JSON REST API ([`api/openapi.yaml`](api/openapi.yaml)).
 
 The full specification is [REQUIREMENTS.md](REQUIREMENTS.md). Working rules for contributors are in
@@ -418,6 +421,7 @@ Only one process can hold port 9001. Tests start in-process daemons on `127.0.0.
 | [docs/flows.md](docs/flows.md) | Writing sensors, flows and prompts: the node contract, routing, templates, agent nodes, dry-run, replay, test-node. |
 | [docs/auth.md](docs/auth.md) | The Auth page, changing sign-in from the UI or API (guardrails), auth stacks, modules, sharing on your tailnet (Tailscale), threat notes. |
 | [docs/mcp.md](docs/mcp.md) | hal9001 as an MCP server for Claude Code, Codex, omp and pi: the `/mcp` endpoint, the stdio command, tools, approvals, install commands. |
+| [docs/mcp-servers.md](docs/mcp-servers.md) | hal9001 as an MCP client: adding remote MCP servers (OAuth, API key), the `mcp_servers` config, `hal9001 mcp call` for sensors, the assistant's MCP tools, security notes and a Notion checklist. |
 | [docs/runtimes.md](docs/runtimes.md) | Configuring, detecting, installing and probing ACP runtimes. |
 | [docs/acp-gate.md](docs/acp-gate.md) | Measured behavior of the real adapters (Claude, Codex, omp). |
 | [docs/assist.md](docs/assist.md) | The chat assistant: Ask AI (global drawer, page context, `navigate_ui`), AI-assisted authoring (draft, permission policy, secret model, lifecycle), the read-only tools that inspect runs, and the GitHub issue link. |

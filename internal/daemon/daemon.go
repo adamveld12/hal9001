@@ -26,6 +26,7 @@ import (
 	"hal9001/internal/authstore"
 	"hal9001/internal/httpsec"
 	"hal9001/internal/inboxact"
+	"hal9001/internal/mcpclient"
 	"hal9001/internal/menubar"
 	"hal9001/internal/notify"
 	"hal9001/internal/sandbox"
@@ -161,16 +162,23 @@ func Run(ctx context.Context, opts Options) error {
 		Via:      func() string { return d.effective(d.workspace()).Config.Value.NotifyVia },
 		Terminal: notify.New(notify.WithLogger(log), notify.WithIcon(writeNotifyIcon(home, log))),
 	})
+	// Remote MCP servers (config.yaml mcp_servers): the OAuth redirect lands on this daemon's real port.
+	mcpMgr := mcpclient.New(mcpclient.Options{
+		Home: home, Version: opts.Version, Log: log,
+		Servers:     func() map[string]spec.RemoteMCP { return d.effective(d.workspace()).Config.Value.MCPServers },
+		RedirectURL: func() string { return "http://127.0.0.1:" + strconv.Itoa(port) + "/oauth/callback" },
+	})
 	eng, err := newEngine(engineParams{
 		Store: st, Home: home, BasePATH: basePATH, ExactPATH: opts.ExactPATH, Log: log,
 		Notifier:  notifier,
 		UIBaseURL: uiBaseURL(opts.UIURL, os.Getenv(EnvUIURL), port),
 		Clock:     opts.Clock,
-		MCPURL:    "http://127.0.0.1:" + strconv.Itoa(port), Executable: opts.Executable,
+		MCPURL:    "http://127.0.0.1:" + strconv.Itoa(port), Executable: opts.Executable, MCPClient: mcpMgr,
 	})
 	if err != nil {
 		return fmt.Errorf("daemon: engine: %w", err)
 	}
+	mcpMgr.SetNotifier(eng)
 	d.engine = eng
 
 	tsCLI := tailscale.CLI{Path: basePATH}
@@ -213,6 +221,7 @@ func Run(ctx context.Context, opts Options) error {
 	assistMgr, err := assist.New(assist.Options{
 		Store: st, Home: home, Host: eng.AssistHost(), Log: log,
 		URL: "http://127.0.0.1:" + strconv.Itoa(port), IdleTimeout: opts.AssistIdleTimeout, Executable: opts.Executable, Version: opts.Version,
+		MCP: mcpMgr,
 	})
 	if err != nil {
 		return fmt.Errorf("daemon: assist: %w", err)
@@ -257,12 +266,13 @@ func Run(ctx context.Context, opts Options) error {
 		Store: st, Home: home, Engine: eng, Assist: assistMgr, InboxActions: inboxActions, Auth: mgr, MCP: eng.ToolHub(),
 		Operator: operator, Port: port, Executable: opts.Executable, Tailscale: tsMgr,
 		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH, Runtimes: eng.Runtimes(),
-		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update,
+		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update, MCPClient: mcpMgr,
 	})
 	// The API server announces on-disk edits to SSE clients and owns the
 	// stream hub, which must be closed on shutdown.
 	apiServer, _ := apiHandler.(interface {
 		PublishConfigChange(paths []string)
+		PublishMCPServer(name string)
 		assist.UIPublisher
 		Close()
 	})
@@ -270,6 +280,7 @@ func Run(ctx context.Context, opts Options) error {
 		defer apiServer.Close()
 		// navigate_ui and start_draft reach the web UI as stream events.
 		assistMgr.SetUIPublisher(apiServer)
+		mcpMgr.SetChanged(apiServer.PublishMCPServer)
 	}
 	handler := httpsec.Middleware(httpsec.Options{
 		Port:         port,

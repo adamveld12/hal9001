@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -319,6 +320,14 @@ func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.
 		return e.finishPoll(run, snap, nil, err)
 	}
 	defer cleanup()
+	mcp, err := e.grantMCP(run.ID, sensor.ID, sensor.MCPServers, sensor.Timeout.Std(), env["PATH"])
+	if err != nil {
+		return e.finishPoll(run, snap, nil, fmt.Errorf("grant MCP access: %w", err))
+	}
+	if mcp != nil {
+		defer mcp.Revoke()
+		maps.Copy(env, mcp.Env)
+	}
 	res, runErr := runner.Run(ctx, runner.Spec{
 		Lang:    runner.Lang(sensor.Lang),
 		Script:  sensor.Script,
@@ -328,6 +337,9 @@ func (e *Engine) doPoll(ctx context.Context, run *store.SensorRun, sensor *spec.
 		BaseEnv: map[string]string{},
 		Timeout: sensor.Timeout.Std(),
 	})
+	if mcp != nil {
+		run.MCPCalls = mcp.Calls()
+	}
 	if runErr != nil {
 		return e.finishPoll(run, snap, &res, fmt.Errorf("run sensor: %w", runErr))
 	}

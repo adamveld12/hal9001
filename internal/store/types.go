@@ -322,6 +322,18 @@ type SensorRun struct {
 	NewCount   int          `json:"new_count"`
 	Stdout     Content      `json:"stdout"`
 	Stderr     Content      `json:"stderr"`
+	// MCPCalls are the tool calls the script made with its run token (docs/mcp-servers.md), in order.
+	MCPCalls []SensorMCPCall `json:"mcp_calls,omitempty"`
+}
+
+// SensorMCPCall is one `hal9001 mcp call` of a sensor run.
+type SensorMCPCall struct {
+	Server     string    `json:"server"`
+	Tool       string    `json:"tool"`
+	At         time.Time `json:"at"`
+	DurationMS int64     `json:"duration_ms"`
+	OK         bool      `json:"ok"`
+	Error      string    `json:"error,omitempty"`
 }
 
 // SensorState is per-sensor bookkeeping; LastSuccessAt feeds HAL_LAST_SUCCESS_AT.
