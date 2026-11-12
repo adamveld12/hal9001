@@ -6,19 +6,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"hal9001/internal/outschema"
 )
 
+func nonNilSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 const inboxCols = `id, source_type, flow_run_id, node_run_id, agent_run_id, title, priority, summary_md, suggested_reply, links,
-	parse_error, is_read, starred, archived, dry_run, created_at, client, thread_key`
+	parse_error, is_read, starred, archived, dry_run, created_at, client, thread_key, questions, actions, conversation_id`
 
 func scanInbox(r rowScanner) (InboxItem, error) {
 	var (
 		it                                 InboxItem
 		src, prio, links, created          string
+		questions, actions                 string
 		parseErr, read, starred, arch, dry int
 	)
 	if err := r.Scan(&it.ID, &src, &it.FlowRunID, &it.NodeRunID, &it.AgentRunID, &it.Title, &prio, &it.SummaryMD, &it.SuggestedReply, &links,
-		&parseErr, &read, &starred, &arch, &dry, &created, &it.Client, &it.ThreadKey); err != nil {
+		&parseErr, &read, &starred, &arch, &dry, &created, &it.Client, &it.ThreadKey, &questions, &actions, &it.ConversationID); err != nil {
 		return InboxItem{}, scanErr(err)
 	}
 	it.SourceType, it.Priority = SourceType(src), Priority(prio)
@@ -30,6 +40,12 @@ func scanInbox(r rowScanner) (InboxItem, error) {
 	if it.Links == nil {
 		it.Links = []InboxLink{}
 	}
+	if err := json.Unmarshal([]byte(questions), &it.Questions); err != nil {
+		return InboxItem{}, fmt.Errorf("store: decode inbox questions: %w", err)
+	}
+	if err := json.Unmarshal([]byte(actions), &it.Actions); err != nil {
+		return InboxItem{}, fmt.Errorf("store: decode inbox actions: %w", err)
+	}
 	var err error
 	it.CreatedAt, err = parseTS(created)
 	return it, err
@@ -38,7 +54,8 @@ func scanInbox(r rowScanner) (InboxItem, error) {
 // CreateInboxItem inserts it, assigning ID, Priority (normal) and CreatedAt.
 // SourceType must name the id that is set (AgentRunID or NodeRunID), or be SourceMCP, which has no run ids and
 // names the external client in Client. FlowRunID is filled in from the node/agent run when empty, so a starred item
-// always protects its whole trace from pruning.
+// always protects its whole trace from pruning. Questions and Actions are only for a note an agent wrote (AgentRunID
+// set) and must pass outschema.Check; otherwise ErrInvalid.
 func (s *Store) CreateInboxItem(ctx context.Context, it *InboxItem) error {
 	if it.Title == "" {
 		return fmt.Errorf("%w: inbox title required", ErrInvalid)
@@ -66,13 +83,30 @@ func (s *Store) CreateInboxItem(ctx context.Context, it *InboxItem) error {
 	if err != nil {
 		return err
 	}
+	if len(it.Questions) > 0 || len(it.Actions) > 0 {
+		if it.AgentRunID == "" {
+			return fmt.Errorf("%w: only a note an agent wrote can have questions or actions", ErrInvalid)
+		}
+		if err := outschema.Check(it.Questions, it.Actions); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+	}
+	questions, err := jsonText(nonNilSlice(it.Questions))
+	if err != nil {
+		return err
+	}
+	actions, err := jsonText(nonNilSlice(it.Actions))
+	if err != nil {
+		return err
+	}
 	return s.write(ctx, func(t *txn) error {
 		if err := t.resolveInboxLinks(ctx, it); err != nil {
 			return err
 		}
-		_, err := t.ExecContext(ctx, `INSERT INTO inbox_items (`+inboxCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err := t.ExecContext(ctx, `INSERT INTO inbox_items (`+inboxCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			it.ID, it.SourceType, it.FlowRunID, it.NodeRunID, it.AgentRunID, it.Title, it.Priority, it.SummaryMD, it.SuggestedReply, links,
-			b2i(it.ParseError), b2i(it.Read), b2i(it.Starred), b2i(it.Archived), b2i(it.DryRun), ts(it.CreatedAt), it.Client, it.ThreadKey)
+			b2i(it.ParseError), b2i(it.Read), b2i(it.Starred), b2i(it.Archived), b2i(it.DryRun), ts(it.CreatedAt), it.Client, it.ThreadKey,
+			questions, actions, it.ConversationID)
 		if err != nil {
 			return fmt.Errorf("store: insert inbox_item: %w", err)
 		}

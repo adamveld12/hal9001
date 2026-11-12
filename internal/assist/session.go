@@ -535,6 +535,13 @@ func (s *session) finishTurn(t *turn, rec agent.RunRecord, runErr error) {
 		_ = s.saveLocked()
 		s.armIdleLocked()
 	}
+	if obs := s.m.turnObserver(); obs != nil {
+		result := rec.FinalMessage
+		if result == "" {
+			result = note
+		}
+		obs.TurnEnded(s.id, status == store.AssistFailed, errText, result)
+	}
 	close(t.done)
 }
 
@@ -739,6 +746,9 @@ func (s *session) approvalPending(runID, toolCallID, approvalID string) {
 		s.row.Status = store.AssistAwaitingApproval
 		_ = s.saveLocked()
 	}
+	if obs := s.m.turnObserver(); obs != nil {
+		obs.TurnWaiting(s.id, approvalID)
+	}
 }
 
 // approvalResolved returns the session to running once no approval is pending.
@@ -755,6 +765,9 @@ func (s *session) approvalResolved(approvalID string, allowed bool) {
 	if len(s.pending) == 0 && s.turn != nil && s.row.Status == store.AssistAwaitingApproval {
 		s.row.Status = store.AssistRunning
 		_ = s.saveLocked()
+		if obs := s.m.turnObserver(); obs != nil {
+			obs.TurnResumed(s.id)
+		}
 	}
 }
 

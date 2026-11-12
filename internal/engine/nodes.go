@@ -13,6 +13,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/notify"
+	"hal9001/internal/outschema"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -542,6 +543,56 @@ func (e *Engine) fillFromEmission(ne *nodeEnv, it *store.InboxItem) {
 			it.Links = append(it.Links, store.InboxLink{Label: red.String(l.label), URL: red.String(l.url)})
 		}
 	}
+	e.linkEmittingRun(ne, it)
+}
+
+// linkEmittingRun links the agent run that emitted the note to the item and attaches the note's questions and
+// actions. Both need the run (the user's answers continue its conversation), so without an existing run nothing is
+// attached. Invalid questions or actions are ignored.
+func (e *Engine) linkEmittingRun(ne *nodeEnv, it *store.InboxItem) {
+	in, _ := ne.inputV.(map[string]any)
+	ag, _ := in["agent"].(map[string]any)
+	if it.AgentRunID == "" {
+		id, _ := ag["run_id"].(string)
+		if id == "" {
+			return
+		}
+		if _, err := e.st.GetAgentRun(e.dbCtx, id); err != nil {
+			return
+		}
+		it.AgentRunID = id
+	}
+	if len(it.Questions) > 0 || len(it.Actions) > 0 {
+		return
+	}
+	out, ok := ag["output"].(map[string]any)
+	if !ok {
+		return
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	qs, as, err := outschema.ParseInteractive(raw)
+	if err != nil {
+		return
+	}
+	it.Questions, it.Actions = redactInteractive(ne.snap.red.String, qs, as)
+}
+
+// redactInteractive applies red to every text of questions and actions.
+func redactInteractive(red func(string) string, qs []outschema.Question, as []outschema.Action) ([]outschema.Question, []outschema.Action) {
+	for i := range qs {
+		qs[i].Question = red(qs[i].Question)
+		for j := range qs[i].Options {
+			qs[i].Options[j].Label = red(qs[i].Options[j].Label)
+			qs[i].Options[j].Description = red(qs[i].Options[j].Description)
+		}
+	}
+	for i := range as {
+		as[i].Label, as[i].Prompt = red(as[i].Label), red(as[i].Prompt)
+	}
+	return qs, as
 }
 
 type emittedLink struct{ label, url string }

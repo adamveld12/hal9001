@@ -322,9 +322,13 @@ Fallback: if a runtime fails the §13 gate and can't be fixed through configurat
   "priority": "low | normal | high | urgent",
   "summary_md": "markdown",
   "suggested_reply": "string, optional",
-  "links": [{"label": "string", "url": "string"}]
+  "links": [{"label": "string", "url": "string"}],
+  "questions": "optional, max 4: [{id, question, header (<= 12 chars), options: [{label, description?}] (2-5), recommended?, multi?}]",
+  "actions": "optional, max 5: [{type: prompt, label (<= 40 chars), prompt}]"
 }
 ```
+
+`questions` and `actions` are only kept for a note an agent wrote. Answering a question, running an action or replying forks the agent's conversation once per note and sends the message in the background (docs/assist.md, "Inbox actions").
 
 If parsing fails, the inbox item is created with the raw final message, `priority: normal`, and a `parse_error` flag visible in the UI.
 

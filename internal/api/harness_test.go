@@ -18,6 +18,7 @@ import (
 	"hal9001/internal/apispec"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/inboxact"
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -159,6 +160,7 @@ type envOptions struct {
 	auth   *auth.Config
 	ui     http.Handler
 	assist core.Assist
+	inbox  func(e *env) *inboxact.Service
 	// operator is the operator tool set served at /mcp; port and executable are what /api/mcp/info reports.
 	operator *tools.Operator
 	// mcp serves the /api/mcp/ run-token operations.
@@ -214,6 +216,10 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 	if eo.tailscale != nil {
 		tsm = eo.tailscale(e)
 	}
+	var inbox *inboxact.Service
+	if eo.inbox != nil {
+		inbox = eo.inbox(e)
+	}
 	e.srv = New(Options{
 		Tailscale: tsm,
 		Store:     st, Home: e.home, Engine: e.eng, Auth: e.mgr, Runtimes: rm,
@@ -222,7 +228,7 @@ func newEnv(t *testing.T, mods ...func(*envOptions)) *env {
 			e.reloads.Add(1)
 			e.ws.Store(spec.Load(e.home))
 		},
-		Version: "test", UI: eo.ui, Assist: eo.assist, Operator: eo.operator, MCP: eo.mcp, Port: eo.port, Executable: eo.executable, Update: e.upd,
+		Version: "test", UI: eo.ui, Assist: eo.assist, InboxActions: inbox, Operator: eo.operator, MCP: eo.mcp, Port: eo.port, Executable: eo.executable, Update: e.upd,
 	}).(*Server)
 	t.Cleanup(e.srv.Close)
 	return e

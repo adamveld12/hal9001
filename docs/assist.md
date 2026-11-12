@@ -323,6 +323,54 @@ The drawer has a `Full page` button (accessible name `Open full page`) in its he
 
 ![The Ask AI drawer with the Full page button (accessible name Open full page)](images/chat/drawer-open-full-page-light.png) ([dark](images/chat/drawer-open-full-page-dark.png))
 
+## Inbox actions
+
+A note an agent wrote (`submit_output` with `output: note`, or an `emit_<port>` shortcut to an inbox node) can carry
+**questions** (up to 4, each with 2 to 5 options, an optional recommended option and an `Other` text answer) and **actions**
+(up to 5 buttons, each sending a fixed prompt). Every note an agent wrote also has a **reply** box. The agent's note format is in
+[flows.md](flows.md#questions-and-actions); the endpoints (`POST /api/inbox/{id}/answers`, `/actions/{index}` and `/reply`) are
+in [api.md](api.md).
+
+- **Questions.** Pick an option (radio buttons, or checkboxes for a multi-choice question) or type under `Other`, then
+  `Send answers`. The button shows how many of the open questions are ready (`Send answers (2 of 3)`); you may answer some
+  and the rest later. An answered question is locked and shows its answer.
+- **Next steps.** Hover a button to see the exact prompt it sends. An action runs once per note; its button then opens the
+  chat instead of running again.
+- **Reply.** `Reply to agent…`; `Cmd/Ctrl+Enter` sends.
+
+**One chat per note.** The first answer, action or reply forks the note's agent conversation, the same fork as `Continue in chat`
+on the Agent run page. Later interactions of the note reuse it, so the agent keeps the context. `Open chat` opens that
+conversation in the drawer without leaving the Inbox; it is also on the Chat page and counted in `Agent chats (N)` of the
+note. If the agent's sandbox expired, it is recreated and the chat shows a notice.
+
+**Background turns.** Sending returns at once and the agent works in the background. One message is in flight per note at a
+time: while it is, all controls of the note are disabled. Each interaction in the list under the controls has a status that
+updates live:
+
+| Status | Shown as |
+|---|---|
+| `running` | `Running…` |
+| `waiting_for_approval` | `Waiting for approval`, with a link to the approval in the Inbox (`/inbox/approval/<id>`) |
+| `done` | `Done` and one line of the agent's final message |
+| `failed` | `Failed` and the error |
+
+**Approvals still apply.** Whatever the agent tries to do after a message (a tool call, a proposal, a request) goes through
+the same approvals as in any chat; decide it in the Inbox and the turn continues.
+
+![A note with two questions: a single choice with a recommended option and a multiple choice with an Other answer](images/inbox-actions/questions-light.png) ([dark](images/inbox-actions/questions-dark.png))
+
+![The answers sent: the questions are locked and the interaction is Done with the agent's result and an Open chat button](images/inbox-actions/answered-done-light.png) ([dark](images/inbox-actions/answered-done-dark.png))
+
+![A note with three next-step buttons and the reply box](images/inbox-actions/actions-light.png) ([dark](images/inbox-actions/actions-dark.png))
+
+![An action waiting for approval, with a link to the approval](images/inbox-actions/waiting-for-approval-light.png) ([dark](images/inbox-actions/waiting-for-approval-dark.png))
+
+![A reply typed into the reply box](images/inbox-actions/reply-box-light.png) ([dark](images/inbox-actions/reply-box-dark.png))
+
+![A reply running in the background](images/inbox-actions/reply-running-light.png) ([dark](images/inbox-actions/reply-running-dark.png))
+
+![Open chat shows the note's conversation in the drawer while the Inbox stays open](images/inbox-actions/open-chat-light.png) ([dark](images/inbox-actions/open-chat-dark.png))
+
 ## The draft directory
 
 `<home>/data/assist/<session>/` (mode 0700) holds:
