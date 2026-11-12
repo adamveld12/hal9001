@@ -23,6 +23,7 @@ import {
   type ChatFilters,
 } from "./filters";
 import { FilterBar } from "./FilterBar";
+import { RunFilterBanner } from "./RunFilterBanner";
 import { mergePages } from "./list";
 import { chatPath, NEW_CHAT_ID } from "./path";
 
@@ -81,6 +82,12 @@ export function ChatPage() {
             New chat
           </Link>
         </div>
+        {filters.flow_run !== "" && (
+          <RunFilterBanner
+            flowRun={filters.flow_run}
+            onClear={() => setFilters({ ...filters, flow_run: "" })}
+          />
+        )}
         <FilterBar filters={filters} onChange={setFilters} />
         <div className="min-h-0 flex-1 overflow-auto">
           <ConversationList
@@ -88,6 +95,7 @@ export function ChatPage() {
             rows={rows}
             selectedId={selectedId}
             search={search}
+            flowRun={filters.flow_run}
             filtered={hasActiveFilters(filters)}
             onClear={() => setFilters(NO_CHAT_FILTERS)}
           />

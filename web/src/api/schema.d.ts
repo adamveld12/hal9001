@@ -5577,6 +5577,8 @@ export interface components {
       client?: string | null;
       /** @description Grouping key the MCP client passed with the note. */
       thread_key?: string | null;
+      /** @description Agent conversations of the note's flow run, as `GET /api/conversations?flow_run=<flow_run_id>` lists them (forks and continuation-run agents included). 0 for a run without agent nodes and for source `mcp`. */
+      agent_chats: number;
     };
     /**
      * @description Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
@@ -10462,7 +10464,7 @@ export interface operations {
         flow?: components["schemas"]["Slug"];
         /** @description Node id. */
         node?: components["schemas"]["Slug"];
-        /** @description Flow run id: its agent runs and the forks of them. */
+        /** @description Flow run id: its agent runs, the chats forked from them, and the agent runs (and forks) of the continuation runs started from it. */
         flow_run?: components["schemas"]["Ulid"];
         runtime?: components["schemas"]["Slug"];
         status?: components["schemas"]["ConversationStatus"];

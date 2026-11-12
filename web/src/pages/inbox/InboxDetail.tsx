@@ -8,10 +8,11 @@ import { Time } from "../../components/Time";
 import { Badge, Button, Kbd, Panel } from "../../components/ui";
 import { shortId } from "../../lib/format";
 import { PriorityBadge } from "./InboxList";
-import { safeHref, tracePath } from "./model";
+import { agentChatsLink, safeHref, tracePath } from "./model";
 
 function TraceLinks({ item }: { item: InboxItem }) {
   const cls = "text-accent underline";
+  const chats = agentChatsLink(item);
   if (item.source === "mcp") {
     return (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
@@ -32,6 +33,11 @@ function TraceLinks({ item }: { item: InboxItem }) {
       {item.agent_run_id && (
         <Link to={`/agent-runs/${item.agent_run_id}`} className={cls}>
           agent run {shortId(item.agent_run_id)}
+        </Link>
+      )}
+      {chats && (
+        <Link to={chats.to} className={cls}>
+          {chats.label}
         </Link>
       )}
       {item.event_id && (

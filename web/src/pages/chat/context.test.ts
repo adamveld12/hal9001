@@ -48,6 +48,20 @@ describe("chatPageContext", () => {
     expect(ctx.entities?.filter((e) => e.id === "01B")).toHaveLength(1);
   });
 
+  it("tells the assistant which run filters the list", () => {
+    const ctx = chatPageContext({
+      filters: { ...NO_CHAT_FILTERS, flow_run: "01JC7Z3K9Q8V5T2M4N6P8R0S1T" },
+      listed: [],
+      hasMore: false,
+      selected: null,
+      starting: false,
+    });
+    const facts = Object.fromEntries(
+      ctx.facts?.map((f) => [f.label, f.value]) ?? [],
+    );
+    expect(facts["flow_run filter"]).toBe("01JC7Z3K9Q8V5T2M4N6P8R0S1T");
+  });
+
   it("describes the page without a selection", () => {
     const ctx = chatPageContext({
       filters: NO_CHAT_FILTERS,

@@ -60,7 +60,7 @@ and run ids (`flow_id`, `flow_run_id`, `node_id`, `node_run_id`, `agent_run_id` 
 `forked_from` (the run a chat continues), `fork_context`, `fork_count`, `started_at`, `updated_at` (last activity), `ended_at`
 and a one-line `preview`.
 
-- Filters: `source` (`flow`, `chat`), `kind`, `flow`, `node`, `flow_run`, `runtime`, `status`, `forked_from` (an agent run id),
+- Filters: `source` (`flow`, `chat`), `kind`, `flow`, `node`, `flow_run` (the run's agent conversations, the chats forked from them, and the agent conversations of the continuation runs started from it), `runtime`, `status`, `forked_from` (an agent run id),
   `since` (inclusive) and `until` (exclusive) on the last activity, and `q`. `q` is a case-insensitive substring (ASCII; `%` and
   `_` are literal) over the title, ids, flow and node ids, the message text of chats and the prompt and result text of flow runs
   (text over 64 KiB is stored outside the database and not searched).

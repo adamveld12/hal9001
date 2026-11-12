@@ -18,6 +18,7 @@ export function ConversationList({
   rows,
   selectedId,
   search,
+  flowRun,
   filtered,
   onClear,
 }: {
@@ -26,6 +27,8 @@ export function ConversationList({
   selectedId: string | null;
   /** The URL query, so a picked row keeps the filters. */
   search: string;
+  /** The run the list is filtered by, or empty. */
+  flowRun: string;
   /** Any filter is set. */
   filtered: boolean;
   onClear: () => void;
@@ -67,6 +70,7 @@ export function ConversationList({
             c={c}
             selected={c.id === selectedId}
             search={search}
+            flowRun={flowRun}
           />
         ))}
       </ul>

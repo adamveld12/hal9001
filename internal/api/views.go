@@ -136,6 +136,7 @@ type resolver struct {
 	agentRuns map[string]*store.AgentRun
 	flows     map[string]*spec.Flow
 	permIDs   map[string]map[string]string // agent run -> permission request -> approval
+	chatCount map[string]int               // flow run -> agent conversations of it
 }
 
 func (s *Server) resolver(ctx context.Context) *resolver {
@@ -146,6 +147,7 @@ func (s *Server) resolver(ctx context.Context) *resolver {
 		agentRuns: map[string]*store.AgentRun{},
 		flows:     map[string]*spec.Flow{},
 		permIDs:   map[string]map[string]string{},
+		chatCount: map[string]int{},
 	}
 }
 
@@ -927,6 +929,24 @@ type inboxItemView struct {
 	// Client names the external MCP client of a note with source "mcp"; ThreadKey is the grouping key it passed.
 	Client    *string `json:"client"`
 	ThreadKey *string `json:"thread_key"`
+	// AgentChats is the number of agent conversations of the note's flow run (see GET /api/conversations?flow_run=).
+	AgentChats int `json:"agent_chats"`
+}
+
+// agentChats counts the agent conversations of a flow run once per resolver.
+func (rv *resolver) agentChats(flowRunID string) (int, error) {
+	if flowRunID == "" {
+		return 0, nil
+	}
+	if n, ok := rv.chatCount[flowRunID]; ok {
+		return n, nil
+	}
+	n, err := rv.s.opts.Store.CountFlowRunConversations(rv.ctx, flowRunID)
+	if err != nil {
+		return 0, err
+	}
+	rv.chatCount[flowRunID] = n
+	return n, nil
 }
 
 func (rv *resolver) inboxView(it store.InboxItem) (inboxItemView, error) {
@@ -946,12 +966,17 @@ func (rv *resolver) inboxView(it store.InboxItem) (inboxItemView, error) {
 	for _, k := range it.Links {
 		links = append(links, linkView{Label: k.Label, URL: k.URL})
 	}
+	chats, err := rv.agentChats(l.FlowRunID)
+	if err != nil {
+		return inboxItemView{}, err
+	}
 	return inboxItemView{
 		ID: it.ID, Source: string(it.SourceType), SourceID: sourceID, FlowRunID: l.FlowRunID, NodeRunID: it.NodeRunID,
 		AgentRunID: nonEmpty(it.AgentRunID), FlowID: l.FlowID, NodeID: l.NodeID, EventID: nonEmpty(l.EventID), Title: it.Title,
 		Priority: string(it.Priority), SummaryMD: it.SummaryMD, SuggestedReply: nonEmpty(it.SuggestedReply), Links: links,
 		Read: it.Read, Starred: it.Starred, Archived: it.Archived, DryRun: it.DryRun, ParseError: it.ParseError,
 		CreatedAt: utc(it.CreatedAt), Client: nonEmpty(it.Client), ThreadKey: nonEmpty(it.ThreadKey),
+		AgentChats: chats,
 	}, nil
 }
 

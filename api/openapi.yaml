@@ -2932,7 +2932,7 @@ paths:
         - {name: kind, in: query, description: 'A chat''s target kind, or `agent` for flow conversations.', schema: {$ref: '#/components/schemas/ConversationKind'}}
         - {name: flow, in: query, description: 'Flow id: runs of that flow, forks of them and chats that draft that flow.', schema: {$ref: '#/components/schemas/Slug'}}
         - {name: node, in: query, description: 'Node id.', schema: {$ref: '#/components/schemas/Slug'}}
-        - {name: flow_run, in: query, description: 'Flow run id: its agent runs and the forks of them.', schema: {$ref: '#/components/schemas/Ulid'}}
+        - {name: flow_run, in: query, description: 'Flow run id: its agent runs, the chats forked from them, and the agent runs (and forks) of the continuation runs started from it.', schema: {$ref: '#/components/schemas/Ulid'}}
         - {name: runtime, in: query, schema: {$ref: '#/components/schemas/Slug'}}
         - {name: status, in: query, schema: {$ref: '#/components/schemas/ConversationStatus'}}
         - {name: forked_from, in: query, description: 'Agent run id: only the chats forked from it.', schema: {$ref: '#/components/schemas/Ulid'}}
@@ -6671,7 +6671,7 @@ components:
         cancel_run: {type: boolean, default: false, description: '`tool_call` only (Deny + stop): cancel the run instead of letting the agent continue.'}
     InboxItem:
       type: object
-      required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at]
+      required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at, agent_chats]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         source: {type: string, enum: [agent_run, node_run, mcp], description: '`mcp` is a note an external MCP client posted with `send_note` (`docs/mcp.md`): no run ids, `flow_id` is `mcp`, `node_id` `send_note`.'}
@@ -6695,6 +6695,7 @@ components:
         created_at: {$ref: '#/components/schemas/Timestamp'}
         client: {type: [string, 'null'], description: 'Name of the external MCP client of a note with source `mcp`.'}
         thread_key: {type: [string, 'null'], description: 'Grouping key the MCP client passed with the note.'}
+        agent_chats: {type: integer, minimum: 0, description: 'Agent conversations of the note''s flow run, as `GET /api/conversations?flow_run=<flow_run_id>` lists them (forks and continuation-run agents included). 0 for a run without agent nodes and for source `mcp`.'}
     NotifyVia:
       type: string
       enum: [auto, app, terminal-notifier, none]

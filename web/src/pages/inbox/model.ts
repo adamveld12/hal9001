@@ -62,6 +62,28 @@ export function safeHref(url: string): string | null {
   }
 }
 
+/**
+ * The note's "Agent chats (N)" link: the Chat list filtered to the agent
+ * conversations of the note's flow run. Absent for a run without agents and for
+ * notes that belong to no flow run (MCP notes), even when there is only one
+ * conversation, so the link always lands on the filtered list.
+ */
+export function agentChatsLink(
+  item: Pick<InboxItem, "source" | "flow_run_id" | "agent_chats">,
+): { label: string; to: string } | null {
+  if (
+    item.source === "mcp" ||
+    item.flow_run_id === "" ||
+    item.agent_chats < 1
+  ) {
+    return null;
+  }
+  return {
+    label: `Agent chats (${item.agent_chats})`,
+    to: `/chat?flow_run=${encodeURIComponent(item.flow_run_id)}`,
+  };
+}
+
 /** Where "open trace" goes: the agent run that wrote the note, else the flow run. */
 export function tracePath(
   item: Pick<InboxItem, "source" | "agent_run_id" | "flow_run_id">,

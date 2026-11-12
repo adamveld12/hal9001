@@ -3,6 +3,7 @@ import type { Conversation } from "../../api/conversations";
 import { Badge } from "../../components/ui";
 import { cx } from "../../lib/cx";
 import { relativeTime } from "../../lib/format";
+import { runRelation } from "./filters";
 import { chatPath } from "./path";
 import { ConversationStatusPill } from "./StatusPill";
 import {
@@ -18,11 +19,15 @@ export function ConversationRow({
   c,
   selected,
   search,
+  flowRun = "",
 }: {
   c: Conversation;
   selected: boolean;
   search: string;
+  /** The run the list is filtered by: marks forks and continuation-run conversations. */
+  flowRun?: string;
 }) {
+  const relation = runRelation(c, flowRun);
   const flowNode = flowNodeLabel(c);
   const forks = forkCountLabel(c.fork_count);
   return (
@@ -53,6 +58,11 @@ export function ConversationRow({
           {c.forked_from && (
             <span title={forkOriginLabel(c.forked_from)}>
               <Badge>fork</Badge>
+            </span>
+          )}
+          {relation === "continuation" && (
+            <span title="Agent conversation of a run continued from this one">
+              <Badge>continuation</Badge>
             </span>
           )}
           {forks && <span>{forks}</span>}

@@ -27,6 +27,7 @@ function item(over: Partial<InboxItem> & { id: string }): InboxItem {
     archived: false,
     dry_run: false,
     parse_error: false,
+    agent_chats: 0,
     created_at: "2026-11-05T10:00:00Z",
     ...over,
   };
