@@ -65,11 +65,11 @@ func CheckConfig(b []byte) (*Config, []Diagnostic) {
 
 // CheckSensor parses and validates sensor bytes. name is the file stem the
 // sensor is (or will be) stored under; it becomes the sensor's id. An empty
-// name leaves the id to a legacy id: field, or empty.
-func CheckSensor(name string, b []byte) (*Sensor, []Diagnostic) {
+// name leaves the id to a legacy id: field, or empty. refs may be nil to skip reference checks (mcp_servers).
+func CheckSensor(name string, b []byte, refs *Refs) (*Sensor, []Diagnostic) {
 	s, ds := ParseSensor(name, b)
 	if s != nil {
-		ds = append(ds, ValidateSensor(s)...)
+		ds = append(ds, ValidateSensor(s, refs)...)
 	}
 	return s, withFile(KindSensor.Rel(name), ds)
 }

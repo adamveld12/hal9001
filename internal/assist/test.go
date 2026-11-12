@@ -83,7 +83,7 @@ func (m *Manager) testSensor(ctx context.Context, s *session, byAgent bool) (cor
 		return zero, err
 	}
 	target := s.row.TargetID
-	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML))
+	sensor, ds := spec.CheckSensor("", []byte(s.row.DraftYAML), m.sensorRefs())
 	if sensor == nil || spec.HasErrors(ds) {
 		s.mu.Unlock()
 		for i := range ds {

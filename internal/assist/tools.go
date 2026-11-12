@@ -285,7 +285,7 @@ func (s *session) runValidate(_ context.Context, _ tools.Call) (tools.Result, er
 	case s.isTool():
 		_, diags = evaluateTool(s.row.DraftYAML, s.row.TargetID)
 	default:
-		_, diags = evaluate(s.row.DraftYAML, s.row.TargetID)
+		_, diags = evaluate(s.row.DraftYAML, s.row.TargetID, s.m.sensorRefs())
 	}
 	return tools.Result{Text: string(diags)}, nil
 }

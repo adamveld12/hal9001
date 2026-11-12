@@ -22,6 +22,15 @@ import (
 // Every write calls Reload before it answers, so the engine already runs the
 // new definition when the client sees the response.
 
+// sensorRefs are the references a sensor file may use, from the loaded workspace (its mcp_servers).
+func (s *Server) sensorRefs() *spec.Refs {
+	var cfg *spec.Config
+	if ws := s.opts.Workspace(); ws != nil {
+		cfg = ws.Config.Value
+	}
+	return &spec.Refs{MCPServers: spec.MCPServerRefs(cfg)}
+}
+
 func diagnostics(ds []spec.Diagnostic) []spec.Diagnostic {
 	if ds == nil {
 		return []spec.Diagnostic{}
@@ -279,7 +288,7 @@ func (s *Server) sensorDetail(r *http.Request, id string) (sensorDetailView, err
 	if err != nil {
 		return sensorDetailView{}, err
 	}
-	sensor, ds := spec.CheckSensor(id, raw)
+	sensor, ds := spec.CheckSensor(id, raw, s.sensorRefs())
 	ks, err := s.opts.Store.GetKillSwitch(r.Context())
 	if err != nil {
 		return sensorDetailView{}, err
@@ -343,7 +352,7 @@ func (s *Server) createSensor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw = spec.DropLegacyID(raw)
-	_, ds = spec.CheckSensor(id, raw)
+	_, ds = spec.CheckSensor(id, raw, s.sensorRefs())
 	if !s.saveFile(w, r, spec.KindSensor, id, raw, "", ds) {
 		return
 	}
@@ -381,7 +390,7 @@ func (s *Server) updateSensor(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
-	_, ds := spec.CheckSensor(id, raw)
+	_, ds := spec.CheckSensor(id, raw, s.sensorRefs())
 	if !s.saveFile(w, r, spec.KindSensor, id, raw, req.ExpectedHash, ds) {
 		return
 	}
@@ -420,7 +429,7 @@ func (s *Server) validateSensor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sensor, ds := spec.CheckSensor(req.ID, raw)
+	sensor, ds := spec.CheckSensor(req.ID, raw, s.sensorRefs())
 	ds = append(ds, idDiagnostics(req.ID)...)
 	out := struct {
 		Valid       bool              `json:"valid"`
