@@ -59,9 +59,11 @@ type ConversationFilter struct {
 	// Source is ConversationChat, ConversationFlow or empty for both.
 	Source string
 	// Kind is a chat's target kind, or ConversationKindAgent for flow conversations.
-	Kind      string
-	FlowID    string
-	NodeID    string
+	Kind   string
+	FlowID string
+	NodeID string
+	// FlowRunID selects the conversations of one flow run: its agent conversations, the chats forked from them, and the
+	// agent conversations (and their forks) of the continuation runs started from it.
 	FlowRunID string
 	Runtime   string
 	// Status is the normalised status: running (an agent run that is queued or running), awaiting_approval, idle,
@@ -159,9 +161,8 @@ func flowBranch(f ConversationFilter) (string, []any) {
 	return q + w.clause(), w.args
 }
 
-// ListConversations lists the conversations ordered by last activity, newest first, then by id descending. Page with
-// AfterActivity and AfterID: the order is total, so rows that share a timestamp are neither skipped nor repeated.
-func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) (ConversationPage, error) {
+// conversationUnion is the union of the branches that can hold rows matching f; empty when none can.
+func conversationUnion(f ConversationFilter) (string, []any) {
 	var (
 		branches []string
 		args     []any
@@ -174,7 +175,36 @@ func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) (Co
 		q, a := flowBranch(f)
 		branches, args = append(branches, q), append(args, a...)
 	}
-	if len(branches) == 0 {
+	return strings.Join(branches, " UNION ALL "), args
+}
+
+// flowRun matches the conversations of a flow run: those of the run itself (its agent runs and the chats forked from
+// them, which carry the run's id) and those of the continuation runs started from it.
+func (w *where) flowRun(id string) {
+	if id != "" {
+		w.add("(flow_run_id = ? OR flow_run_id IN (SELECT id FROM flow_runs WHERE continuation_of_run_id = ?))", id, id)
+	}
+}
+
+// CountFlowRunConversations returns how many conversations ListConversations lists for the flow run (see
+// ConversationFilter.FlowRunID).
+func (s *Store) CountFlowRunConversations(ctx context.Context, flowRunID string) (int, error) {
+	union, args := conversationUnion(ConversationFilter{FlowRunID: flowRunID})
+	var w where
+	w.flowRun(flowRunID)
+	var n int
+	err := s.rdb.QueryRowContext(ctx, sqlJoin("SELECT COUNT(*) FROM (", union, ")", w.clause()), append(args, w.args...)...).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("store: count run conversations: %w", err)
+	}
+	return n, nil
+}
+
+// ListConversations lists the conversations ordered by last activity, newest first, then by id descending. Page with
+// AfterActivity and AfterID: the order is total, so rows that share a timestamp are neither skipped nor repeated.
+func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) (ConversationPage, error) {
+	union, args := conversationUnion(f)
+	if union == "" {
 		return ConversationPage{Items: []ConversationRow{}}, nil
 	}
 	var w where
@@ -182,7 +212,7 @@ func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) (Co
 	w.eq("kind", f.Kind)
 	w.eq("flow_id", f.FlowID)
 	w.eq("node_id", f.NodeID)
-	w.eq("flow_run_id", f.FlowRunID)
+	w.flowRun(f.FlowRunID)
 	w.eq("runtime", f.Runtime)
 	w.eq("status", f.Status)
 	w.in("forked_from_agent_run_id", f.ForkedFrom)
@@ -191,7 +221,7 @@ func (s *Store) ListConversations(ctx context.Context, f ConversationFilter) (Co
 		w.add("(activity < ? OR (activity = ? AND id < ?))", ts(f.AfterActivity), ts(f.AfterActivity), f.AfterID)
 	}
 	limit := limitOf(ListOpts{Limit: f.Limit})
-	query := sqlJoin("SELECT ", conversationCols, " FROM (", strings.Join(branches, " UNION ALL "), ")", w.clause(), " ORDER BY activity DESC, id DESC LIMIT ?")
+	query := sqlJoin("SELECT ", conversationCols, " FROM (", union, ")", w.clause(), " ORDER BY activity DESC, id DESC LIMIT ?")
 	args = append(append(args, w.args...), limit+1)
 	rows, err := s.rdb.QueryContext(ctx, query, args...)
 	if err != nil {
