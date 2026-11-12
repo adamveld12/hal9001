@@ -35,6 +35,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
     "tailscale",
     "auth-overview",
     "auth-stacks",
+    "mcp-servers",
   ],
   "sensor_run.created": ["sensors", "sensor", "sensor-runs"],
   "sensor_run.updated": ["sensors", "sensor", "sensor-runs"],
@@ -95,6 +96,7 @@ const ROOTS: Record<DataStreamType, readonly QueryRoot[]> = {
   "update.status": ["update"],
   "update.install": [],
   "runtime.adapter": ["runtimes"],
+  "mcp_server.updated": ["mcp-servers"],
 };
 
 export function rootsFor(type: DataStreamType): readonly QueryRoot[] {

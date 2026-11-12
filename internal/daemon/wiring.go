@@ -9,6 +9,7 @@ import (
 	"hal9001/internal/api"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/mcpclient"
 	"hal9001/internal/notify"
 	"hal9001/internal/runtimes"
 	"hal9001/internal/spec"
@@ -45,6 +46,8 @@ type engineParams struct {
 	// MCPURL and Executable are how agents reach hal's MCP server (see engine.Options).
 	MCPURL     string
 	Executable string
+	// MCPClient is the remote MCP client; sensors that declare mcp_servers get run tokens for it.
+	MCPClient *mcpclient.Manager
 }
 
 // apiParams are the inputs of api.New (see wiring_engine.go).
@@ -69,4 +72,5 @@ type apiParams struct {
 	Sinks      *notify.Sinks
 	Update     *update.Service
 	Tailscale  *tailscale.Manager
+	MCPClient  *mcpclient.Manager
 }

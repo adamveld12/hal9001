@@ -277,6 +277,8 @@ type sensorRunView struct {
 	Stdout     textBlobView `json:"stdout"`
 	Stderr     textBlobView `json:"stderr"`
 	Error      *string      `json:"error"`
+	// MCPCalls are the tool calls the script made with `hal9001 mcp call`; omitted when it made none.
+	MCPCalls []store.SensorMCPCall `json:"mcp_calls,omitempty"`
 }
 
 // sensorRunStatus maps the store's four statuses onto the contract's six: a
@@ -296,7 +298,7 @@ func (s *Server) sensorRunView(r store.SensorRun, preview bool) sensorRunView {
 	v := sensorRunView{
 		ID: r.ID, SensorID: r.SensorID, Trigger: trigger, Status: sensorRunStatus(r), Baseline: r.Baseline,
 		StartedAt: utc(r.StartedAt), EndedAt: utcPtr(r.EndedAt), DurationMS: r.DurationMS, ExitCode: r.ExitCode,
-		Stdout: s.blob(r.Stdout, preview), Stderr: s.blob(r.Stderr, preview), Error: nonEmpty(r.Error),
+		Stdout: s.blob(r.Stdout, preview), Stderr: s.blob(r.Stderr, preview), Error: nonEmpty(r.Error), MCPCalls: r.MCPCalls,
 	}
 	if r.Status != store.SensorRunning {
 		v.ItemCount, v.NewCount = &r.ItemCount, &r.NewCount

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -35,7 +36,7 @@ func (t *txn) prep(ctx context.Context, table, id string, fields ...contentField
 
 func sensorRunCols(slim bool) string {
 	return "id, sensor_id, origin, status, baseline, started_at, ended_at, duration_ms, exit_code, error, item_count, new_count, " +
-		contentCols("stdout", slim) + ", " + contentCols("stderr", slim)
+		contentCols("stdout", slim) + ", " + contentCols("stderr", slim) + ", mcp_calls"
 }
 
 func scanSensorRun(r rowScanner) (SensorRun, error) {
@@ -46,11 +47,13 @@ func scanSensorRun(r rowScanner) (SensorRun, error) {
 		dur, exit      sql.NullInt64
 		baseline       int
 		origin, status string
+		mcpCalls       string
 	)
 	dests := []any{&sr.ID, &sr.SensorID, &origin, &status, &baseline, &started, &ended, &dur, &exit,
 		&sr.Error, &sr.ItemCount, &sr.NewCount}
 	dests = append(dests, scanDests(&sr.Stdout)...)
 	dests = append(dests, scanDests(&sr.Stderr)...)
+	dests = append(dests, &mcpCalls)
 	if err := r.Scan(dests...); err != nil {
 		return SensorRun{}, scanErr(err)
 	}
@@ -68,6 +71,11 @@ func scanSensorRun(r rowScanner) (SensorRun, error) {
 	if exit.Valid {
 		v := int(exit.Int64)
 		sr.ExitCode = &v
+	}
+	if mcpCalls != "" && mcpCalls != "[]" {
+		if err := json.Unmarshal([]byte(mcpCalls), &sr.MCPCalls); err != nil {
+			return SensorRun{}, fmt.Errorf("store: sensor run mcp_calls: %w", err)
+		}
 	}
 	return sr, nil
 }
@@ -98,11 +106,11 @@ func (s *Store) CreateSensorRun(ctx context.Context, r *SensorRun) error {
 			return err
 		}
 		_, err := t.ExecContext(ctx, `INSERT INTO sensor_runs (id, sensor_id, origin, status, baseline, started_at, ended_at, duration_ms, exit_code, error, item_count, new_count,
-			stdout_text, stdout_ref, stdout_size, stderr_text, stderr_ref, stderr_size)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			stdout_text, stdout_ref, stdout_size, stderr_text, stderr_ref, stderr_size, mcp_calls)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			r.ID, r.SensorID, r.Origin, r.Status, b2i(r.Baseline), ts(r.StartedAt), tsOrNil(r.EndedAt), nullInt64(r.DurationMS), nullInt(r.ExitCode),
 			r.Error, r.ItemCount, r.NewCount,
-			r.Stdout.Text, r.Stdout.Ref, r.Stdout.Size, r.Stderr.Text, r.Stderr.Ref, r.Stderr.Size)
+			r.Stdout.Text, r.Stdout.Ref, r.Stdout.Size, r.Stderr.Text, r.Stderr.Ref, r.Stderr.Size, mcpCallsJSON(r.MCPCalls))
 		if err != nil {
 			return fmt.Errorf("store: insert sensor_run: %w", err)
 		}
@@ -121,9 +129,9 @@ func (s *Store) UpdateSensorRun(ctx context.Context, r *SensorRun) error {
 			return err
 		}
 		res, err := t.ExecContext(ctx, `UPDATE sensor_runs SET status=?, baseline=?, ended_at=?, duration_ms=?, exit_code=?, error=?, item_count=?, new_count=?,
-			stdout_text=?, stdout_ref=?, stdout_size=?, stderr_text=?, stderr_ref=?, stderr_size=? WHERE id=?`,
+			stdout_text=?, stdout_ref=?, stdout_size=?, stderr_text=?, stderr_ref=?, stderr_size=?, mcp_calls=? WHERE id=?`,
 			r.Status, b2i(r.Baseline), tsOrNil(r.EndedAt), nullInt64(r.DurationMS), nullInt(r.ExitCode), r.Error, r.ItemCount, r.NewCount,
-			r.Stdout.Text, r.Stdout.Ref, r.Stdout.Size, r.Stderr.Text, r.Stderr.Ref, r.Stderr.Size, r.ID)
+			r.Stdout.Text, r.Stdout.Ref, r.Stdout.Size, r.Stderr.Text, r.Stderr.Ref, r.Stderr.Size, mcpCallsJSON(r.MCPCalls), r.ID)
 		if err != nil {
 			return fmt.Errorf("store: update sensor_run: %w", err)
 		}
@@ -133,6 +141,18 @@ func (s *Store) UpdateSensorRun(ctx context.Context, r *SensorRun) error {
 		t.note(ResSensorRun, r.ID, OpUpdate)
 		return nil
 	})
+}
+
+// mcpCallsJSON is the stored form of a run's MCP calls.
+func mcpCallsJSON(calls []SensorMCPCall) string {
+	if len(calls) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(calls)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // GetSensorRun returns one run with full inline output.
