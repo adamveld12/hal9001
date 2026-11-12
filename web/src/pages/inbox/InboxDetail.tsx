@@ -9,6 +9,7 @@ import { Badge, Button, Kbd, Panel } from "../../components/ui";
 import { shortId } from "../../lib/format";
 import { PriorityBadge } from "./InboxList";
 import { agentChatsLink, safeHref, tracePath } from "./model";
+import { InboxActions } from "./InboxActions";
 
 function TraceLinks({ item }: { item: InboxItem }) {
   const cls = "text-accent underline";
@@ -139,6 +140,8 @@ export function InboxDetail({
           </pre>
         </Panel>
       )}
+
+      <InboxActions key={item.id} item={item} />
 
       {item.links.length > 0 && (
         <Panel title="Links">

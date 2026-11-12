@@ -28,6 +28,11 @@ function item(over: Partial<InboxItem> & { id: string }): InboxItem {
     dry_run: false,
     parse_error: false,
     agent_chats: 0,
+    questions: [],
+    actions: [],
+    can_reply: true,
+    conversation_id: null,
+    interactions: [],
     created_at: "2026-11-05T10:00:00Z",
     ...over,
   };

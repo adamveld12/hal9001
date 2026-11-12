@@ -30,6 +30,7 @@ import (
 	"hal9001/internal/apispec"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/inboxact"
 	"hal9001/internal/mcpclient"
 	"hal9001/internal/notify"
 	"hal9001/internal/runtimes"
@@ -49,7 +50,10 @@ type Options struct {
 	// Assist serves the AI-assisted authoring endpoints that start agent turns or
 	// run drafts. Optional: without it those endpoints answer 503 unavailable.
 	Assist core.Assist
-	Auth   *auth.Manager
+	// InboxActions serves answering questions, running actions and replying on inbox notes. Optional: without it
+	// those endpoints answer 503 unavailable.
+	InboxActions *inboxact.Service
+	Auth         *auth.Manager
 	// MCP serves the /api/mcp/ operations (hal's per-run MCP server backend). Optional: without it they answer 503.
 	MCP MCPHub
 	// Operator is the tool set served to external MCP clients at /mcp (docs/mcp.md). Optional: without it /mcp answers 503.
@@ -371,6 +375,9 @@ func (s *Server) handlers() map[string]http.HandlerFunc {
 		"getInboxItem":      s.getInboxItem,
 		"updateInboxItem":   s.updateInboxItem,
 		"bulkInbox":         s.bulkInbox,
+		"answerInboxItem":   s.answerInboxItem,
+		"runInboxAction":    s.runInboxAction,
+		"replyInboxItem":    s.replyInboxItem,
 
 		"listPrompts":  s.listPrompts,
 		"createPrompt": s.createPrompt,

@@ -933,6 +933,55 @@ type inboxItemView struct {
 	ThreadKey *string `json:"thread_key"`
 	// AgentChats is the number of agent conversations of the note's flow run (see GET /api/conversations?flow_run=).
 	AgentChats int `json:"agent_chats"`
+
+	// Questions, Actions, CanReply, ConversationID and Interactions are the note's interactive part (docs/api.md).
+	Questions      []inboxQuestionView    `json:"questions"`
+	Actions        []inboxActionView      `json:"actions"`
+	CanReply       bool                   `json:"can_reply"`
+	ConversationID *string                `json:"conversation_id"`
+	Interactions   []inboxInteractionView `json:"interactions"`
+}
+
+type inboxOptionView struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+type inboxAnswerView struct {
+	QuestionID string   `json:"question_id"`
+	Choices    []string `json:"choices"`
+	Other      *string  `json:"other"`
+}
+
+type inboxQuestionView struct {
+	ID          string            `json:"id"`
+	Question    string            `json:"question"`
+	Header      string            `json:"header"`
+	Options     []inboxOptionView `json:"options"`
+	Recommended *int              `json:"recommended"`
+	Multi       bool              `json:"multi"`
+	Answer      *inboxAnswerView  `json:"answer"`
+}
+
+type inboxActionView struct {
+	Type   string `json:"type"`
+	Label  string `json:"label"`
+	Prompt string `json:"prompt"`
+	Used   bool   `json:"used"`
+}
+
+type inboxInteractionView struct {
+	ID          string    `json:"id"`
+	Kind        string    `json:"kind"`
+	ActionIndex *int      `json:"action_index"`
+	Summary     string    `json:"summary"`
+	Message     string    `json:"message"`
+	Status      string    `json:"status"`
+	ApprovalID  *string   `json:"approval_id"`
+	Result      *string   `json:"result"`
+	Error       *string   `json:"error"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // agentChats counts the agent conversations of a flow run once per resolver.
@@ -972,14 +1021,71 @@ func (rv *resolver) inboxView(it store.InboxItem) (inboxItemView, error) {
 	if err != nil {
 		return inboxItemView{}, err
 	}
-	return inboxItemView{
+	v := inboxItemView{
 		ID: it.ID, Source: string(it.SourceType), SourceID: sourceID, FlowRunID: l.FlowRunID, NodeRunID: it.NodeRunID,
 		AgentRunID: nonEmpty(it.AgentRunID), FlowID: l.FlowID, NodeID: l.NodeID, EventID: nonEmpty(l.EventID), Title: it.Title,
 		Priority: string(it.Priority), SummaryMD: it.SummaryMD, SuggestedReply: nonEmpty(it.SuggestedReply), Links: links,
 		Read: it.Read, Starred: it.Starred, Archived: it.Archived, DryRun: it.DryRun, ParseError: it.ParseError,
 		CreatedAt: utc(it.CreatedAt), Client: nonEmpty(it.Client), ThreadKey: nonEmpty(it.ThreadKey),
-		AgentChats: chats,
-	}, nil
+		AgentChats:     chats,
+		Questions:      []inboxQuestionView{},
+		Actions:        []inboxActionView{},
+		CanReply:       it.AgentRunID != "",
+		ConversationID: nonEmpty(it.ConversationID),
+		Interactions:   []inboxInteractionView{},
+	}
+	if !v.CanReply {
+		return v, nil
+	}
+	ins, err := rv.s.opts.Store.ListInboxInteractions(rv.ctx, it.ID)
+	if err != nil {
+		return inboxItemView{}, err
+	}
+	answers := map[string]*inboxAnswerView{}
+	used := map[int]bool{}
+	for _, in := range ins {
+		switch in.Kind {
+		case store.InteractionAnswers:
+			for _, a := range in.Answers {
+				choices := a.Choices
+				if choices == nil {
+					choices = []string{}
+				}
+				answers[a.QuestionID] = &inboxAnswerView{QuestionID: a.QuestionID, Choices: choices, Other: nonEmpty(a.Other)}
+			}
+		case store.InteractionAction:
+			if in.ActionIndex != nil {
+				used[*in.ActionIndex] = true
+			}
+		}
+		summary := "Reply"
+		switch in.Kind {
+		case store.InteractionAnswers:
+			summary = "Answers"
+		case store.InteractionAction:
+			summary = "Action"
+			if in.ActionIndex != nil && *in.ActionIndex < len(it.Actions) {
+				summary = "Action: " + it.Actions[*in.ActionIndex].Label
+			}
+		}
+		v.Interactions = append(v.Interactions, inboxInteractionView{
+			ID: in.ID, Kind: in.Kind, ActionIndex: in.ActionIndex, Summary: summary, Message: in.Message, Status: in.Status,
+			ApprovalID: nonEmpty(in.ApprovalID), Result: nonEmpty(in.Result), Error: nonEmpty(in.Error),
+			CreatedAt: utc(in.CreatedAt), UpdatedAt: utc(in.UpdatedAt),
+		})
+	}
+	for _, q := range it.Questions {
+		qv := inboxQuestionView{ID: q.ID, Question: q.Question, Header: q.Header, Recommended: q.Recommended, Multi: q.Multi,
+			Options: make([]inboxOptionView, 0, len(q.Options)), Answer: answers[q.ID]}
+		for _, o := range q.Options {
+			qv.Options = append(qv.Options, inboxOptionView{Label: o.Label, Description: o.Description})
+		}
+		v.Questions = append(v.Questions, qv)
+	}
+	for i, a := range it.Actions {
+		v.Actions = append(v.Actions, inboxActionView{Type: a.Type, Label: a.Label, Prompt: a.Prompt, Used: used[i]})
+	}
+	return v, nil
 }
 
 // ---- kill switch, status, auth events ----

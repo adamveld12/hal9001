@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"hal9001/internal/outschema"
 )
 
 // Errors returned by repository methods. Use errors.Is.
@@ -578,6 +580,62 @@ type InboxItem struct {
 	// Client names the external MCP client of a SourceMCP item, ThreadKey is the grouping key it passed.
 	Client    string `json:"client,omitempty"`
 	ThreadKey string `json:"thread_key,omitempty"`
+	// Questions and Actions are what the agent that wrote the note asks and offers (empty for every other note).
+	Questions []InboxQuestion `json:"questions"`
+	Actions   []InboxAction   `json:"actions"`
+	// ConversationID is the fork of the agent's conversation that the first interaction with the note created (an
+	// assist session id); empty until then.
+	ConversationID string `json:"conversation_id,omitempty"`
+}
+
+// InboxQuestion, InboxOption and InboxAction are the questions and actions of a note, as validated by outschema.
+type (
+	InboxQuestion = outschema.Question
+	InboxOption   = outschema.Option
+	InboxAction   = outschema.Action
+)
+
+// Kinds of InboxInteraction.
+const (
+	InteractionAnswers = "answers"
+	InteractionAction  = "action"
+	InteractionReply   = "reply"
+)
+
+// Statuses of InboxInteraction.
+const (
+	InteractionRunning  = "running"
+	InteractionWaiting  = "waiting_for_approval"
+	InteractionDone     = "done"
+	InteractionFailed   = "failed"
+	interactionActiveIn = "'running','waiting_for_approval'"
+)
+
+// InboxAnswer is the user's answer to one question: the labels of the chosen options and/or free text ("Other").
+type InboxAnswer struct {
+	QuestionID string   `json:"question_id"`
+	Choices    []string `json:"choices"`
+	Other      string   `json:"other,omitempty"`
+}
+
+// InboxInteraction is one thing the user did with a note: a batch of answers, one action, or a reply. Message is the
+// exact text sent to the note's conversation; Status follows the turn it started.
+type InboxInteraction struct {
+	ID             string
+	ItemID         string
+	ConversationID string
+	Kind           string
+	// ActionIndex is the index into the note's actions for Kind action.
+	ActionIndex *int
+	// Answers are the answers of Kind answers.
+	Answers    []InboxAnswer
+	Message    string
+	Status     string
+	ApprovalID string
+	Result     string
+	Error      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // ModuleResult is one auth module's outcome inside an AuthEvent.

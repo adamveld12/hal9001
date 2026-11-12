@@ -25,6 +25,7 @@ import (
 	"hal9001/internal/authcfg"
 	"hal9001/internal/authstore"
 	"hal9001/internal/httpsec"
+	"hal9001/internal/inboxact"
 	"hal9001/internal/mcpclient"
 	"hal9001/internal/menubar"
 	"hal9001/internal/notify"
@@ -227,6 +228,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer assistMgr.Shutdown()
 	eng.SetToolApprovalObserver(assistMgr)
+	// Inbox interactions follow the turns of the forked conversations; the ones a previous daemon left running end here.
+	inboxActions := &inboxact.Service{Store: st, Assist: assistMgr, Log: log}
+	if err := inboxActions.Start(ctx); err != nil {
+		return fmt.Errorf("daemon: start inbox actions: %w", err)
+	}
+	assistMgr.SetTurnObserver(inboxActions)
 	if err := assistMgr.Start(); err != nil {
 		return fmt.Errorf("daemon: start assist: %w", err)
 	}
@@ -256,7 +263,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("daemon: operator tools: %w", err)
 	}
 	apiHandler := newAPI(apiParams{
-		Store: st, Home: home, Engine: eng, Assist: assistMgr, Auth: mgr, MCP: eng.ToolHub(),
+		Store: st, Home: home, Engine: eng, Assist: assistMgr, InboxActions: inboxActions, Auth: mgr, MCP: eng.ToolHub(),
 		Operator: operator, Port: port, Executable: opts.Executable, Tailscale: tsMgr,
 		Workspace: d.workspace, Reload: d.reload, BasePATH: basePATH, Runtimes: eng.Runtimes(),
 		Version: opts.Version, UI: ui, Log: log, Sinks: sinks, Update: d.update, MCPClient: mcpMgr,

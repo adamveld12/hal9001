@@ -25,6 +25,8 @@ type Emission struct {
 type outTool struct {
 	name, port, description string
 	schema                  *outschema.Schema
+	// check is an optional extra validation run after the schema accepted a call.
+	check func(args []byte) error
 }
 
 // OutputSink collects the results an agent run returns through its output tools: submit_output (output: note) or one
@@ -52,14 +54,26 @@ type OutputSink struct {
 func NewNoteSink() *OutputSink {
 	return &OutputSink{
 		tools: []outTool{{
-			name: OutputToolName, schema: outschema.Note(),
+			name: OutputToolName, schema: outschema.Note(), check: checkInteractive,
 			description: "Return this run's final result as structured arguments (preferred over writing it as JSON in your final message). " +
 				"Call it exactly once, when you are done. " +
 				"A call that does not match the input schema is refused with the path and reason of each mismatch; fix the arguments and call again. " +
-				"The last valid call counts.",
+				"The last valid call counts. " + interactiveGuidance,
 		}},
-		preamble: "result: call submit_output once with your final result (preferred); ending your final message with the JSON object is still accepted.",
+		preamble: "result: call submit_output once with your final result (preferred); ending your final message with the JSON object is still accepted. " +
+			"Use `questions` for decisions you need from the person before you act and `actions` for optional next steps; never write answer options in the message text.",
 	}
+}
+
+// interactiveGuidance tells the agent how to use the optional questions and actions of a note.
+const interactiveGuidance = "Optional `questions` (up to 4): ask them when you need a decision from the person before acting; each has 2-5 options and the person can always type their own answer. " +
+	"Optional `actions` (up to 5): offer next steps the person can start with one click; the prompt is sent back to you verbatim and side effects still need approval. " +
+	"Never hand-write JSON or answer options in the message text."
+
+// checkInteractive applies the limits of questions and actions that the JSON Schema cannot express.
+func checkInteractive(args []byte) error {
+	_, _, err := outschema.ParseInteractive(args)
+	return err
 }
 
 // NewPortSink returns the sink of an agent node with declared ports: one emit_<port> tool per entry of emits (the
@@ -73,7 +87,13 @@ func NewPortSink(emits []spec.EmitTool, many bool) (*OutputSink, error) {
 		if err != nil {
 			return nil, fmt.Errorf("port %s: schema: %w", t.Port, err)
 		}
-		s.tools = append(s.tools, outTool{name: t.Name, port: t.Port, schema: sc, description: t.ToolDescription()})
+		desc := t.ToolDescription()
+		var check func([]byte) error
+		if t.Shortcut {
+			desc += " " + interactiveGuidance
+			check = checkInteractive
+		}
+		s.tools = append(s.tools, outTool{name: t.Name, port: t.Port, schema: sc, description: desc, check: check})
 		names = append(names, t.Name)
 	}
 	s.followUp = "You must finish by calling one of: " + strings.Join(names, ", ") + "."
@@ -157,7 +177,16 @@ func (o *OutputSink) registered() []Tool {
 }
 
 func (o *OutputSink) run(t *outTool, c Call) (Result, error) {
-	if err := t.schema.Validate(c.Args); err != nil {
+	err := t.schema.Validate(c.Args)
+	if err == nil && t.check != nil {
+		if cerr := t.check(c.Args); cerr != nil {
+			o.mu.Lock()
+			o.lastErr = cerr.Error()
+			o.mu.Unlock()
+			return Result{}, fmt.Errorf("%s: the arguments are not valid (fix them and call %s again):\n%w", t.name, t.name, cerr)
+		}
+	}
+	if err != nil {
 		o.mu.Lock()
 		o.lastErr = err.Error()
 		o.mu.Unlock()

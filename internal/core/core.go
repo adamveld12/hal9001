@@ -484,6 +484,18 @@ type Assist interface {
 	Fork(ctx context.Context, agentRunID string) (*store.AssistSession, error)
 }
 
+// TurnObserver is told about the turns of assist conversations. Calls happen while the session's lock is held, so
+// an implementation MUST NOT call back into the Assist service or take locks that are held across Assist calls.
+type TurnObserver interface {
+	// TurnWaiting: the turn of sessionID waits for the approval approvalID.
+	TurnWaiting(sessionID, approvalID string)
+	// TurnResumed: the turn of sessionID runs again after its approvals were decided.
+	TurnResumed(sessionID string)
+	// TurnEnded: the turn of sessionID ended. result is the turn's final message (or the note about a cancelled or
+	// denied turn); errText is set when failed.
+	TurnEnded(sessionID string, failed bool, errText, result string)
+}
+
 // DraftConflictError is UpdateDraft's hash mismatch (409 conflict).
 type DraftConflictError struct {
 	Expected, Current string

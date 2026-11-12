@@ -2782,6 +2782,106 @@ paths:
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '422': {$ref: '#/components/responses/ValidationFailed'}
         default: {$ref: '#/components/responses/Error'}
+  /api/inbox/{id}/answers:
+    parameters:
+      - {$ref: '#/components/parameters/InboxId'}
+    post:
+      operationId: answerInboxItem
+      tags: [inbox]
+      summary: Answer the questions of a note
+      description: |
+        Sends the answers to the agent that wrote the note, in the background. The first interaction with a note forks the
+        agent's conversation once (as `POST /api/conversations/{id}/fork` does); every later answer, action and reply of
+        the note goes to the same fork (`conversation_id`). The message is `My answers to your questions:` followed by one
+        line per answer, `- <question id>: <chosen labels, then Other text>`, for example `- merge_method: Merge commit`.
+        The call returns once the message is sent (202); the turn runs on. `interactions` of the item (and `inbox.updated`
+        on the stream) follow it: `running`, `waiting_for_approval` (with the approval) and `done` or `failed`. Side
+        effects the agent attempts still go through approvals.
+
+        Each answer names a question that is not answered yet and carries the labels of the chosen options and/or free
+        text (`other`). A single-choice question takes exactly one of them; a `multi` question takes one or more.
+        Answered questions are locked. 404 for an unknown note; 409 when the note has no agent run, a question is already
+        answered, the previous message is still being worked on, or the agent run is still running; 422 for an answer that
+        does not fit its question.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InboxAnswerRequest'}
+      responses:
+        '202':
+          description: The message was sent. The updated item.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxItem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/inbox/{id}/actions/{index}:
+    parameters:
+      - {$ref: '#/components/parameters/InboxId'}
+      - name: index
+        in: path
+        required: true
+        description: Index into the item's `actions`.
+        schema: {type: integer, minimum: 0, maximum: 4}
+    post:
+      operationId: runInboxAction
+      tags: [inbox]
+      summary: Run an action of a note
+      description: |
+        Sends the action's `prompt` verbatim to the note's agent conversation (see `answerInboxItem` for the fork, the
+        background turn and the statuses). An action runs once per note: a second call is 409. 404 for an unknown note or
+        an index outside `actions`; other errors as `answerInboxItem`.
+      x-hal-service: admin
+      responses:
+        '202':
+          description: The message was sent. The updated item.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxItem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/inbox/{id}/reply:
+    parameters:
+      - {$ref: '#/components/parameters/InboxId'}
+    post:
+      operationId: replyInboxItem
+      tags: [inbox]
+      summary: Reply to the agent that wrote a note
+      description: |
+        Sends `text` verbatim to the note's agent conversation (see `answerInboxItem`). Any number of replies, one at a
+        time: 409 while the previous message is still being worked on. Only notes with `agent_run_id` can be replied to.
+      x-hal-service: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InboxReplyRequest'}
+      responses:
+        '202':
+          description: The message was sent. The updated item.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InboxItem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        default: {$ref: '#/components/responses/Error'}
   /api/prompts:
     get:
       operationId: listPrompts
@@ -7147,7 +7247,7 @@ components:
         cancel_run: {type: boolean, default: false, description: '`tool_call` only (Deny + stop): cancel the run instead of letting the agent continue.'}
     InboxItem:
       type: object
-      required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at, agent_chats]
+      required: [id, source, source_id, flow_run_id, node_run_id, agent_run_id, flow_id, node_id, event_id, title, priority, summary_md, suggested_reply, links, read, starred, archived, dry_run, parse_error, created_at, agent_chats, questions, actions, can_reply, conversation_id, interactions]
       properties:
         id: {$ref: '#/components/schemas/Ulid'}
         source: {type: string, enum: [agent_run, node_run, mcp], description: '`mcp` is a note an external MCP client posted with `send_note` (`docs/mcp.md`): no run ids, `flow_id` is `mcp`, `node_id` `send_note`.'}
@@ -7172,6 +7272,11 @@ components:
         client: {type: [string, 'null'], description: 'Name of the external MCP client of a note with source `mcp`.'}
         thread_key: {type: [string, 'null'], description: 'Grouping key the MCP client passed with the note.'}
         agent_chats: {type: integer, minimum: 0, description: 'Agent conversations of the note''s flow run, as `GET /api/conversations?flow_run=<flow_run_id>` lists them (forks and continuation-run agents included). 0 for a run without agent nodes and for source `mcp`.'}
+        questions: {type: array, maxItems: 4, items: {$ref: '#/components/schemas/InboxQuestion'}, description: 'What the agent asked for (`POST /api/inbox/{id}/answers`). Only a note an agent wrote (`agent_run_id` set) has any.'}
+        actions: {type: array, maxItems: 5, items: {$ref: '#/components/schemas/InboxAction'}, description: 'Next steps the agent offered (`POST /api/inbox/{id}/actions/{index}`).'}
+        can_reply: {type: boolean, description: 'The note was written by an agent: it can be replied to (`POST /api/inbox/{id}/reply`) and its questions and actions work.'}
+        conversation_id: {$ref: '#/components/schemas/NullableUlid'}
+        interactions: {type: array, items: {$ref: '#/components/schemas/InboxInteraction'}, description: 'Answers, actions and replies sent so far, oldest first. `conversation_id` is the fork they went to, set by the first one; open it as a conversation.'}
     NotifyVia:
       type: string
       enum: [auto, app, terminal-notifier, none]
@@ -7253,6 +7358,88 @@ components:
         skipped_starred: {type: integer, minimum: 0}
         skipped_not_archived: {type: integer, minimum: 0}
         changed_ids: {type: array, items: {$ref: '#/components/schemas/Ulid'}}
+    InboxOption:
+      type: object
+      additionalProperties: false
+      required: [label, description]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 80}
+        description: {type: string, maxLength: 300, description: 'Empty when the agent gave none.'}
+    InboxAnswer:
+      type: object
+      additionalProperties: false
+      required: [question_id, choices, other]
+      properties:
+        question_id: {type: string}
+        choices: {type: array, items: {type: string}, description: Labels of the chosen options.}
+        other: {type: [string, 'null'], description: 'Free text the user gave instead of, or in addition to, the options ("Other").'}
+    InboxQuestion:
+      type: object
+      description: |
+        A decision the agent asked for, shaped like Ask User Question. Every question also accepts free text (`other`) in an answer.
+        `answer` is set once the question was answered; it is then locked.
+      additionalProperties: false
+      required: [id, question, header, options, recommended, multi, answer]
+      properties:
+        id: {type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,39}$', description: Unique in the note.}
+        question: {type: string, minLength: 1, maxLength: 300}
+        header: {type: string, maxLength: 12, description: 'Short chip label; empty when the agent gave none.'}
+        options: {type: array, minItems: 2, maxItems: 5, items: {$ref: '#/components/schemas/InboxOption'}}
+        recommended: {type: [integer, 'null'], minimum: 0, maximum: 4, description: Index into `options` of the option the agent recommends.}
+        multi: {type: boolean, description: More than one option may be chosen.}
+        answer: {anyOf: [{$ref: '#/components/schemas/InboxAnswer'}, {type: 'null'}]}
+    InboxAction:
+      type: object
+      description: An optional next step the agent offered. `prompt` is sent to the agent verbatim; an action runs once per note.
+      additionalProperties: false
+      required: [type, label, prompt, used]
+      properties:
+        type: {type: string, enum: [prompt]}
+        label: {type: string, minLength: 1, maxLength: 40}
+        prompt: {type: string, minLength: 1, maxLength: 2000}
+        used: {type: boolean, description: The action was already run (any status of its interaction).}
+    InboxInteraction:
+      type: object
+      description: |
+        One thing the user did with a note: answered questions, ran an action or replied. The message went to the note's
+        agent conversation (`conversation_id`) and started a turn; `status` follows that turn.
+      additionalProperties: false
+      required: [id, kind, action_index, summary, message, status, approval_id, result, error, created_at, updated_at]
+      properties:
+        id: {$ref: '#/components/schemas/Ulid'}
+        kind: {type: string, enum: [answers, action, reply]}
+        action_index: {type: [integer, 'null'], description: 'For kind `action`, the index into `actions`.'}
+        summary: {type: string, description: 'Short label: `Answers`, `Action: <label>` or `Reply`.'}
+        message: {type: string, description: The exact text sent to the agent.}
+        status: {type: string, enum: [running, waiting_for_approval, done, failed]}
+        approval_id: {$ref: '#/components/schemas/NullableUlid'}
+        result: {type: [string, 'null'], description: 'One line from the last message of the agent, set when `status` is `done`.'}
+        error: {type: [string, 'null'], description: Set when `status` is `failed`.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+    InboxAnswerRequest:
+      type: object
+      additionalProperties: false
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [question_id]
+            properties:
+              question_id: {type: string}
+              choices: {type: array, maxItems: 5, items: {type: string}, description: Labels of the chosen options; exactly as listed in the question.}
+              other: {type: string, maxLength: 2000, description: Free text ("Other").}
+    InboxReplyRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: {type: string, minLength: 1, maxLength: 8000, description: Sent to the agent verbatim.}
     InboxPatch:
       type: object
       additionalProperties: false

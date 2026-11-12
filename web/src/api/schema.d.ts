@@ -2097,6 +2097,89 @@ export interface paths {
     patch: operations["updateInboxItem"];
     trace?: never;
   };
+  "/api/inbox/{id}/answers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["InboxId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Answer the questions of a note
+     * @description Sends the answers to the agent that wrote the note, in the background. The first interaction with a note forks the
+     *     agent's conversation once (as `POST /api/conversations/{id}/fork` does); every later answer, action and reply of
+     *     the note goes to the same fork (`conversation_id`). The message is `My answers to your questions:` followed by one
+     *     line per answer, `- <question id>: <chosen labels, then Other text>`, for example `- merge_method: Merge commit`.
+     *     The call returns once the message is sent (202); the turn runs on. `interactions` of the item (and `inbox.updated`
+     *     on the stream) follow it: `running`, `waiting_for_approval` (with the approval) and `done` or `failed`. Side
+     *     effects the agent attempts still go through approvals.
+     *
+     *     Each answer names a question that is not answered yet and carries the labels of the chosen options and/or free
+     *     text (`other`). A single-choice question takes exactly one of them; a `multi` question takes one or more.
+     *     Answered questions are locked. 404 for an unknown note; 409 when the note has no agent run, a question is already
+     *     answered, the previous message is still being worked on, or the agent run is still running; 422 for an answer that
+     *     does not fit its question.
+     */
+    post: operations["answerInboxItem"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/inbox/{id}/actions/{index}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["InboxId"];
+        /** @description Index into the item's `actions`. */
+        index: number;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Run an action of a note
+     * @description Sends the action's `prompt` verbatim to the note's agent conversation (see `answerInboxItem` for the fork, the
+     *     background turn and the statuses). An action runs once per note: a second call is 409. 404 for an unknown note or
+     *     an index outside `actions`; other errors as `answerInboxItem`.
+     */
+    post: operations["runInboxAction"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/inbox/{id}/reply": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["InboxId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reply to the agent that wrote a note
+     * @description Sends `text` verbatim to the note's agent conversation (see `answerInboxItem`). Any number of replies, one at a
+     *     time: 409 while the previous message is still being worked on. Only notes with `agent_run_id` can be replied to.
+     */
+    post: operations["replyInboxItem"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/prompts": {
     parameters: {
       query?: never;
@@ -5960,6 +6043,15 @@ export interface components {
       thread_key?: string | null;
       /** @description Agent conversations of the note's flow run, as `GET /api/conversations?flow_run=<flow_run_id>` lists them (forks and continuation-run agents included). 0 for a run without agent nodes and for source `mcp`. */
       agent_chats: number;
+      /** @description What the agent asked for (`POST /api/inbox/{id}/answers`). Only a note an agent wrote (`agent_run_id` set) has any. */
+      questions: components["schemas"]["InboxQuestion"][];
+      /** @description Next steps the agent offered (`POST /api/inbox/{id}/actions/{index}`). */
+      actions: components["schemas"]["InboxAction"][];
+      /** @description The note was written by an agent: it can be replied to (`POST /api/inbox/{id}/reply`) and its questions and actions work. */
+      can_reply: boolean;
+      conversation_id: components["schemas"]["NullableUlid"];
+      /** @description Answers, actions and replies sent so far, oldest first. `conversation_id` is the fork they went to, set by the first one; open it as a conversation. */
+      interactions: components["schemas"]["InboxInteraction"][];
     };
     /**
      * @description Where notifications go. `auto` (default): the macOS app when at least one is connected as a sink, otherwise
@@ -6054,6 +6146,81 @@ export interface components {
       skipped_starred: number;
       skipped_not_archived: number;
       changed_ids: components["schemas"]["Ulid"][];
+    };
+    InboxOption: {
+      label: string;
+      /** @description Empty when the agent gave none. */
+      description: string;
+    };
+    InboxAnswer: {
+      question_id: string;
+      /** @description Labels of the chosen options. */
+      choices: string[];
+      /** @description Free text the user gave instead of, or in addition to, the options ("Other"). */
+      other: string | null;
+    };
+    /**
+     * @description A decision the agent asked for, shaped like Ask User Question. Every question also accepts free text (`other`) in an answer.
+     *     `answer` is set once the question was answered; it is then locked.
+     */
+    InboxQuestion: {
+      /** @description Unique in the note. */
+      id: string;
+      question: string;
+      /** @description Short chip label; empty when the agent gave none. */
+      header: string;
+      options: components["schemas"]["InboxOption"][];
+      /** @description Index into `options` of the option the agent recommends. */
+      recommended: number | null;
+      /** @description More than one option may be chosen. */
+      multi: boolean;
+      answer: components["schemas"]["InboxAnswer"] | null;
+    };
+    /** @description An optional next step the agent offered. `prompt` is sent to the agent verbatim; an action runs once per note. */
+    InboxAction: {
+      /** @enum {string} */
+      type: "prompt";
+      label: string;
+      prompt: string;
+      /** @description The action was already run (any status of its interaction). */
+      used: boolean;
+    };
+    /**
+     * @description One thing the user did with a note: answered questions, ran an action or replied. The message went to the note's
+     *     agent conversation (`conversation_id`) and started a turn; `status` follows that turn.
+     */
+    InboxInteraction: {
+      id: components["schemas"]["Ulid"];
+      /** @enum {string} */
+      kind: "answers" | "action" | "reply";
+      /** @description For kind `action`, the index into `actions`. */
+      action_index: number | null;
+      /** @description Short label: `Answers`, `Action: <label>` or `Reply`. */
+      summary: string;
+      /** @description The exact text sent to the agent. */
+      message: string;
+      /** @enum {string} */
+      status: "running" | "waiting_for_approval" | "done" | "failed";
+      approval_id: components["schemas"]["NullableUlid"];
+      /** @description One line from the last message of the agent, set when `status` is `done`. */
+      result: string | null;
+      /** @description Set when `status` is `failed`. */
+      error: string | null;
+      created_at: components["schemas"]["Timestamp"];
+      updated_at: components["schemas"]["Timestamp"];
+    };
+    InboxAnswerRequest: {
+      answers: {
+        question_id: string;
+        /** @description Labels of the chosen options; exactly as listed in the question. */
+        choices?: string[];
+        /** @description Free text ("Other"). */
+        other?: string;
+      }[];
+    };
+    InboxReplyRequest: {
+      /** @description Sent to the agent verbatim. */
+      text: string;
     };
     InboxPatch: {
       read?: boolean;
@@ -10709,6 +10876,104 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  answerInboxItem: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["InboxId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InboxAnswerRequest"];
+      };
+    };
+    responses: {
+      /** @description The message was sent. The updated item. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InboxItem"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
+  runInboxAction: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["InboxId"];
+        /** @description Index into the item's `actions`. */
+        index: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The message was sent. The updated item. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InboxItem"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  replyInboxItem: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["InboxId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InboxReplyRequest"];
+      };
+    };
+    responses: {
+      /** @description The message was sent. The updated item. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InboxItem"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
       422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];

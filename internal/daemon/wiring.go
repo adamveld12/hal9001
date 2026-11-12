@@ -9,6 +9,7 @@ import (
 	"hal9001/internal/api"
 	"hal9001/internal/auth"
 	"hal9001/internal/core"
+	"hal9001/internal/inboxact"
 	"hal9001/internal/mcpclient"
 	"hal9001/internal/notify"
 	"hal9001/internal/runtimes"
@@ -52,13 +53,14 @@ type engineParams struct {
 
 // apiParams are the inputs of api.New (see wiring_engine.go).
 type apiParams struct {
-	Store    *store.Store
-	Home     string
-	Engine   core.Engine
-	Assist   core.Assist
-	Auth     *auth.Manager
-	MCP      api.MCPHub
-	Operator *tools.Operator
+	Store        *store.Store
+	Home         string
+	Engine       core.Engine
+	Assist       core.Assist
+	InboxActions *inboxact.Service
+	Auth         *auth.Manager
+	MCP          api.MCPHub
+	Operator     *tools.Operator
 	// Port and Executable are what GET /api/mcp/info reports (see api.Options).
 	Port       int
 	Executable string

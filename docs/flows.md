@@ -675,6 +675,23 @@ or with `ports` it never does.
 }
 ```
 
+#### Questions and actions
+
+A note written by an agent (`output: note`, or an `emit_<port>` shortcut that leads to an inbox node) may also carry:
+
+- `questions` (at most 4): decisions the agent needs before it acts. Each has `id` (slug `[a-z0-9][a-z0-9_-]*`, at most 40
+  characters, unique), `question` (at most 300), `header` (at most 12 characters, optional), `options` (2 to 5 of
+  `{label, description?}`, labels distinct), `recommended` (index into `options`, optional) and `multi` (multiple choice).
+  The inbox always offers "Other" with free text; it is not an option.
+- `actions` (at most 5): optional next steps `{type: "prompt", label, prompt}` (`label` at most 40 characters, `prompt` 1 to 2000).
+  The prompt is sent back to the agent verbatim.
+
+Only notes written by an agent can have them; an inbox node with its own title, or a note from the MCP or the API without an
+agent run, never does. A call to `submit_output` or a shortcut `emit_<port>` with invalid ones is refused with the reason and
+the agent calls again; in the text-parse path an invalid note falls back to the unstructured item. Answering, clicking an
+action or replying forks the agent's conversation once per note (later interactions reuse the fork) and sends the message in
+the background; tool calls that write still need approval. See [Inbox actions](assist.md#inbox-actions).
+
 If parsing fails, an item is still created with the raw final message, priority `normal`, and a `parse_error` flag.
 Starter prompts are in `content/prompts/` (`pr-review`, `triage-slack`, `linear-triage`, `email-secretary`).
 

@@ -116,7 +116,22 @@ type Manager struct {
 	sessions map[string]*session
 	byRun    map[string]*session // running turn's agent run id -> session
 	stopped  bool
-	ui       UIPublisher // where navigate_ui and start_draft publish; nil until SetUIPublisher
+	ui       UIPublisher       // where navigate_ui and start_draft publish; nil until SetUIPublisher
+	obs      core.TurnObserver // told about turn progress; nil until SetTurnObserver
+}
+
+// SetTurnObserver sets who is told about turn progress (waiting for an approval, resumed, ended). nil clears it.
+// The observer is called with the session's lock held; see core.TurnObserver.
+func (m *Manager) SetTurnObserver(o core.TurnObserver) {
+	m.mu.Lock()
+	m.obs = o
+	m.mu.Unlock()
+}
+
+func (m *Manager) turnObserver() core.TurnObserver {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.obs
 }
 
 var _ core.Assist = (*Manager)(nil)

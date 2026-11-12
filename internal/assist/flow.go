@@ -367,6 +367,7 @@ func flowInstructions(sessionID, targetID string, globalEnv []string) string {
 
 	w("### Inbox nodes\n\n")
 	w("- `title` is required and must render non-empty. `priority` is one of `low`, `normal`, `high`, `urgent`. `summary_md` is Markdown for a reader who has not seen the item. Add `links` (`{label, url}`) to the source.\n")
+	w("- An inbox note written by an agent (`output: note`, or an inbox node after a schema-less agent port) may carry `questions` (up to 4, each with 2-5 options) and `actions` (up to 5 `{type: prompt, label, prompt}`); the agent sets them, not the inbox node.\n")
 	w("- A test shows each inbox node's rendered item in `would_create`; check the text reads well on the sample.\n\n")
 
 	w("## Environment\n\n")

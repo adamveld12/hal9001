@@ -481,6 +481,7 @@ func (e *Engine) noteToInbox(ne *nodeEnv, res agent.RunRecord, expectNote bool) 
 		for _, l := range n.Links {
 			it.Links = append(it.Links, store.InboxLink{Label: red.String(l.Label), URL: red.String(l.URL)})
 		}
+		it.Questions, it.Actions = redactInteractive(red.String, n.Questions, n.Actions)
 	case expectNote:
 		it.Title = fmt.Sprintf("Unstructured agent result: %s/%s", ne.fr.FlowID, ne.node.ID)
 		it.Priority, it.ParseError = store.PriorityNormal, true

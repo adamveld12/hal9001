@@ -115,3 +115,29 @@ func TestParseNote(t *testing.T) {
 		})
 	}
 }
+
+func TestNoteQuestionsAndActionsRoundTrip(t *testing.T) {
+	in := `{"title":"T","summary_md":"s","questions":[{"id":"fix","header":"Fix","question":"Which?","options":[{"label":"Revert"},{"label":"Patch","description":"Smaller"}],"recommended":1,"multi":true}],"actions":[{"label":"Draft","prompt":"Draft it."}]}`
+	n, err := agent.NoteFromJSON([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Questions) != 1 || n.Questions[0].ID != "fix" || !n.Questions[0].Multi || n.Questions[0].Recommended == nil || *n.Questions[0].Recommended != 1 ||
+		len(n.Questions[0].Options) != 2 || n.Questions[0].Options[1].Description != "Smaller" {
+		t.Errorf("questions: %+v", n.Questions)
+	}
+	if len(n.Actions) != 1 || n.Actions[0].Type != "prompt" || n.Actions[0].Prompt != "Draft it." {
+		t.Errorf("actions (type defaults to prompt): %+v", n.Actions)
+	}
+	if viaText, err := agent.ParseNote("done " + in); err != nil || len(viaText.Questions) != 1 {
+		t.Errorf("text path: %+v %v", viaText, err)
+	}
+	for _, bad := range []string{
+		`{"title":"T","questions":[{"id":"a","question":"Q?","options":[{"label":"x"}]}]}`,
+		`{"title":"T","actions":[{"type":"shell","label":"l","prompt":"p"}]}`,
+	} {
+		if _, err := agent.NoteFromJSON([]byte(bad)); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+}

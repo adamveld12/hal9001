@@ -248,6 +248,20 @@ type InboxItem struct {
 	Archived   bool `json:"archived"`
 	DryRun     bool `json:"dry_run"`
 	ParseError bool `json:"parse_error"`
+	Questions  []struct {
+		ID          string `json:"id"`
+		Header      string `json:"header"`
+		Recommended *int   `json:"recommended"`
+		Multi       bool   `json:"multi"`
+		Options     []struct {
+			Label string `json:"label"`
+		} `json:"options"`
+	} `json:"questions"`
+	Actions []struct {
+		Type   string `json:"type"`
+		Label  string `json:"label"`
+		Prompt string `json:"prompt"`
+	} `json:"actions"`
 }
 
 type KillSwitch struct {

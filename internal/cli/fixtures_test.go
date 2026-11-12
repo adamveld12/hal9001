@@ -87,6 +87,7 @@ func inboxItem(read bool) map[string]any {
 		"flow_id": "triage-slack", "node_id": "note", "event_id": nil, "title": "Large PR needs you", "priority": "high",
 		"summary_md": "babylist/web#4120", "suggested_reply": nil, "links": []any{}, "read": read, "starred": false,
 		"archived": false, "dry_run": false, "parse_error": false, "agent_chats": 0, "created_at": ts,
+		"questions": []any{}, "actions": []any{}, "can_reply": true, "conversation_id": nil, "interactions": []any{},
 	}
 }
 

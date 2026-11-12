@@ -12,6 +12,8 @@ func NoteDoc() map[string]any {
 			"priority":        map[string]any{"enum": []any{"low", "normal", "high", "urgent"}, "description": "How soon a person should look. Default normal."},
 			"summary_md":      map[string]any{"type": "string", "description": "Markdown for a reader who has not seen the item."},
 			"suggested_reply": map[string]any{"type": "string", "description": "Optional reply the person can send."},
+			"questions":       questionsDoc(),
+			"actions":         actionsDoc(),
 			"links": map[string]any{
 				"type": "array", "description": "Optional links to the sources.",
 				"items": map[string]any{

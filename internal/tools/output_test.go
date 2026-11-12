@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"hal9001/internal/outschema"
 	"hal9001/internal/spec"
 )
 
@@ -221,5 +222,49 @@ func TestPortSinkFollowUpAndResumeNote(t *testing.T) {
 	}
 	if !strings.HasPrefix(s.ResumeNote(), "## Outputs\nFinish by calling exactly one of these tools:") || !s.Required() {
 		t.Errorf("resume note %q required %v", s.ResumeNote(), s.Required())
+	}
+}
+
+const badQuestions = `{"title":"t","summary_md":"s","questions":[{"id":"a","question":"Q?","options":[{"label":"x"},{"label":"y"}],"recommended":2}]}`
+const goodQuestions = `{"title":"t","summary_md":"s","questions":[{"id":"a","question":"Q?","options":[{"label":"x"},{"label":"y"}],"recommended":1}]}`
+
+// Questions and actions are checked beyond the JSON Schema: a refused call is a tool error naming the problem and the
+// corrected call is accepted, for submit_output and for a shortcut emit tool; a custom port schema is not checked.
+func TestInteractiveCheckOnNoteAndShortcutTools(t *testing.T) {
+	h, _ := newTestHub(t, &fakeHost{}, t.TempDir())
+	ctx := context.Background()
+
+	note := NewNoteSink()
+	s := openWithOutput(t, h, note)
+	if _, err := s.Call(ctx, OutputToolName, json.RawMessage(badQuestions)); err == nil || !strings.Contains(err.Error(), "recommended") || !strings.Contains(err.Error(), "call submit_output again") {
+		t.Fatalf("submit_output with a bad recommended: %v", err)
+	}
+	if note.Done() || !strings.Contains(note.LastError(), "recommended") {
+		t.Errorf("done %v last error %q", note.Done(), note.LastError())
+	}
+	if _, err := s.Call(ctx, OutputToolName, json.RawMessage(goodQuestions)); err != nil || !note.Done() || note.LastError() != "" {
+		t.Fatalf("corrected call: %v done %v last error %q", err, note.Done(), note.LastError())
+	}
+
+	custom := spec.JSONSchema{"type": "object", "properties": map[string]any{"questions": map[string]any{"type": "array"}}}
+	ports, err := NewPortSink([]spec.EmitTool{
+		{Port: "plain", Name: "emit_plain", Description: "Plain.", LeadsTo: "inbox note", Schema: spec.JSONSchema(outschema.NoteDoc()), Shortcut: true},
+		{Port: "own", Name: "emit_own", Description: "Own.", LeadsTo: "command node", Schema: custom},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := openWithOutput(t, h, ports)
+	if _, err := ps.Call(ctx, "emit_plain", json.RawMessage(badQuestions)); err == nil || !strings.Contains(err.Error(), "recommended") {
+		t.Fatalf("emit_plain with a bad recommended: %v", err)
+	}
+	if ports.Done() || !strings.Contains(ports.LastError(), "recommended") {
+		t.Errorf("done %v last error %q", ports.Done(), ports.LastError())
+	}
+	if _, err := ps.Call(ctx, "emit_plain", json.RawMessage(goodQuestions)); err != nil || !ports.Done() {
+		t.Fatalf("corrected call: %v", err)
+	}
+	if _, err := ps.Call(ctx, "emit_own", json.RawMessage(`{"questions":[1,"anything"]}`)); err != nil {
+		t.Errorf("a custom schema must not get the note check: %v", err)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"hal9001/internal/outschema"
 )
 
 // Link is a labelled URL in a note.
@@ -21,6 +23,9 @@ type Note struct {
 	SummaryMD      string `json:"summary_md"`
 	SuggestedReply string `json:"suggested_reply,omitempty"`
 	Links          []Link `json:"links,omitempty"`
+	// Questions and Actions are the interactive parts of an agent's note (docs/flows.md, "Questions and actions").
+	Questions []outschema.Question `json:"questions,omitempty"`
+	Actions   []outschema.Action   `json:"actions,omitempty"`
 }
 
 var validPriorities = map[string]bool{"low": true, "normal": true, "high": true, "urgent": true}
@@ -58,6 +63,14 @@ func NoteFromJSON(obj []byte) (Note, error) {
 	for i, l := range n.Links {
 		if strings.TrimSpace(l.URL) == "" {
 			return Note{}, fmt.Errorf("note link %d has no url", i)
+		}
+	}
+	if err := outschema.Check(n.Questions, n.Actions); err != nil {
+		return Note{}, fmt.Errorf("note questions or actions: %w", err)
+	}
+	for i := range n.Actions {
+		if n.Actions[i].Type == "" {
+			n.Actions[i].Type = outschema.ActionPrompt
 		}
 	}
 	return n, nil

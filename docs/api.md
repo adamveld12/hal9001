@@ -193,6 +193,18 @@ curl -sS -X POST -H "$H" "$API/inbox/bulk" -d "{\"action\":\"unarchive\",\"ids\"
 - The result is `{matched, changed, skipped_starred, skipped_not_archived, changed_ids}`. `matched` includes skipped items; `changed` counts items actually modified (or that a preview would modify).
 - Each changed item emits `inbox.updated`; a delete emits `stream.resync` (reason `pruned`). `status.changed` carries the new `unread_inbox`.
 
+Answering a note that an agent wrote (`admin`; `answerInboxItem`, `runInboxAction`, `replyInboxItem` in `api/openapi.yaml`). A note can carry `questions` and `actions` (items with `can_reply: true`); every item lists its `interactions`:
+
+```sh
+curl -sS -X POST -H "$H" "$API/inbox/$ID/answers" -d '{"answers":[{"question_id":"merge_method","choices":["Squash"]}]}'  # also {"other": "free text"}
+curl -sS -X POST "$API/inbox/$ID/actions/0"                                                                              # runs the action's prompt
+curl -sS -X POST -H "$H" "$API/inbox/$ID/reply" -d '{"text":"Please also update the changelog."}'
+```
+
+- Each call returns `202` with the updated item once the message is sent to the agent; the agent's turn runs in the background. The first call forks the agent's conversation (as `POST /api/conversations/{id}/fork`) and stores it as `conversation_id`; later calls reuse that fork.
+- A question can be answered once and an action run once. One message is in flight per note: while an interaction is `running` or `waiting_for_approval`, another call is `409`. Follow `interactions[].status` (`running`, `waiting_for_approval` with `approval_id`, `done` with a one-line `result`, `failed` with `error`) or `inbox.updated` on the stream. Side effects the agent attempts still need approvals.
+- The message is `My answers to your questions:` plus one `- <question id>: <labels>[, Other: <text>]` line per answered question; an action sends its `prompt` and a reply its `text`, both verbatim. A note without an agent run (an MCP client's note) is `409`; an answer that does not fit its question is `422`.
+
 Other everyday calls:
 
 ```sh
