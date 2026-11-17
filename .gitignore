@@ -28,3 +28,4 @@ web/dist/
 
 # Update signing private key (from mise run update:keygen)
 /update-signing-key.txt
+.worktrees
