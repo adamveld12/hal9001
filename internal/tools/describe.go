@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"hal9001/internal/hashline"
 )
 
 // ---- gh_api ----
@@ -81,13 +83,26 @@ func ghAPIDescribe(args json.RawMessage, _ string) ApprovalText {
 
 // ---- sandbox tools ----
 
+// describeWrite says what an fs_write call does, from its request alone: it creates a file (no expected revision),
+// replaces one as a whole, or edits some of its lines.
 func (s *sandboxTools) describeWrite(args json.RawMessage, _ string) ApprovalText {
-	var a struct{ Path, Content string }
-	_ = json.Unmarshal(args, &a)
+	var p struct {
+		Path string `json:"path"`
+	}
+	var req hashline.Request
+	_ = json.Unmarshal(args, &p)
+	_ = json.Unmarshal(args, &req)
+	verb, mode, sizeKey, size := "Edit", "edit", "edits", len(req.Edits)
+	if req.Content != nil {
+		verb, mode, sizeKey, size = "Replace", "replace", "bytes", len(*req.Content)
+		if req.ExpectedHash == "" {
+			verb, mode = "Create", "create"
+		}
+	}
 	return ApprovalText{
-		Title:       "Write " + a.Path,
-		Description: fmt.Sprintf("Write %s (%d bytes) in sandbox %s", a.Path, len(a.Content), s.name),
-		Fields:      []ApprovalField{{"path", a.Path}, {"bytes", fmt.Sprint(len(a.Content))}, {"sandbox", s.name}},
+		Title:       verb + " " + p.Path,
+		Description: fmt.Sprintf("%s %s (%s) in sandbox %s", verb, p.Path, plural(size, strings.TrimSuffix(sizeKey, "s")), s.name),
+		Fields:      []ApprovalField{{"path", p.Path}, {"mode", mode}, {sizeKey, fmt.Sprint(size)}, {"sandbox", s.name}},
 	}
 }
 

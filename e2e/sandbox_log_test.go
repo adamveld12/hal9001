@@ -57,7 +57,7 @@ func TestSandboxRunLogIsRecordedAndServed(t *testing.T) {
 	d.Runtime("fake", script{Turns: []turn{{When: inMode("default"), Steps: []step{
 		mcp("c1", "shell", map[string]any{"command": "echo hello; echo warn >&2; echo $LOG_SECRET; exit 4"}),
 		mcp("c2", "shell", map[string]any{"command": "rm -f nothing"}),
-		mcp("c3", "fs_write", map[string]any{"path": "notes/a.txt", "content": "hello"}),
+		mcp("c3", "fs_write", map[string]any{"path": "notes/a.txt", "expected_hash": "", "content": "hello"}),
 		mcp("c4", "fs_read", map[string]any{"path": "missing.txt"}),
 		say("finished"),
 	}}}})
@@ -125,7 +125,7 @@ func TestSandboxRunLogIsRecordedAndServed(t *testing.T) {
 // A user's decision on a sandbox call is part of the log: approved calls say so, denied ones are logged as denied.
 func TestSandboxRunLogRecordsHumanDecisions(t *testing.T) {
 	d, _ := sandboxDaemon(t, "always", "per_run", []step{
-		mcp("c1", "fs_write", map[string]any{"path": "ok.txt", "content": "one"}),
+		mcp("c1", "fs_write", map[string]any{"path": "ok.txt", "expected_hash": "", "content": "one"}),
 		mcp("c2", "shell", map[string]any{"command": "echo should-not-run"}),
 	})
 	runID := d.InjectRun("src", map[string]any{"id": "7"})
