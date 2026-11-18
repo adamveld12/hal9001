@@ -163,7 +163,7 @@ func (n *notifications) showHintOnce() {
 
 // handle carries out the user's response to a notification.
 func (n *notifications) handle(act menubar.NotificationAction) {
-	h := menubar.ActionHandler{Client: n.a.client, Open: openURL, Fail: n.post}
+	h := menubar.ActionHandler{Client: n.a.client, Open: n.a.opener.Open, Fail: n.post}
 	ctx, cancel := context.WithTimeout(n.a.ctx, 30*time.Second)
 	defer cancel()
 	if err := h.Handle(ctx, act); err != nil {

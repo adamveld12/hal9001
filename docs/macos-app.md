@@ -90,8 +90,25 @@ Use a flow that raises inbox notes and approvals (the seeded `demo` flow does; t
 - [ ] Decide an approval (or read an item) in the web UI: its notification disappears from Notification Center.
 - [ ] `high` and `urgent` play a sound; `low` and `normal` are silent. Notifications are not time-sensitive, so a
       Focus mode may hold them back.
+- [ ] Tab reuse (Chrome): have Chrome running with a hal9001 tab open (for example the Inbox). The first click on a
+      notification (or its **Open** button) makes macOS ask whether HAL9001 may control Google Chrome; click **OK**. If that
+      first click already opened a new tab (the prompt can outlast the 2 s limit), click another notification.
+- [ ] With a hal9001 tab open in Chrome, clicking a notification loads its page in that tab, switches to it, raises its
+      window and activates Chrome; no new tab appears. With several hal9001 tabs, the active tab of the frontmost window
+      is the one reused.
+- [ ] With Chrome running but no hal9001 tab, or with Chrome quit, clicking opens the page the normal way (default
+      browser, new tab) and does not launch Chrome by itself.
+- [ ] After denying (System Settings > Privacy & Security > Automation > HAL9001 > Google Chrome off), clicking still
+      opens the page in a new tab and shows no error; the reason is in `app.log`.
 - [ ] While the app is the notification sink, `terminal-notifier` does not fire; after Quit it does again
       (`hal9001` falls back when no sink is connected).
+
+Details of the tab reuse: a link on the hal9001 UI origin (`HAL9001_UI_URL`, default `http://localhost:9001`; the loopback
+names `localhost` and `127.0.0.1` count as one host, scheme and port must match) is opened by asking Chrome, through
+`osascript`, for a tab on that origin; the app never launches Chrome to look. The scripts take the URLs as arguments,
+never as script text. Any failure (Chrome not running, no such tab, Automation permission denied, a script error, more
+than 2 s) opens the link the normal way and is only logged. The same applies to the menu items that open a UI page.
+`terminal-notifier` notifications are not affected.
 
 ## 5. Alerts hint
 

@@ -28,6 +28,7 @@ func TestBundleWritesInfoPlistAndMatchingAgentPlist(t *testing.T) {
 		"<key>CFBundleShortVersionString</key><string>1.2.3</string>",
 		"<key>HAL9001Version</key><string>v1.2.3-4-gabc &amp; co</string>",
 		"<key>LSUIElement</key><true/>",
+		"<key>NSAppleEventsUsageDescription</key><string>",
 		"<key>LSMinimumSystemVersion</key><string>13.0</string>",
 	} {
 		if !strings.Contains(info, want) {

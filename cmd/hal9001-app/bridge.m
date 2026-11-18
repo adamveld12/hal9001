@@ -26,6 +26,10 @@ char *hal_info_string(const char *key) {
   return NULL;
 }
 
+int hal_app_running(const char *bundle_id) {
+  return [NSRunningApplication runningApplicationsWithBundleIdentifier:[NSString stringWithUTF8String:bundle_id]].count > 0;
+}
+
 // ---- SMAppService ---------------------------------------------------------------------------------------------
 
 static SMAppService *serviceFor(int kind, const char *plist) {

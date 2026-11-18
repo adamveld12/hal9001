@@ -16,6 +16,7 @@ import (
 
 	"fyne.io/systray"
 
+	"hal9001/internal/browsertab"
 	"hal9001/internal/menubar"
 	"hal9001/internal/service"
 )
@@ -47,6 +48,8 @@ func run() int {
 	api := firstNonEmpty(*apiURL, os.Getenv("HAL9001_URL"), profile.APIURL())
 	ui := strings.TrimRight(firstNonEmpty(os.Getenv("HAL9001_UI_URL"), api), "/")
 	a := &app{profile: profile, client: menubar.NewClient(api), ui: ui, userHome: userHome, exe: exe, launchctl: runLaunchctl}
+	chrome := browsertab.Chrome{IsRunning: func() bool { return appRunning(browsertab.ChromeBundleID) }}
+	a.opener = browsertab.Opener{UI: ui, Browsers: []browsertab.Browser{chrome}, Fallback: openURL}
 	a.installRoot = installRoot(profile, exe)
 	a.notif = &notifications{a: a}
 	slog.Info("hal9001-app starting", "version", version, "bundle", profile.BundleID, "api", api, "ui", ui, "update_installer", a.installRoot != "")
