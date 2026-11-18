@@ -208,9 +208,10 @@ func mcpStep(id, tool string, args any, save string) step {
 	return step{Op: fakeagent.OpMCPCall, ID: id, Tool: tool, Args: args, Path: save}
 }
 
-// assistEdit is the agent replacing the sensor draft (draft_write).
+// assistEdit is the agent replacing the whole sensor draft with draft_write: it sends the hash of the draft file as it
+// has just read it ({{sha256:...}}, see the fake agent), as a replacement of an existing file must.
 func assistEdit(yaml string) step {
-	return mcpStep("edit-draft", "draft_write", map[string]any{"content": yaml}, "")
+	return mcpStep("edit-draft", "draft_write", map[string]any{"expected_hash": "{{sha256:sensor.yaml}}", "content": yaml}, "")
 }
 
 // halPerms are the hal-side records of the run's tool calls (the agent layer's own requests are the others).
@@ -847,10 +848,8 @@ func TestAssistUserEditsReachTheAgent(t *testing.T) {
 	if got.Status != "idle" {
 		t.Fatalf("status %q error %v", got.Status, got.Error)
 	}
-	var seen struct {
-		YAML string `json:"yaml"`
-	}
-	if b, err := os.ReadFile(filepath.Join(d.assistDir(s.ID), "seen.json")); err != nil || json.Unmarshal(b, &seen) != nil || seen.YAML != newer {
+	var seen draftViewJSON
+	if b, err := os.ReadFile(filepath.Join(d.assistDir(s.ID), "seen.json")); err != nil || json.Unmarshal(b, &seen) != nil || seen.text() != newer {
 		t.Errorf("the agent saw %q (%v), want the editor's content", b, err)
 	}
 	if got.Draft.YAML != newer || got.Draft.UpdatedBy != "user" {

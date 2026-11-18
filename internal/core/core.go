@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"hal9001/internal/hashline"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 )
@@ -296,6 +297,43 @@ type AssistSample struct {
 	Payload  json.RawMessage `json:"payload"`
 }
 
+// AssistDraftFile is one file of a session's draft read as anchored lines: GET /api/assist/sessions/{id}/draft, and
+// the agent's draft_read. The JSON names of the line fields are those of hashline.View.
+type AssistDraftFile struct {
+	// Path is the draft path that was read: the draft file's name (sensor.yaml, flow.yaml or tool.yaml), prompts/<name>.md
+	// or sensors/<id>.yaml.
+	Path string `json:"path"`
+	// Exists is false for a prompt or sensor that has no file yet: Hash is then empty and there are no lines.
+	Exists bool `json:"exists"`
+	// Saved is true for a sensor of a flow session that has no draft yet: the lines are the saved file's, and the
+	// first edit copies it into the draft.
+	Saved bool `json:"saved"`
+	// Hash is the revision of this file alone, the hash of its bytes. Editing a prompt or a sensor leaves the draft's own hash alone.
+	Hash string `json:"hash"`
+	// Lines are the requested lines (every line without a range); TotalLines counts the whole file.
+	Lines           []hashline.Line `json:"lines"`
+	TotalLines      int             `json:"total_lines"`
+	HasFinalNewline bool            `json:"has_final_newline"`
+	// Diagnostics is the validator's findings for the whole draft (a JSON array), like the session's draft.
+	Diagnostics json.RawMessage `json:"diagnostics"`
+}
+
+// AssistDraftEdit is the compact result of a change to a draft file: PATCH /api/assist/sessions/{id}/draft and the
+// agent's draft_write. It does not repeat the file.
+type AssistDraftEdit struct {
+	Path string `json:"path"`
+	// Hash is the file's new revision, the expected_hash of the next edit.
+	Hash       string `json:"hash"`
+	TotalLines int    `json:"total_lines"`
+	// Changed is false when the request left the file as it was.
+	Changed bool `json:"changed"`
+	// Affected are the lines of the new file that differ from the old one, with their new anchors (after a deletion,
+	// the lines around it). Truncated is true when more lines changed than are listed.
+	Affected    []hashline.Line `json:"affected"`
+	Truncated   bool            `json:"truncated"`
+	Diagnostics json.RawMessage `json:"diagnostics"`
+}
+
 // AssistToolTestResult is the tool variant of the outcome of POST /api/assist/sessions/{id}/test: one call of
 // the draft tool. A failing tool is still a result (OK false).
 type AssistToolTestResult struct {
@@ -455,6 +493,17 @@ type Assist interface {
 	// UpdateDraft replaces the draft (updated_by user). expectedHash, when non-empty, must equal
 	// the current draft hash, else *DraftConflictError.
 	UpdateDraft(ctx context.Context, sessionID, yaml, expectedHash string) (*store.AssistSession, error)
+	// ReadDraft returns one file of the draft as anchored lines. path "" is the draft itself; flow sessions also have
+	// prompts/<name>.md and sensors/<id>.yaml. startLine and endLine (1-based, inclusive; both 0: every line) select a
+	// range. ErrInvalidState for a general or a closed session, *ValidationError for a path the session does not have
+	// or a range outside the file.
+	ReadDraft(ctx context.Context, sessionID, path string, startLine, endLine int) (AssistDraftFile, error)
+	// EditDraft applies req to one file of the draft (path as in ReadDraft) and persists the result like UpdateDraft:
+	// the draft, its diagnostics and the assist.updated event are current when it returns. req.ExpectedHash must be
+	// the file's current hash (empty: the file must not exist yet), else *DraftConflictError; edits that do not apply,
+	// a path the session does not have and a file over its size limit are a *ValidationError. byAgent sets updated_by
+	// to agent instead of user.
+	EditDraft(ctx context.Context, sessionID, path string, req hashline.Request, byAgent bool) (AssistDraftEdit, error)
 	// TestDraft runs the draft and returns the redacted result without recording anything a user would see.
 	// Sensor sessions run it like Poll now; flow sessions run it once on the sample req names. The code runs
 	// with real credentials: a test by the user always runs and marks the script approved; a test byAgent runs
@@ -496,11 +545,26 @@ type TurnObserver interface {
 	TurnEnded(sessionID string, failed bool, errText, result string)
 }
 
-// DraftConflictError is UpdateDraft's hash mismatch (409 conflict).
+// DraftConflictError is a draft hash mismatch (409 conflict): UpdateDraft's expected hash, or the expected_hash of an
+// EditDraft request.
 type DraftConflictError struct {
+	// Path is the draft file the hash belongs to; empty for the draft itself.
+	Path string
+	// Expected is the hash the caller sent (empty: it asked to create the file) and Current the file's hash (empty:
+	// the file does not exist).
 	Expected, Current string
 }
 
 func (e *DraftConflictError) Error() string {
-	return "the draft changed since it was read (hash " + e.Current + ", expected " + e.Expected + ")"
+	what := "the draft"
+	if e.Path != "" {
+		what = e.Path
+	}
+	switch {
+	case e.Current == "":
+		return what + " does not exist (expected hash " + e.Expected + "): send an empty expected_hash to create it"
+	case e.Expected == "":
+		return what + " already exists (hash " + e.Current + "): an empty expected_hash only creates a file that does not exist yet"
+	}
+	return what + " changed since it was read (hash " + e.Current + ", expected " + e.Expected + ")"
 }

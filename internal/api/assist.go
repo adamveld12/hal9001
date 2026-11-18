@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"hal9001/internal/core"
+	"hal9001/internal/hashline"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
 )
@@ -319,6 +321,79 @@ func (s *Server) updateAssistDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, assistDraft(*a))
+}
+
+// getAssistDraft reads one file of the draft as anchored lines (the agent's draft_read over HTTP).
+func (s *Server) getAssistDraft(w http.ResponseWriter, r *http.Request) {
+	q := newQuery(r)
+	path := q.str("path")
+	start, end := lineRange(q)
+	if !q.ok(w) {
+		return
+	}
+	svc, ok := s.assist(w)
+	if !ok {
+		return
+	}
+	res, err := svc.ReadDraft(r.Context(), r.PathValue("id"), path, start, end)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// lineRange reads start and end, the 1-based first and last line (inclusive) to return; 0 means not given.
+func lineRange(q *query) (start, end int) {
+	for name, dst := range map[string]*int{"start": &start, "end": &end} {
+		v := q.str(name)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			q.fail("%s must be an integer of 1 or more", name)
+			continue
+		}
+		*dst = n
+	}
+	if start > 0 && end > 0 && end < start {
+		q.fail("end must not be before start")
+	}
+	return start, end
+}
+
+// editAssistDraft changes one file of the draft with line-anchored edits, or writes it whole (the agent's draft_write
+// over HTTP). Who made the change is the caller: the CLI marks the agent's requests like the test's.
+func (s *Server) editAssistDraft(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path         string          `json:"path"`
+		ExpectedHash *string         `json:"expected_hash"`
+		Content      *string         `json:"content"`
+		Edits        []hashline.Edit `json:"edits"`
+	}
+	if !decodeJSON(w, r, &req, false) {
+		return
+	}
+	switch {
+	case req.ExpectedHash == nil:
+		fieldProblem(w, "expected_hash", "expected_hash is required: the hash of the file as read from this API, or an empty string to create a file that does not exist yet")
+		return
+	case *req.ExpectedHash != "" && !hashRE.MatchString(*req.ExpectedHash):
+		fieldProblem(w, "expected_hash", "expected_hash must be the hash of a file read from this API, or an empty string to create a file")
+		return
+	}
+	svc, ok := s.assist(w)
+	if !ok {
+		return
+	}
+	res, err := svc.EditDraft(r.Context(), r.PathValue("id"), req.Path,
+		hashline.Request{ExpectedHash: *req.ExpectedHash, Content: req.Content, Edits: req.Edits}, r.Header.Get(assistAgentHeader) != "")
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) testAssistDraft(w http.ResponseWriter, r *http.Request) {

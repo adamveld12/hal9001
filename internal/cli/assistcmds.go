@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -242,6 +243,86 @@ func assistCmds() []*command {
 		},
 	}
 
+	var readPath string
+	var readStart, readEnd int
+	draftRead := &leaf{
+		usage: "[--path FILE] [--start N] [--end N] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&readPath, "path", "", "the file: the draft itself (default), or in flow sessions prompts/<name>.md or sensors/<id>.yaml")
+			fs.IntVar(&readStart, "start", 0, "first line to read (1-based; default: the first)")
+			fs.IntVar(&readEnd, "end", 0, "last line to read (inclusive; default: the last)")
+		},
+		run: func(ctx context.Context, c *call) error {
+			id, err := c.sessionArg("assist draft-read")
+			if err != nil {
+				return err
+			}
+			q := query("path", readPath)
+			if c.flagSet("start") {
+				q.Set("start", strconv.Itoa(readStart))
+			}
+			if c.flagSet("end") {
+				q.Set("end", strconv.Itoa(readEnd))
+			}
+			return c.doEmit(ctx, http.MethodGet, "/api/assist/sessions/"+esc(id)+"/draft", q, nil)
+		},
+	}
+
+	var editPath, editHash, editContent, editEdits string
+	draftEdit := &leaf{
+		usage: "--expected-hash HASH (--content FILE|- | --edits FILE|-) [--path FILE] [<session>] (default: $" + EnvAssistSession + ")", maxArgs: 1,
+		flags: func(fs *flag.FlagSet) {
+			fs.StringVar(&editPath, "path", "", "the file: the draft itself (default), or in flow sessions prompts/<name>.md or sensors/<id>.yaml")
+			fs.StringVar(&editHash, "expected-hash", "", "the file's hash from draft-read; --expected-hash= (empty) creates a file that does not exist yet")
+			fs.StringVar(&editContent, "content", "", "replace the whole file with the content of this file (- for stdin)")
+			fs.StringVar(&editEdits, "edits", "", "apply the JSON array of line edits in this file (- for stdin), for example [{\"op\":\"replace\",\"start\":\"3:a1b2\",\"content\":\"new text\"}]")
+		},
+		run: func(ctx context.Context, c *call) error {
+			id, err := c.sessionArg("assist draft-edit")
+			if err != nil {
+				return err
+			}
+			switch {
+			case !c.flagSet("expected-hash"):
+				return usagef("assist draft-edit: --expected-hash is required (--expected-hash= creates a file that does not exist yet)")
+			case c.flagSet("content") == c.flagSet("edits"):
+				return usagef("assist draft-edit: give --content or --edits, not both and not neither")
+			}
+			req := map[string]any{"expected_hash": editHash}
+			if editPath != "" {
+				req["path"] = editPath
+			}
+			if c.flagSet("content") {
+				text, err := c.readInput(editContent)
+				if err != nil {
+					return err
+				}
+				req["content"] = string(text)
+			} else {
+				raw, err := c.readInput(editEdits)
+				if err != nil {
+					return err
+				}
+				var edits []map[string]any
+				if err := json.Unmarshal(raw, &edits); err != nil || len(edits) == 0 {
+					return usagef("assist draft-edit: --edits must be a JSON array of edits")
+				}
+				req["edits"] = edits
+			}
+			// Inside an assist session the request says so, and the draft shows the agent as the author of the change.
+			cl := c.client()
+			if c.env.Getenv(EnvAssistSession) != "" {
+				cl.headers = http.Header{AssistAgentHeader: {"1"}}
+			}
+			body, _ := jsonBody(req)
+			resp, err := cl.do(ctx, http.MethodPatch, "/api/assist/sessions/"+esc(id)+"/draft", nil, body)
+			if err != nil {
+				return err
+			}
+			return c.emit(resp)
+		},
+	}
+
 	return []*command{
 		cmd("list", "list assist sessions", list),
 		cmd("create", "start an assist session for a new or existing sensor, flow or tool", create),
@@ -252,6 +333,8 @@ func assistCmds() []*command {
 		cmd("test", "run the session's draft (a poll for a sensor, one sample for a flow, one call for a tool) and print the result", test),
 		cmd("samples", "list the sample inputs of a flow session", samples),
 		cmd("draft", "print the session's current draft (YAML, hash, diagnostics)", draft),
+		cmd("draft-read", "print one draft file as anchored lines with its hash (the draft, or a prompt or sensor of a flow session)", draftRead),
+		cmd("draft-edit", "change one draft file with line-anchored edits, or write it whole, guarded by its hash", draftEdit),
 	}
 }
 

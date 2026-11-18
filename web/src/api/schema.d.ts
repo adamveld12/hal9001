@@ -2364,10 +2364,29 @@ export interface paths {
       };
       cookie?: never;
     };
-    get?: never;
+    /**
+     * Read one draft file as anchored lines
+     * @description Reads a file of the session's draft the way the agent's `draft_read` does: every line with an anchor, and the
+     *     file's `hash`. An anchor is `<line number>:<4 hex digits>`, the number and a short hash of the line's text; the
+     *     `hash` is the revision of this one file and the `expected_hash` that `PATCH` of the same path needs.
+     *
+     *     `path` names the file: omitted (or the draft file itself: `sensor.yaml`, `flow.yaml`, `tool.yaml`) for the draft,
+     *     and in flow sessions `prompts/<name>.md` (a draft prompt) or `sensors/<id>.yaml` (a draft sensor; a saved sensor
+     *     without a draft yet reads as the saved file with `saved: true`, and its first edit copies it into the draft). A
+     *     file that does not exist yet reads as `exists: false`, an empty `hash` and no lines. `start` and `end` (1-based,
+     *     inclusive) return only that range of lines; a range that begins past the end returns no lines, and `total_lines`
+     *     always counts the whole file. Every file has its own `hash`: changing a prompt or a sensor does not change the
+     *     draft's. `diagnostics` are the validator's findings for the whole draft, like `draft.diagnostics` of the session,
+     *     which keeps serving the raw YAML.
+     *
+     *     409 `invalid-state` for a general session (it has no draft) and for a closed one; 422 for a path the session does
+     *     not have.
+     */
+    get: operations["getAssistDraft"];
     /**
      * Replace the draft
-     * @description The editor's way to hand its content to the session. `expected_hash` (the draft `hash` from the last read)
+     * @description The editor's way to hand its whole content to the session; the agent, and any client that changes a few lines,
+     *     uses `PATCH`. `expected_hash` (the draft `hash` from the last read)
      *     guards against overwriting a change the agent made meanwhile; 409 `conflict` on mismatch, carrying
      *     `current_hash`. Allowed while a turn runs. The draft is validated like a sensor file, with diagnostics
      *     returned in the draft; invalid YAML is accepted.
@@ -2377,7 +2396,34 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    patch?: never;
+    /**
+     * Change one draft file with line-anchored edits, or write it whole
+     * @description The agent's `draft_write` over HTTP: changes one file of the draft by the anchors of a `GET` of it, or creates or
+     *     replaces the whole file. `expected_hash` is required and is the file's current `hash`; an empty string creates a
+     *     file that does not exist yet and never overwrites one, so it only suits a new prompt or sensor of a flow session.
+     *     A hash that is not the file's is 409 `conflict` carrying `current_hash` (null when the file does not exist) and
+     *     changes nothing: read the file again and repeat the edit.
+     *
+     *     Send `edits` or `content`, not both. Every edit is `{op, start, end?, content?}`: `replace` swaps the lines from
+     *     `start` to `end` (default: `start`) for `content`, `delete` removes them, `insert_before` and `insert_after` add
+     *     `content` next to the line `start`. All the edits of one request apply to the file as `expected_hash` shows it, so
+     *     their anchors need no renumbering; edits must not overlap or insert at the same place, and all are applied or none.
+     *     An edit's `content` is split into lines on LF or CRLF (one trailing line terminator is ignored; an empty string is
+     *     one blank line) and written in the file's own line ending. Edits keep whether the file ends with a newline, and a
+     *     file that mixes LF and CRLF accepts no edits; `content` of the request is the whole new file, written exactly as
+     *     given, and works for every file. An edit that does not apply (an anchor that does not match its line, a line out
+     *     of range, a missing `content`), both or neither of `edits` and `content`, a `path` the session does not have and
+     *     a result over the size limit (256 KiB for the draft, 64 KiB for a prompt or a sensor) are 422 `validation-failed`
+     *     and change nothing.
+     *
+     *     The change is stored like the editor's `PUT`: when the response is sent the file, the draft's `hash`,
+     *     `diagnostics` and `updated_by`, and the `assist.updated` event of `/api/stream`, are current. `updated_by` is `agent`
+     *     when the request has the `X-Hal9001-Assist-Agent` header (the CLI sets it inside an assist session), else `user`.
+     *     The response is compact: the file's new `hash`, the validator's `diagnostics` and the anchors of the lines that
+     *     changed; read the file with `GET` for the rest. A flow session's prompt or sensor has its own `hash`: the draft's
+     *     does not move for them. Allowed while a turn runs. 409 `invalid-state` for a general session and for a closed one.
+     */
+    patch: operations["editAssistDraft"];
     trace?: never;
   };
   "/api/assist/sessions/{id}/test": {
@@ -6674,7 +6720,7 @@ export interface components {
     };
     /**
      * @description A sensor the agent drafted in a flow session (`sensors/<id>.yaml` in the draft directory): a new sensor, or an edit
-     *     of a saved one (the agent's first `draft_write` to `sensors/<id>.yaml` copies it in). Save creates it
+     *     of a saved one (the agent's first edit of `sensors/<id>.yaml` copies it in). Save creates it
      *     (`POST /api/sensors` with `id`) when `base_hash` is null, else replaces the file (`PUT /api/sensors/{id}` with
      *     `expected_hash` = `base_hash`), before the prompts and the flow.
      */
@@ -6889,6 +6935,76 @@ export interface components {
     AssistDraftRequest: {
       yaml: string;
       expected_hash?: components["schemas"]["Hash"];
+    };
+    /** @description Lowercase hex SHA-256 of one draft file's bytes: its revision. Empty for a file that does not exist yet; as `expected_hash`, an empty string creates the file and never overwrites one. */
+    AssistDraftFileHash: string;
+    /** @description Names one line of a file as it was read: `<line number>:<4 lowercase hex digits>`, the number and a short hash of the line's text. An anchor whose hash does not match its line is rejected. */
+    AssistDraftAnchor: string;
+    AssistDraftLine: {
+      /** @description 1-based line number. */
+      number: number;
+      anchor: components["schemas"]["AssistDraftAnchor"];
+      /** @description The line without its line terminator. */
+      text: string;
+    };
+    /**
+     * @description One file of the session's draft as anchored lines (`GET /api/assist/sessions/{id}/draft`): the fields of the
+     *     agent's `draft_read`.
+     */
+    AssistDraftFile: {
+      /** @description The draft path that was read: the draft file's name (`sensor.yaml`, `flow.yaml` or `tool.yaml`), `prompts/<name>.md` or `sensors/<id>.yaml`. */
+      path: string;
+      /** @description False for a prompt or a sensor that has no file yet: `hash` is empty and there are no lines. */
+      exists: boolean;
+      /** @description True for a sensor of a flow session that has no draft yet: the lines are the saved file's, and the first edit copies it into the draft. */
+      saved: boolean;
+      hash: components["schemas"]["AssistDraftFileHash"];
+      /** @description The requested lines (all of them without `start` and `end`). */
+      lines: components["schemas"]["AssistDraftLine"][];
+      /** @description The number of lines of the whole file. */
+      total_lines: number;
+      /** @description Whether the file ends with a line terminator. Edits keep it; a whole-file `content` sets it. */
+      has_final_newline: boolean;
+      /** @description The validator's findings for the whole draft (`draft.diagnostics` of the session). */
+      diagnostics: components["schemas"]["Diagnostic"][];
+    };
+    /** @description One line edit. Its anchors refer to the file as `expected_hash` shows it. */
+    AssistDraftEditOp: {
+      /** @enum {string} */
+      op: "replace" | "delete" | "insert_before" | "insert_after";
+      /** @description The line the edit applies to; the first line of a `replace` or `delete` range. */
+      start: components["schemas"]["AssistDraftAnchor"];
+      /** @description The last line of the range. Only for `replace` and `delete`; default: `start`. */
+      end?: components["schemas"]["AssistDraftAnchor"];
+      /** @description The new text: split into lines on LF or CRLF, one trailing line terminator is ignored, an empty string is one blank line. Required by `replace` and the inserts, not allowed for `delete`. */
+      content?: string;
+    };
+    /** @description Changes one file of the draft: `edits` or `content`, not both. */
+    AssistDraftEditRequest: {
+      /** @description The file: the draft itself (default), or in flow sessions `prompts/<name>.md` or `sensors/<id>.yaml`. */
+      path?: string;
+      expected_hash: components["schemas"]["AssistDraftFileHash"];
+      /** @description The whole new file: creates it (with an empty `expected_hash`) or replaces all of it. */
+      content?: string;
+      /** @description Line edits, all applied to the file as `expected_hash` shows it. */
+      edits?: components["schemas"]["AssistDraftEditOp"][];
+    };
+    /** @description The compact result of a change to a draft file. It does not repeat the file; read it with `GET`. */
+    AssistDraftEdit: {
+      /** @description The file that was changed (as in `GET`). */
+      path: string;
+      /** @description The file's new revision: the `expected_hash` of the next edit. */
+      hash: components["schemas"]["Hash"];
+      /** @description The number of lines of the file now. */
+      total_lines: number;
+      /** @description False when the request left the file as it was. */
+      changed: boolean;
+      /** @description The lines of the file now that differ from before, with their new anchors; after a deletion, the lines around it. Lines below a change have moved: anchors that are not listed here need a new read. */
+      affected: components["schemas"]["AssistDraftLine"][];
+      /** @description More lines changed than `affected` lists (at most 40 lines and 8 KiB of text): read the file for the rest. */
+      truncated: boolean;
+      /** @description The validator's findings for the whole draft after the change. */
+      diagnostics: components["schemas"]["Diagnostic"][];
     };
     AssistTestItem: {
       /** @description The draft's `key` template rendered over the item; null when it failed. */
@@ -11333,6 +11449,42 @@ export interface operations {
       default: components["responses"]["Error"];
     };
   };
+  getAssistDraft: {
+    parameters: {
+      query?: {
+        /** @description The file: the draft itself (default), or in flow sessions `prompts/<name>.md` or `sensors/<id>.yaml`. */
+        path?: string;
+        /** @description First line to return (1-based). Default: the first. */
+        start?: number;
+        /** @description Last line to return (inclusive). Default: the last. */
+        end?: number;
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The file as anchored lines. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistDraftFile"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["ValidationFailed"];
+      default: components["responses"]["Error"];
+    };
+  };
   updateAssistDraft: {
     parameters: {
       query?: never;
@@ -11363,6 +11515,43 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       415: components["responses"]["UnsupportedMediaType"];
+      default: components["responses"]["Error"];
+    };
+  };
+  editAssistDraft: {
+    parameters: {
+      query?: never;
+      header?: {
+        /** @description Set by the CLI when it runs inside an assist session. Any non-empty value marks the change as the agent's. */
+        "X-Hal9001-Assist-Agent"?: string;
+      };
+      path: {
+        id: components["parameters"]["AssistSessionId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AssistDraftEditRequest"];
+      };
+    };
+    responses: {
+      /** @description The edit was applied (or changed nothing: `changed` is false). */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AssistDraftEdit"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      415: components["responses"]["UnsupportedMediaType"];
+      422: components["responses"]["ValidationFailed"];
       default: components["responses"]["Error"];
     };
   };

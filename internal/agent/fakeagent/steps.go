@@ -2,11 +2,14 @@ package fakeagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -407,7 +410,7 @@ func (t *turnState) mcpInvoke(st Step) error {
 		return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=true connect: %v", st.ID, err)))
 	}
 	defer func() { _ = cs.Close() }()
-	res, err := cs.CallTool(t.ctx, &mcp.CallToolParams{Name: st.Tool, Arguments: st.Args})
+	res, err := cs.CallTool(t.ctx, &mcp.CallToolParams{Name: st.Tool, Arguments: t.expandArgs(st.Args)})
 	if err != nil {
 		return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=true call: %v", st.ID, err)))
 	}
@@ -424,4 +427,37 @@ func (t *turnState) mcpInvoke(st Step) error {
 		}
 	}
 	return t.emit(acp.UpdateAgentMessageText(fmt.Sprintf("mcp[%s] is_error=%t %s", st.ID, res.IsError, text.String())))
+}
+
+// sha256Ref is the placeholder {{sha256:<file>}} in the arguments of a tool call: the hex SHA-256 of that file in the
+// session's working directory, or empty when the file does not exist. It makes the call that of an agent that has just
+// read the file and sends back the hash it read.
+var sha256Ref = regexp.MustCompile(`\{\{sha256:([^{}]+)\}\}`)
+
+// expandArgs returns the arguments of a tool call (decoded JSON) with the placeholders of every string expanded.
+func (t *turnState) expandArgs(v any) any {
+	switch x := v.(type) {
+	case string:
+		return sha256Ref.ReplaceAllStringFunc(x, func(ref string) string {
+			b, err := os.ReadFile(t.abs(sha256Ref.FindStringSubmatch(ref)[1])) //nolint:gosec // the scripted test names the file
+			if err != nil {
+				return ""
+			}
+			sum := sha256.Sum256(b)
+			return hex.EncodeToString(sum[:])
+		})
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = t.expandArgs(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = t.expandArgs(e)
+		}
+		return out
+	}
+	return v
 }

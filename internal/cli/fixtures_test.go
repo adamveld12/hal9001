@@ -189,6 +189,22 @@ func assistTestResult(exitCode int) map[string]any {
 	}
 }
 
+func assistDraftFile() map[string]any {
+	return map[string]any{
+		"path": "sensor.yaml", "exists": true, "saved": false, "hash": hash,
+		"lines":       []any{map[string]any{"number": 2, "anchor": "2:a1b2", "text": "lang: bash"}},
+		"total_lines": 3, "has_final_newline": true, "diagnostics": []any{},
+	}
+}
+
+func assistDraftEdit() map[string]any {
+	return map[string]any{
+		"path": "sensor.yaml", "hash": hash, "total_lines": 3, "changed": true,
+		"affected":  []any{map[string]any{"number": 2, "anchor": "2:c3d4", "text": "lang: python"}},
+		"truncated": false, "diagnostics": []any{},
+	}
+}
+
 // runtimeItem is an item of GET /api/runtimes. warnings are RuntimeWarning objects; installing marks a running adapter install.
 func runtimeItem(name, status string, warnings []any, opts ...func(map[string]any)) map[string]any {
 	if warnings == nil {

@@ -12,7 +12,6 @@ import (
 	"hal9001/internal/core"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
-	"hal9001/internal/tools"
 )
 
 // SensorsDir holds the sensors a flow session's agent drafted (<id>.yaml): new ones, and copies of saved ones it
@@ -153,35 +152,6 @@ func parseDraftSensor(f draftSensor, refs *spec.Refs) (*spec.Sensor, []spec.Diag
 	return sensor, ds
 }
 
-// writeDraftSensorLocked stores the agent's draft of sensor id. The first write of a saved sensor copies it in: the
-// hash of the saved file becomes the base of the edit. s.mu must be held.
-func (s *session) writeDraftSensorLocked(id, content string) error {
-	if !spec.ValidID(id) {
-		return fmt.Errorf("sensor name %q is invalid (letters, digits, - and _, at most 64 characters)", id)
-	}
-	if len(content) > maxDraftSensorBytes {
-		return fmt.Errorf("the sensor is too large")
-	}
-	dir := filepath.Join(s.dir, SensorsDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("assist: create sensors directory: %w", err)
-	}
-	path := filepath.Join(dir, id+draftSensorSuffix)
-	if _, err := os.Stat(path); err != nil {
-		if len(readDraftSensors(s.dir)) >= maxDraftSensors {
-			return fmt.Errorf("a flow session drafts at most %d sensors", maxDraftSensors)
-		}
-		if saved := spec.Load(s.m.home).Sensor(id); saved != nil {
-			bases := sensorBases(s.dir)
-			bases[id] = saved.Hash
-			if err := writeSensorBases(s.dir, bases); err != nil {
-				return err
-			}
-		}
-	}
-	return writeAtomic(path, []byte(content))
-}
-
 // findDraftSensorLocked returns the draft sensor id of a flow session. s.mu must be held.
 func (s *session) findDraftSensorLocked(id string) (draftSensor, bool) {
 	for _, f := range readDraftSensors(s.dir) {
@@ -220,7 +190,7 @@ func (s *session) testPlanLocked(req core.AssistTestRequest) testPlan {
 	if sensorID != "" {
 		f, found := s.findDraftSensorLocked(sensorID)
 		if !found {
-			p.diagnostics = invalidDiagnostics("sensor", fmt.Sprintf("the session has no draft sensor %q (write sensors/%s.yaml with draft_write first)", sensorID, sensorID))
+			p.diagnostics = invalidDiagnostics("sensor", fmt.Sprintf("the session has no draft sensor %q (create sensors/%s.yaml with draft_write first: an empty expected_hash creates it)", sensorID, sensorID))
 			return p
 		}
 		sensor, ds := parseDraftSensor(f, s.m.sensorRefs())
@@ -339,19 +309,4 @@ func (m *Manager) fromSensorInput(ctx context.Context, s *session, byAgent bool,
 		return nil, invalid("item", fmt.Sprintf("the sensor draft produced %d item(s); item %d does not exist", res.ItemCount, i))
 	}
 	return res.Items[i].Item, nil
-}
-
-// readDraftSensorLocked returns the draft of sensor id, or the saved file when there is no draft (an edit starts
-// with the first draft_write of the id). s.mu must be held.
-func (s *session) readDraftSensorLocked(id string) (tools.Result, error) {
-	if f, ok := s.findDraftSensorLocked(id); ok {
-		return tools.Result{Text: f.YAML}, nil
-	}
-	if !spec.ValidID(id) {
-		return tools.Result{}, fmt.Errorf("sensor name %q is invalid", id)
-	}
-	if saved := spec.Load(s.m.home).Sensor(id); saved != nil {
-		return tools.Result{Text: "# saved sensor, not drafted yet: draft_write sensors/" + id + ".yaml to edit it\n" + string(saved.Raw)}, nil
-	}
-	return tools.Result{}, fmt.Errorf("sensors/%s.yaml: there is no draft or saved sensor of that name", id)
 }

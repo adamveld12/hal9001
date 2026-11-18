@@ -1,6 +1,7 @@
 package assist
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +13,7 @@ import (
 	"strings"
 
 	"hal9001/internal/core"
-	"hal9001/internal/spec"
+	"hal9001/internal/hashline"
 	"hal9001/internal/store"
 	"hal9001/internal/tools"
 )
@@ -57,25 +58,33 @@ func obj(props map[string]any, required ...string) map[string]any {
 }
 
 func (s *session) draftTools() []tools.Tool {
-	pathDoc := "The draft file: omit it for the draft itself, or use `prompts/<name>.md` (flow sessions: a new prompt) or `sensors/<id>.yaml` (flow sessions: a new sensor, or an edit of a saved one)."
+	pathDoc := "The file: omit it for the draft itself, or use `prompts/<name>.md` (flow sessions: a prompt) or `sensors/<id>.yaml` (flow sessions: a sensor, new or a saved one)."
 	return []tools.Tool{
 		{
 			Name: "draft_read",
-			Description: "Read the session's draft. Without `path` it returns the current draft with its validation diagnostics as JSON. " +
-				"`path` may also be `instructions` (how to author this draft: read it first), `prompts/<name>.md` (a draft prompt), `sensors/<id>.yaml` (flow sessions: a draft sensor, else the saved one) or `sensors` (list the draft sensors) or `reference/<file>` " +
-				"(read-only reference material of a flow session: runtimes.txt, sandboxes.md, tools.md, settings.md, docs/agent-nodes.md; flow sessions also docs/flows.md, sensors/, prompts/, samples/; a directory lists its entries).",
-			InputSchema: obj(map[string]any{"path": map[string]any{"type": "string"}}),
-			Run:         s.runDraftRead,
+			Description: "Read the session's draft as numbered lines with anchors, and its hash. " +
+				"Every line is `{number, anchor, text}`: an anchor is `<line>:<4 hex digits>`, the line number and a short hash of its text. The result also has the file's `hash`, which draft_write needs as `expected_hash`, and the validation `diagnostics`. " +
+				"Without `path` it reads the draft; `start` and `end` (1-based, inclusive) read a range of lines only. " +
+				"`path` may also be `instructions` (how to author this draft: read it first), `prompts/<name>.md` (a draft prompt), `sensors/<id>.yaml` (flow sessions: a draft sensor, else the saved one; a new one reads as `exists: false`), `sensors` or `prompts` (list the draft files) or `reference/<file>` " +
+				"(read-only reference material of a flow session: runtimes.txt, sandboxes.md, tools.md, settings.md, docs/agent-nodes.md; flow sessions also docs/flows.md, sensors/, prompts/, samples/; plain text, a directory lists its entries).",
+			InputSchema: obj(map[string]any{
+				"path":  map[string]any{"type": "string", "description": pathDoc},
+				"start": map[string]any{"type": "integer", "minimum": 1, "description": "The first line to return (1-based). Draft files only."},
+				"end":   map[string]any{"type": "integer", "minimum": 1, "description": "The last line to return, inclusive. Draft files only."},
+			}),
+			Run: s.runDraftRead,
 		},
 		{
 			Name: "draft_write",
-			Description: "Replace the draft (or a draft prompt or sensor) with `content`. It never needs approval; it returns the validation diagnostics of the result. " +
+			Description: "Change the session's draft with line-anchored edits, or create or replace a whole file. " +
+				"Always send `expected_hash`: the hash from your latest draft_read of that file, or from the result of your last draft_write to it. " +
+				"Send `edits` to change some lines (each `{op, start, end?, content?}`: `op` is replace, delete, insert_before or insert_after; `start` and `end` (replace and delete only) are anchors from the read; all the edits of a call refer to the file as you read it and must not overlap), " +
+				"or `content` for a whole file, written exactly as sent: with an empty `expected_hash` it creates a file that must not exist yet, with the file's hash it replaces all of it. " +
+				"If the file changed since you read it, the call fails with a conflict and changes nothing: read the file again and repeat your edit with the new hash and anchors. " +
+				"It never needs approval and returns the file's new `hash`, the `diagnostics` and the anchors of the changed lines (`affected`), not the whole file. " +
 				pathDoc,
-			InputSchema: obj(map[string]any{
-				"content": map[string]any{"type": "string", "description": "The complete new file content."},
-				"path":    map[string]any{"type": "string", "description": pathDoc},
-			}, "content"),
-			Run: s.runDraftWrite,
+			InputSchema: draftWriteSchema(pathDoc),
+			Run:         s.runDraftWrite,
 		},
 		{
 			Name: "draft_test",
@@ -130,33 +139,57 @@ func (s *session) instructionsText() (string, error) {
 	return instructions(s.id, s.row.TargetID, global, sensor), nil
 }
 
-type draftView struct {
-	File        string          `json:"file"`
-	YAML        string          `json:"yaml"`
-	Hash        string          `json:"hash"`
-	Diagnostics json.RawMessage `json:"diagnostics"`
-	Prompts     []string        `json:"prompts,omitempty"`
-	Sensors     []string        `json:"sensors,omitempty"`
+// draftWriteSchema is the input schema of draft_write: the edit request every Hashline tool shares, and the path of the file.
+func draftWriteSchema(pathDoc string) map[string]any {
+	schema := map[string]any{}
+	for k, v := range hashline.RequestSchema() {
+		schema[k] = v
+	}
+	props := map[string]any{"path": map[string]any{"type": "string", "description": pathDoc}}
+	if request, ok := schema["properties"].(map[string]any); ok {
+		for k, v := range request {
+			props[k] = v
+		}
+	}
+	schema["properties"] = props
+	return schema
 }
 
-func (s *session) viewLocked() draftView {
-	v := draftView{File: draftFileOf(s.row.TargetKind), YAML: s.row.DraftYAML, Hash: s.row.DraftHash, Diagnostics: s.row.DraftDiagnostics}
-	for _, p := range readDraftPrompts(s.dir) {
-		v.Prompts = append(v.Prompts, p.Name)
-	}
-	for _, f := range readDraftSensors(s.dir) {
-		v.Sensors = append(v.Sensors, f.ID)
-	}
-	return v
+// decodeArgs decodes the arguments of a tool call. A field the tool does not have is an error: a misspelled one would
+// otherwise be ignored without a word.
+func decodeArgs(raw json.RawMessage, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
 }
 
-type pathArg struct {
-	Path string `json:"path"`
+// marshalResult encodes the result of a draft tool as one line of JSON. Unlike json.Marshal it leaves <, > and & as
+// they are: the agent copies text out of the lines it reads, and \u0026 is not what a script says.
+func marshalResult(v any) (string, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+// draftReadResult is what draft_read returns for a draft file: its anchored lines and hash, and for the draft itself
+// the names of the prompts and sensors drafted next to it.
+type draftReadResult struct {
+	core.AssistDraftFile
+	Prompts []string `json:"prompts,omitempty"`
+	Sensors []string `json:"sensors,omitempty"`
 }
 
 func (s *session) runDraftRead(_ context.Context, c tools.Call) (tools.Result, error) {
-	var a pathArg
-	if err := json.Unmarshal(c.Args, &a); err != nil {
+	var a struct {
+		Path  string `json:"path"`
+		Start int    `json:"start"`
+		End   int    `json:"end"`
+	}
+	if err := decodeArgs(c.Args, &a); err != nil {
 		return tools.Result{}, fmt.Errorf("arguments: %w", err)
 	}
 	s.mu.Lock()
@@ -164,23 +197,59 @@ func (s *session) runDraftRead(_ context.Context, c tools.Call) (tools.Result, e
 	if err := s.usableLocked(); err != nil {
 		return tools.Result{}, err
 	}
-	switch p := strings.TrimSpace(a.Path); {
-	case p == "" || p == draftFileOf(s.row.TargetKind):
-		b, _ := json.MarshalIndent(s.viewLocked(), "", "  ")
-		return tools.Result{Text: string(b)}, nil
+	p := strings.TrimSpace(a.Path)
+	// What is not a draft file is plain text: the instructions, the reference material and the listings.
+	plain := func() error {
+		if a.Start != 0 || a.End != 0 {
+			return errors.New("start and end only select lines of a draft file")
+		}
+		return nil
+	}
+	switch {
 	case p == "instructions":
+		if err := plain(); err != nil {
+			return tools.Result{}, err
+		}
 		text, err := s.instructionsText()
 		return tools.Result{Text: text}, err
-	case strings.HasPrefix(p, PromptsDir+"/") && s.isFlow():
-		return s.readUnder(PromptsDir, strings.TrimPrefix(p, PromptsDir+"/"))
-	case s.isFlow() && (p == SensorsDir || p == SensorsDir+"/"):
-		return s.readUnder(SensorsDir, ".")
-	case s.isFlow() && strings.HasPrefix(p, SensorsDir+"/") && strings.HasSuffix(p, draftSensorSuffix):
-		return s.readDraftSensorLocked(strings.TrimSuffix(strings.TrimPrefix(p, SensorsDir+"/"), draftSensorSuffix))
 	case strings.HasPrefix(p, ReferenceDir):
+		if err := plain(); err != nil {
+			return tools.Result{}, err
+		}
 		return s.readUnder(ReferenceDir, strings.TrimPrefix(strings.TrimPrefix(p, ReferenceDir), "/"))
+	case s.isFlow() && (p == PromptsDir || p == PromptsDir+"/"):
+		if err := plain(); err != nil {
+			return tools.Result{}, err
+		}
+		return s.readUnder(PromptsDir, ".")
+	case s.isFlow() && (p == SensorsDir || p == SensorsDir+"/"):
+		if err := plain(); err != nil {
+			return tools.Result{}, err
+		}
+		return s.readUnder(SensorsDir, ".")
 	}
-	return tools.Result{}, fmt.Errorf("unknown path %q: use no path, instructions, prompts/<name>.md, sensors/<id>.yaml or reference/<file>", a.Path)
+	t, ok, err := s.draftTargetOf(p)
+	switch {
+	case err != nil:
+		return tools.Result{}, draftToolError(err)
+	case !ok:
+		return tools.Result{}, fmt.Errorf("unknown path %q: use %s, instructions, a listing (prompts, sensors) or reference/<file>", a.Path, s.draftPathsHelp())
+	}
+	file, err := s.readDraftLocked(t, a.Start, a.End)
+	if err != nil {
+		return tools.Result{}, draftToolError(err)
+	}
+	res := draftReadResult{AssistDraftFile: file}
+	if t.kind == draftIsPrimary {
+		for _, pr := range readDraftPrompts(s.dir) {
+			res.Prompts = append(res.Prompts, pr.Name)
+		}
+		for _, f := range readDraftSensors(s.dir) {
+			res.Sensors = append(res.Sensors, f.ID)
+		}
+	}
+	text, err := marshalResult(res)
+	return tools.Result{Text: text}, err
 }
 
 // readUnder reads a file (or lists a directory) inside <draft dir>/<root>, refusing anything outside it.
@@ -223,54 +292,41 @@ func (s *session) readUnder(root, rel string) (tools.Result, error) {
 
 func (s *session) runDraftWrite(_ context.Context, c tools.Call) (tools.Result, error) {
 	var a struct {
-		Content string `json:"content"`
-		Path    string `json:"path"`
+		Path         string          `json:"path"`
+		ExpectedHash string          `json:"expected_hash"`
+		Content      *string         `json:"content"`
+		Edits        []hashline.Edit `json:"edits"`
 	}
-	if err := json.Unmarshal(c.Args, &a); err != nil {
+	if err := decodeArgs(c.Args, &a); err != nil {
 		return tools.Result{}, fmt.Errorf("arguments: %w", err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.usableLocked(); err != nil {
-		return tools.Result{}, err
+	res, err := s.editDraft(a.Path, hashline.Request{ExpectedHash: a.ExpectedHash, Content: a.Content, Edits: a.Edits}, store.DraftByAgent)
+	if err != nil {
+		return tools.Result{}, draftToolError(err)
 	}
-	switch p := strings.TrimSpace(a.Path); {
-	case p == "" || p == draftFileOf(s.row.TargetKind):
-		if len(a.Content) > maxDraftBytes {
-			return tools.Result{}, errors.New("the draft is too large")
+	text, err := marshalResult(res)
+	return tools.Result{Text: text}, err
+}
+
+// draftToolError words an error of the draft operations for the agent: what to do next, not a problem type.
+func draftToolError(err error) error {
+	var conflict *core.DraftConflictError
+	var verr *core.ValidationError
+	switch {
+	case errors.As(err, &conflict):
+		msg := conflict.Error()
+		if conflict.Expected != "" && conflict.Current != "" {
+			msg += ": read it again with draft_read, then repeat your edit with the new hash and anchors"
 		}
-		if err := s.setDraftLocked(a.Content, store.DraftByAgent); err != nil {
-			return tools.Result{}, err
+		return errors.New(msg)
+	case errors.As(err, &verr):
+		msgs := make([]string, 0, len(verr.Diagnostics))
+		for _, d := range verr.Diagnostics {
+			msgs = append(msgs, d.Message)
 		}
-	case s.isFlow() && strings.HasPrefix(p, PromptsDir+"/") && strings.HasSuffix(p, ".md"):
-		name := strings.TrimSuffix(strings.TrimPrefix(p, PromptsDir+"/"), ".md")
-		if !spec.ValidID(name) {
-			return tools.Result{}, fmt.Errorf("prompt name %q is invalid (letters, digits, - and _, at most 64 characters)", name)
-		}
-		if len(a.Content) > maxPromptBytes {
-			return tools.Result{}, errors.New("the prompt is too large")
-		}
-		if err := writeAtomic(filepath.Join(s.dir, PromptsDir, name+".md"), []byte(a.Content)); err != nil {
-			return tools.Result{}, err
-		}
-		s.applyDraft(s.row.DraftYAML, store.DraftByAgent)
-		if err := s.saveLocked(); err != nil {
-			return tools.Result{}, err
-		}
-	case s.isFlow() && strings.HasPrefix(p, SensorsDir+"/") && strings.HasSuffix(p, draftSensorSuffix):
-		id := strings.TrimSuffix(strings.TrimPrefix(p, SensorsDir+"/"), draftSensorSuffix)
-		if err := s.writeDraftSensorLocked(id, a.Content); err != nil {
-			return tools.Result{}, err
-		}
-		s.applyDraft(s.row.DraftYAML, store.DraftByAgent)
-		if err := s.saveLocked(); err != nil {
-			return tools.Result{}, err
-		}
-	default:
-		return tools.Result{}, fmt.Errorf("cannot write %q: use no path for the draft, or prompts/<name>.md or sensors/<id>.yaml in a flow session", a.Path)
+		return errors.New(strings.Join(msgs, "; "))
 	}
-	b, _ := json.MarshalIndent(s.viewLocked(), "", "  ")
-	return tools.Result{Text: "written. Current state:\n" + string(b)}, nil
+	return err
 }
 
 func (s *session) runValidate(_ context.Context, _ tools.Call) (tools.Result, error) {

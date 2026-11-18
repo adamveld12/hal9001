@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,15 +117,25 @@ func TestAssistFlowDraftsANewSensorTestsItAndSavesBoth(t *testing.T) {
 
 func TestAssistFlowEditsASavedSensorAndSaveUpdatesItOrConflicts(t *testing.T) {
 	const edited = "description: Edited by the flow session\ninterval: 30m\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n"
+	editedAgain := strings.Replace(edited, "interval: 30m", "interval: 45m", 1)
 	const flow = "id: uses-src\nenabled: false\ndry_run: true\nsubscribe: [src]\nnodes:\n  - id: keep\n    type: transform\n    steps:\n      - {type: pick, fields: [id]}\n    ui: {x: 100, y: 100}\nedges: []\n"
 	d := newAssistDaemon(t, func(d *Daemon) {
 		srcSensor(d)
-		d.assistRuntime(false, turn{Steps: []step{
-			mcpStep("r1", "draft_read", map[string]any{"path": "sensors/src.yaml"}, "saved-src.yaml"),
-			assistWrite("s1", "sensors/src.yaml", edited),
-			assistWrite("f1", "flow.yaml", flow),
-			say("Edited src."),
-		}})
+		// The first edit of a saved sensor starts from the saved file: the agent sends the hash of the file it read.
+		saved := d.Path("sensors/src.yaml")
+		d.assistRuntime(false,
+			turn{When: when("edit src$"), Steps: []step{
+				mcpStep("r1", "draft_read", map[string]any{"path": "sensors/src.yaml"}, "saved-src.json"),
+				assistWriteHashed("s1", "sensors/src.yaml", saved, edited),
+				assistWrite("f1", "flow.yaml", flow),
+				say("Edited src."),
+			}},
+			turn{When: when("edit src again$"), Steps: []step{
+				assistWriteHashed("s2", "sensors/src.yaml", saved, editedAgain),
+				assistWrite("f2", "flow.yaml", flow),
+				say("Edited src again."),
+			}},
+		)
 	})
 	var before struct {
 		Hash string `json:"hash"`
@@ -132,17 +143,19 @@ func TestAssistFlowEditsASavedSensorAndSaveUpdatesItOrConflicts(t *testing.T) {
 	d.Get("/api/sensors/src").Want(200).JSON(&before)
 	savedBefore := d.Read("sensors/src.yaml")
 
-	newSession := func() assistFlowDetail {
+	newSession := func(ask string) assistFlowDetail {
 		s := d.assistCreateFlow("")
-		if got := d.assistTurn(s.ID, "edit src"); got.Status != "idle" {
+		if got := d.assistTurn(s.ID, ask); got.Status != "idle" {
 			t.Fatalf("status %q error %v", got.Status, got.Error)
 		}
 		return d.assistFlowGet(s.ID)
 	}
 
-	f := newSession()
-	if r := string(readFile(t, d.assistDir(f.ID), "saved-src.yaml")); !strings.Contains(r, "saved sensor, not drafted yet") || !strings.Contains(r, "interval: 1h") {
-		t.Errorf("reading an undrafted saved sensor = %q", r)
+	f := newSession("edit src")
+	var read draftViewJSON
+	if err := json.Unmarshal(readFile(t, d.assistDir(f.ID), "saved-src.json"), &read); err != nil ||
+		!read.Exists || !read.Saved || read.Hash != before.Hash || !strings.Contains(read.text(), "interval: 1h") {
+		t.Errorf("reading an undrafted saved sensor = %+v (%v), want the saved file and its hash", read, err)
 	}
 	if len(f.Draft.Sensors) != 1 || f.Draft.Sensors[0].ID != "src" || !f.Draft.Sensors[0].Exists || f.Draft.Sensors[0].BaseHash == nil || *f.Draft.Sensors[0].BaseHash != before.Hash {
 		t.Fatalf("draft sensors = %+v (saved hash %s)", f.Draft.Sensors, before.Hash)
@@ -158,7 +171,7 @@ func TestAssistFlowEditsASavedSensorAndSaveUpdatesItOrConflicts(t *testing.T) {
 
 	// A second session copies the (now changed) sensor; the file changes meanwhile: Save reports a conflict and the
 	// draft warns about it.
-	f2 := newSession()
+	f2 := newSession("edit src again")
 	d.Write("sensors/src.yaml", "interval: 2h\nlang: bash\nscript: \"true\"\nkey: \"{{.id}}\"\nfirst_run: fire\ntimeout: 10s\n")
 	d.Put("/api/sensors/src", map[string]any{"expected_hash": *f2.Draft.Sensors[0].BaseHash, "yaml": f2.Draft.Sensors[0].YAML}).Want(409)
 	d.Put("/api/assist/sessions/"+f2.ID+"/draft", map[string]any{"yaml": f2.Draft.YAML, "expected_hash": f2.Draft.Hash}).Want(200)

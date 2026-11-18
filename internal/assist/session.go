@@ -486,6 +486,7 @@ func (s *session) prompt(ctx context.Context, t *turn, text string, page *core.A
 func preamble(targetID string, global, sensor []string, summary string) string {
 	var b strings.Builder
 	b.WriteString("[hal9001 sensor assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
+		"Read the draft, then change only the lines that must change with draft_write (anchored edits and the hash you read; a whole file only for a new file). " +
 		"Call draft_read with path `instructions` first: it holds the sensor format, the output and key rules and how to test.\n")
 	if targetID != "" {
 		b.WriteString("You are editing the existing sensor `" + targetID + "`; keep its id.\n")
