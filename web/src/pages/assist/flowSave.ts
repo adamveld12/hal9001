@@ -3,7 +3,8 @@
 // do not exist yet, then the flow file. A saved prompt or sensor is never
 // replaced by accident: existing prompts are skipped, and a new sensor whose id
 // is taken stops the save. A file that cannot be written stops the save before
-// the next one. Pure apart from the calls on the `FlowSaveApi` it is given.
+// the next one. One draft sensor can also be saved alone (`saveSensorDraft`).
+// Pure apart from the calls on the `FlowSaveApi` it is given.
 
 import type { AssistDraft } from "../../api/assist";
 import { ApiError } from "../../api/client";
@@ -88,6 +89,50 @@ export class SensorExistsError extends Error {
   }
 }
 
+type DraftSensor = AssistDraft["sensors"][number];
+
+/** Saving one draft sensor wrote its file (`action` says how) or stopped with `error`. */
+export type SensorSaveResult =
+  | { ok: true; action: "create" | "update" }
+  | { ok: false; action: "create" | "update"; error: unknown };
+
+/**
+ * Writes one draft sensor: a sensor without `base_hash` is created; one with it
+ * replaces the saved file if that still has this hash (with `overwrite`,
+ * whatever hash it has now). A new sensor whose id a saved file has is refused
+ * without calling the API.
+ */
+export async function saveSensorDraft(
+  api: Pick<FlowSaveApi, "createSensor" | "updateSensor" | "currentSensorHash">,
+  s: Pick<DraftSensor, "id" | "yaml" | "exists" | "base_hash">,
+  options: SaveOptions = {},
+): Promise<SensorSaveResult> {
+  if (s.base_hash === null) {
+    if (s.exists) {
+      return {
+        ok: false,
+        action: "create",
+        error: new SensorExistsError(s.id),
+      };
+    }
+    try {
+      await api.createSensor(s.id, s.yaml);
+    } catch (error) {
+      return { ok: false, action: "create", error };
+    }
+    return { ok: true, action: "create" };
+  }
+  try {
+    const expected = options.overwrite
+      ? await api.currentSensorHash(s.id)
+      : s.base_hash;
+    await api.updateSensor(s.id, expected, s.yaml);
+  } catch (error) {
+    return { ok: false, action: "update", error };
+  }
+  return { ok: true, action: "update" };
+}
+
 /**
  * Writes the draft's sensors in draft order, then its new prompts in the order
  * the agent wrote them, then the flow. A sensor without `base_hash` is created;
@@ -107,34 +152,21 @@ export async function saveFlowDraft(
     createdPrompts: [],
   };
   for (const s of draft.sensors) {
-    const action = s.base_hash === null ? "create" : "update";
-    const stop = (error: unknown): SaveResult => ({
-      ok: false,
-      stage: "sensor",
-      sensor: s.id,
-      action,
-      error,
-      ...written,
-    });
-    if (s.base_hash === null) {
-      if (s.exists) return stop(new SensorExistsError(s.id));
-      try {
-        await api.createSensor(s.id, s.yaml);
-      } catch (error) {
-        return stop(error);
-      }
-      written.createdSensors.push(s.id);
-    } else {
-      try {
-        const expected = options.overwrite
-          ? await api.currentSensorHash(s.id)
-          : s.base_hash;
-        await api.updateSensor(s.id, expected, s.yaml);
-      } catch (error) {
-        return stop(error);
-      }
-      written.updatedSensors.push(s.id);
+    const r = await saveSensorDraft(api, s, options);
+    if (!r.ok) {
+      return {
+        ok: false,
+        stage: "sensor",
+        sensor: s.id,
+        action: r.action,
+        error: r.error,
+        ...written,
+      };
     }
+    (r.action === "create"
+      ? written.createdSensors
+      : written.updatedSensors
+    ).push(s.id);
   }
   for (const p of draft.prompts) {
     if (p.exists) continue;
@@ -215,10 +247,16 @@ function reasonOf(e: unknown): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+/**
+ * The text and findings of a failed sensor write. `alone` is a save of just
+ * that sensor (the card's Save sensor): nothing else was to be written, so it
+ * does not mention the flow or other files.
+ */
 function describeSensorFailure(
-  r: Extract<SaveResult, { ok: false; stage: "sensor" }>,
+  r: { sensor: string; action: "create" | "update"; error: unknown },
   diagnostics: Diagnostic[],
   saved: string,
+  alone: boolean,
 ): SaveFailure {
   const file = sensorDraftFile(r.sensor);
   const located = diagnostics.map((d) => ({ ...d, file: d.file ?? file }));
@@ -227,36 +265,64 @@ function describeSensorFailure(
     r.action === "create" &&
     r.error instanceof ApiError &&
     r.error.status === 409;
+  const noFlow = alone ? "" : " The flow was not saved.";
   if (reported || refused) {
     const how = reported
       ? ", but the draft treats it as new"
       : " (created meanwhile)";
     return {
-      message: `Sensor "${r.sensor}" already exists${how}. It was not overwritten and the flow was not saved.${saved} Rename the sensor in the draft or ask the assistant to edit the existing one.`,
+      message: `Sensor "${r.sensor}" already exists${how}. It was not overwritten${alone ? "" : " and the flow was not saved"}.${saved} Rename the sensor in the draft or ask the assistant to edit the existing one.`,
       diagnostics: located,
       conflict: false,
     };
   }
   if (isConflict(r.error)) {
     return {
-      message: `Sensor "${r.sensor}" changed on disk since this session copied it. The flow was not saved.${saved} Overwrite saves the draft over the files that changed.`,
+      message: `Sensor "${r.sensor}" changed on disk since this session copied it.${noFlow}${saved} Overwrite saves the draft over ${alone ? "the file that changed" : "the files that changed"}.`,
       diagnostics: located,
       conflict: true,
     };
   }
   if (located.length > 0) {
     return {
-      message: `The server rejected sensor "${r.sensor}"; see the findings. The flow was not saved.${saved}`,
+      message: `The server rejected sensor "${r.sensor}"; see the findings.${noFlow}${saved}`,
       diagnostics: located,
       conflict: false,
     };
   }
   const verb = r.action === "create" ? "created" : "updated";
   return {
-    message: `Sensor "${r.sensor}" could not be ${verb}: ${reasonOf(r.error)} The flow was not saved.${saved}`,
+    message: `Sensor "${r.sensor}" could not be ${verb}: ${reasonOf(r.error)}${noFlow}${saved}`,
     diagnostics: located,
     conflict: false,
   };
+}
+
+/** The text and findings to show for a failed save of one sensor alone. */
+export function describeSensorSaveFailure(
+  sensor: string,
+  r: Extract<SensorSaveResult, { ok: false }>,
+): SaveFailure {
+  return describeSensorFailure(
+    { sensor, ...r },
+    diagnosticsOf(r.error) ?? [],
+    "",
+    true,
+  );
+}
+
+/**
+ * Whether a draft sensor can be saved alone: not while it has errors of its
+ * own. The flow's findings and other sensors' do not matter. Null when it can.
+ */
+export function sensorSaveBlocker(
+  sensor: Pick<DraftSensor, "diagnostics">,
+  agentBusy: boolean,
+): string | null {
+  if (sensor.diagnostics.some((d) => d.severity === "error")) {
+    return "Fix the sensor's errors first.";
+  }
+  return agentBusy ? "Wait for the agent to finish its turn." : null;
 }
 
 /** The text and findings to show for a failed save. */
@@ -265,7 +331,9 @@ export function describeSaveFailure(
 ): SaveFailure {
   const diagnostics = diagnosticsOf(r.error) ?? [];
   const saved = alreadySaved(r);
-  if (r.stage === "sensor") return describeSensorFailure(r, diagnostics, saved);
+  if (r.stage === "sensor") {
+    return describeSensorFailure(r, diagnostics, saved, false);
+  }
   if (r.stage === "prompt") {
     const taken = r.error instanceof ApiError && r.error.status === 409;
     return {

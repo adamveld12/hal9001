@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { usePutAssistDraft, type AssistSessionDetail } from "../../api/assist";
+import { type AssistSessionDetail } from "../../api/assist";
 import { api, errorMessage, unwrap } from "../../api/client";
 import {
   createFlowFromYaml,
@@ -10,11 +10,6 @@ import {
   type FlowDetail,
 } from "../../api/flows";
 import { qk } from "../../api/keys";
-import {
-  createSensorFromYaml,
-  fetchSensor,
-  updateSensorFromYaml,
-} from "../../api/sensors";
 import { useAssist } from "./context";
 import {
   describeSaveFailure,
@@ -22,6 +17,11 @@ import {
   type FlowSaveApi,
   type SaveFailure,
 } from "./flowSave";
+import {
+  invalidateSensorQueries,
+  sensorSaveApi,
+  useDraftRefresh,
+} from "./useDraftRefresh";
 
 /**
  * Save of the open flow session's draft: its sensors, its new prompts, then the
@@ -35,7 +35,7 @@ export function useFlowSave(sessionId: string) {
   const assist = useAssist();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const put = usePutAssistDraft(sessionId);
+  const refreshDraft = useDraftRefresh(sessionId);
   const { id: targetId } = assist.target;
 
   // The file's hash when the session began (or was last saved), for conflict detection.
@@ -48,9 +48,7 @@ export function useFlowSave(sessionId: string) {
   const [failure, setFailure] = useState<SaveFailure | null>(null);
 
   const saveApi: FlowSaveApi = {
-    createSensor: createSensorFromYaml,
-    updateSensor: updateSensorFromYaml,
-    currentSensorHash: async (id) => (await fetchSensor(id)).hash,
+    ...sensorSaveApi,
     createPrompt: (markdown) =>
       unwrap(api.POST("/api/prompts", { body: { markdown } })),
     createFlow: async (yaml) => {
@@ -102,21 +100,14 @@ export function useFlowSave(sessionId: string) {
       });
       const wroteSensors =
         result.createdSensors.length + result.updatedSensors.length > 0;
-      if (wroteSensors) {
-        for (const root of ["sensors", "sensor"] as const) {
-          void qc.invalidateQueries({ queryKey: qk(root) });
-        }
-      }
+      if (wroteSensors) invalidateSensorQueries(qc);
       if (result.createdPrompts.length > 0) {
         for (const root of ["prompts", "prompt"] as const) {
           void qc.invalidateQueries({ queryKey: qk(root) });
         }
       }
       if (wroteSensors || result.createdPrompts.length > 0) {
-        // Pushing the draft unchanged makes the daemon re-check the sensors, the prompts and the diagnostics.
-        await put
-          .mutateAsync({ yaml: draft.yaml, expected_hash: draft.hash })
-          .catch(() => undefined);
+        await refreshDraft();
       }
       if (!result.ok) {
         setFailure(describeSaveFailure(result));

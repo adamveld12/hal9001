@@ -4,7 +4,10 @@ import { ApiError } from "../../api/client";
 import {
   describeSaveFailure,
   describeSavePlan,
+  describeSensorSaveFailure,
   saveFlowDraft,
+  saveSensorDraft,
+  sensorSaveBlocker,
   SensorExistsError,
   type FlowSaveApi,
   type SaveResult,
@@ -496,5 +499,126 @@ describe("describeSaveFailure", () => {
       ...written,
     });
     expect(atPrompt.message).toMatch(/Already saved: created sensor a;/);
+  });
+});
+
+describe("saveSensorDraft (Save sensor on a card)", () => {
+  it("creates a new sensor and writes nothing else", async () => {
+    const { api, calls } = fakeApi();
+    const r = await saveSensorDraft(api, sensor("fresh"));
+    expect(r).toEqual({ ok: true, action: "create" });
+    expect(calls).toEqual(["sensor+:fresh"]);
+  });
+
+  it("replaces an edited sensor against the hash the draft copied it at", async () => {
+    const { api, calls } = fakeApi();
+    const r = await saveSensorDraft(api, sensor("gh", "h-copy"));
+    expect(r).toEqual({ ok: true, action: "update" });
+    expect(calls).toEqual(["sensor~:gh:h-copy"]);
+  });
+
+  it("reports a sensor that changed on disk as a conflict the user can overwrite", async () => {
+    const { api, calls } = fakeApi({
+      updateSensor: () => Promise.reject(problem(409, "conflict")),
+    });
+    const r = await saveSensorDraft(api, sensor("gh", "h-copy"));
+    expect(r).toMatchObject({ ok: false, action: "update" });
+    if (r.ok) throw new Error("expected a failure");
+    const f = describeSensorSaveFailure("gh", r);
+    expect(f.conflict).toBe(true);
+    expect(f.message).toMatch(/Sensor "gh" changed on disk/);
+    expect(f.message).toMatch(/Overwrite/);
+    // The sensor alone: nothing about the flow or other files.
+    expect(f.message).not.toMatch(/flow|Already saved/);
+    expect(calls).toEqual([]);
+  });
+
+  it("overwrites against the current hash", async () => {
+    const { api, calls } = fakeApi();
+    const r = await saveSensorDraft(api, sensor("gh", "h-copy"), {
+      overwrite: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual(["hash:gh", "sensor~:gh:now-gh"]);
+  });
+
+  it("does not call the API for a new sensor whose id is saved, and offers no overwrite", async () => {
+    const { api, calls } = fakeApi();
+    const r = await saveSensorDraft(api, sensor("taken", null, true));
+    expect(calls).toEqual([]);
+    if (r.ok) throw new Error("expected a failure");
+    expect(r.error).toBeInstanceOf(SensorExistsError);
+    expect(describeSensorSaveFailure("taken", r).conflict).toBe(false);
+  });
+
+  it("says a create the daemon refuses was taken meanwhile", async () => {
+    const { api } = fakeApi({
+      createSensor: () => Promise.reject(problem(409, "conflict")),
+    });
+    const r = await saveSensorDraft(api, sensor("a"));
+    if (r.ok) throw new Error("expected a failure");
+    const f = describeSensorSaveFailure("a", r);
+    expect(f.conflict).toBe(false);
+    expect(f.message).toMatch(/already exists \(created meanwhile\)/);
+  });
+
+  it("carries the findings of a rejected sensor with its file", async () => {
+    const { api } = fakeApi({
+      createSensor: () =>
+        Promise.reject(
+          problem(422, "validation-failed", {
+            diagnostics: [{ severity: "error", message: "bad interval" }],
+          }),
+        ),
+    });
+    const r = await saveSensorDraft(api, sensor("a"));
+    if (r.ok) throw new Error("expected a failure");
+    const f = describeSensorSaveFailure("a", r);
+    expect(f.message).toMatch(/server rejected sensor "a"/);
+    expect(f.diagnostics).toEqual([
+      expect.objectContaining({
+        file: "sensors/a.yaml",
+        message: "bad interval",
+      }),
+    ]);
+  });
+});
+
+describe("sensorSaveBlocker", () => {
+  const finding = (severity: "error" | "warning") => ({
+    severity,
+    code: "x",
+    message: "m",
+  });
+
+  it("is blocked by the sensor's own errors only", () => {
+    expect(
+      sensorSaveBlocker({ diagnostics: [finding("error")] }, false),
+    ).toMatch(/errors/);
+    expect(
+      sensorSaveBlocker({ diagnostics: [finding("warning")] }, false),
+    ).toBe(null);
+    expect(sensorSaveBlocker({ diagnostics: [] }, false)).toBe(null);
+  });
+
+  it("waits for the agent's turn to end", () => {
+    expect(sensorSaveBlocker({ diagnostics: [] }, true)).toMatch(/Wait/);
+  });
+});
+
+describe("saving a sensor alone, then the flow", () => {
+  it("the flow's Save updates the sensor at its saved hash instead of creating it again", async () => {
+    // After Save sensor the daemon re-checks the draft: the sensor exists and its base is the saved hash.
+    const { api, calls } = fakeApi();
+    const r = await saveFlowDraft(
+      api,
+      draftOf({ sensors: [sensor("gh", "saved-hash", true)] }),
+      update,
+    );
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual([
+      "sensor~:gh:saved-hash",
+      "update:triage:h0:id: triage",
+    ]);
   });
 });
