@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.35",
-  "build": 35,
-  "commit": "026ca2effff84b7dbaae8b21b0a1dec91ca0f40c",
-  "published_at": "2026-11-18T22:47:11Z",
+  "version": "0.1.36",
+  "build": 36,
+  "commit": "e332866b7723c073c5c2c43a55d6a7666a5b8164",
+  "published_at": "2026-11-18T23:42:01Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.35/HAL9001-0.1.35.app.zip",
-  "size": 29009887,
-  "sha256": "f201e9f3a9ba80d6f041dce5a3ed2f8e82c3f2af242092617b1428c2c7b03679",
-  "signature": "B0QrQlfSQn6X+ikZXdbSrbDG5CHgsU4LsWh4GGfXLMo7jrXVGdHxWk5WUqEI2X/k2B4gQq8FKWYQyl5rOyrBBg==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.35",
-  "notes": "## Changes\n\n- Assist: keep keys typed while a message is being sent (#32) (026ca2e)\n- Flow Ask AI drawer: save a drafted sensor on its own (#33) (01079ca)\n- Assist chat: keep the composer visible and the list inside its box at any drawer height (#34) (5d154b3)\n- agent steering and skill tweaks (#30) (c72cccf)\n\nCommit: 026ca2effff84b7dbaae8b21b0a1dec91ca0f40c\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.36/HAL9001-0.1.36.app.zip",
+  "size": 29019685,
+  "sha256": "8a9ae7af33f6725b14483025bfd0416c65a0adc07f17b5ac6e1acba7f4d00edc",
+  "signature": "EoRCWzC0Qj78sTeOMmPn1bdyG6wmXyEzIJvs5sFCa723V7tDhnJJXhdelfFbxqftkrJUBBJ6HoECJIy+pawqAA==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.36",
+  "notes": "## Changes\n\n- Reuse an open hal9001 Chrome tab for notification links (#35) (e332866)\n\nCommit: e332866b7723c073c5c2c43a55d6a7666a5b8164\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
