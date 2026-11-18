@@ -52,7 +52,7 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	}
 
 	w("## Rules\n\n")
-	w("- Change only the draft, with draft_write (the complete new file each time). The user's own sensor files, flows and settings are not reachable and must not be touched.\n")
+	w("- Change only the draft, with draft_write: read it with draft_read and change only the lines that must change (below). The user's own sensor files, flows and settings are not reachable and must not be touched.\n")
 	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords). ")
 	w("The script reads credentials from the environment variables listed below; you only ever see their names.\n")
 	w("- Reading and writing the draft and validating it never ask the user. Testing it asks only when the script changed (below).\n")
@@ -62,10 +62,11 @@ func instructions(sessionID, targetID string, globalEnv, sensorEnv []string) str
 	w("Changing only `interval`, `key`, `first_run` or `timeout` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
 
+	w("%s", editGuide(false))
 	w("%s", configGuide())
 
 	w("## Tools\n\n")
-	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it and returns the same.\n")
+	w("- `draft_read` returns the draft as anchored lines with its `hash` and its validation diagnostics, as JSON; `draft_write` changes it with anchored edits (or a whole file) and returns the new `hash`, the diagnostics and the changed lines.\n")
 	w("- `validate` checks the draft against the sensor format and returns the diagnostics.\n")
 	w("- `draft_test` runs the draft the way a poll would (with the real credentials, which you cannot see) and returns JSON: ")
 	w("`exit_code`, `timed_out`, `parse_error`, `item_count`, `items` (each with its rendered `dedup_key` or a `key_error`), and the redacted `stdout` and `stderr`. ")
@@ -125,6 +126,27 @@ func nameList(names []string) string {
 		s[i] = "`" + n + "`"
 	}
 	return strings.Join(s, ", ")
+}
+
+// editGuide is the instructions section about reading and changing the draft, the same for every kind of session. flow
+// adds the files a flow session has besides the draft.
+func editGuide(flow bool) string {
+	var b strings.Builder
+	w := func(s string) { b.WriteString(s) }
+	w("## Reading and changing the draft\n\n")
+	w("Read the draft, then change only the lines that must change. Do not send the whole file again to change a few lines.\n\n")
+	w("- `draft_read` returns the file as lines. Each line has an anchor such as `12:3fa9` (its number and a short hash of its text), and the result has the file's `hash`. `start` and `end` read a range of lines (1-based, inclusive).\n")
+	w("- `draft_write` changes it. Every call needs `expected_hash`: the `hash` of the file as you last read it, or as your last `draft_write` returned it.\n")
+	w("- `edits` change lines. Each edit is `{op, start, end, content}`: `replace` swaps the lines from `start` to `end` for `content` (`end` is optional: without it one line); `delete` removes them (no `content`); `insert_before` and `insert_after` add `content` next to the line `start` (no `end`). `start` and `end` are anchors. `content` is the new text: lines separated by newlines, one newline at its very end ignored, an empty string one blank line. Anchors always refer to the file as you read it, so one call can carry several edits at different places without renumbering anything; edits must not overlap or insert at the same place, and either all of them are applied or none.\n")
+	w("- `content` instead of `edits` is the whole file, written exactly as you send it. Send it for a new file (an empty `expected_hash` creates a file that does not exist yet and never overwrites one), when you rewrite most of an existing file (`expected_hash` is then that file's hash), or when edits cannot do the job: they keep the file's line endings and whether it ends with a newline, and refuse a file that mixes LF and CRLF line endings. A call carries `edits` or `content`, never both.\n")
+	w("- The result is short: the file's new `hash`, its `diagnostics`, `changed` and the anchors of the lines that changed (`affected`; `truncated` says there were more than listed). Use that `hash` and those anchors for the next edit. Lines below a change moved, so read again (a range is enough) before you edit somewhere else.\n")
+	w("- A call that fails with a conflict changed nothing: the file changed since you read it (the user edits the draft too). Read it again, look at what changed, and repeat your edit with the new `hash` and anchors. Never repeat a call with the old hash, and do not resend the whole file to get past a conflict.\n")
+	w("- An edit that cannot be applied (an anchor that does not match its line, a line out of range, overlapping edits, a missing `content`) changes nothing either, and the error says why: fix the request and send it again.\n")
+	if flow {
+		w("- `path` selects the file: the draft (no `path`), `prompts/<name>.md` or `sensors/<id>.yaml`. Every file has its own `hash`; changing a prompt or a sensor does not change the draft's.\n")
+	}
+	w("\n")
+	return b.String()
 }
 
 // forkPreamble is the section a forked chat adds to the general preamble: which run it continues, what the node's own

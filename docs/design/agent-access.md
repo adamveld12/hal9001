@@ -42,12 +42,12 @@ hal, so it is allowed in `readonly` too), validates its input (a failure is a to
 to a port never bypasses approvals: downstream `approval` nodes and tool-call approvals apply as usual. The planning phase of an
 approve+proposal node does not get emit tools. See docs/flows.md, "Outputs and ports".
 
-Added when the agent node sets `sandbox:` (see below): `fs_read`, `fs_write`, `fs_list`, `fs_search`, `shell` executed in
-that sandbox's working directory.
+Added when the agent node sets `sandbox:` (see below): `fs_read` (anchored lines and a revision), `fs_write` (line-anchored
+`edits` or whole-file `content`, guarded by the revision), `fs_list`, `fs_search`, `shell` executed in that sandbox's working directory.
 
 Added per agent node via `tools: [ids]`: user-defined custom tools.
 
-Assist sessions get `draft_read`, `draft_write`, `draft_test`, `validate` (+ the always-available set) instead of editing
+Assist sessions get `draft_read`, `draft_write` (the same anchored edit request as `fs_write`), `draft_test`, `validate` (+ the always-available set) instead of editing
 files. They also get read-only inspection tools (everything the CLI can list, get and inspect: runs, transcripts, sandbox
 logs, sensors, events, inbox, approvals, config; no approval, capped results) and `github_issue_link`, which builds a
 prefilled GitHub new-issue link and calls nothing, and `navigate_ui` / `start_draft` (they publish a stream event that moves the user's view or opens a draft chat; no approval). Flow agent nodes get none of these. See [../assist.md](../assist.md#tools-and-permissions).

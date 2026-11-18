@@ -11,9 +11,16 @@ import (
 
 func localSession(t *testing.T) sandbox.Session {
 	t.Helper()
+	return localSessionWith(t, sandbox.Env{})
+}
+
+// localSessionWith is localSession for a sandbox with the given environment: its secrets are hidden from what the
+// session returns.
+func localSessionWith(t *testing.T, env sandbox.Env) sandbox.Session {
+	t.Helper()
 	cfg := spec.DefaultSandbox(spec.SandboxLocal)
 	cfg.Enabled, cfg.Root = true, t.TempDir()
-	b, err := sandbox.New(spec.SandboxLocal, cfg, sandbox.Env{}, t.TempDir())
+	b, err := sandbox.New(spec.SandboxLocal, cfg, env, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -125,7 +125,7 @@ func ucScript(load bool) script {
 			say("Printed."),
 		}},
 		{When: when("write notes$"), Steps: []step{
-			toolCall("fs_write", "c1", `{"path":"notes.txt","content":"chat notes"}`),
+			toolCall("fs_write", "c1", `{"path":"notes.txt","expected_hash":"","content":"chat notes"}`),
 			say("Wrote it."),
 		}},
 		{When: when("read notes$"), Steps: []step{
@@ -143,7 +143,7 @@ func ucScript(load bool) script {
 		}},
 		{When: when("run lockdown$"), Steps: []step{
 			toolCall("shell", "c1", `{"command":"rm -f report.txt"}`),
-			toolCall("fs_write", "c2", `{"path":"../escape.txt","content":"x"}`),
+			toolCall("fs_write", "c2", `{"path":"../escape.txt","expected_hash":"","content":"x"}`),
 			toolCall("fs_read", "c3", `{"path":"report.txt"}`),
 			say("Tried."),
 		}},
@@ -164,7 +164,7 @@ func ucScript(load bool) script {
 			say("Asked to emit."),
 		}},
 		{When: when("Review"), Steps: []step{
-			toolCall("fs_write", "w1", `{"path":"report.txt","content":"`+ucReportText+`"}`),
+			toolCall("fs_write", "w1", `{"path":"report.txt","expected_hash":"","content":"`+ucReportText+`"}`),
 			toolCall("shell", "w2", `{"command":"echo flow-ran > ran.txt"}`),
 			toolCall("emit_reviewed", "w3", `{"priority":"urgent","body":"Flow says fine"}`),
 			say("done"),
@@ -176,7 +176,7 @@ func ucScript(load bool) script {
 func ucNoPortsScript(load bool) script {
 	s := ucScript(load)
 	s.Turns[len(s.Turns)-1] = turn{When: when("Review"), Steps: []step{
-		toolCall("fs_write", "w1", `{"path":"report.txt","content":"`+ucReportText+`"}`),
+		toolCall("fs_write", "w1", `{"path":"report.txt","expected_hash":"","content":"`+ucReportText+`"}`),
 		say("Reviewed fine"),
 	}}
 	return s
@@ -308,7 +308,7 @@ func TestUnifiedChatReattachesTheSandboxOfTheRun(t *testing.T) {
 			// The first chat turn reads what the run wrote, through the tools of the node and the assistant.
 			turn, tr := e.ucTurn(fork.ID, "read the file")
 			wantContains(t, "transcript", tr,
-				"mcp[c1] is_error=false "+ucReportText, "mcp[c2] is_error=false", "report.txt", "mcp[c3] is_error=false", "mcp[c4] is_error=false", `word\":\"hey`, "mcp[c5] is_error=false", `\"id\":\"f\"`)
+				"mcp[c1] is_error=false", "|"+ucReportText, "mcp[c2] is_error=false", "report.txt", "mcp[c3] is_error=false", "mcp[c4] is_error=false", `word\":\"hey`, "mcp[c5] is_error=false", `\"id\":\"f\"`)
 			if strings.Contains(tr, "is_error=true") {
 				t.Errorf("a tool call failed:\n%s", tr)
 			}
@@ -444,7 +444,7 @@ func TestUnifiedChatToolsAndApprovals(t *testing.T) {
 
 	// Lockdown: a policy deny, a path that leaves the workdir, then a read that still works.
 	_, tr = e.ucTurn(fork.ID, "run lockdown")
-	wantContains(t, "lockdown transcript", tr, "mcp[c1] is_error=true", "denied by policy", "mcp[c2] is_error=true", "mcp[c3] is_error=false "+ucReportText)
+	wantContains(t, "lockdown transcript", tr, "mcp[c1] is_error=true", "denied by policy", "mcp[c2] is_error=true", "mcp[c3] is_error=false", "|"+ucReportText)
 	if len(e.workspaces("report.txt")) != 1 {
 		t.Error("the denied rm ran")
 	}

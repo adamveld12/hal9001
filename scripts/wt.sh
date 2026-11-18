@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates a sibling worktree ../hal9001-wt-<name> on a new branch from origin/main.
+# Creates a worktree .worktrees/<name> on a new branch from origin/main.
 # Usage: scripts/wt.sh <name> [branch]   (branch defaults to feat/<name>)
 set -euo pipefail
 
@@ -15,12 +15,13 @@ branch=${branch:-feat/$name}
 # Resolve the main checkout even when run from inside another worktree.
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 main=$(cd "$common/.." && pwd)
-dest="$(dirname "$main")/hal9001-wt-$name"
+dest="$main/.worktrees/$name"
 
 if [ -e "$dest" ]; then
   echo "refusing: $dest already exists" >&2
   exit 1
 fi
+mkdir -p "$main/.worktrees"
 
 git -C "$main" fetch origin
 git -C "$main" worktree add "$dest" -b "$branch" origin/main

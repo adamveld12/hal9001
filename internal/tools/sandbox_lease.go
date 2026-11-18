@@ -292,12 +292,28 @@ func (l *lease) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	return s.ReadFile(ctx, path)
 }
 
+func (l *lease) ReadFileRaw(ctx context.Context, path string) (sandbox.RawFile, error) {
+	s, err := l.session(ctx)
+	if err != nil {
+		return sandbox.RawFile{}, err
+	}
+	return s.ReadFileRaw(ctx, path)
+}
+
 func (l *lease) WriteFile(ctx context.Context, path string, data []byte) error {
 	s, err := l.session(ctx)
 	if err != nil {
 		return err
 	}
 	return s.WriteFile(ctx, path, data)
+}
+
+func (l *lease) EditFile(ctx context.Context, path string, edit sandbox.EditFunc) error {
+	s, err := l.session(ctx)
+	if err != nil {
+		return err
+	}
+	return s.EditFile(ctx, path, edit)
 }
 
 func (l *lease) List(ctx context.Context, path string) ([]sandbox.Entry, error) {

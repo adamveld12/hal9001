@@ -240,25 +240,32 @@ func (s *sandboxTools) toolList() []Tool {
 	return []Tool{
 		{
 			Name: "fs_read",
-			Description: "Read a text file " + where + ". Paths are relative to the workdir; paths outside it are rejected. " +
-				fmt.Sprintf("Returns at most %d bytes; use offset to read further.", maxReadBytes),
+			Description: "Read a text file " + where + " as numbered lines, each `anchor|text` (for example `12:a3f1|func main() {`), under a header with the " +
+				"revision of the file (its SHA-256 hash). fs_write takes the anchors and the revision to change the file. " +
+				fmt.Sprintf("Returns at most %d bytes; start_line and end_line read a part, and the result says where to continue. ", maxReadBytes) +
+				"Secret values are replaced by " + sandbox.Redacted + "; a line that holds one is marked [secret: read-only] and cannot be replaced or deleted. " +
+				"Paths are relative to the workdir; paths outside it are rejected.",
 			InputSchema: objSchema([]string{"path"}, map[string]any{
-				"path":   str("File path relative to the workdir."),
-				"offset": map[string]any{"type": "integer", "minimum": 0, "description": "Byte offset to start at (default 0)."},
+				"path":       str("File path relative to the workdir."),
+				"start_line": map[string]any{"type": "integer", "minimum": 1, "description": "First line to return (default 1)."},
+				"end_line":   map[string]any{"type": "integer", "minimum": 1, "description": "Last line to return (default: the end of the file)."},
 			}),
 			Run: s.read,
 		},
 		{
 			Name: "fs_write",
-			Description: "Create or replace a file " + where + " with the given content, creating parent directories. " +
-				"Paths outside the workdir are rejected. May need the user's approval, which shows a diff.",
-			InputSchema: objSchema([]string{"path", "content"}, map[string]any{
-				"path":    str("File path relative to the workdir."),
-				"content": str("The complete new content of the file."),
-			}),
-			Policy:   s.writePolicy,
-			Describe: s.describeWrite,
-			Run:      s.write,
+			Description: "Create, replace or edit a file " + where + ", creating parent directories. expected_hash is required: the revision of the file " +
+				"from fs_read, or \"\" to create a file that does not exist yet (an existing file is never overwritten that way). Then send either " +
+				"content, the complete new file, or edits, which change only the lines they name: each edit has an op (replace, delete, insert_before, " +
+				"insert_after), a start anchor (replace and delete also take an end anchor) as fs_read shows them, and content. All anchors refer to the " +
+				"file as you read it, so edits do not move each other, and they must not overlap. If the file changed since you read it, or an anchor does " +
+				"not match its line, nothing is written: read the file again. Lines that fs_read marks as secret cannot be replaced or deleted. " +
+				"Returns the new revision and the anchors of the changed lines, so you can go on editing without reading again. " +
+				"Paths outside the workdir are rejected. May need the user's approval, which shows the diff of the real result.",
+			InputSchema: writeSchema(),
+			Policy:      s.writePolicy,
+			Describe:    s.describeWrite,
+			Run:         s.write,
 		},
 		{
 			Name:        "fs_list",
@@ -270,8 +277,8 @@ func (s *sandboxTools) toolList() []Tool {
 		},
 		{
 			Name: "fs_search",
-			Description: "Search file contents " + where + " for a regular expression (extended syntax). Returns " +
-				fmt.Sprintf("path:line:text for at most %d matches; skips binary files and .git.", sandbox.MaxMatches),
+			Description: "Search file contents " + where + " for a regular expression (extended syntax). Returns the matching lines of at most " +
+				fmt.Sprintf("%d matches, grouped by file under the file's revision, each as `anchor|text` (the anchors fs_write takes); skips binary files and .git.", sandbox.MaxMatches),
 			InputSchema: objSchema([]string{"pattern"}, map[string]any{
 				"pattern": str("Regular expression."),
 				"path":    str("File or directory to search, relative to the workdir (default: the workdir)."),
@@ -304,72 +311,26 @@ func decode(raw json.RawMessage, dst any) error {
 func (s *sandboxTools) read(ctx context.Context, c Call) (Result, error) {
 	ctx = annotate(ctx, c)
 	var a struct {
-		Path   string `json:"path"`
-		Offset int    `json:"offset"`
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
 	}
-	if err := decode(c.Args, &a); err != nil {
+	if err := decodeStrict(c.Args, &a); err != nil {
 		return Result{}, err
 	}
-	data, err := s.sess.ReadFile(ctx, a.Path)
+	f, err := s.sess.ReadFileRaw(ctx, a.Path)
 	if err != nil {
 		return Result{}, err
 	}
-	if a.Offset > len(data) {
-		return Result{}, fmt.Errorf("offset %d is past the end of the file (%d bytes)", a.Offset, len(data))
+	text, err := renderRead(a.Path, f, a.StartLine, a.EndLine)
+	if err != nil {
+		return Result{}, err
 	}
-	data = data[a.Offset:]
-	if len(data) > maxReadBytes {
-		next := a.Offset + maxReadBytes
-		return Result{Text: string(data[:maxReadBytes]) + fmt.Sprintf("\n[truncated: %d more bytes; call again with offset %d]", len(data)-maxReadBytes, next)}, nil
-	}
-	return Result{Text: string(data)}, nil
+	return Result{Text: text}, nil
 }
 
 // diffSnippetLimit bounds the diff shown in an approval.
 const diffSnippetLimit = 16 << 10
-
-func (s *sandboxTools) writePolicy(raw json.RawMessage) (Verdict, string) {
-	var a struct{ Path, Content string }
-	if json.Unmarshal(raw, &a) != nil {
-		return VerdictAllow, ""
-	}
-	d := s.policy.Decide(sandbox.OpFSWrite, map[string]any{"path": a.Path})
-	switch d.Action {
-	case "deny":
-		return VerdictDeny, fmt.Sprintf("fs_write to %s is denied by the %s sandbox policy: %s", a.Path, s.name, d.Reason)
-	case "approve":
-	default:
-		return VerdictAllow, d.Reason
-	}
-	// Reading the current content for the diff is not an operation of the agent.
-	ctx, cancel := context.WithTimeout(sandbox.WithCall(context.Background(), sandbox.CallInfo{Hidden: true}), 20*time.Second)
-	defer cancel()
-	old, err := s.sess.ReadFile(ctx, a.Path)
-	label := "modify " + a.Path
-	switch {
-	case errors.Is(err, sandbox.ErrNotFound):
-		old, label = nil, "create "+a.Path
-	case err != nil:
-		old, label = nil, "write "+a.Path+" (current content unreadable: "+err.Error()+")"
-	}
-	diff := UnifiedDiff(a.Path, string(old), a.Content)
-	if len(diff) > diffSnippetLimit {
-		diff = diff[:diffSnippetLimit] + "\n[diff truncated]"
-	}
-	return VerdictApprove, fmt.Sprintf("sandbox %s: %s (%s)\n\n%s", s.name, label, d.Reason, diff)
-}
-
-func (s *sandboxTools) write(ctx context.Context, c Call) (Result, error) {
-	ctx = annotate(ctx, c)
-	var a struct{ Path, Content string }
-	if err := decode(c.Args, &a); err != nil {
-		return Result{}, err
-	}
-	if err := s.sess.WriteFile(ctx, a.Path, []byte(a.Content)); err != nil {
-		return Result{}, err
-	}
-	return Result{Text: fmt.Sprintf("wrote %d bytes to %s", len(a.Content), a.Path)}, nil
-}
 
 func (s *sandboxTools) list(ctx context.Context, c Call) (Result, error) {
 	ctx = annotate(ctx, c)
@@ -408,15 +369,7 @@ func (s *sandboxTools) search(ctx context.Context, c Call) (Result, error) {
 	if len(hits) == 0 {
 		return Result{Text: "no matches"}, nil
 	}
-	var b strings.Builder
-	for _, h := range hits {
-		text := h.Text
-		if len(text) > 300 {
-			text = text[:300] + "…"
-		}
-		fmt.Fprintf(&b, "%s:%d:%s\n", h.Path, h.Line, text)
-	}
-	return Result{Text: b.String()}, nil
+	return Result{Text: s.renderHits(ctx, hits)}, nil
 }
 
 func (s *sandboxTools) shellPolicy(raw json.RawMessage) (Verdict, string) {
@@ -567,46 +520,13 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 
 // UnifiedDiff renders a unified diff (3 lines of context) of old to new for path. Identical texts give "(no changes)".
 func UnifiedDiff(path, old, new string) string {
-	a, b := splitLines(old), splitLines(new)
 	if old == new {
 		return "(no changes)"
 	}
-	// LCS table over lines; inputs are bounded by the caller's approval snippet, but cap the table anyway.
-	if len(a)*len(b) > 4_000_000 {
+	a, b := splitLines(old), splitLines(new)
+	ops, ok := diffLines(a, b)
+	if !ok {
 		return fmt.Sprintf("--- a/%s\n+++ b/%s\n(file too large to diff: %d lines -> %d lines)", path, path, len(a), len(b))
-	}
-	lcs := make([][]int, len(a)+1)
-	for i := range lcs {
-		lcs[i] = make([]int, len(b)+1)
-	}
-	for i := len(a) - 1; i >= 0; i-- {
-		for j := len(b) - 1; j >= 0; j-- {
-			if a[i] == b[j] {
-				lcs[i][j] = lcs[i+1][j+1] + 1
-			} else {
-				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
-			}
-		}
-	}
-	type op struct {
-		kind byte // ' ', '-', '+'
-		text string
-	}
-	var ops []op
-	i, j := 0, 0
-	for i < len(a) || j < len(b) {
-		switch {
-		case i < len(a) && j < len(b) && a[i] == b[j]:
-			ops = append(ops, op{' ', a[i]})
-			i++
-			j++
-		case j < len(b) && (i == len(a) || lcs[i][j+1] >= lcs[i+1][j]):
-			ops = append(ops, op{'+', b[j]})
-			j++
-		default:
-			ops = append(ops, op{'-', a[i]})
-			i++
-		}
 	}
 	const ctxLines = 3
 	keep := make([]bool, len(ops))
@@ -622,7 +542,7 @@ func UnifiedDiff(path, old, new string) string {
 	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "--- a/%s\n+++ b/%s\n", path, path)
-	oldLine, newLine := 1, 1
+	oldLine, newLine, hunks := 1, 1, 0
 	for k := 0; k < len(ops); {
 		if !keep[k] {
 			if ops[k].kind != '+' {
@@ -648,6 +568,7 @@ func UnifiedDiff(path, old, new string) string {
 			}
 		}
 		fmt.Fprintf(&out, "@@ -%d,%d +%d,%d @@\n", oldLine, oc, newLine, nc)
+		hunks++
 		for _, o := range ops[k:end] {
 			out.WriteByte(o.kind)
 			out.WriteString(o.text)
@@ -657,7 +578,87 @@ func UnifiedDiff(path, old, new string) string {
 		newLine += nc
 		k = end
 	}
+	if hunks == 0 {
+		out.WriteString("(only the line endings or the final newline differ)")
+	}
 	return strings.TrimRight(out.String(), "\n")
+}
+
+// diffOp is one line of a diff: kept (' '), removed ('-') or added ('+').
+type diffOp struct {
+	kind byte
+	text string
+}
+
+// diffLines is the line diff of a to b. The lines the two share at the start and at the end are kept without being
+// compared, so a change in a large file costs what its changed middle costs. The middle goes through an LCS table whose
+// size is capped; false means it is too large to diff.
+func diffLines(a, b []string) ([]diffOp, bool) {
+	pre := 0
+	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
+		pre++
+	}
+	suf := 0
+	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
+		suf++
+	}
+	ma, mb := a[pre:len(a)-suf], b[pre:len(b)-suf]
+	if len(ma)*len(mb) > 4_000_000 {
+		return nil, false
+	}
+	lcs := make([][]int, len(ma)+1)
+	for i := range lcs {
+		lcs[i] = make([]int, len(mb)+1)
+	}
+	for i := len(ma) - 1; i >= 0; i-- {
+		for j := len(mb) - 1; j >= 0; j-- {
+			if ma[i] == mb[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else {
+				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
+			}
+		}
+	}
+	ops := make([]diffOp, 0, len(a)+len(b)-pre-suf)
+	for _, t := range a[:pre] {
+		ops = append(ops, diffOp{' ', t})
+	}
+	i, j := 0, 0
+	for i < len(ma) || j < len(mb) {
+		switch {
+		case i < len(ma) && j < len(mb) && ma[i] == mb[j]:
+			ops = append(ops, diffOp{' ', ma[i]})
+			i++
+			j++
+		case j < len(mb) && (i == len(ma) || lcs[i][j+1] >= lcs[i+1][j]):
+			ops = append(ops, diffOp{'+', mb[j]})
+			j++
+		default:
+			ops = append(ops, diffOp{'-', ma[i]})
+			i++
+		}
+	}
+	for _, t := range a[len(a)-suf:] {
+		ops = append(ops, diffOp{' ', t})
+	}
+	return ops, true
+}
+
+// changedLines lists the numbers, in the new text, of the lines ops adds, and counts the lines it removes.
+func changedLines(ops []diffOp) (added []int, removed int) {
+	n := 0
+	for _, o := range ops {
+		switch o.kind {
+		case ' ':
+			n++
+		case '+':
+			n++
+			added = append(added, n)
+		case '-':
+			removed++
+		}
+	}
+	return added, removed
 }
 
 func splitLines(s string) []string {

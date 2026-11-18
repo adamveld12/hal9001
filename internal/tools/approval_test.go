@@ -84,9 +84,16 @@ func TestSandboxAndGHDescriptions(t *testing.T) {
 	if at.Description != "Run `npm test` in sandbox docker-dev" || at.Command != "npm test" {
 		t.Errorf("shell = %+v", at)
 	}
-	at = st.describeWrite(json.RawMessage(`{"path":"a/b.txt","content":"hello"}`), "")
-	if at.Description != "Write a/b.txt (5 bytes) in sandbox docker-dev" {
-		t.Errorf("write = %+v", at)
+	hash := strings.Repeat("a", 64)
+	for _, tc := range []struct{ args, title, desc, mode string }{
+		{`{"path":"a/b.txt","expected_hash":"","content":"hello"}`, "Create a/b.txt", "Create a/b.txt (5 bytes) in sandbox docker-dev", "create"},
+		{`{"path":"a/b.txt","expected_hash":"` + hash + `","content":"hello"}`, "Replace a/b.txt", "Replace a/b.txt (5 bytes) in sandbox docker-dev", "replace"},
+		{`{"path":"a/b.txt","expected_hash":"` + hash + `","edits":[{"op":"delete","start":"3:abcd"},{"op":"delete","start":"7:abcd"}]}`, "Edit a/b.txt", "Edit a/b.txt (2 edits) in sandbox docker-dev", "edit"},
+	} {
+		at = st.describeWrite(json.RawMessage(tc.args), "")
+		if at.Title != tc.title || at.Description != tc.desc || approvalField(at, "mode") != tc.mode || approvalField(at, "sandbox") != "docker-dev" {
+			t.Errorf("write %s = %+v", tc.args, at)
+		}
 	}
 	for _, tc := range []struct{ args, want string }{
 		{`{"method":"POST","path":"/repos/o/r/pulls/123/reviews","params":{"event":"APPROVE"}}`, "Post a review on o/r#123 (approve)."},
@@ -143,7 +150,7 @@ func TestEveryApprovingToolDescribesItself(t *testing.T) {
 	// An example call that needs approval, by tool name. shellLike tools must also give a command.
 	approving := map[string]string{
 		"gh_api":      `{"method":"POST","path":"/repos/o/r/issues/1/comments","params":{"body":"hi"}}`,
-		"fs_write":    `{"path":"a.txt","content":"x"}`,
+		"fs_write":    `{"path":"a.txt","expected_hash":"","content":"x"}`,
 		"shell":       `{"command":"npm test"}`,
 		"deploy_it":   `{"target":"prod"}`,
 		"flow_run":    `{"id":"triage"}`,

@@ -116,9 +116,17 @@ func (d *Daemon) assistFlowTest(id string, body map[string]any) flowTestJSON {
 	return res
 }
 
-// assistWrite is the agent writing a draft file with draft_write (flow.yaml or prompts/<name>.md).
+// assistWrite is the agent writing a whole draft file with draft_write (flow.yaml, prompts/<name>.md or sensors/<id>.yaml).
+// It sends the hash of the file as it has just read it ({{sha256:...}}, see the fake agent): the hash of the file in the
+// draft directory, or empty when there is none, which creates the file.
 func assistWrite(id, rel, data string) step {
-	return mcpStep(id, "draft_write", map[string]any{"path": rel, "content": data}, "")
+	return assistWriteHashed(id, rel, rel, data)
+}
+
+// assistWriteHashed is assistWrite with the hash taken from another file: the saved sensor a first edit of
+// sensors/<id>.yaml starts from (the draft directory has no copy of it yet).
+func assistWriteHashed(id, rel, hashOf, data string) step {
+	return mcpStep(id, "draft_write", map[string]any{"path": rel, "expected_hash": "{{sha256:" + hashOf + "}}", "content": data}, "")
 }
 
 const (

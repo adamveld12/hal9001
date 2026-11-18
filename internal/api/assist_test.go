@@ -2,25 +2,30 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"hal9001/internal/core"
+	"hal9001/internal/hashline"
+	"hal9001/internal/spec"
 	"hal9001/internal/store"
 )
 
 // assistDouble stands in for core.Assist. Tests script the call they exercise.
 type assistDouble struct {
-	create  func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
-	send    func(ctx context.Context, id, text string, yaml *string, page *core.AssistPageContext) (*store.AssistSession, error)
-	draft   func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
-	test    func(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error)
-	cancel  func(ctx context.Context, id string) (*store.AssistSession, error)
-	closeS  func(ctx context.Context, id string) error
-	created func(ctx context.Context, sensorID string) error
-	fork    func(ctx context.Context, agentRunID string) (*store.AssistSession, error)
+	create    func(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error)
+	send      func(ctx context.Context, id, text string, yaml *string, page *core.AssistPageContext) (*store.AssistSession, error)
+	draft     func(ctx context.Context, id, yaml, expectedHash string) (*store.AssistSession, error)
+	readDraft func(ctx context.Context, id, path string, start, end int) (core.AssistDraftFile, error)
+	editDraft func(ctx context.Context, id, path string, req hashline.Request, byAgent bool) (core.AssistDraftEdit, error)
+	test      func(ctx context.Context, id string, byAgent bool, req core.AssistTestRequest) (core.AssistTestOutcome, error)
+	cancel    func(ctx context.Context, id string) (*store.AssistSession, error)
+	closeS    func(ctx context.Context, id string) error
+	created   func(ctx context.Context, sensorID string) error
+	fork      func(ctx context.Context, agentRunID string) (*store.AssistSession, error)
 }
 
 func (d *assistDouble) CreateSession(ctx context.Context, req core.AssistCreateRequest) (*store.AssistSession, error) {
@@ -98,6 +103,9 @@ func TestAssistWritesNeedTheServiceAndReadsDoNot(t *testing.T) {
 		{"POST", "/api/assist/sessions", `{"target":{"kind":"sensor"},"runtime":"claude"}`},
 		{"POST", "/api/assist/sessions/" + a.ID + "/messages", `{"text":"hi"}`},
 		{"PUT", "/api/assist/sessions/" + a.ID + "/draft", `{"yaml":"id: x\n"}`},
+		// A draft file is read from the draft directory, so reading it needs the service too.
+		{"GET", "/api/assist/sessions/" + a.ID + "/draft", ``},
+		{"PATCH", "/api/assist/sessions/" + a.ID + "/draft", `{"expected_hash":"","content":"id: x\n"}`},
 		{"POST", "/api/assist/sessions/" + a.ID + "/test", `{}`},
 		{"POST", "/api/assist/sessions/" + a.ID + "/cancel", `{}`},
 		{"DELETE", "/api/assist/sessions/" + a.ID, ``},
@@ -420,6 +428,149 @@ func (d *assistDouble) Fork(ctx context.Context, agentRunID string) (*store.Assi
 	return d.fork(ctx, agentRunID)
 }
 func (d *assistDouble) ToolCreated(context.Context, string) error { return nil }
+
+func (d *assistDouble) ReadDraft(ctx context.Context, id, path string, start, end int) (core.AssistDraftFile, error) {
+	if d.readDraft == nil {
+		return core.AssistDraftFile{}, errUnscripted
+	}
+	return d.readDraft(ctx, id, path, start, end)
+}
+
+func (d *assistDouble) EditDraft(ctx context.Context, id, path string, req hashline.Request, byAgent bool) (core.AssistDraftEdit, error) {
+	if d.editDraft == nil {
+		return core.AssistDraftEdit{}, errUnscripted
+	}
+	return d.editDraft(ctx, id, path, req, byAgent)
+}
+
+// GET and PATCH of a draft file hand the path, the line range, the request and who asks to the service, and answer with
+// what it returns; what the request itself gets wrong never reaches it.
+func TestAssistHashlineDraftFilesAreReadAndEditedThroughTheService(t *testing.T) {
+	other := strings.Repeat("a", 64)
+	svc := &assistDouble{}
+	e := newEnv(t, func(o *envOptions) { o.assist = svc })
+	a := e.assistSession("", "idle")
+	base := "/api/assist/sessions/" + a.ID + "/draft"
+	noFile := &core.ValidationError{Diagnostics: []spec.Diagnostic{{Severity: spec.SeverityError, Code: spec.CodeInvalidValue, Path: "path", Message: "the session has no such draft file"}}}
+
+	var read struct {
+		path       string
+		start, end int
+	}
+	svc.readDraft = func(_ context.Context, id, path string, start, end int) (core.AssistDraftFile, error) {
+		if id != a.ID {
+			t.Errorf("the service was asked for session %q", id)
+		}
+		read.path, read.start, read.end = path, start, end
+		return core.AssistDraftFile{
+			Path: "prompts/triage.md", Exists: true, Hash: hash64, Lines: []hashline.Line{{Number: 3, Anchor: "3:a1b2", Text: "Be brief."}},
+			TotalLines: 7, HasFinalNewline: true, Diagnostics: json.RawMessage("[]"),
+		}, nil
+	}
+	got := e.get(base + "?path=prompts%2Ftriage.md&start=3&end=4").want(200).json()
+	lines, _ := got["lines"].([]any)
+	if read.path != "prompts/triage.md" || read.start != 3 || read.end != 4 || got["hash"] != hash64 || got["total_lines"] != float64(7) || len(lines) != 1 || lines[0].(map[string]any)["anchor"] != "3:a1b2" {
+		t.Errorf("service got %+v, response = %v", read, got)
+	}
+	e.get(base).want(200)
+	if read.path != "" || read.start != 0 || read.end != 0 {
+		t.Errorf("a read without a query reached the service as %+v, want the draft and every line", read)
+	}
+	for _, q := range []string{"?start=0", "?start=x", "?end=-1", "?start=5&end=2"} {
+		e.get(base + q).want(400)
+	}
+	for _, tc := range []struct {
+		err     error
+		status  int
+		problem string
+	}{
+		{core.ErrInvalidState, 409, "invalid-state"},
+		{noFile, 422, "validation-failed"},
+		{store.ErrNotFound, 404, "not-found"},
+	} {
+		svc.readDraft = func(context.Context, string, string, int, int) (core.AssistDraftFile, error) {
+			return core.AssistDraftFile{}, tc.err
+		}
+		if got := e.get(base).want(tc.status).problem(); got != tc.problem {
+			t.Errorf("read error %v: problem %q, want %q", tc.err, got, tc.problem)
+		}
+	}
+
+	var edited struct {
+		calls   int
+		path    string
+		req     hashline.Request
+		byAgent bool
+	}
+	svc.editDraft = func(_ context.Context, id, path string, req hashline.Request, byAgent bool) (core.AssistDraftEdit, error) {
+		if id != a.ID {
+			t.Errorf("the service was asked to edit session %q", id)
+		}
+		edited.calls, edited.path, edited.req, edited.byAgent = edited.calls+1, path, req, byAgent
+		return core.AssistDraftEdit{
+			Path: "sensor.yaml", Hash: hash64, TotalLines: 9, Changed: true,
+			Affected: []hashline.Line{{Number: 3, Anchor: "3:c3d4", Text: "interval: 2m"}}, Diagnostics: json.RawMessage("[]"),
+		}, nil
+	}
+	res := e.do("PATCH", base, `{"expected_hash":"`+hash64+`","edits":[{"op":"replace","start":"3:a1b2","content":"interval: 2m"}]}`).want(200).json()
+	if edited.path != "" || edited.req.ExpectedHash != hash64 || edited.req.Content != nil || edited.byAgent || len(edited.req.Edits) != 1 ||
+		edited.req.Edits[0].Op != hashline.OpReplace || edited.req.Edits[0].Start != "3:a1b2" || edited.req.Edits[0].Content == nil || *edited.req.Edits[0].Content != "interval: 2m" {
+		t.Errorf("service got %+v", edited)
+	}
+	if res["hash"] != hash64 || res["changed"] != true || len(res["affected"].([]any)) != 1 {
+		t.Errorf("response = %v", res)
+	}
+	// A whole file with an empty hash creates it; the agent's marker says who changed it.
+	req := request("PATCH", base, []byte(`{"path":"prompts/x.md","expected_hash":"","content":"x\n"}`))
+	req.Header.Set(assistAgentHeader, "1")
+	serve(t, e.srv, req).want(200)
+	if edited.path != "prompts/x.md" || edited.req.ExpectedHash != "" || edited.req.Content == nil || *edited.req.Content != "x\n" || len(edited.req.Edits) != 0 || !edited.byAgent {
+		t.Errorf("service got %+v, want a create of prompts/x.md by the agent", edited)
+	}
+
+	// What the request gets wrong is answered before the service hears of it.
+	calls := edited.calls
+	for _, body := range []string{`{"content":"x"}`, `{"expected_hash":"nope","content":"x"}`, `{"expected_hash":null,"content":"x"}`} {
+		e.do("PATCH", base, body).want(422)
+	}
+	for _, body := range []string{`{"expected_hash":"","content":"x","extra":1}`, `{"expected_hash":"","edits":[{"op":"delete","start":"1:abcd","extra":1}]}`, `[]`} {
+		e.do("PATCH", base, body).want(400)
+	}
+	if edited.calls != calls {
+		t.Errorf("%d malformed requests reached the service", edited.calls-calls)
+	}
+
+	svc.editDraft = func(context.Context, string, string, hashline.Request, bool) (core.AssistDraftEdit, error) {
+		return core.AssistDraftEdit{}, &core.DraftConflictError{Path: "sensor.yaml", Expected: hash64, Current: other}
+	}
+	r := e.do("PATCH", base, `{"expected_hash":"`+hash64+`","content":"x"}`).want(409)
+	if r.problem() != "conflict" || r.json()["expected_hash"] != hash64 || r.json()["current_hash"] != other {
+		t.Errorf("stale hash = %s", r.Body)
+	}
+	svc.editDraft = func(context.Context, string, string, hashline.Request, bool) (core.AssistDraftEdit, error) {
+		return core.AssistDraftEdit{}, &core.DraftConflictError{Path: "prompts/x.md", Expected: hash64}
+	}
+	r = e.do("PATCH", base, `{"path":"prompts/x.md","expected_hash":"`+hash64+`","content":"x"}`).want(409)
+	if r.problem() != "conflict" || r.json()["current_hash"] != nil {
+		t.Errorf("a hash for a file that does not exist = %s, want current_hash null", r.Body)
+	}
+	for _, tc := range []struct {
+		err     error
+		status  int
+		problem string
+	}{
+		{noFile, 422, "validation-failed"},
+		{core.ErrInvalidState, 409, "invalid-state"},
+		{store.ErrNotFound, 404, "not-found"},
+	} {
+		svc.editDraft = func(context.Context, string, string, hashline.Request, bool) (core.AssistDraftEdit, error) {
+			return core.AssistDraftEdit{}, tc.err
+		}
+		if got := e.do("PATCH", base, `{"expected_hash":"","content":"x"}`).want(tc.status).problem(); got != tc.problem {
+			t.Errorf("edit error %v: problem %q, want %q", tc.err, got, tc.problem)
+		}
+	}
+}
 
 func TestAssistTestRejectsMalformedSimulateEmit(t *testing.T) {
 	e := newEnv(t)

@@ -31,7 +31,9 @@ prompts already answered in this session; persisted, survives `session/load`). A
 no turn matches, the prompt fails with a JSON-RPC error that names the mode/turn/prompt. If the client cancels the turn
 the response is `stopReason: cancelled`.
 
-Text fields accept `{{prompt}}`, `{{cwd}}`, `{{session_id}}`, `{{mode}}`, `{{turn}}` substitutions.
+Text fields accept `{{prompt}}`, `{{cwd}}`, `{{session_id}}`, `{{mode}}`, `{{turn}}` substitutions. A string in the `args` of
+`mcp_call` and `mcp_invoke` accepts `{{sha256:<file>}}`: the hex SHA-256 of that file in the session cwd, empty when the file does
+not exist. It is the hash an agent that has just read the file sends back (for example as `expected_hash` of a draft edit).
 
 ### Steps
 

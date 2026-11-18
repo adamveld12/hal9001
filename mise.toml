@@ -22,7 +22,7 @@ description = "Every check the hooks run, on the whole tree (static, race, shard
 depends = ["check:static", "race", "e2e", "check:web"]
 
 [tasks.wt]
-description = "Create the worktree ../hal9001-wt-<name> on branch feat/<name> (or a given branch) from origin/main; prints its path. Usage: mise run wt <name> [branch]"
+description = "Create the worktree .worktrees/<name> on branch feat/<name> (or a given branch) from origin/main; prints its path. Usage: mise run wt <name> [branch]"
 run = "scripts/wt.sh"
 
 [tasks.push]

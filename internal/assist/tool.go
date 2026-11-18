@@ -191,6 +191,7 @@ func clip(s string) string {
 func toolPreamble(targetID string, global, own []string, summary string) string {
 	var b strings.Builder
 	b.WriteString("[hal9001 tool assistant] You have no file or shell access: you read and change the draft with the tools draft_read, draft_write, draft_test and validate. " +
+		"Read the draft, then change only the lines that must change with draft_write (anchored edits and the hash you read; a whole file only for a new file). " +
 		"Call draft_read with path `instructions` first: it holds the tool format, how arguments reach the script and how to test.\n")
 	if targetID != "" {
 		b.WriteString("You are editing the existing tool `" + targetID + "`; keep its id.\n")
@@ -220,7 +221,7 @@ func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) s
 	}
 
 	w("## Rules\n\n")
-	w("- Change only the draft, with draft_write (the complete new file each time). The user's own tool files, flows and settings are not reachable and must not be touched.\n")
+	w("- Change only the draft, with draft_write: read it with draft_read and change only the lines that must change (below). The user's own tool files, flows and settings are not reachable and must not be touched.\n")
 	w("- Never print, echo, log or ask for a secret value (tokens, API keys, passwords), and ")
 	w("The script reads credentials from the environment variables listed below; you only ever see their names.\n")
 	w("- Reading and writing the draft and validating it never ask the user. Testing it asks only when the code changed (below).\n")
@@ -230,10 +231,11 @@ func toolInstructions(sessionID, targetID string, globalEnv, toolEnv []string) s
 	w("Changing only `description`, `params`, `approve`, `timeout` or `runs_in_sandbox` does not ask. If the user denies the test, or the command answers that the script needs approval, do not look for another way to run it: explain what you wanted to check and wait for the user.\n")
 	w("- End every turn with a short plain-language summary of what you changed and what the test showed. The user sees the draft update live; say what they should check or decide.\n\n")
 
+	w("%s", editGuide(false))
 	w("%s", configGuide())
 
 	w("## Tools\n\n")
-	w("- `draft_read` returns the current draft with its validation diagnostics as JSON; `draft_write` replaces it and returns the same.\n")
+	w("- `draft_read` returns the draft as anchored lines with its `hash` and its validation diagnostics, as JSON; `draft_write` changes it with anchored edits (or a whole file) and returns the new `hash`, the diagnostics and the changed lines.\n")
 	w("- `validate` checks the draft against the tool format and returns the diagnostics.\n")
 	w("- `draft_test` calls the draft once with `args` (a JSON object; omit for none) and returns JSON: ")
 	w("`ok`, `args` (with defaults filled in), `stdout`, `structured` (stdout parsed when it is a JSON object or array), `stderr`, `exit_code`, `timed_out` and `error`. ")

@@ -79,7 +79,7 @@ func inspectGuide(drafts bool) string {
 	w("2. \"Why did the sensor not fire?\": `sensor_get` (state, paused, last status), `sensor_runs_list` (`status: failed` for errors), `sensor_run_get` (stderr, item count), `events_list` with `sensor_id`: items whose dedup key was already seen produce no event. Then `flow_runs_list` with `event_id` for what the flows did with it.\n")
 	w("3. \"What happened to this event or item?\": `event_get` shows the flow runs it fanned out to; a transform that dropped it gives a reason on its node run.\n")
 	if drafts {
-		w("4. Report what you found in plain language: the cause, the ids of the runs you looked at (so the user can open them), and the fix. If the fix is a change to a draft you can make, make it with `draft_write`.\n\n")
+		w("4. Report what you found in plain language: the cause, the ids of the runs you looked at (so the user can open them), and the fix. If the fix is a change to a draft you can make, make it with a small `draft_write` edit of the lines concerned (read the draft first).\n\n")
 	} else {
 		w("4. Report what you found in plain language: the cause, the ids of the runs you looked at (so the user can open them), and the fix. If the fix is a change to a sensor, flow or tool, offer a draft session with `start_draft`.\n\n")
 	}

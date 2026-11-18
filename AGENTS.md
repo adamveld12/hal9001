@@ -36,7 +36,7 @@ This is a fun side project; iteration speed beats rigor.
 
 ## Worktrees only (agents)
 
-- Work in `../hal9001-wt-<name>`; create it with `mise run wt <name>`, `cd` there first, and use absolute paths under it for every edit. Never edit the main checkout.
+- Work in `.worktrees/<name>`; create it with `mise run wt <name>`, `cd` there first, and use absolute paths under it for every edit. Never edit the main checkout.
 - Before each commit, `git -C <main checkout> status --short` must be empty.
 
 ## Never without explicit user permission

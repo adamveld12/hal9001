@@ -111,7 +111,7 @@ func TestAssistGeneralSessionKnowsThePageAndMovesTheUsersView(t *testing.T) {
 				mcpStep("query", "navigate_ui", map[string]any{"path": "/flows/triage?next=/x"}, ""),
 				mcpStep("draft", "start_draft", map[string]any{"kind": "flow", "id": "triage", "prompt": "add a retry node"}, "draft.txt"),
 				mcpStep("nodraft", "start_draft", map[string]any{"kind": "flow", "id": "missing"}, ""),
-				mcpStep("wr", "draft_write", map[string]any{"content": "x"}, ""),
+				mcpStep("wr", "draft_write", map[string]any{"expected_hash": "", "content": "x"}, ""),
 				mcpStep("read", "flows_list", map[string]any{}, "flows.json"),
 				say("Opened it."),
 			}},

@@ -27,6 +27,7 @@ import (
 
 	"hal9001/internal/agent"
 	"hal9001/internal/core"
+	"hal9001/internal/hashline"
 	"hal9001/internal/runner"
 	"hal9001/internal/spec"
 	"hal9001/internal/store"
@@ -329,6 +330,28 @@ func (m *Manager) UpdateDraft(ctx context.Context, sessionID, yaml, expectedHash
 		return nil, err
 	}
 	return s.updateDraft(yaml, expectedHash)
+}
+
+// ReadDraft returns one file of the session's draft as anchored lines (see core.Assist).
+func (m *Manager) ReadDraft(ctx context.Context, sessionID, path string, startLine, endLine int) (core.AssistDraftFile, error) {
+	s, err := m.session(ctx, sessionID)
+	if err != nil {
+		return core.AssistDraftFile{}, err
+	}
+	return s.readDraft(path, startLine, endLine)
+}
+
+// EditDraft applies req to one file of the session's draft (see core.Assist). byAgent marks the change as the agent's.
+func (m *Manager) EditDraft(ctx context.Context, sessionID, path string, req hashline.Request, byAgent bool) (core.AssistDraftEdit, error) {
+	s, err := m.session(ctx, sessionID)
+	if err != nil {
+		return core.AssistDraftEdit{}, err
+	}
+	by := store.DraftByUser
+	if byAgent {
+		by = store.DraftByAgent
+	}
+	return s.editDraft(path, req, by)
 }
 
 // Cancel cancels the running turn.

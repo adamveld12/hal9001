@@ -50,6 +50,18 @@ func TestAssistCommandsHitTheRightEndpointsAndPrintTheResponse(t *testing.T) {
 				"triage": map[string]any{"port": "needs_human"},
 				"review": map[string]any{"port": "ok", "output": map[string]any{"title": "a=b"}}}},
 			ok(assistTestResult(0)), assistTestResult(0)},
+		{"draft-read sends the path and the line range", []string{"assist", "draft-read", "--path", "prompts/triage.md", "--start", "2", "--end", "3", id1}, "",
+			"GET /api/assist/sessions/" + id1 + "/draft", url.Values{"path": {"prompts/triage.md"}, "start": {"2"}, "end": {"3"}}, nil,
+			ok(assistDraftFile()), assistDraftFile()},
+		{"draft-edit sends the edits from stdin", []string{"assist", "draft-edit", "--expected-hash", hash, "--edits", "-", id1},
+			`[{"op":"replace","start":"2:a1b2","content":"lang: python"}]`,
+			"PATCH /api/assist/sessions/" + id1 + "/draft", nil,
+			map[string]any{"expected_hash": hash, "edits": []any{map[string]any{"op": "replace", "start": "2:a1b2", "content": "lang: python"}}},
+			ok(assistDraftEdit()), assistDraftEdit()},
+		{"draft-edit creates a file with an empty hash", []string{"assist", "draft-edit", "--path", "prompts/new.md", "--expected-hash=", "--content", "-", id1}, "Be brief.\n",
+			"PATCH /api/assist/sessions/" + id1 + "/draft", nil,
+			map[string]any{"path": "prompts/new.md", "expected_hash": "", "content": "Be brief.\n"},
+			ok(assistDraftEdit()), assistDraftEdit()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,6 +172,7 @@ func TestAssistTestDraftAndCancelDefaultToTheSessionInTheEnvironment(t *testing.
 		{"test", []string{"assist", "test"}, "POST /api/assist/sessions/" + id2 + "/test", ok(assistTestResult(0))},
 		{"draft", []string{"assist", "draft"}, "GET /api/assist/sessions/" + id2, ok(assistSessionDetail())},
 		{"cancel", []string{"assist", "cancel"}, "POST /api/assist/sessions/" + id2 + "/cancel", ok(assistSession("idle"))},
+		{"draft-read", []string{"assist", "draft-read"}, "GET /api/assist/sessions/" + id2 + "/draft", ok(assistDraftFile())},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+" uses the environment session", func(t *testing.T) {
@@ -299,6 +312,57 @@ func TestAssistTestMarksRequestsMadeInsideASession(t *testing.T) {
 			f := newFakeDaemon(t)
 			f.on(route, ok(assistTestResult(0)))
 			res := f.run(runOpts{env: tc.env}, tc.args...)
+			if res.code != 0 {
+				t.Fatalf("exit %d: %s", res.code, res.stderr)
+			}
+			if got := f.only().Header.Get(cli.AssistAgentHeader) != ""; got != tc.marked {
+				t.Errorf("agent marker sent = %v, want %v", got, tc.marked)
+			}
+		})
+	}
+}
+
+// draft-edit says what it needs before it sends anything: the hash the edit was made against (an empty one is a choice,
+// so it must be written out), and either the whole file or edits, never both and never neither.
+func TestAssistHashlineDraftEditNeedsAHashAndExactlyOneKindOfChange(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+	}{
+		{"no hash", []string{"assist", "draft-edit", "--content", "-", id1}, "x\n"},
+		{"neither content nor edits", []string{"assist", "draft-edit", "--expected-hash", hash, id1}, ""},
+		{"both content and edits", []string{"assist", "draft-edit", "--expected-hash", hash, "--content", "a.txt", "--edits", "b.json", id1}, ""},
+		{"edits that are not a list", []string{"assist", "draft-edit", "--expected-hash", hash, "--edits", "-", id1}, `{"op":"replace"}`},
+		{"an empty list of edits", []string{"assist", "draft-edit", "--expected-hash", hash, "--edits", "-", id1}, `[]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeDaemon(t)
+			res := f.run(runOpts{stdin: tc.stdin}, tc.args...)
+			if res.code != cli.ExitUsage || len(f.requests()) != 0 {
+				t.Errorf("exit %d with %d requests, want a usage error before any request (stderr %s)", res.code, len(f.requests()), res.stderr)
+			}
+		})
+	}
+}
+
+// A change made by the agent says so, like its test: inside an assist session the request carries the marker, and the
+// draft then shows the agent as its author; a person at a terminal sends none.
+func TestAssistHashlineDraftEditMarksRequestsMadeInsideASession(t *testing.T) {
+	route := "PATCH /api/assist/sessions/" + id2 + "/draft"
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		args   []string
+		marked bool
+	}{
+		{"agent, session from the environment", map[string]string{cli.EnvAssistSession: id2}, []string{"assist", "draft-edit", "--expected-hash", hash, "--content", "-"}, true},
+		{"person at a terminal", nil, []string{"assist", "draft-edit", "--expected-hash", hash, "--content", "-", id2}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeDaemon(t)
+			f.on(route, ok(assistDraftEdit()))
+			res := f.run(runOpts{env: tc.env, stdin: "id: x\n"}, tc.args...)
 			if res.code != 0 {
 				t.Fatalf("exit %d: %s", res.code, res.stderr)
 			}

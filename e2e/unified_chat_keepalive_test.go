@@ -49,7 +49,7 @@ func TestUnifiedChatSandboxExpiresBetweenMessages(t *testing.T) {
 	e.waitKept(fork.ID, 1)
 	d.Clock.Advance(45 * time.Second)
 	_, tr := e.ucTurn(fork.ID, "read notes")
-	wantContains(t, "second turn", tr, "mcp[c1] is_error=false chat notes", "mcp[c2] is_error=false "+ucReportText)
+	wantContains(t, "second turn", tr, "mcp[c1] is_error=false", "|chat notes", "mcp[c2] is_error=false", "|"+ucReportText)
 	e.waitKept(fork.ID, 2)
 	d.Clock.Advance(45 * time.Second)
 	time.Sleep(100 * time.Millisecond)
@@ -98,7 +98,7 @@ func TestUnifiedChatSandboxExpiresBetweenMessages(t *testing.T) {
 	}
 	e.ucTurn(fork.ID, "write notes")
 	_, tr = e.ucTurn(fork.ID, "read notes")
-	wantContains(t, "turn in the new sandbox", tr, "mcp[c1] is_error=false chat notes", "mcp[c2] is_error=true")
+	wantContains(t, "turn in the new sandbox", tr, "mcp[c1] is_error=false", "|chat notes", "mcp[c2] is_error=true")
 	if got := ucNotices(d.conversationMessages(fork.ID)); len(got) != 1 {
 		t.Errorf("a second notice appeared inside the window: %q", got)
 	}

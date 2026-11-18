@@ -287,6 +287,8 @@ Every command accepts `--help`. Errors from the API are printed as the `applicat
 | `assist list` / `assist get <session>` | `--target-kind`, `--target-id`; `get` includes the conversation. |
 | `assist send <session> <text...>` | `--yaml file\|-` replaces the draft first. Starts one agent turn. |
 | `assist test [<session>]` / `assist draft [<session>]` | Run the draft like Poll now (redacted JSON result) / print the draft with its diagnostics. The session defaults to `HAL9001_ASSIST_SESSION`. |
+| `assist draft-read [<session>]` | `--path`, `--start`, `--end`: the draft or a draft file as anchored lines with its revision. |
+| `assist draft-edit [<session>]` | `--expected-hash H` (empty creates a file), `--content file\|-` or `--edits file\|-`, `--path`: change the draft with the shared line-anchored edit request. |
 | `assist cancel [<session>]` / `assist close <session>` | Cancel the running turn / end the session and delete its draft directory. |
 | `events list` | `--sensor`, `--flow`, `--kind`, `--status`, `--decision`, `--q`, `--since`, `--until` (RFC 3339), `--limit`, `--cursor` |
 | `events get <id>` | The event with its fan-out of flow runs. |
