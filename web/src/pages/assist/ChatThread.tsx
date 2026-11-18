@@ -56,7 +56,7 @@ export function ChatThread({
       {elsewhere !== null && (
         <div
           role="status"
-          className="shrink-0 border-b border-line bg-raised px-3 py-1.5 text-xs"
+          className="min-h-0 overflow-auto border-b border-line bg-raised px-3 py-1.5 text-xs"
         >
           This session edits{" "}
           {targetId === null ? `a new ${cfg.noun}` : `${cfg.noun} ${targetId}`}.{" "}
@@ -84,14 +84,14 @@ export function ChatThread({
         }
       />
       {s.messages.length === 0 && !closed && (
-        <div className="shrink-0 px-3 pb-3">
+        <div className="min-h-0 overflow-auto px-3 pb-3">
           <StarterPrompts kind={kind} targetId={s.target.id} />
         </div>
       )}
       {s.status === "failed" && s.error && (
         <div
           role="alert"
-          className="shrink-0 border-t border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
+          className="min-h-0 overflow-auto border-t border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
         >
           The last turn failed: {s.error}
         </div>
@@ -106,7 +106,7 @@ export function ChatThread({
       ) : (
         <>
           {kind === "flow" && inDrawer && (
-            <div className="max-h-48 shrink-0 overflow-auto">
+            <div className="max-h-48 overflow-auto">
               <FlowSavePanel sessionId={id} />
             </div>
           )}

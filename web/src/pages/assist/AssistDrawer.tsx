@@ -261,7 +261,7 @@ export function AssistDrawer() {
         {notice !== null && (
           <div
             role="alert"
-            className="flex items-start gap-2 border-b border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
+            className="flex min-h-0 items-start gap-2 overflow-auto border-b border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
           >
             <span className="min-w-0 flex-1">{notice}</span>
             <button
