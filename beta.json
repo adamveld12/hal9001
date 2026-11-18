@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "0.1.30",
-  "build": 30,
-  "commit": "eb3b983498e0c908cf77f5506a40cf0d97e2110b",
-  "published_at": "2026-11-12T22:58:21Z",
+  "version": "0.1.31",
+  "build": 31,
+  "commit": "e719d2ce8848f5504d3d8d9e82a66fbd12ff5c71",
+  "published_at": "2026-11-18T20:53:52Z",
   "min_macos": "13.0",
-  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.30/HAL9001-0.1.30.app.zip",
-  "size": 28878133,
-  "sha256": "0c2e559613dd7674e1f8dc4438f0aea9d5038d7f54dcdb21c7cc1e8be2ef3c5a",
-  "signature": "Y4aKjPjqJFP3RgNGIOWUQ/5maBN728FkIIf7h9lt6Bu+mdsENBxIA9MugKcOkA+vIyP3Gj6RooZxNAyERgIUDQ==",
-  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.30",
-  "notes": "## Changes\n\n- Inbox actions: agent notes carry questions, actions and a reply box (#28) (eb3b983)\n- Inbox: Agent chats link to the Chat list filtered by flow run (#27) (a4e7eaf)\n\nCommit: eb3b983498e0c908cf77f5506a40cf0d97e2110b\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
+  "url": "https://github.com/adamveld12/hal9001/releases/download/v0.1.31/HAL9001-0.1.31.app.zip",
+  "size": 29008940,
+  "sha256": "b3539504cd93e363f638dca81bfcf9e898faa0c76e8bb561c95fd2159222712a",
+  "signature": "ntRPzxvK9a9+z/AWMolmYqhrbZGih6Gz1Www+m0SwRLzYlrp92Syeuu6fmddhVgpj4f1XR8mnfGNESAmrXUmCA==",
+  "notes_url": "https://github.com/adamveld12/hal9001/releases/tag/v0.1.31",
+  "notes": "## Changes\n\n- Hashline: line-anchored edits for draft and sandbox tools (#31) (e719d2c)\n\nCommit: e719d2ce8848f5504d3d8d9e82a66fbd12ff5c71\n\n## Install\n\nOpen the DMG and drag HAL9001 to Applications. The app is ad-hoc signed: open it once (macOS blocks it), then go to System Settings \u003e Privacy \u0026 Security and click Open Anyway. On macOS 14 and earlier, right-click \u003e Open also works.\n"
 }
