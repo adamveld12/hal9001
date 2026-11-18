@@ -103,7 +103,7 @@ export function MessageList({
         ref={box}
         role="log"
         aria-label="Conversation"
-        className="min-h-0 flex-1 overflow-auto p-3"
+        className="min-h-0 flex-1 overflow-auto"
         onScroll={(e) => {
           const el = e.currentTarget;
           atBottom.current = shouldFollow(
@@ -114,7 +114,7 @@ export function MessageList({
           updatePill();
         }}
       >
-        <div ref={content} className="space-y-3">
+        <div ref={content} className="space-y-3 p-3">
           {sandbox?.hasMore && onLoadEarlierSandbox && (
             <div className="flex items-center gap-2 text-xs text-muted">
               <span>Older sandbox entries are not shown.</span>

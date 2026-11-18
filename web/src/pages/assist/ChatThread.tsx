@@ -56,7 +56,7 @@ export function ChatThread({
       {elsewhere !== null && (
         <div
           role="status"
-          className="border-b border-line bg-raised px-3 py-1.5 text-xs"
+          className="min-h-0 overflow-auto border-b border-line bg-raised px-3 py-1.5 text-xs"
         >
           This session edits{" "}
           {targetId === null ? `a new ${cfg.noun}` : `${cfg.noun} ${targetId}`}.{" "}
@@ -84,20 +84,20 @@ export function ChatThread({
         }
       />
       {s.messages.length === 0 && !closed && (
-        <div className="px-3 pb-3">
+        <div className="min-h-0 overflow-auto px-3 pb-3">
           <StarterPrompts kind={kind} targetId={s.target.id} />
         </div>
       )}
       {s.status === "failed" && s.error && (
         <div
           role="alert"
-          className="border-t border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
+          className="min-h-0 overflow-auto border-t border-bad/30 bg-bad/5 px-3 py-2 text-xs text-bad"
         >
           The last turn failed: {s.error}
         </div>
       )}
       {closed ? (
-        <div className="space-y-2 border-t border-line p-3 text-xs text-muted">
+        <div className="shrink-0 space-y-2 border-t border-line p-3 text-xs text-muted">
           This session has ended.
           <div>
             <Button onClick={onNewChat}>Start a new chat</Button>
@@ -110,7 +110,10 @@ export function ChatThread({
               <FlowSavePanel sessionId={id} />
             </div>
           )}
-          <div className="border-t border-line p-3" data-chat-composer="">
+          <div
+            className="shrink-0 border-t border-line p-3"
+            data-chat-composer=""
+          >
             <Composer
               disabled={busy}
               placeholder={
