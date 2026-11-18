@@ -108,6 +108,7 @@ type bundleInfo struct {
 }
 
 // infoPlist renders Info.plist. LSUIElement keeps the app out of the Dock and the app switcher: it lives in the menubar.
+// NSAppleEventsUsageDescription is the text of the one-time prompt that lets the app control Chrome (see internal/browsertab).
 func infoPlist(b bundleInfo) []byte {
 	var out bytes.Buffer
 	str := func(k, v string) {
@@ -131,6 +132,7 @@ func infoPlist(b bundleInfo) []byte {
 	str("HAL9001Version", b.FullVersion)
 	str("LSMinimumSystemVersion", "13.0")
 	out.WriteString("\t<key>LSUIElement</key><true/>\n\t<key>NSHighResolutionCapable</key><true/>\n")
+	str("NSAppleEventsUsageDescription", "HAL9001 reuses an open hal9001 tab in Google Chrome when you open a notification, instead of opening a new tab.")
 	if b.DevHome != "" {
 		str("HAL9001DevHome", b.DevHome)
 	}

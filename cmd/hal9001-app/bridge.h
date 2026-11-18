@@ -9,6 +9,8 @@
 char *hal_bundle_identifier(void);
 // A string (or number) value of the main bundle's Info.plist, as a string; NULL when the key is absent.
 char *hal_info_string(const char *key);
+// 1 when an app with this bundle identifier is running. Does not launch it and needs no permission.
+int hal_app_running(const char *bundle_id);
 
 // ---- SMAppService ----
 // kind 0 is the LaunchAgent named by plist (a file in Contents/Library/LaunchAgents of the bundle), kind 1 the app

@@ -11,6 +11,7 @@ import (
 
 	"fyne.io/systray"
 
+	"hal9001/internal/browsertab"
 	"hal9001/internal/menubar"
 	"hal9001/internal/service"
 )
@@ -19,6 +20,7 @@ type app struct {
 	profile   service.Profile
 	client    *menubar.Client
 	ui        string
+	opener    browsertab.Opener // opens UI links, reusing an open hal9001 tab in Chrome
 	userHome  string
 	exe       string // this executable: <bundle>/Contents/MacOS/HAL9001 when bundled
 	launchctl service.Launchctl
@@ -255,7 +257,7 @@ func (a *app) add(parent *systray.MenuItem, e menubar.Entry) {
 					case menubar.Action:
 						a.runAction(e.ID)
 					default:
-						if err := openURL(e.URL); err != nil {
+						if err := a.opener.Open(e.URL); err != nil {
 							slog.Error("open failed", "url", e.URL, "err", err)
 						}
 					}

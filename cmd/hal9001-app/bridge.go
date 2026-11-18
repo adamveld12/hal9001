@@ -44,6 +44,13 @@ func infoString(key string) string {
 	return goString(C.hal_info_string(k))
 }
 
+// appRunning reports whether an app with this bundle identifier runs. It never launches it.
+func appRunning(bundleID string) bool {
+	id, free := cString(bundleID)
+	defer free()
+	return C.hal_app_running(id) != 0
+}
+
 // smKind selects what an SMAppService call acts on.
 type smKind int
 
