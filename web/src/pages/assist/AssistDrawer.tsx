@@ -247,7 +247,7 @@ export function AssistDrawer() {
         aria-label="AI assistant"
         style={{ "--assist-w": `${width}px` } as React.CSSProperties}
         className={cx(
-          "assist-drawer flex flex-col border-l border-line bg-bg",
+          "assist-drawer flex min-h-0 flex-col border-l border-line bg-bg",
           "fixed inset-y-0 right-0 z-30 w-full max-w-md shadow-xl",
           "lg:relative lg:z-auto lg:w-[var(--assist-w)] lg:max-w-none lg:shrink-0 lg:shadow-none",
         )}
