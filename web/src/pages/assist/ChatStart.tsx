@@ -6,6 +6,7 @@ import {
 } from "../../api/assist";
 import { useRuntimes } from "../../api/settings";
 import { Composer } from "./Composer";
+import { carryDraft } from "./composerDraft";
 import { Header, RuntimeControls, StarterPrompts } from "./ChatParts";
 import { useAssist } from "./context";
 import type { DrawerTarget } from "./drawerState";
@@ -45,7 +46,7 @@ export function ChatStart({
       ? remembered
       : (names[0] ?? ""));
 
-  const start = async (text: string) => {
+  const start = async (text: string, draft: () => string) => {
     saveRuntime(runtime);
     const yaml = await assist.editor()?.getText();
     await startSession({
@@ -59,7 +60,12 @@ export function ChatStart({
       send: (id) =>
         send.mutateAsync({ id, text, page_context: assist.pageContext() }),
       end: (id) => end.mutateAsync(id),
-      bind: onStarted,
+      bind: (id) => {
+        // This message box goes away; what was typed while the first message
+        // was on its way goes into the next one.
+        carryDraft(draft());
+        onStarted(id);
+      },
     });
   };
 
