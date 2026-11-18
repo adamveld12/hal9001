@@ -44,7 +44,7 @@ func TestUnifiedChatForkHoldsTheSandboxWhileTheUserTypes(t *testing.T) {
 		t.Fatal("the sandbox was removed while the fork waited for its first message")
 	}
 	_, tr := e.ucTurn(fork.ID, "read the file")
-	wantContains(t, "first turn", tr, "mcp[c1] is_error=false "+ucReportText)
+	wantContains(t, "first turn", tr, "mcp[c1] is_error=false", "|"+ucReportText)
 	if n := ucNotices(d.conversationMessages(fork.ID)); len(n) != 0 {
 		t.Errorf("notices: %q", n)
 	}
@@ -77,9 +77,9 @@ func TestUnifiedChatSecondForkGetsItsOwnSandbox(t *testing.T) {
 		t.Errorf("workspaces = %v, want one per chat", got)
 	}
 	_, tr := e.ucTurn(first.ID, "read the file")
-	wantContains(t, "first fork", tr, "mcp[c1] is_error=false "+ucReportText)
+	wantContains(t, "first fork", tr, "mcp[c1] is_error=false", "|"+ucReportText)
 	_, tr = e.ucTurn(second.ID, "read notes")
-	wantContains(t, "second fork", tr, "mcp[c1] is_error=false chat notes", "mcp[c2] is_error=true")
+	wantContains(t, "second fork", tr, "mcp[c1] is_error=false", "|chat notes", "mcp[c2] is_error=true")
 }
 
 // Stopping the daemon removes every held sandbox (of runs and of chats) and every agent process; the forks are still
@@ -269,7 +269,7 @@ func TestUnifiedChatPersistentSandboxKeepsFiles(t *testing.T) {
 		t.Errorf("notices = %q", n)
 	}
 	_, tr := e.ucTurn(fork.ID, "read the file")
-	wantContains(t, "turn", tr, "mcp[c1] is_error=false "+ucReportText)
+	wantContains(t, "turn", tr, "mcp[c1] is_error=false", "|"+ucReportText)
 }
 
 // Suspending the idle agent process does not end the chat's sandbox: the next message resumes the agent session in the
@@ -281,7 +281,7 @@ func TestUnifiedChatSuspendedAgentKeepsTheSandbox(t *testing.T) {
 	e.ucTurn(fork.ID, "write notes")
 	d.Eventually("the idle agent process to be suspended", func() bool { return len(d.agentProcesses()) == 0 })
 	_, tr := e.ucTurn(fork.ID, "read notes")
-	wantContains(t, "turn after the suspension", tr, "mcp[c1] is_error=false chat notes", "mcp[c2] is_error=false "+ucReportText)
+	wantContains(t, "turn after the suspension", tr, "mcp[c1] is_error=false", "|chat notes", "mcp[c2] is_error=false", "|"+ucReportText)
 	if n := ucNotices(d.conversationMessages(fork.ID)); len(n) != 0 {
 		t.Errorf("notices after a suspension: %q", n)
 	}

@@ -387,12 +387,24 @@ for sessions that were left open.
 ## Tools and permissions
 
 The agent has **no file or shell access** (see [acp-lockdown.md](acp-lockdown.md)). It reads and changes the draft only
-through hal's MCP tools, and each turn starts with the hal context block (session and run ids, time, tool summary):
+through hal's MCP tools, and each turn starts with the hal context block (session and run ids, time, tool summary).
+
+### Editing with line anchors
+
+`draft_read` returns a file as lines tagged with an anchor (`12:7fa3`) plus the file's revision `hash`; it takes `start` and `end` for a range. `draft_write` and the REST `PATCH /api/assist/sessions/{id}/draft` change a file with the same request: `{path?, expected_hash, content | edits}`.
+
+- `edits` is a batch of `replace`, `delete`, `insert_before` and `insert_after` operations. They name lines by anchor (`start`, and `end` for a range) and all refer to the file as it was read. A wrong or stale anchor, an overlap or a malformed request changes nothing.
+- `content` replaces or creates the whole file. Both modes need `expected_hash`: the current revision, or an empty string to create a new file (never to overwrite one).
+- A stale `expected_hash` is a conflict (409 `conflict`, with `current_hash`; `null` when the file is missing): read again and repeat. Each file has its own revision, so editing a prompt or a draft sensor never changes the flow draft's `hash`.
+- Unedited lines keep their bytes, line endings and final newline. Files with mixed LF/CRLF endings accept whole-file `content` only.
+- The result is compact: the new `hash`, the diagnostics and the changed lines with fresh anchors, not the whole file.
+- The editor's `PUT` still replaces the draft with plain YAML (guarded by `expected_hash`); the CLI has `assist draft-read` and `assist draft-edit`.
+- Sandbox runs use the same contract: `fs_read` returns anchored lines and a revision, `fs_write` takes the request above with a required `path`, and `fs_search` hits carry anchors. Lines that hold a secret value are read-only, and the approval card shows the real diff.
 
 | Tool | What it does | Approval |
 |---|---|---|
-| `draft_read` | The draft with its validation diagnostics. `path` also reads `instructions` (the authoring guide), `prompts/<name>.md` and, in flow sessions, `sensors/<id>.yaml` (the draft sensor, else the saved one; `sensors` lists the drafts) and `reference/<file>` (read-only; a directory lists its entries). | never |
-| `draft_write` | Replaces the draft, or in flow sessions a draft prompt `prompts/<name>.md` or draft sensor `sensors/<id>.yaml`; returns the diagnostics. | never |
+| `draft_read` | The draft as anchored lines with its revision and validation diagnostics (`start`/`end` select a range). `path` also reads `instructions` (the authoring guide), `prompts/<name>.md` and, in flow sessions, `sensors/<id>.yaml` (the draft sensor, else the saved one; `sensors` lists the drafts) and `reference/<file>` (read-only; a directory lists its entries). | never |
+| `draft_write` | Edits the draft with line-anchored `edits` or replaces it with `content` ([above](#editing-with-line-anchors)); in flow sessions also a draft prompt `prompts/<name>.md` or draft sensor `sensors/<id>.yaml`. Returns the new revision and the diagnostics. | never |
 | `validate` | The draft's diagnostics. | never |
 | `draft_test` (`sample`, `event`, `sensor`, `from_sensor` + `item` for flows) | Runs the draft like a poll or one flow run with your credentials; redacted result. A sensor that declares `mcp_servers` gets a run token for them, so `hal9001 mcp call` works inside the test ([mcp-servers.md](mcp-servers.md#sensors)). | **When the script changed** since you last tested or approved it (or since the saved sensor's script): a `tool_call` approval whose chat message carries what runs, which credentials it mentions, the MCP servers the sensor declares and the tools its script calls, and a diff against the last approved version. Allow records that script as approved; unchanged scripts run without asking. |
 | `gh_api`, `pr_view`, `now`, ... | hal's always-available tools. | as for flow agents |
