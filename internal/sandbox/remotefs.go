@@ -44,6 +44,8 @@ type remoteSession struct {
 	b64Read bool
 	closeFn func(ctx context.Context, success bool) error
 	info    SessionInfo
+	// locks orders the file replacements (WriteFile and EditFile) of the session by path.
+	locks pathLocks
 }
 
 func (s *remoteSession) Workdir() string { return s.workdir }
@@ -86,6 +88,8 @@ const (
 	exitNotFound  = 92
 	exitTooLarge  = 93
 	exitIsDir     = 94
+	exitDenied    = 95
+	exitChanged   = 96
 )
 
 // guard is the common prefix of the file scripts: it sets Wp (physical workdir) and T (target) and exits
@@ -132,6 +136,8 @@ func fileErr(res rawResult, p string) error {
 		return ErrTooLarge
 	case exitIsDir:
 		return fmt.Errorf("%s is a directory", p)
+	case exitDenied:
+		return fmt.Errorf("%s: %w", p, fs.ErrPermission)
 	case exitNoWorkdir:
 		return errors.New("sandbox workdir is missing")
 	}
@@ -171,6 +177,16 @@ func (s *remoteSession) ReadFile(ctx context.Context, p string) ([]byte, error) 
 	return res.Stdout, nil
 }
 
+// ReadFileRaw is ReadFile for trusted code. This session has no secrets of its own to hide, so Redact keeps the text
+// as it is; the redacting wrapper of every session New returns supplies the real one.
+func (s *remoteSession) ReadFileRaw(ctx context.Context, p string) (RawFile, error) {
+	data, err := s.ReadFile(ctx, p)
+	if err != nil {
+		return RawFile{}, err
+	}
+	return RawFile{Data: data, Exists: true, Redact: plainText}, nil
+}
+
 // maxInlineWrite bounds a write that has to travel inside the script.
 const maxInlineWrite = 1 << 20
 
@@ -185,6 +201,11 @@ func (s *remoteSession) WriteFile(ctx context.Context, p string, data []byte) er
 	if rel == "." {
 		return fmt.Errorf("%s is a directory", p)
 	}
+	unlock, err := s.locks.lock(ctx, rel)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	// Create the missing directories first, then re-run the guard with the real location.
 	mk := s.guard(rel) + fmt.Sprintf(`[ -d "$T" ] && exit %d
 mkdir -p -- "$(dirname -- "$T")"
@@ -211,6 +232,141 @@ mkdir -p -- "$(dirname -- "$T")"
 		return err
 	}
 	return fileErr(res, p)
+}
+
+// editAttempts is how often EditFile reads a file again after it changed under a replacement.
+const editAttempts = 3
+
+// EditFile replaces p with what edit makes of its content. edit runs here, not in the sandbox, so this takes two scripts:
+// one reads the file together with a checksum, the other replaces it through a temporary file in the same directory and
+// a rename, but only while the file still has the checksum. A file that changed in between is read again and edit called
+// again. Calls of this session on one path are serialized.
+//
+// The checksum shortens the time in which a command the agent runs with Exec can change the file unnoticed to the time
+// between the check and the rename. It does not close it: this is no transaction against arbitrary processes in the
+// sandbox. The scripts confine the path like every file script of this session (guard).
+func (s *remoteSession) EditFile(ctx context.Context, p string, edit EditFunc) error {
+	rel, err := s.rel(p)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return fmt.Errorf("%s is a directory", p)
+	}
+	unlock, err := s.locks.lock(ctx, rel)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	for range editAttempts {
+		data, token, exists, err := s.readForEdit(ctx, rel, p)
+		if err != nil {
+			return err
+		}
+		updated, err := edit(RawFile{Data: data, Exists: exists, Redact: plainText})
+		if errors.Is(err, ErrNoChange) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if len(updated) > MaxFileSize {
+			return ErrTooLarge
+		}
+		changed, err := s.replaceFile(ctx, rel, p, token, updated)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s keeps changing while it is edited; try again", p)
+}
+
+// readForEdit reads the file EditFile is about to replace, with the checksum the replacement is conditional on: the
+// output of cksum, "nocksum" where there is none, "missing" for a file that does not exist.
+func (s *remoteSession) readForEdit(ctx context.Context, rel, p string) (data []byte, token string, exists bool, err error) {
+	read, limit := `cat "$T"`, MaxFileSize+256
+	if s.b64Read {
+		// base64 wraps its lines.
+		read, limit = `base64 < "$T"`, MaxFileSize*4/3+MaxFileSize/50+1024
+	}
+	script := s.guard(rel) + fmt.Sprintf(`[ -d "$T" ] && exit %d
+if [ ! -e "$T" ]; then echo missing; exit 0; fi
+[ "$(wc -c < "$T")" -gt %d ] && exit %d
+cksum < "$T" 2>/dev/null || echo nocksum
+%s
+`, exitIsDir, MaxFileSize, exitTooLarge, read)
+	res, err := s.script(ctx, script, nil, limit)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if err := fileErr(res, p); err != nil {
+		return nil, "", false, err
+	}
+	if res.Truncated {
+		return nil, "", false, ErrTooLarge
+	}
+	line, body, ok := bytes.Cut(res.Stdout, []byte{'\n'})
+	if !ok {
+		return nil, "", false, fmt.Errorf("%s: unexpected answer from the sandbox", p)
+	}
+	token = string(line)
+	if token == "missing" {
+		return nil, token, false, nil
+	}
+	if s.b64Read {
+		dec, derr := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(string(body)), ""))
+		if derr != nil {
+			return nil, "", false, fmt.Errorf("%s: %w", p, derr)
+		}
+		body = dec
+	}
+	return body, token, true, nil
+}
+
+// replaceFile writes data in the place of the file, through a temporary file in the same directory and a rename, if the
+// file still has the checksum token. It reports true, and writes nothing, when the file has changed.
+func (s *remoteSession) replaceFile(ctx context.Context, rel, p, token string, data []byte) (changed bool, err error) {
+	var write string
+	var stdin []byte
+	if s.noStdin {
+		if len(data) > maxInlineWrite {
+			return false, fmt.Errorf("this sandbox backend writes files of at most %d bytes", maxInlineWrite)
+		}
+		write = "base64 -d > \"$tmp\" <<'HAL_B64_EOF'\n" + wrap76(base64.StdEncoding.EncodeToString(data)) + "HAL_B64_EOF\n"
+	} else {
+		write = "cat > \"$tmp\"\n"
+		stdin = data
+		if stdin == nil {
+			stdin = []byte{}
+		}
+	}
+	// As in WriteFile: guard, create the missing directories, guard again with the real location. The file keeps its
+	// mode and owner (cp -p of the old file); a new one gets 640. An existing file that is not writable is refused, as
+	// a write in place would be.
+	script := s.guard(rel) + fmt.Sprintf(`[ -d "$T" ] && exit %d
+mkdir -p -- "$(dirname -- "$T")"
+`, exitIsDir) + s.guard(rel) + fmt.Sprintf(`cur=missing
+if [ -e "$T" ]; then cur=$(cksum < "$T" 2>/dev/null) || cur=nocksum; fi
+[ "$cur" = %s ] || exit %d
+[ ! -e "$T" ] || [ -w "$T" ] || exit %d
+D=$(dirname -- "$T")
+tmp=$(mktemp "$D/.hal-edit-XXXXXX") || exit 1
+trap 'rm -f -- "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+if [ -e "$T" ]; then cp -p -- "$T" "$tmp" || exit 1; else chmod 640 "$tmp" || exit 1; fi
+%smv -f -- "$tmp" "$T" || exit 1
+`, shQuote(token), exitChanged, exitDenied, write)
+	res, err := s.script(ctx, script, stdin, 1024)
+	if err != nil {
+		return false, err
+	}
+	if res.ExitCode == exitChanged {
+		return true, nil
+	}
+	return false, fileErr(res, p)
 }
 
 func wrap76(s string) string {

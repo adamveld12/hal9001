@@ -60,9 +60,17 @@ type Session interface {
 	// Exec runs cmd with `sh -c` in the workdir with the run's env. A non-zero exit is not an error; a
 	// timeout sets TimedOut. A zero timeout means the backend default.
 	Exec(ctx context.Context, cmd string, stdin []byte, timeout time.Duration) (ExecResult, error)
+	// ReadFile returns the content of a file with secret values replaced by Redacted.
 	ReadFile(ctx context.Context, path string) ([]byte, error)
+	// ReadFileRaw is ReadFile for trusted code (a view of a file for line edits): the bytes are as stored, secret values
+	// included. RawFile.Redact hides them again; whatever of the content reaches an agent, a log or an error must go
+	// through it.
+	ReadFileRaw(ctx context.Context, path string) (RawFile, error)
 	// WriteFile creates parent directories and replaces the file.
 	WriteFile(ctx context.Context, path string, data []byte) error
+	// EditFile replaces a file, creating parent directories, with what edit makes of its current content. The file is
+	// replaced whole through a temporary file in its directory, so a reader sees the old file or the new one. See EditFunc.
+	EditFile(ctx context.Context, path string, edit EditFunc) error
 	// List returns the entries of a directory ("" or "." is the workdir), sorted by name.
 	List(ctx context.Context, path string) ([]Entry, error)
 	// Search greps files under path for a regular expression (RE2 on local, extended regex elsewhere).
@@ -88,7 +96,7 @@ type Sweeper interface {
 // Limits.
 const (
 	MaxOutput      = 1 << 20  // bytes kept per output stream of Exec
-	MaxFileSize    = 10 << 20 // largest file ReadFile returns or WriteFile accepts
+	MaxFileSize    = 10 << 20 // largest file ReadFile returns or WriteFile and EditFile accept
 	MaxMatches     = 200
 	MaxListed      = 1000
 	DefaultTimeout = 10 * time.Minute
@@ -125,10 +133,15 @@ const minSecretLen = 4
 const Redacted = "«redacted»"
 
 // redactor replaces secret values in text.
-type redactor struct{ r *strings.Replacer }
+type redactor struct {
+	r *strings.Replacer
+	// lines is r for views that number the lines of a text: a secret that spans lines is replaced by Redacted and as
+	// many line breaks as it holds, so line n of the result is still line n of the text.
+	lines *strings.Replacer
+}
 
 func newRedactor(secrets []string) redactor {
-	var pairs []string
+	var pairs, linePairs []string
 	seen := map[string]bool{}
 	for _, s := range secrets {
 		if len(s) < minSecretLen || seen[s] {
@@ -136,11 +149,12 @@ func newRedactor(secrets []string) redactor {
 		}
 		seen[s] = true
 		pairs = append(pairs, s, Redacted)
+		linePairs = append(linePairs, s, Redacted+strings.Repeat("\n", strings.Count(s, "\n")))
 	}
 	if len(pairs) == 0 {
 		return redactor{}
 	}
-	return redactor{strings.NewReplacer(pairs...)}
+	return redactor{r: strings.NewReplacer(pairs...), lines: strings.NewReplacer(linePairs...)}
 }
 
 func (r redactor) str(s string) string {
@@ -155,6 +169,14 @@ func (r redactor) bytes(b []byte) []byte {
 		return b
 	}
 	return []byte(r.r.Replace(string(b)))
+}
+
+// keepLines is str for a text whose lines are numbered (RawFile.Redact).
+func (r redactor) keepLines(s string) string {
+	if r.lines == nil {
+		return s
+	}
+	return r.lines.Replace(s)
 }
 
 // redactBackend wraps b so that everything its sessions return has secrets removed.
@@ -218,8 +240,24 @@ func (s redactSession) ReadFile(ctx context.Context, path string) ([]byte, error
 	return s.red.bytes(b), s.err(err)
 }
 
+// ReadFileRaw hands out the stored bytes: they are for trusted code, which redacts what it shows with RawFile.Redact.
+func (s redactSession) ReadFileRaw(ctx context.Context, path string) (RawFile, error) {
+	f, err := s.Session.ReadFileRaw(ctx, path)
+	f.Redact = s.red.keepLines
+	return f, s.err(err)
+}
+
 func (s redactSession) WriteFile(ctx context.Context, path string, data []byte) error {
 	return s.err(s.Session.WriteFile(ctx, path, data))
+}
+
+// EditFile gives edit the stored bytes, not redacted ones: what it returns is written, so a redacted copy would
+// replace the secret values in the file by Redacted. Only an error is redacted, as it reaches the agent.
+func (s redactSession) EditFile(ctx context.Context, path string, edit EditFunc) error {
+	return s.err(s.Session.EditFile(ctx, path, func(old RawFile) ([]byte, error) {
+		old.Redact = s.red.keepLines
+		return edit(old)
+	}))
 }
 
 func (s redactSession) List(ctx context.Context, path string) ([]Entry, error) {

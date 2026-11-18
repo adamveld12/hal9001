@@ -56,6 +56,16 @@
 // and execute phases of an approve node share it: opening the second closes the session still held from the first.
 // (Depot stops its per_run sandbox when a phase ends, so only its workdir name is shared.)
 //
+// The file tools work on hashline views (internal/hashline). fs_read shows a text file as lines tagged with anchors
+// and the revision (hash) of the file, in ranges of at most 256 KiB; fs_search anchors the lines it finds; fs_write takes
+// the shared hashline request (expected_hash, then whole content or edits that name anchors) and path, and replaces the
+// file atomically through sandbox.Session.EditFile, which checks the revision against the file as it is then. For an
+// approval, fs_write's policy applies the request to the stored content and shows the diff of the real result; a call
+// that cannot be applied (stale revision, bad anchor) fails before the user is asked, and a file that changed while the
+// approval was pending is not written. Anchors and revisions come from the stored bytes, the lines shown have the
+// sandbox's secret values replaced (sandbox.RawFile.Redact), and no edit may replace or delete a line that holds one;
+// the secret bytes of the other lines are written back unchanged.
+//
 // A RunSpec with Conversation set (a chat continued from an agent run) gets a lease instead (sandbox_lease.go): a
 // sandbox.Session that takes over the run's held sandbox on the first Extension.BeforeTurn, is held for keep_alive
 // after every turn (Extension.AfterTurn), and is recreated from the same image, repo and ref, with a notice, when it

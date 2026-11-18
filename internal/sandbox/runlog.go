@@ -108,6 +108,9 @@ type CallInfo struct {
 	Command string
 	// Hidden keeps the operation out of the log (hal's own helper files).
 	Hidden bool
+	// Detail says in a few words what the call did to a file (fs_write: "2 edits", "whole file"); the log adds it to
+	// the title of the entry.
+	Detail string
 }
 
 type callKey struct{}
@@ -292,7 +295,9 @@ func (s *loggedSession) Exec(ctx context.Context, cmd string, stdin []byte, time
 	return res, err
 }
 
-func (s *loggedSession) fsEntry(ctx context.Context, tool, title, path string, start time.Time, n int64, err error) {
+// fsEntry logs a file operation. soft marks an error that the caller expects, a refused edit: it is a warning, not an
+// error.
+func (s *loggedSession) fsEntry(ctx context.Context, tool, title, path string, start time.Time, n int64, err error, soft bool) {
 	ci := CallFrom(ctx)
 	if ci.Hidden {
 		return
@@ -303,7 +308,7 @@ func (s *loggedSession) fsEntry(ctx context.Context, tool, title, path string, s
 	e := LogEntry{Kind: KindFS, Tool: tool, Approval: ci.Approval, Title: title, Path: path, Duration: time.Since(start)}
 	if err != nil {
 		e.Level, e.Error = LevelWarn, err.Error()
-		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrEscape) && !errors.Is(err, ErrTooLarge) {
+		if !soft && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrEscape) && !errors.Is(err, ErrTooLarge) {
 			e.Level = LevelError
 		}
 	} else {
@@ -315,14 +320,50 @@ func (s *loggedSession) fsEntry(ctx context.Context, tool, title, path string, s
 func (s *loggedSession) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	start := time.Now()
 	b, err := s.Session.ReadFile(ctx, path)
-	s.fsEntry(ctx, "fs_read", "read "+path, path, start, int64(len(b)), err)
+	s.fsEntry(ctx, "fs_read", "read "+path, path, start, int64(len(b)), err, false)
 	return b, err
+}
+
+func (s *loggedSession) ReadFileRaw(ctx context.Context, path string) (RawFile, error) {
+	start := time.Now()
+	f, err := s.Session.ReadFileRaw(ctx, path)
+	s.fsEntry(ctx, "fs_read", "read "+path, path, start, int64(len(f.Data)), err, false)
+	return f, err
 }
 
 func (s *loggedSession) WriteFile(ctx context.Context, path string, data []byte) error {
 	start := time.Now()
 	err := s.Session.WriteFile(ctx, path, data)
-	s.fsEntry(ctx, "fs_write", fmt.Sprintf("write %s (%d bytes)", path, len(data)), path, start, int64(len(data)), err)
+	s.fsEntry(ctx, "fs_write", fmt.Sprintf("write %s (%d bytes)", path, len(data)), path, start, int64(len(data)), err, false)
+	return err
+}
+
+// EditFile logs the edit with the size of the new file and CallInfo.Detail. An edit that edit refused is a warning; the
+// entry holds the error message and never the content.
+func (s *loggedSession) EditFile(ctx context.Context, path string, edit EditFunc) error {
+	start := time.Now()
+	var size int64
+	var wrote, refused bool
+	err := s.Session.EditFile(ctx, path, func(old RawFile) ([]byte, error) {
+		out, err := edit(old)
+		wrote, refused = err == nil, err != nil && !errors.Is(err, ErrNoChange)
+		size = int64(len(out))
+		return out, err
+	})
+	title := "write " + path
+	switch {
+	case err != nil:
+		title += " (not written)"
+	case !wrote:
+		title += " (no changes)"
+	default:
+		title += fmt.Sprintf(" (%d bytes", size)
+		if d := CallFrom(ctx).Detail; d != "" {
+			title += ", " + d
+		}
+		title += ")"
+	}
+	s.fsEntry(ctx, "fs_write", title, path, start, size, err, refused)
 	return err
 }
 
@@ -332,7 +373,7 @@ func (s *loggedSession) List(ctx context.Context, path string) ([]Entry, error) 
 	if path == "" {
 		path = "."
 	}
-	s.fsEntry(ctx, "fs_list", "list "+path, path, start, int64(len(ents)), err)
+	s.fsEntry(ctx, "fs_list", "list "+path, path, start, int64(len(ents)), err, false)
 	return ents, err
 }
 
@@ -342,7 +383,7 @@ func (s *loggedSession) Search(ctx context.Context, path, pattern string) ([]Mat
 	if path == "" {
 		path = "."
 	}
-	s.fsEntry(ctx, "fs_search", fmt.Sprintf("search %s in %s", oneLine(pattern), path), path, start, int64(len(hits)), err)
+	s.fsEntry(ctx, "fs_search", fmt.Sprintf("search %s in %s", oneLine(pattern), path), path, start, int64(len(hits)), err, false)
 	return hits, err
 }
 

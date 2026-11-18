@@ -14,6 +14,7 @@
 //	res, err := sess.Exec(ctx, "go test ./...", nil, 0)  // res.Stdout, res.Stderr, res.ExitCode, res.TimedOut
 //	data, err := sess.ReadFile(ctx, "main.go")
 //	err = sess.WriteFile(ctx, "out/report.md", data)
+//	err = sess.EditFile(ctx, "out/report.md", func(old sandbox.RawFile) ([]byte, error) { ... }) // see EditFunc
 //	ents, err := sess.List(ctx, ".")
 //	hits, err := sess.Search(ctx, ".", `TODO\(`)
 //	err = sess.Close(ctx, success)                       // per_run + success removes the workspace
@@ -34,6 +35,16 @@
 //     credentials (DEPOT_TOKEN, SSH_PASSWORD, SSH_PRIVATE_KEY, ...) are not passed to commands.
 //   - Everything returned by a Session (output, file contents, search hits, errors) has secret values
 //     replaced by Redacted. Values shorter than 4 bytes are not redacted. Encoded exfiltration is not caught.
+//     The exception is the trusted pair ReadFileRaw and EditFile: their callers get the bytes as stored, because
+//     what an edit returns is written back (a redacted copy would overwrite the secret values in the file with
+//     Redacted). RawFile.Redact hides the secret values again, line for line, in whatever the caller shows to an agent;
+//     the errors EditFile returns are redacted.
+//   - EditFile replaces a file with what an EditFunc makes of its current content: the content is read, the function
+//     runs on it and the result replaces the file through a temporary file in the same directory and a rename, with
+//     the same path confinement, symlink refusal and size limit as the other file operations. The calls of hal on one
+//     path are serialized. It is no transaction against other processes in the sandbox: a command started with Exec can
+//     change the file after it was read. The remote backends check a checksum before the rename and read again when the
+//     file changed; the local backend does not.
 //   - Close(ctx, false) keeps a failed per_run workspace for debugging; backends implement Sweeper to remove
 //     it after the retention period (call Sweep(ctx, maxAge) on the Backend returned by New).
 //
@@ -74,5 +85,5 @@
 //     pinned. Root with runs/<run-id>.
 //
 // docker, kubernetes, depot and ssh run files operations as POSIX shell scripts, so the image needs sh,
-// grep, base64 (depot), wc and dirname.
+// grep, base64 (depot), wc, dirname, and for EditFile cksum, mktemp, cp and mv.
 package sandbox

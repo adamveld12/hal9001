@@ -3,6 +3,8 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -154,7 +156,17 @@ func (s *localSession) ReadFile(_ context.Context, p string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, MaxFileSize+1))
 }
 
-func (s *localSession) WriteFile(_ context.Context, p string, data []byte) error {
+// ReadFileRaw is ReadFile for trusted code. This session has no secrets of its own to hide, so Redact keeps the text
+// as it is; the redacting wrapper of every session New returns supplies the real one.
+func (s *localSession) ReadFileRaw(ctx context.Context, p string) (RawFile, error) {
+	data, err := s.ReadFile(ctx, p)
+	if err != nil {
+		return RawFile{}, err
+	}
+	return RawFile{Data: data, Exists: true, Redact: plainText}, nil
+}
+
+func (s *localSession) WriteFile(ctx context.Context, p string, data []byte) error {
 	if len(data) > MaxFileSize {
 		return ErrTooLarge
 	}
@@ -165,12 +177,130 @@ func (s *localSession) WriteFile(_ context.Context, p string, data []byte) error
 	if r == "." {
 		return fmt.Errorf("%s is a directory", p)
 	}
+	unlock, err := localLocks.lock(ctx, filepath.Join(s.dir, filepath.FromSlash(r)))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if dir := path.Dir(r); dir != "." {
 		if err := s.root.MkdirAll(dir, 0o750); err != nil {
 			return mapRootErr(err)
 		}
 	}
 	return mapRootErr(s.root.WriteFile(r, data, 0o640))
+}
+
+// localLocks orders the file replacements (WriteFile and EditFile) of every local session by physical path: the workdir
+// of a persistent sandbox is shared by all its runs.
+var localLocks pathLocks
+
+// EditFile replaces p with what edit makes of its content. The calls of hal on one file are serialized. The new content
+// is written to a temporary file next to p and renamed over it, so a reader sees the old file or the new one. The file
+// keeps its mode (a new one gets 0640). A symbolic link is refused, and so is a file without write permission, as
+// WriteFile refuses it. The read and the rename are not one step against other processes: a command the agent runs with
+// Exec that changes the file in between is not noticed, and its change is lost.
+func (s *localSession) EditFile(ctx context.Context, p string, edit EditFunc) error {
+	r, err := s.rel(p)
+	if err != nil {
+		return err
+	}
+	if r == "." {
+		return fmt.Errorf("%s is a directory", p)
+	}
+	unlock, err := localLocks.lock(ctx, filepath.Join(s.dir, filepath.FromSlash(r)))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	data, perm, exists, err := s.readForEdit(r, p)
+	if err != nil {
+		return err
+	}
+	updated, err := edit(RawFile{Data: data, Exists: exists, Redact: plainText})
+	if errors.Is(err, ErrNoChange) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(updated) > MaxFileSize {
+		return ErrTooLarge
+	}
+	return s.replace(r, updated, perm, exists)
+}
+
+// readForEdit reads the file EditFile is about to replace: its content and mode, and whether it exists.
+func (s *localSession) readForEdit(r, p string) (data []byte, perm fs.FileMode, exists bool, err error) {
+	if st, lerr := s.root.Lstat(r); lerr == nil && st.Mode()&fs.ModeSymlink != 0 {
+		return nil, 0, false, symlinkError{p}
+	}
+	f, err := s.root.Open(r)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, mapRootErr(err)
+	}
+	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	switch {
+	case st.IsDir():
+		return nil, 0, false, fmt.Errorf("%s is a directory", p)
+	case st.Size() > MaxFileSize:
+		return nil, 0, false, ErrTooLarge
+	case st.Mode().Perm()&0o200 == 0:
+		return nil, 0, false, fmt.Errorf("%s: %w", p, fs.ErrPermission)
+	}
+	data, err = io.ReadAll(io.LimitReader(f, MaxFileSize+1))
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if len(data) > MaxFileSize {
+		return nil, 0, false, ErrTooLarge
+	}
+	return data, st.Mode().Perm(), true, nil
+}
+
+// replace puts data in the place of the file r through a temporary file in the same directory. A file that already
+// existed keeps its mode.
+func (s *localSession) replace(r string, data []byte, perm fs.FileMode, exists bool) (err error) {
+	dir := path.Dir(r)
+	if dir != "." {
+		if err := s.root.MkdirAll(dir, 0o750); err != nil {
+			return mapRootErr(err)
+		}
+	}
+	if !exists {
+		perm = 0o640
+	}
+	var raw [6]byte
+	_, _ = rand.Read(raw[:])
+	tmp := path.Join(dir, ".hal-edit-"+hex.EncodeToString(raw[:]))
+	f, err := s.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return mapRootErr(err)
+	}
+	defer func() {
+		if err != nil {
+			_ = s.root.Remove(tmp)
+		}
+	}()
+	_, err = f.Write(data)
+	if err == nil {
+		// The mode given at creation went through the umask; a failure here leaves a file that is no wider than perm.
+		_ = f.Chmod(perm)
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return mapRootErr(s.root.Rename(tmp, r))
 }
 
 func (s *localSession) List(_ context.Context, p string) ([]Entry, error) {
