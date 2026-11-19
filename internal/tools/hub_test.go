@@ -322,3 +322,87 @@ func TestWaitReadyReturnsWhenTheAgentConnectsOrTimesOut(t *testing.T) {
 		t.Fatal("a cancelled wait reported ready")
 	}
 }
+
+func readOnlySession(t *testing.T, h *Hub) *Session {
+	t.Helper()
+	s, err := h.Open(context.Background(), RunSpec{RunID: "r", ReadOnly: true, Info: func() RunInfo { return RunInfo{AgentRunID: "r"} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return s
+}
+
+func TestGHAPIReadOnlyRunReadsComparePaths(t *testing.T) {
+	for _, path := range []string{
+		"/repos/o/r/compare/main...feature",
+		"repos/o/r/compare/v1.0.0...v1.1.0",
+		"/repos/o/r/compare/main...user:feature",
+		"/repos/o/r/compare/main...feat/x",
+		"/repos/o/r/compare/main...feat%2Fx",
+		"/repos/o/r/compare/main...feat%23x",
+		"/repos/o/r/compare/main...a!b'c(d)e",
+		"/repos/o/r/compare/main...feature?per_page=1",
+	} {
+		t.Run(path, func(t *testing.T) {
+			dir, log := fakeGH(t)
+			host := &fakeHost{}
+			h, _ := newTestHub(t, host, dir)
+			s := readOnlySession(t, h)
+			args, _ := json.Marshal(map[string]any{"path": path})
+			if _, err := s.Call(context.Background(), "gh_api", args); err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if len(host.approvals) != 0 || !strings.Contains(readFile(log), "-- "+path) {
+				t.Errorf("approvals=%d log=%q", len(host.approvals), readFile(log))
+			}
+		})
+	}
+}
+
+func TestGHAPIHeadReadsWithoutApprovalInReadOnlyRun(t *testing.T) {
+	dir, log := fakeGH(t)
+	host := &fakeHost{}
+	h, _ := newTestHub(t, host, dir)
+	s := readOnlySession(t, h)
+	res, err := s.Call(context.Background(), "gh_api", json.RawMessage(`{"method":"head","path":"/repos/o/r","params":{"per_page":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Text, `"ok":true`) || len(host.approvals) != 0 {
+		t.Errorf("result=%q approvals=%d", res.Text, len(host.approvals))
+	}
+	// gh sends -f params as a body unless the method is GET, so HEAD params go in the query string.
+	if got := strings.TrimSpace(readFile(log)); got != "api -X HEAD --include -- /repos/o/r?per_page=1" {
+		t.Errorf("gh argv = %q", got)
+	}
+}
+
+func TestGHAPIRejectsTraversalAndOtherHosts(t *testing.T) {
+	dir, log := fakeGH(t)
+	h, _ := newTestHub(t, &fakeHost{}, dir)
+	s := readOnlySession(t, h)
+	for _, path := range []string{
+		"../x", "repos/o/r/../../user", "repos/o/r/%2e%2e/x", "repos/o/r/./x", "repos/o/r/compare/main...a#b", "repos/o/r/%2E%2E",
+		"https://evil.test/x", "//evil.test/x", "evil.test:443/x",
+	} {
+		args, _ := json.Marshal(map[string]any{"path": path})
+		if _, err := s.Call(context.Background(), "gh_api", args); err == nil {
+			t.Errorf("%s: want an error", path)
+		}
+	}
+	if readFile(log) != "" {
+		t.Errorf("gh ran: %q", readFile(log))
+	}
+}
+
+func TestReadOnlyRunRefusesPostWithoutAsking(t *testing.T) {
+	dir, log := fakeGH(t)
+	host := &fakeHost{decision: Decision{Allowed: true}}
+	h, _ := newTestHub(t, host, dir)
+	s := readOnlySession(t, h)
+	_, err := s.Call(context.Background(), "gh_api", json.RawMessage(`{"method":"POST","path":"/repos/o/r/issues","params":{"title":"x"}}`))
+	if err == nil || !strings.Contains(err.Error(), "read-only") || len(host.approvals) != 0 || readFile(log) != "" {
+		t.Errorf("err=%v approvals=%d log=%q", err, len(host.approvals), readFile(log))
+	}
+}

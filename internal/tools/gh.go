@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -33,8 +34,10 @@ const (
 )
 
 var (
-	repoRE   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	ghPathRE = regexp.MustCompile(`^/?[A-Za-z0-9][A-Za-z0-9._~\-/%@+,]*$`)
+	repoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	// ghPathRE allows what branch and tag names use in compare paths (":" for cross-fork refs). "#" and "?" stay out: they
+	// would end the path, so a ref containing them must be percent-encoded.
+	ghPathRE = regexp.MustCompile(`^/?[A-Za-z0-9][A-Za-z0-9._~\-/%@+,:!'()]*$`)
 )
 
 func (o GHOptions) bin() string {
@@ -119,12 +122,12 @@ func ghTools(o GHOptions) []Tool {
 	return []Tool{
 		{
 			Name: "gh_api",
-			Description: "Call the GitHub REST API with the user's gh authentication. GET runs immediately; POST, PUT, PATCH and DELETE need the user's approval. " +
-				"path is like /repos/OWNER/REPO/pulls/1. params are query parameters for GET and the JSON body otherwise.",
+			Description: "Call the GitHub REST API with the user's gh authentication. GET and HEAD run immediately (HEAD returns the response headers); POST, PUT, PATCH and DELETE need the user's approval. " +
+				"path is like /repos/OWNER/REPO/pulls/1. params are query parameters for GET and HEAD and the JSON body otherwise.",
 			InputSchema: obj(map[string]any{
-				"method":   map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
+				"method":   map[string]any{"type": "string", "enum": []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}, "default": "GET"},
 				"path":     map[string]any{"type": "string", "description": "API path, e.g. /repos/OWNER/REPO/issues"},
-				"params":   map[string]any{"type": "object", "description": "Query parameters (GET) or JSON body (other methods)"},
+				"params":   map[string]any{"type": "object", "description": "Query parameters (GET, HEAD) or JSON body (other methods)"},
 				"paginate": map[string]any{"type": "boolean", "description": "GET only: fetch every page"},
 			}, "path"),
 			Approval: ghAPIApproval,
@@ -196,17 +199,38 @@ func parseGHAPI(args json.RawMessage) (ghAPIArgs, error) {
 		a.Method = "GET"
 	}
 	switch a.Method {
-	case "GET", "POST", "PUT", "PATCH", "DELETE":
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE":
 	default:
 		return a, fmt.Errorf("method %q is not allowed", a.Method)
 	}
-	if !ghPathRE.MatchString(strings.SplitN(a.Path, "?", 2)[0]) || strings.Contains(a.Path, "..") {
+	if !validGHPath(strings.SplitN(a.Path, "?", 2)[0]) {
 		return a, fmt.Errorf("path %q is not a GitHub API path", a.Path)
 	}
 	return a, nil
 }
 
-// ghAPIApproval: everything but GET needs approval. Unparsable arguments are left to Run to reject.
+// validGHPath accepts a relative API path (no scheme, host or "//") with no "." or ".." segment, also when
+// percent-encoded. ".." inside a segment (compare/main...feature) is fine.
+func validGHPath(path string) bool {
+	if !ghPathRE.MatchString(path) {
+		return false
+	}
+	segs := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if strings.Contains(segs[0], ":") {
+		return false
+	}
+	for _, seg := range segs {
+		dec, err := url.PathUnescape(seg)
+		if err != nil || dec == "." || dec == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isReadMethod(m string) bool { return m == "GET" || m == "HEAD" }
+
+// ghAPIApproval: everything but GET and HEAD needs approval. Unparsable arguments are left to Run to reject.
 func ghAPIApproval(args json.RawMessage) (bool, string) {
 	a, err := parseGHAPI(args)
 	if err != nil {
@@ -215,7 +239,7 @@ func ghAPIApproval(args json.RawMessage) (bool, string) {
 		}
 		return false, ""
 	}
-	if a.Method == "GET" {
+	if isReadMethod(a.Method) {
 		return false, ""
 	}
 	return true, fmt.Sprintf("gh_api %s %s changes GitHub", a.Method, a.Path)
@@ -226,7 +250,7 @@ func writeMethod(args json.RawMessage) string {
 		Method string `json:"method"`
 	}
 	if json.Unmarshal(args, &a) == nil {
-		if m := strings.ToUpper(strings.TrimSpace(a.Method)); m != "" && m != "GET" {
+		if m := strings.ToUpper(strings.TrimSpace(a.Method)); m != "" && !isReadMethod(m) {
 			return m
 		}
 	}
@@ -240,7 +264,23 @@ func (o GHOptions) runGHAPI(ctx context.Context, c Call) (Result, error) {
 	}
 	argv := []string{"api", "-X", a.Method}
 	var stdin []byte
-	if a.Method == "GET" {
+	path := a.Path
+	switch {
+	case a.Method == "HEAD":
+		// gh only turns -f into query parameters for GET, so HEAD parameters go in the path.
+		argv = append(argv, "--include")
+		if len(a.Params) > 0 {
+			q := url.Values{}
+			for k, v := range a.Params {
+				q.Set(k, paramString(v))
+			}
+			sep := "?"
+			if strings.Contains(path, "?") {
+				sep = "&"
+			}
+			path += sep + q.Encode()
+		}
+	case a.Method == "GET":
 		if a.Paginate {
 			argv = append(argv, "--paginate")
 		}
@@ -252,13 +292,13 @@ func (o GHOptions) runGHAPI(ctx context.Context, c Call) (Result, error) {
 		for _, k := range keys {
 			argv = append(argv, "-f", k+"="+paramString(a.Params[k]))
 		}
-	} else if len(a.Params) > 0 {
+	case len(a.Params) > 0:
 		if stdin, err = json.Marshal(a.Params); err != nil {
 			return Result{}, err
 		}
 		argv = append(argv, "--input", "-")
 	}
-	argv = append(argv, "--", a.Path)
+	argv = append(argv, "--", path)
 	out, err := o.gh(ctx, stdin, argv...)
 	return Result{Text: out}, err
 }

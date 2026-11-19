@@ -26,7 +26,7 @@ Always available to every agent run (executed on the local hal instance):
 
 | Tool | Notes |
 |---|---|
-| `gh_api(method, path, params)`, `pr_view`, `pr_diff`, `pr_list`, `issue_view`, `search` | `gh` CLI with the user's auth. GET auto-allowed; POST/PATCH/PUT/DELETE need approval by default. |
+| `gh_api(method, path, params)`, `pr_view`, `pr_diff`, `pr_list`, `issue_view`, `search` | `gh` CLI with the user's auth. GET and HEAD auto-allowed (also in read-only runs); POST/PATCH/PUT/DELETE need approval by default. |
 | `now(timezone?)` | Current time. |
 | `request_approval(title, description, body?, priority?, editable?, timeout_seconds?, wait_seconds?)` | Ask the user for a decision. `description` is required (one or two sentences: what you want to do and why); without it the call is a tool error and the agent retries. Returns `{approval_id, status, decision, comment, values, edited, edits, message?}`. A denial with a comment is steering: `message` repeats it as `Denied by the user: "<text>". Do not retry the same action unchanged; do what the user asked instead.` Allowed in read-only and dry runs (it only asks). Same schema as the MCP operator tool of that name ([../mcp.md](../mcp.md)). |
 | `run_context()`, `node_input()`, `event()` | The run's state: ids, trigger, node input payload, original event. |
